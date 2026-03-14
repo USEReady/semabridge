@@ -1,0 +1,30 @@
+core:
+  intermediate_format: OSI
+  repository_path: C:\Users\Premasai\Documents\workspace\demo\semabridge\semabridge.db
+  local_models_path: C:\Users\Premasai\Documents\workspace\demo\semabridge\models
+  backup_retention: 5
+database:
+  backend: orm
+  connection_url_env: SEMABRIDGE_DATABASE_URL
+  writer_thread_queue: true
+llm:
+  enabled: false
+  model: gpt-4o-mini
+  timeout_seconds: 30
+  max_retries: 3
+  api_key_env: OPENAI_API_KEY
+logging:
+  level: DEBUG
+  format: text
+  dir: ./logs
+  redact_secrets: true
+  log_file: C:\Users\Premasai\Documents\workspace\demo\semabridge\semabridge.log
+concurrency:
+  max_concurrent_models: 4
+  thread_pool_size: 8
+options:
+  global_exclude_models: []
+config_path: C:\Users\Premasai\Documents\workspace\demo\semabridge\config.yaml
+fabric:
+  workspace_id: 8bdf7f63-16ce-46f2-aeb1-921392b2abbb
+  workspace_name: My workspace

@@ -1,0 +1,264 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OSIModel",
+  "description": "Open Semantic Intermediate (OSI) Schema representing an agnostic semantic model for synchronization.",
+  "type": "object",
+  "required": [
+    "unique_name",
+    "version",
+    "datasets",
+    "metrics",
+    "relationships",
+    "dimensions"
+  ],
+  "properties": {
+    "unique_name": {
+      "type": "string",
+      "description": "Unique identifier for the semantic model."
+    },
+    "label": {
+      "type": "string",
+      "description": "Human-readable display name."
+    },
+    "description": {
+      "type": ["string", "null"],
+      "description": "Model description."
+    },
+    "version": {
+      "type": "string",
+      "description": "Semantic version of the model."
+    },
+    "datasets": {
+      "type": "array",
+      "description": "List of dataset (table) definitions. Restricted to max 75 per model for Power BI push limits.",
+      "maxItems": 75,
+      "items": {
+        "$ref": "#/definitions/OSIDataset"
+      }
+    },
+    "metrics": {
+      "type": "array",
+      "description": "List of metric (measure) definitions.",
+      "items": {
+        "$ref": "#/definitions/OSIMetric"
+      }
+    },
+    "relationships": {
+      "type": "array",
+      "description": "List of relationship definitions. Restricted to max 75 per model.",
+      "maxItems": 75,
+      "items": {
+        "$ref": "#/definitions/OSIRelationship"
+      }
+    },
+    "dimensions": {
+      "type": "array",
+      "description": "List of logical dimension configurations.",
+      "items": {
+        "$ref": "#/definitions/OSIDimension"
+      }
+    },
+    "source_platform": {
+      "type": ["string", "null"],
+      "description": "The platform the model was extracted from."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Creation timestamp."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Vendor-specific properties and metadata extensions."
+    }
+  },
+  "definitions": {
+    "OSIDataset": {
+      "type": "object",
+      "required": [
+        "unique_name",
+        "columns"
+      ],
+      "properties": {
+        "unique_name": { "type": "string" },
+        "label": { "type": "string" },
+        "description": { "type": ["string", "null"] },
+        "source_table": { "type": ["string", "null"] },
+        "source_schema": { "type": ["string", "null"] },
+        "columns": {
+          "type": "array",
+          "description": "Columns defined for the table. Limited to 75 (Power BI restriction) or recommended 50-100 (Snowflake Cortex).",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/definitions/OSIColumn"
+          }
+        },
+        "is_fact": { "type": "boolean" },
+        "is_hidden": { "type": "boolean" }
+      }
+    },
+    "OSIColumn": {
+      "type": "object",
+      "required": [
+        "unique_name",
+        "data_type"
+      ],
+      "properties": {
+        "unique_name": { "type": "string" },
+        "label": { "type": "string" },
+        "data_type": {
+          "type": "string",
+          "enum": ["string", "integer", "decimal", "float", "boolean", "date", "datetime", "time", "binary", "variant", "unknown"]
+        },
+        "description": { "type": ["string", "null"] },
+        "is_key": { "type": "boolean" },
+        "is_hidden": { "type": "boolean" },
+        "format_string": { "type": ["string", "null"] },
+        "source_expression": { "type": ["string", "null"] },
+        "synonyms": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "is_enum": { "type": "boolean" },
+        "cortex_search_service": { "type": ["string", "null"] },
+        "sample_values": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        }
+      }
+    },
+    "OSIMetric": {
+      "type": "object",
+      "required": [
+        "unique_name",
+        "dataset",
+        "aggregation"
+      ],
+      "properties": {
+        "unique_name": { "type": "string" },
+        "label": { "type": "string" },
+        "dataset": { "type": "string" },
+        "source_column": { "type": ["string", "null"] },
+        "expression": { "type": ["string", "null"] },
+        "aggregation": {
+          "type": "string",
+          "enum": ["sum", "count", "count_distinct", "avg", "min", "max", "none"]
+        },
+        "description": { "type": ["string", "null"] },
+        "format_string": { "type": ["string", "null"] },
+        "business_owner": { "type": ["string", "null"] },
+        "is_hidden": { "type": "boolean" },
+        "access_modifier": { "type": ["string", "null"] },
+        "synonyms": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "OSIRelationship": {
+      "type": "object",
+      "required": [
+        "unique_name",
+        "from_dataset",
+        "from_columns",
+        "to_dataset",
+        "to_columns",
+        "cardinality"
+      ],
+      "properties": {
+        "unique_name": { "type": "string" },
+        "from_dataset": { "type": "string" },
+        "from_columns": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "to_dataset": { "type": "string" },
+        "to_columns": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "cardinality": {
+          "type": "string",
+          "enum": ["one-to-one", "one-to-many", "many-to-one", "many-to-many"]
+        },
+        "cross_filter_direction": {
+          "type": "string",
+          "enum": ["single", "both"]
+        },
+        "is_active": { "type": "boolean" }
+      }
+    },
+    "OSIDimension": {
+      "type": "object",
+      "required": [
+        "unique_name",
+        "dataset"
+      ],
+      "properties": {
+        "unique_name": { "type": "string" },
+        "label": { "type": "string" },
+        "description": { "type": ["string", "null"] },
+        "dataset": { "type": "string" },
+        "attributes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/OSIAttribute"
+          }
+        },
+        "hierarchies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/OSIHierarchy"
+          }
+        },
+        "is_hidden": { "type": "boolean" }
+      }
+    },
+    "OSIAttribute": {
+      "type": "object",
+      "required": [
+        "unique_name",
+        "dataset",
+        "source_column"
+      ],
+      "properties": {
+        "unique_name": { "type": "string" },
+        "label": { "type": "string" },
+        "dataset": { "type": "string" },
+        "source_column": { "type": "string" },
+        "is_hidden": { "type": "boolean" }
+      }
+    },
+    "OSIHierarchy": {
+      "type": "object",
+      "required": [
+        "unique_name"
+      ],
+      "properties": {
+        "unique_name": { "type": "string" },
+        "label": { "type": "string" },
+        "levels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/OSILevel"
+          }
+        }
+      }
+    },
+    "OSILevel": {
+      "type": "object",
+      "required": [
+        "unique_name",
+        "attribute"
+      ],
+      "properties": {
+        "unique_name": { "type": "string" },
+        "label": { "type": "string" },
+        "attribute": { "type": "string" }
+      }
+    }
+  }
+}

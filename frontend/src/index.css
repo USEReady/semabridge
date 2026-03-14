@@ -1,0 +1,130 @@
+@import "tailwindcss";
+
+/* ============================= */
+/* DARK THEME (Default)          */
+/* ============================= */
+[data-theme="dark"] {
+  --bg-app: #0D1117;
+  --bg-surface: #161B22;
+  --bg-surface-hover: #1f242d;
+  --bg-surface-raised: #1C2129;
+  --bg-primary: #0D1117;
+  --bg-input: #0D1117;
+  --bg-backdrop: rgba(0, 0, 0, 0.60);
+
+  --text-primary: #C9D1D9;
+  --text-secondary: #8B949E;
+  --text-tertiary: #6E7681;
+  --text-inverse: #0D1117;
+
+  --border-color: rgba(255, 255, 255, 0.06);
+  --border-main: rgba(255, 255, 255, 0.06);
+
+  --accent-blue: #6366F1;
+  --accent-blue-hover: #818CF8;
+  --color-accent: #6366F1;
+  --color-accent-faint: rgba(99, 102, 241, 0.1);
+  --color-primary-muted: rgba(99, 102, 241, 0.15);
+
+  --color-success: #10B981;
+  --color-success-muted: rgba(16, 185, 129, 0.15);
+  --color-warning: #F59E0B;
+  --color-warning-muted: rgba(245, 158, 11, 0.15);
+  --color-danger: #EF4444;
+  --color-danger-muted: rgba(239, 68, 68, 0.15);
+
+  --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.5);
+  --transition-normal: 0.2s ease;
+}
+
+/* ============================= */
+/* LIGHT THEME                   */
+/* ============================= */
+[data-theme="light"] {
+  --bg-app: #F8FAFC;
+  --bg-surface: #FFFFFF;
+  --bg-surface-hover: #E2E8F0;
+  --bg-surface-raised: #F1F5F9;
+  --bg-primary: #F8FAFC;
+  --bg-input: #FFFFFF;
+  --bg-backdrop: rgba(15, 23, 42, 0.45);
+
+  --text-primary: #0F172A;
+  --text-secondary: #1E293B;
+  --text-tertiary: #475569;
+  --text-inverse: #FFFFFF;
+
+  --border-color: rgba(0, 0, 0, 0.08);
+  --border-main: rgba(0, 0, 0, 0.10);
+
+  --accent-blue: #4F46E5;
+  --accent-blue-hover: #4338CA;
+  --color-accent: #4F46E5;
+  --color-accent-faint: rgba(79, 70, 229, 0.08);
+  --color-primary-muted: rgba(79, 70, 229, 0.10);
+
+  --color-success: #059669;
+  --color-success-muted: rgba(5, 150, 105, 0.12);
+  --color-warning: #D97706;
+  --color-warning-muted: rgba(217, 119, 6, 0.12);
+  --color-danger: #DC2626;
+  --color-danger-muted: rgba(220, 38, 38, 0.12);
+
+  --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.12);
+  --transition-normal: 0.2s ease;
+}
+
+/* ============================= */
+/* Global Styles                 */
+/* ============================= */
+body {
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  margin: 0;
+  font-family: sans-serif;
+  transition: background 0.25s ease, color 0.25s ease;
+}
+
+/* ============================= */
+/* Theme-aware Tailwind Utilities */
+/* ============================= */
+@layer utilities {
+  /* Backgrounds */
+  .bg-app          { background-color: var(--bg-app); }
+  .bg-surface      { background-color: var(--bg-surface); }
+  .bg-surface-hover{ background-color: var(--bg-surface-hover); }
+  .bg-surface-raised{ background-color: var(--bg-surface-raised); }
+  .bg-backdrop     { background-color: var(--bg-backdrop); }
+  .bg-border-main  { background-color: var(--border-main); }
+
+  /* Text */
+  .text-primary    { color: var(--text-primary); }
+  .text-secondary  { color: var(--text-secondary); }
+  .text-tertiary   { color: var(--text-tertiary); }
+  .text-inverse    { color: var(--text-inverse); }
+  .text-accent-blue{ color: var(--accent-blue); }
+  .text-color-success{ color: var(--color-success); }
+
+  /* Borders */
+  .border-main     { border-color: var(--border-main); }
+
+  /* Accent helpers */
+  .border-t-accent-blue { border-top-color: var(--accent-blue); }
+
+  /* Transition helper */
+  .theme-transition {
+    transition: background var(--transition-normal),
+                color var(--transition-normal),
+                border-color var(--transition-normal);
+  }
+}
+
+/* Custom scrollbar */
+.custom-scrollbar::-webkit-scrollbar { width: 6px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: var(--border-main); border-radius: 3px; }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+
+/* Hide scrollbar utility */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }

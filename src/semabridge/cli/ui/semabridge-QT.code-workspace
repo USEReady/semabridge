@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "../../../../.."
+		},
+		{
+			"name": "semabridge-react-yaml-fix",
+			"path": "../../../../../../semabridge-react-yaml-fix"
+		}
+	],
+	"settings": {}
+}

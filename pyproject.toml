@@ -1,0 +1,108 @@
+[project]
+name = "semabridge"
+version = "1.0.0"
+description = "Semantic Model Bridge — unified Fabric/Snowflake pipeline with ORM, distributed orchestration, and PBIX support"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Platform Engineering Team"}
+]
+keywords = ["fabric", "power-bi", "snowflake", "semantic-model", "sml", "temporal", "ray"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    # ── Core runtime ──────────────────────────────────────────────────
+    "snowflake-connector-python>=3.0.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "pyyaml>=6.0",
+    "ruamel-yaml>=0.19.1",
+    "httpx>=0.25.0",
+    "msal>=1.24.0",
+    "requests>=2.31.0",
+    "tenacity>=8.2.0",
+    # ── CLI & UI ──────────────────────────────────────────────────────
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "python-dotenv>=1.0.0",
+    "streamlit>=1.28.0",
+    "pandas>=2.0.0",
+    "PyQt6>=6.6.0",
+    # ── API layer ─────────────────────────────────────────────────────
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+    "websockets>=12.0",
+    # ── Database / ORM ────────────────────────────────────────────────
+    "duckdb>=1.0.0",
+    "duckdb-engine>=0.12.0",
+    "sqlalchemy>=2.0.0",
+    "alembic>=1.13.0",
+    "psycopg2-binary>=2.9.0",
+    "pymysql>=1.1.0",
+    "cryptography>=41.0.0",
+    # ── PBIX support ──────────────────────────────────────────────────
+    "pbixray>=0.5.0",
+    # ── Auth ─────────────────────────────────────────────────────────
+    "passlib[bcrypt]>=1.7.4",
+    "python-jose[cryptography]>=3.3.0",
+    "email-validator>=2.0.0",
+    # ── Distributed orchestration (Temporal + Ray) ───────────────────
+    "temporalio>=1.7.0",
+    "ray[default]>=2.40.0",
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "prometheus-client>=0.20.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+    "pyinstaller>=6.0.0",
+]
+orm = [
+    "sqlmodel>=0.0.14",
+]
+
+[project.scripts]
+semabridge = "semabridge.cli.main:main"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["semabridge*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "W", "I", "N", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+addopts = "-v --tb=short"
+asyncio_mode = "auto"

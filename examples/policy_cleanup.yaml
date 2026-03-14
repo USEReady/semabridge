@@ -1,0 +1,11 @@
+# Legacy Cleanup Policy
+# Use this to clean up old views and experimental features.
+
+snowflake:
+  create_missing_tables: false # Don't create anything
+  
+legacy:
+  drop_deprecated_views: true
+
+features:
+  enable_cortex_analyst: false

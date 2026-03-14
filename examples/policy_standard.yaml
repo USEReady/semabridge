@@ -1,0 +1,24 @@
+# Standard Production Policy
+# Recommended for new deployments.
+
+snowflake:
+  query_tag: "Semabridge_Prod"
+  quote_identifiers: true
+  create_missing_tables: true
+  validate_column_schema: true
+
+fabric:
+  deploy_overwrite: true
+  tmsl_generation_mode: "standard"
+
+semantic_model:
+  view_suffix: "_semantic"
+  enable_date_dimension: true
+
+compatibility:
+  suppress_reserved_words: true
+  force_uppercase: true
+
+features:
+  enable_cortex_analyst: true
+  enable_parallel_execution: false

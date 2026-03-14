@@ -1,0 +1,42 @@
+# Semabridge Configuration File
+# ==============================
+#
+# This file demonstrates all configuration options for Semabridge.
+# Multiple config files can be merged: --config base.yaml --config override.yaml
+#
+# Environment Variable Interpolation:
+# - Use ${ENV_VAR} syntax to reference environment variables
+# - Use ${ENV_VAR:-default} for variables with defaults
+# - Use field_env: VAR_NAME to reference env var for that field
+
+# Required: Source connector configuration
+source:
+  type: fabric  # "snowflake" or "fabric"
+  dataset_id: ${FABRIC_DATASET_ID}  # Fabric dataset ID (required for fabric source)
+  workspace_id: ${FABRIC_WORKSPACE_ID:-}  # Optional, defaults to env var
+
+# Optional: Target connector configuration
+target:
+  type: snowflake  # "snowflake" or "fabric"
+  deploy: false  # Set to true to enable deployment
+  database: ${SNOWFLAKE_DATABASE:-}  # Optional override
+  schema_name: ${SNOWFLAKE_SCHEMA:-}  # Optional override
+
+# Required: Semantic model name
+model_name: "CustomerProfitability"
+
+# Optional: Version tag for this run
+version_tag: "v1.0.0"
+
+# Optional: Path to behavior policy YAML
+# policy_path: "policies/production.yaml"
+
+# Optional: Sync direction (if not set, inferred from source/target types)
+# Values: "source_to_target" or "target_to_source"
+sync_direction: source_to_target
+
+# Optional: Logging configuration
+# CLI --log-level argument takes precedence over this setting
+logging:
+  level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: text  # "text" (readable) or "json" (structured)

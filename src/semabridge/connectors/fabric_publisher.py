@@ -1,0 +1,437 @@
+"""
+Fabric Publisher.
+
+Publishes semantic models to Microsoft Fabric using the REST API.
+No XMLA required - uses base64-encoded model.bim payloads.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import time
+from typing import Any, Optional
+
+import httpx
+import msal
+
+from semabridge.core.settings import FabricConfig
+from semabridge.connectors.tmsl_generator import TMSLGenerator
+from semabridge.sml.models import SMLModel
+from semabridge.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class PublishError(Exception):
+    """Raised when model publishing fails."""
+    pass
+
+
+class FabricPublisher:
+    """
+    Publishes semantic models to Microsoft Fabric.
+    
+    Uses the Fabric REST API:
+    - POST /workspaces/{workspaceId}/semanticModels (create)
+    - PATCH /workspaces/{workspaceId}/semanticModels/{modelId} (update)
+    
+    Handles long-running operations with polling.
+    """
+    
+    # API endpoints
+    FABRIC_API_BASE = "https://api.fabric.microsoft.com/v1"
+    FABRIC_SCOPE = "https://api.fabric.microsoft.com/.default"
+    
+    def __init__(self, config: FabricConfig):
+        """
+        Initialize the publisher.
+        
+        Args:
+            config: Fabric configuration with credentials
+        """
+        self.config = config
+        self._access_token: Optional[str] = None
+        self._token_expiry: float = 0
+    
+    def _get_access_token(self, force_refresh: bool = False) -> str:
+        """Get a valid access token, refreshing if needed."""
+        current_time = time.time()
+        
+        if not force_refresh and self._access_token and current_time < self._token_expiry - 300:
+            return self._access_token
+        
+        logger.debug("Acquiring new access token...")
+
+        # --- Pre-issued token from environment variable (CI / automation) ---
+        import os
+        env_token = os.environ.get("FABRIC_ACCESS_TOKEN")
+        if env_token:
+            self._access_token = env_token
+            self._token_expiry = current_time + 3600
+            logger.debug("FabricPublisher: using FABRIC_ACCESS_TOKEN from environment")
+            return self._access_token
+
+        # --- Device-code / delegated flow when no client_secret is configured ---
+        if self.config.client_secret is None:
+            token = self._get_access_token_from_credential_manager()
+            self._access_token = token
+            self._token_expiry = current_time + 600  # conservative TTL
+            return self._access_token
+
+        app = msal.ConfidentialClientApplication(
+            client_id=self.config.client_id,
+            client_credential=self.config.client_secret.get_secret_value(),
+            authority=f"https://login.microsoftonline.com/{self.config.tenant_id}",
+        )
+        
+        result = app.acquire_token_for_client(scopes=[self.FABRIC_SCOPE])
+        
+        if "access_token" not in result:
+            error = result.get("error_description", "Unknown authentication error")
+            raise PublishError(f"Failed to acquire access token: {error}")
+        
+        self._access_token = result["access_token"]
+        self._token_expiry = current_time + result.get("expires_in", 3600)
+        
+        logger.debug("Access token acquired successfully")
+        return self._access_token
+
+    def _get_access_token_from_credential_manager(self) -> str:
+        """Return the stored device-code / delegated-flow access token.
+
+        Falls back to a silent refresh via refresh_token when expired.
+        Raises PublishError if no valid token is available.
+        """
+        try:
+            from semabridge.repository.credential_manager import CredentialManager
+
+            cm = CredentialManager()
+            if cm.has_valid_token():
+                token_data = cm.get_msal_token()
+                logger.debug("FabricPublisher: using stored device-code token")
+                return token_data["access_token"]
+
+            token_data = cm.get_msal_token()
+            if token_data and token_data.get("refresh_token"):
+                import msal
+                tenant_id = token_data.get("tenant_id", "organizations")
+                app = msal.PublicClientApplication(
+                    client_id="04b07795-8ddb-461a-bbee-02f9e1bf7b46",
+                    authority=f"https://login.microsoftonline.com/{tenant_id}",
+                )
+                result = app.acquire_token_by_refresh_token(
+                    token_data["refresh_token"],
+                    scopes=["https://api.fabric.microsoft.com/.default"],
+                )
+                if "access_token" in result:
+                    cm.save_msal_token(
+                        access_token=result["access_token"],
+                        refresh_token=result.get("refresh_token", token_data["refresh_token"]),
+                        account_username=token_data.get("account_username", "unknown"),
+                        tenant_id=tenant_id,
+                        expires_in=result.get("expires_in", 3600),
+                    )
+                    logger.debug("FabricPublisher: device-code token refreshed silently")
+                    return result["access_token"]
+                else:
+                    logger.warning(
+                        "FabricPublisher: silent token refresh failed: %s",
+                        result.get("error_description", result.get("error", "unknown")),
+                    )
+        except Exception as exc:
+            logger.warning("FabricPublisher: device-code token lookup failed: %s", exc)
+
+        logger.warning(
+            "No valid Fabric access token found. "
+            "Options: (1) sign in via the Connections panel, "
+            "(2) set FABRIC_ACCESS_TOKEN env var with a pre-issued token, or "
+            "(3) configure FABRIC_CLIENT_SECRET for service-principal auth."
+        )
+        raise PublishError(
+            "No valid Fabric access token available. "
+            "Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET."
+        )
+    
+    def _get_headers(self) -> dict[str, str]:
+        """Get request headers with auth token."""
+        return {
+            "Authorization": f"Bearer {self._get_access_token()}",
+            "Content-Type": "application/json",
+        }
+    
+    def publish(
+        self,
+        sml_model: SMLModel,
+        model_name: Optional[str] = None,
+        description: Optional[str] = None,
+        snowflake_server: str = "",
+        snowflake_warehouse: str = "",
+        snowflake_database: str = "",
+        snowflake_schema: str = "",
+        overwrite: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Publish an SML model to Fabric.
+        
+        Args:
+            sml_model: SML model to publish
+            model_name: Override model name (uses SML name if not provided)
+            description: Override description
+            snowflake_server: Snowflake server for M expressions
+            snowflake_warehouse: Snowflake warehouse
+            snowflake_database: Snowflake database
+            snowflake_schema: Snowflake schema
+            overwrite: Whether to overwrite existing model
+            
+        Returns:
+            API response with model details
+        """
+        display_name = model_name or sml_model.label or sml_model.unique_name
+        model_description = description or sml_model.description
+        
+        logger.info(f"Publishing semantic model: {display_name}")
+        
+        # Check if model already exists
+        existing_model = self.find_model_by_name(display_name)
+        
+        if existing_model and not overwrite:
+            raise PublishError(f"Model '{display_name}' already exists and overwrite=False")
+        
+        # Generate TMSL
+        generator = TMSLGenerator(
+            sml_model,
+            snowflake_server=snowflake_server,
+            snowflake_warehouse=snowflake_warehouse,
+            snowflake_database=snowflake_database,
+            snowflake_schema=snowflake_schema,
+        )
+        
+        model_bim = generator.generate()
+        definition_pbism = generator.generate_definition_pbism()
+        platform_file = generator.generate_platform_file()
+        
+        # Encode as base64
+        model_bim_b64 = base64.b64encode(
+            json.dumps(model_bim, indent=2).encode("utf-8")
+        ).decode("ascii")
+        
+        definition_pbism_b64 = base64.b64encode(
+            json.dumps(definition_pbism, indent=2).encode("utf-8")
+        ).decode("ascii")
+        
+        platform_b64 = base64.b64encode(
+            json.dumps(platform_file, indent=2).encode("utf-8")
+        ).decode("ascii")
+        
+        # Build API payload
+        payload = {
+            "displayName": display_name,
+            "description": model_description,
+            "definition": {
+                "parts": [
+                    {
+                        "path": "model.bim",
+                        "payload": model_bim_b64,
+                        "payloadType": "InlineBase64",
+                    },
+                    {
+                        "path": "definition.pbism",
+                        "payload": definition_pbism_b64,
+                        "payloadType": "InlineBase64",
+                    },
+                    {
+                        "path": ".platform",
+                        "payload": platform_b64,
+                        "payloadType": "InlineBase64",
+                    },
+                ]
+            }
+        }
+        
+        if existing_model:
+            # Update existing model
+            result = self._update_model(existing_model["id"], payload)
+        else:
+            # Create new model
+            result = self._create_model(payload)
+            
+        # Trigger refresh to ensure changes are visible
+        if "id" in result:
+             self.refresh_model(result["id"])
+             
+        return result
+    
+    def _create_model(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Create a new semantic model."""
+        url = f"{self.FABRIC_API_BASE}/workspaces/{self.config.workspace_id}/semanticModels"
+        
+        logger.debug(f"Creating semantic model: {payload['displayName']}")
+        
+        with httpx.Client(timeout=60) as client:
+            response = client.post(url, headers=self._get_headers(), json=payload)
+            
+            if response.status_code == 202:
+                # Long-running operation
+                return self._poll_operation(response)
+            elif response.status_code == 201:
+                # Immediate success
+                result = response.json()
+                logger.info(f"Created semantic model: {result.get('displayName')} (ID: {result.get('id')})")
+                return result
+            else:
+                error_text = response.text
+                logger.error(f"Create failed: {response.status_code} - {error_text}")
+                raise PublishError(f"Failed to create model: {response.status_code} - {error_text}")
+    
+    def _update_model(
+        self,
+        model_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Update an existing semantic model."""
+        url = f"{self.FABRIC_API_BASE}/workspaces/{self.config.workspace_id}/semanticModels/{model_id}/updateDefinition"
+        
+        logger.debug(f"Updating semantic model: {model_id}")
+        
+        # Update only needs the definition part
+        update_payload = {
+            "definition": payload["definition"]
+        }
+        
+        with httpx.Client(timeout=60) as client:
+            response = client.post(url, headers=self._get_headers(), json=update_payload)
+            
+            if response.status_code == 202:
+                # Long-running operation
+                return self._poll_operation(response)
+            elif response.status_code == 200:
+                logger.info(f"Updated semantic model: {payload['displayName']} (ID: {model_id})")
+                return {"id": model_id, "displayName": payload["displayName"], "status": "updated"}
+            else:
+                error_text = response.text
+                logger.error(f"Update failed: {response.status_code} - {error_text}")
+                raise PublishError(f"Failed to update model: {response.status_code} - {error_text}")
+
+    def refresh_model(self, model_id: str) -> bool:
+        """Trigger a refresh of the semantic model."""
+        url = f"{self.FABRIC_API_BASE}/workspaces/{self.config.workspace_id}/semanticModels/{model_id}/refresh"
+        
+        logger.info(f"Triggering refresh for model: {model_id}")
+        
+        with httpx.Client(timeout=30) as client:
+            response = client.post(url, headers=self._get_headers())
+            
+            if response.status_code == 202:
+                logger.info("Refresh initiated successfully")
+                return True
+            else:
+                logger.warning(f"Failed to trigger refresh: {response.status_code} - {response.text}")
+                return False
+    
+    def _poll_operation(
+        self,
+        initial_response: httpx.Response,
+        max_wait: int = 300,
+        poll_interval: int = 5,
+    ) -> dict[str, Any]:
+        """Poll a long-running operation until completion."""
+        operation_url = initial_response.headers.get("Location")
+        operation_id = initial_response.headers.get("x-ms-operation-id")
+        retry_after = int(initial_response.headers.get("Retry-After", poll_interval))
+        
+        if not operation_url:
+            # No operation URL, check if we got a result
+            if initial_response.status_code in (200, 201):
+                return initial_response.json()
+            raise PublishError("No operation URL in response")
+        
+        logger.debug(f"Polling operation: {operation_id}")
+        
+        start_time = time.time()
+        
+        with httpx.Client(timeout=30) as client:
+            while time.time() - start_time < max_wait:
+                time.sleep(retry_after)
+                
+                response = client.get(operation_url, headers=self._get_headers())
+                
+                if response.status_code != 200:
+                    raise PublishError(f"Operation status check failed: {response.status_code}")
+                
+                result = response.json()
+                status = result.get("status", "").lower()
+                
+                if status == "succeeded":
+                    logger.info("Operation completed successfully")
+                    return result.get("result", result)
+                elif status == "failed":
+                    error = result.get("error", {})
+                    raise PublishError(f"Operation failed: {error.get('message', 'Unknown error')}")
+                elif status in ("running", "inprogress", "notstarted"):
+                    logger.debug(f"Operation status: {status}")
+                    continue
+                else:
+                    logger.warning(f"Unknown operation status: {status}")
+        
+        raise PublishError(f"Operation timed out after {max_wait} seconds")
+    
+    def find_model_by_name(self, name: str) -> Optional[dict[str, Any]]:
+        """Find a semantic model by name in the workspace."""
+        url = f"{self.FABRIC_API_BASE}/workspaces/{self.config.workspace_id}/semanticModels"
+        
+        try:
+            with httpx.Client(timeout=30) as client:
+                response = client.get(url, headers=self._get_headers())
+                
+                if response.status_code != 200:
+                    logger.warning(f"Could not list models: {response.status_code}")
+                    return None
+                
+                models = response.json().get("value", [])
+                
+                for model in models:
+                    if model.get("displayName", "").lower() == name.lower():
+                        return model
+                
+                return None
+        except Exception as e:
+            logger.warning(f"Error finding model: {e}")
+            return None
+    
+    def list_models(self) -> list[dict[str, Any]]:
+        """List all semantic models in the workspace."""
+        url = f"{self.FABRIC_API_BASE}/workspaces/{self.config.workspace_id}/semanticModels"
+        
+        with httpx.Client(timeout=30) as client:
+            response = client.get(url, headers=self._get_headers())
+            
+            if response.status_code != 200:
+                raise PublishError(f"Failed to list models: {response.status_code}")
+            
+            return response.json().get("value", [])
+    
+    def delete_model(self, model_id: str) -> bool:
+        """Delete a semantic model."""
+        url = f"{self.FABRIC_API_BASE}/workspaces/{self.config.workspace_id}/semanticModels/{model_id}"
+        
+        with httpx.Client(timeout=30) as client:
+            response = client.delete(url, headers=self._get_headers())
+            
+            if response.status_code in (200, 204):
+                logger.info(f"Deleted semantic model: {model_id}")
+                return True
+            else:
+                logger.error(f"Delete failed: {response.status_code}")
+                return False
+    
+    def test_connection(self) -> bool:
+        """Test Fabric API connectivity."""
+        try:
+            self._get_access_token()
+            models = self.list_models()
+            logger.info(f"Connected to Fabric workspace. Found {len(models)} semantic models.")
+            return True
+        except Exception as e:
+            logger.error(f"Fabric connection test failed: {e}")
+            return False

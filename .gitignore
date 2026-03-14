@@ -1,0 +1,180 @@
+# ============================================================================
+# Python
+# ============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# ============================================================================
+# Environment & Secrets
+# ============================================================================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+*.pfx
+
+# Virtual environments
+.venv
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ============================================================================
+# IDE & Editors
+# ============================================================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.sublime-project
+*.sublime-workspace
+.vim/
+
+# ============================================================================
+# Frontend
+# ============================================================================
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+npm-debug.log
+yarn-error.log
+.next/
+out/
+
+# ============================================================================
+# Databases
+# ============================================================================
+*.db
+*.sqlite
+*.sqlite3
+*.duckdb
+*.duckdb-shm
+*.duckdb-wal
+semabridge_state.db
+semabridge.db
+semabridge_temp.db
+
+# ============================================================================
+# Project Specific
+# ============================================================================
+output/
+outputs/
+temp/
+tmp/
+logs/
+.semabridge_cache/
+.semabridge/
+src/.semantic_metadata/logs/
+*.bim
+*.pbism
+git_concurrency_log.txt
+test_results.txt
+package-lock.json
+
+# ============================================================================
+# Generated Files & Logs
+# ============================================================================
+*.log
+*_test.log
+deployment_test.log
+semantic_sync_output*.txt
+findstr_exec_output.txt
+SEARCH_RESULTS.md
+BACKEND_ERRORS_ANALYSIS.md
+
+# ============================================================================
+# OS Specific
+# ============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+*.exe
+*.dll
+
+# ============================================================================
+# Backup Files
+# ============================================================================
+*.bak
+*.backup
+*~
+*.orig
+
+# ============================================================================
+# Jupyter
+# ============================================================================
+.ipynb_checkpoints/
+*.ipynb
+
+# ============================================================================
+# Translations
+# ============================================================================
+*.mo
+*.pot
+
+# ============================================================================
+# mypy
+# ============================================================================
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ============================================================================
+# Misc
+# ============================================================================
+.hypothesis/
+*.prof
+.cache/
+.vagrant/
+Vagrantfile
