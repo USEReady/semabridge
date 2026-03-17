@@ -69,6 +69,7 @@ class SnowflakeExtractor:
         self._columns: dict[str, list[dict[str, Any]]] = {}
         self._primary_keys: dict[str, list[str]] = {}
         self._foreign_keys: list[dict[str, Any]] = []
+        self._metrics: list[dict[str, Any]] = []  # List of discovered metrics
     
     @contextmanager
     def connection(self) -> Generator[SnowflakeConnection, None, None]:
@@ -137,6 +138,9 @@ class SnowflakeExtractor:
             else:
                 self._extract_primary_keys(conn)
                 self._extract_foreign_keys(conn)
+            
+            # Extract metrics from views (NEW)
+            self._extract_metrics(conn)
         
         # Update cache if available
         if self.cache:
@@ -149,12 +153,14 @@ class SnowflakeExtractor:
             "columns": self._columns,
             "primary_keys": self._primary_keys,
             "foreign_keys": self._foreign_keys,
+            "metrics": self._metrics,
         }
         
         logger.info(
             f"Extraction complete: {len(self._tables)} tables, "
             f"{sum(len(cols) for cols in self._columns.values())} columns, "
-            f"{len(self._foreign_keys)} relationships"
+            f"{len(self._foreign_keys)} relationships, "
+            f"{len(self._metrics)} metrics"
         )
         
         return result
@@ -577,6 +583,46 @@ class SnowflakeExtractor:
             f"{len(self._primary_keys)} PK tables, "
             f"{len(self._foreign_keys)} FK relationships"
         )
+    
+    def _extract_metrics(self, conn: SnowflakeConnection) -> None:
+        """Extract metrics from Snowflake views.
+        
+        Looks for views matching the pattern 'metric_*' which are created
+        by the syncing process to represent DAX metrics converted to SQL.
+        
+        Returns metrics as a list of dicts with:
+        - name: Full metric name (e.g., 'metric_total_sales')
+        - normalized_name: Cleaned metric name (e.g., 'total_sales')
+        """
+        cur = conn.cursor()
+        
+        logger.debug("Extracting metrics from views...")
+        
+        try:
+            # Query all views in the schema
+            cur.execute(f"""
+                SELECT TABLE_NAME
+                FROM INFORMATION_SCHEMA.VIEWS
+                WHERE TABLE_SCHEMA = %s
+                  AND TABLE_NAME LIKE 'metric_%'
+                ORDER BY TABLE_NAME
+            """, (self.config.schema_name.upper(),))
+            
+            for row in cur.fetchall():
+                view_name = row[0]
+                # Remove 'metric_' prefix to get the normalized name
+                normalized_name = view_name[7:] if view_name.lower().startswith('metric_') else view_name
+                
+                metric_info = {
+                    "name": view_name,
+                    "normalized_name": normalized_name,
+                }
+                self._metrics.append(metric_info)
+            
+            if self._metrics:
+                logger.debug(f"Found {len(self._metrics)} metric views")
+        except Exception as e:
+            logger.debug(f"Could not extract metrics from views: {e}")
     
     def _update_cache(self) -> None:
         """Update the metadata cache with extracted data."""

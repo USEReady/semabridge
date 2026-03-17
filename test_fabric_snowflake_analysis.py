@@ -93,7 +93,8 @@ def analyze_sync(fabric_model_id: str, model_name: str = None):
         model_obj = tmsl.get("model", {})
         
         fabric_tables: Dict[str, Set[str]] = {}
-        fabric_metrics = []
+        fabric_metrics = set()
+        fabric_dimensions = set()
         fabric_relationships = []
         
         # Extract tables
@@ -105,12 +106,13 @@ def analyze_sync(fabric_model_id: str, model_name: str = None):
                 if table_name.startswith(("localdatetable", "datetabletemplate", "_")):
                     continue
                 
-                # Columns
+                # Columns (dimensions)
                 columns = set()
                 if "columns" in table:
                     for col in table["columns"]:
                         col_name = col.get("name", "").lower()
                         columns.add(col_name)
+                        fabric_dimensions.add(f"{table_name}.{col_name}")
                 fabric_tables[table_name] = columns
                 
                 # Metrics/Measures
@@ -118,7 +120,8 @@ def analyze_sync(fabric_model_id: str, model_name: str = None):
                     for measure in table["measures"]:
                         measure_name = measure.get("name", "")
                         if not measure_name.startswith("_"):
-                            fabric_metrics.append(f"{table_name}.{measure_name.lower()}")
+                            metric_full_name = f"{table_name}.{measure_name.lower()}"
+                            fabric_metrics.add(metric_full_name)
         
         # Relationships
         if "relationships" in model_obj:
@@ -139,12 +142,27 @@ def analyze_sync(fabric_model_id: str, model_name: str = None):
         
         snowflake_tables = {table_name.lower() for table_name in metadata.get("tables", {}).keys()}
         snowflake_columns = {}
+        snowflake_dimensions = set()
+        snowflake_metrics = set()
         
         for table_name, cols_list in metadata.get("columns", {}).items():
             normalized_table_name = table_name.lower()
             snowflake_columns[normalized_table_name] = {col.get("name", "").lower() for col in cols_list}
+            
+            # Collect dimensions (all columns are considered dimensions)
+            for col in cols_list:
+                col_name = col.get("name", "").lower()
+                snowflake_dimensions.add(f"{normalized_table_name}.{col_name}")
+        
+        # Extract Snowflake metrics from discovered views
+        for metric in metadata.get("metrics", []):
+            # Metric info has 'name' and 'normalized_name'
+            metric_name = metric.get("normalized_name", "").lower()
+            if metric_name:
+                snowflake_metrics.add(metric_name)
         
         print(f"[OK] Found {len(snowflake_tables)} tables in Snowflake")
+        print(f"     Dimensions: {len(snowflake_dimensions)}, Metrics: {len(snowflake_metrics)}")
         
         # Comparison
         print("\n" + "="*80)
@@ -165,7 +183,10 @@ def analyze_sync(fabric_model_id: str, model_name: str = None):
         print(f"  Synced:            {sync_count} ({sync_pct:.1f}%)")
         print(f"  NOT Synced:        {len(missing_tables)}")
         print(f"  Extra in SF:       {len(extra_tables)}")
-        print(f"  Metrics:           {len(fabric_metrics)}")
+        print(f"  Fabric Metrics:    {len(fabric_metrics)}")
+        print(f"  Fabric Dimensions: {len(fabric_dimensions)}")
+        print(f"  Snowflake Metrics: {len(snowflake_metrics)}")
+        print(f"  Snowflake Dimensions: {len(snowflake_dimensions)}")
         print(f"  Relationships:     {len(fabric_relationships)}")
         
         # Synced tables
@@ -206,14 +227,7 @@ def analyze_sync(fabric_model_id: str, model_name: str = None):
                 col_count = len(snowflake_columns.get(table, set()))
                 print(f"  [EXTRA]   {table:40s} {col_count:3d} columns")
         
-        # Metrics list
-        if fabric_metrics:
-            print(f"\n[METRICS] ({len(fabric_metrics)})")
-            print("-" * 80)
-            for metric in sorted(fabric_metrics)[:10]:
-                print(f"  - {metric}")
-            if len(fabric_metrics) > 10:
-                print(f"  ... and {len(fabric_metrics) - 10} more metrics")
+        # Metrics list (removed - now showing detailed comparison above)
         
         # Relationships
         if fabric_relationships:
@@ -222,6 +236,68 @@ def analyze_sync(fabric_model_id: str, model_name: str = None):
             for rel in fabric_relationships:
                 status = "ACTIVE" if rel.get("active") else "INACTIVE"
                 print(f"  [{status}] {rel['from']:30s} -> {rel['to']}")
+        
+        # Metrics Comparison
+        print(f"\n[METRICS ANALYSIS]")
+        print("-" * 80)
+        metrics_only_fabric = fabric_metrics - snowflake_metrics
+        metrics_only_snowflake = snowflake_metrics - fabric_metrics
+        metrics_synced = fabric_metrics & snowflake_metrics
+        
+        print(f"  Fabric Only:       {len(metrics_only_fabric)} metrics")
+        if metrics_only_fabric:
+            for i, metric in enumerate(sorted(metrics_only_fabric)[:10], 1):
+                print(f"    {i}. {metric}")
+            if len(metrics_only_fabric) > 10:
+                print(f"    ... and {len(metrics_only_fabric) - 10} more")
+        
+        print(f"\n  Snowflake Only:    {len(metrics_only_snowflake)} metrics")
+        if metrics_only_snowflake:
+            for i, metric in enumerate(sorted(metrics_only_snowflake)[:10], 1):
+                print(f"    {i}. {metric}")
+            if len(metrics_only_snowflake) > 10:
+                print(f"    ... and {len(metrics_only_snowflake) - 10} more")
+        
+        print(f"\n  Synced:            {len(metrics_synced)} metrics")
+        if metrics_synced and len(metrics_synced) <= 10:
+            for i, metric in enumerate(sorted(metrics_synced), 1):
+                print(f"    {i}. {metric}")
+        elif metrics_synced:
+            for i, metric in enumerate(sorted(metrics_synced)[:5], 1):
+                print(f"    {i}. {metric}")
+            print(f"    ... and {len(metrics_synced) - 5} more")
+        
+        # Dimensions Comparison
+        print(f"\n[DIMENSIONS ANALYSIS]")
+        print("-" * 80)
+        dims_only_fabric = fabric_dimensions - snowflake_dimensions
+        dims_only_snowflake = snowflake_dimensions - fabric_dimensions
+        dims_synced = fabric_dimensions & snowflake_dimensions
+        
+        print(f"  Fabric Only:       {len(dims_only_fabric)} dimensions")
+        if dims_only_fabric:
+            sorted_dims = sorted(dims_only_fabric)
+            for i, dim in enumerate(sorted_dims[:10], 1):
+                print(f"    {i}. {dim}")
+            if len(dims_only_fabric) > 10:
+                print(f"    ... and {len(dims_only_fabric) - 10} more")
+        
+        print(f"\n  Snowflake Only:    {len(dims_only_snowflake)} dimensions")
+        if dims_only_snowflake:
+            sorted_dims = sorted(dims_only_snowflake)
+            for i, dim in enumerate(sorted_dims[:10], 1):
+                print(f"    {i}. {dim}")
+            if len(dims_only_snowflake) > 10:
+                print(f"    ... and {len(dims_only_snowflake) - 10} more")
+        
+        print(f"\n  Synced:            {len(dims_synced)} dimensions")
+        if dims_synced and len(dims_synced) <= 10:
+            for i, dim in enumerate(sorted(dims_synced), 1):
+                print(f"    {i}. {dim}")
+        elif dims_synced:
+            for i, dim in enumerate(sorted(dims_synced)[:5], 1):
+                print(f"    {i}. {dim}")
+            print(f"    ... and {len(dims_synced) - 5} more")
         
         # Summary report
         print("\n" + "="*80)
@@ -245,8 +321,26 @@ def analyze_sync(fabric_model_id: str, model_name: str = None):
                 s_cols = len(snowflake_columns.get(table, set()))
                 print(f"   {i}. {table} (Fabric: {f_cols} cols, Snowflake: {s_cols} cols)")
         
-        if not missing_tables and not column_mismatches:
-            print("\n[SUCCESS] All Fabric tables and columns are synced to Snowflake!")
+        metrics_only_fabric = fabric_metrics - snowflake_metrics
+        if metrics_only_fabric:
+            action_num = 3 if (missing_tables or column_mismatches) else 1
+            print(f"\n{action_num}. SYNC METRICS TO SNOWFLAKE ({len(metrics_only_fabric)} metrics in Fabric only)")
+            for i, metric in enumerate(sorted(metrics_only_fabric)[:5], 1):
+                print(f"   {i}. {metric}")
+            if len(metrics_only_fabric) > 5:
+                print(f"   ... and {len(metrics_only_fabric) - 5} more")
+        
+        dims_only_fabric = fabric_dimensions - snowflake_dimensions
+        if dims_only_fabric:
+            action_num = 4 if (missing_tables or column_mismatches or metrics_only_fabric) else (3 if (missing_tables or column_mismatches) else 1)
+            print(f"\n{action_num}. SYNC DIMENSIONS TO SNOWFLAKE ({len(dims_only_fabric)} dimensions in Fabric only)")
+            for i, dim in enumerate(sorted(dims_only_fabric)[:5], 1):
+                print(f"   {i}. {dim}")
+            if len(dims_only_fabric) > 5:
+                print(f"   ... and {len(dims_only_fabric) - 5} more")
+        
+        if not missing_tables and not column_mismatches and not metrics_only_fabric and not dims_only_fabric:
+            print("\n[SUCCESS] All Fabric tables, columns, metrics, and dimensions are synced to Snowflake!")
         
         print("\n" + "="*80 + "\n")
         

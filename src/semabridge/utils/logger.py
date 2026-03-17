@@ -2,7 +2,7 @@
 Logging utilities for Semabridge.
 
 Provides consistent logging across the application with:
-- Hierarchical log-level resolution: CLI > project YAML > global config > default (DEBUG)
+- Hierarchical log-level resolution: CLI > project YAML > global config > default (INFO)
 - RotatingFileHandler (10 MB, 5 backups) co-located with the DuckDB repository
 - Rich console output for interactive CLI sessions
 - Thread identifier in every log line for tracing interleaved concurrent ops
@@ -45,6 +45,12 @@ _CREDENTIAL_PATTERNS = [
     re.compile(r'[A-Za-z0-9+/]{40,}={0,2}'),  # Base64 blobs ≥40 chars
 ]
 
+# Repetitive warning throttling (message pattern -> max occurrences)
+_THROTTLED_WARNING_PATTERNS: list[tuple[re.Pattern[str], int]] = [
+    (re.compile(r"^Skipping metric '\S+", re.IGNORECASE), 6),
+    (re.compile(r"^LLM translation low confidence", re.IGNORECASE), 3),
+]
+
 
 class CredentialRedactionFilter(logging.Filter):
     """Scrub log messages matching known credential patterns.
@@ -60,6 +66,29 @@ class CredentialRedactionFilter(logging.Filter):
             msg = pattern.sub("[REDACTED]", msg)
         record.msg = msg
         record.args = None  # Prevent re-formatting with original args
+        return True
+
+
+class WarningThrottleFilter(logging.Filter):
+    """Suppress repetitive warning spam while preserving first occurrences."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._counts: dict[str, int] = {}
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno < logging.WARNING:
+            return True
+
+        msg = record.getMessage()
+        for pattern, max_occurrences in _THROTTLED_WARNING_PATTERNS:
+            if pattern.search(msg):
+                key = pattern.pattern
+                current = self._counts.get(key, 0)
+                if current >= max_occurrences:
+                    return False
+                self._counts[key] = current + 1
+                break
         return True
 
 
@@ -108,7 +137,7 @@ def resolve_log_level(cli_flag: Optional[str] = None) -> str:
         pass
 
     # 4. Default
-    return "DEBUG"
+    return "INFO"
 
 
 def resolve_log_file_path() -> Path:
@@ -164,8 +193,9 @@ def setup_logging(
     root = logging.getLogger()
     root.handlers.clear()
 
-    # --- Credential redaction filter (applied globally) ---
+    # --- Global filters (applied to all handlers) ---
     redaction_filter = CredentialRedactionFilter()
+    throttle_filter = WarningThrottleFilter()
 
     # --- Console handler ---
     if rich_output:
@@ -185,6 +215,7 @@ def setup_logging(
 
     handler.setLevel(log_level)
     handler.addFilter(redaction_filter)
+    handler.addFilter(throttle_filter)
     # Ensure output is flushed immediately, especially important for async contexts
     if hasattr(handler, 'stream'):
         handler.stream = sys.stdout
@@ -204,6 +235,7 @@ def setup_logging(
         file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
         file_handler.setLevel(log_level)
         file_handler.addFilter(redaction_filter)
+        file_handler.addFilter(throttle_filter)
         root.addHandler(file_handler)
     except Exception:
         # If file handler setup fails (permissions, etc.), proceed with console only
@@ -226,6 +258,22 @@ def setup_logging(
     ]
     for logger_name in noisy_loggers:
         logging.getLogger(logger_name).setLevel(logging.WARNING)
+
+    # Keep converter internals concise in normal runs. Deployment status comes
+    # from CLI/connectors and remains visible at INFO.
+    if log_level > logging.DEBUG:
+        semabridge_noisy_modules = [
+            "semabridge.converter.dax_rule_translator",
+            "semabridge.converter.dax_translator",
+            "semabridge.converter.gemini_dax_translator",
+            "semabridge.converter.gemini_api_service",
+            "semabridge.converter.deterministic_translator",
+            "semabridge.converter.dax_pipeline",
+            "semabridge.converter.measure_dictionary",
+            "semabridge.converter.dax_parser",
+        ]
+        for logger_name in semabridge_noisy_modules:
+            logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> logging.Logger:

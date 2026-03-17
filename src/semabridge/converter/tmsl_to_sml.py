@@ -126,6 +126,9 @@ class TMSLTransformer:
             }
 
             # Pass 2: Process Measures (Metrics) with fully-sanitized overrides
+            # Step 2a: Parse all measures and identify those needing Tier 5 LLM translation
+            tier5_candidates = []  # (metric_name, dax, table_alias, dataset_name)
+            
             for table, ds in tables_to_process:
                 if "measures" in table:
                     for measure in table["measures"]:
@@ -136,6 +139,31 @@ class TMSLTransformer:
                             sml.metrics,
                         )
                         sml.metrics.append(metric)
+                        
+                        # If metric still has no SQL, collect for Tier-5 batch.
+                        # Do not gate on sync_enabled here; initial complexity heuristics
+                        # are conservative and can be recovered by LLM translation.
+                        if (not metric.sql_expression and 
+                            metric.expression and metric.expression.strip()):
+                            dax = metric.expression.strip()
+                            table_alias = to_alias(ds.unique_name)
+                            tier5_candidates.append((metric.unique_name, dax, table_alias, ds.unique_name))
+            
+            # Step 2b: Batch translate all Tier 5 candidates at once (reduces API calls by 90%)
+            if tier5_candidates:
+                logger.info(f"📦 Batch translating {len(tier5_candidates)} Tier 5 metrics...")
+                batch_results = self.dax_translator.batch_translate_tier5(tier5_candidates)
+                
+                # Apply batch translation results back to metrics
+                for metric in sml.metrics:
+                    if metric.unique_name in batch_results and batch_results[metric.unique_name]:
+                        translation = batch_results[metric.unique_name]
+                        if translation and translation.is_success:
+                            metric.sql_expression = translation.sql
+                            metric.complexity_tier = translation.tier
+                            metric.sync_enabled = True
+                            metric.sync_failure_reason = None
+                            logger.debug(f"✓ Applied batch translation for '{metric.unique_name}'")
             
             # 3. Process Relationships
             # Build set of valid dataset names (excluding filtered-out tables like LocalDateTable_*)

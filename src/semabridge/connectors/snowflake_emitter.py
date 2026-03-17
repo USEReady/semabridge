@@ -11,7 +11,7 @@ import time
 import yaml
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -85,6 +85,867 @@ class SnowflakeEmitter(BaseEmitter):
             suppress_reserved=self.behavior.compatibility.suppress_reserved_words,
             additional_reserved=set(getattr(self.behavior.compatibility, 'additional_reserved_words', []) or []),
         )
+
+    def _sanitize_sql_markdown(self, sql: str) -> str:
+        """
+        Remove markdown code blocks and formatting from SQL expressions.
+        
+        The LLM sometimes returns SQL wrapped in markdown code fences (```sql ... ```).
+        This method ensures clean SQL without markdown artifacts that would break
+        Snowflake syntax.
+        
+        Examples:
+            Input:  "```sql\nSELECT * FROM table\n```"
+            Output: "SELECT * FROM table"
+            
+            Input:  "```\nSUM(amount)\n```"
+            Output: "SUM(amount)"
+        """
+        if not sql or not isinstance(sql, str):
+            return sql
+        
+        import re
+        
+        # Remove opening markdown code fence (```sql, ```, ``` python, etc.)
+        sql = re.sub(r'^\s*```(?:sql|python|javascript|js|\w*)?\s*\n?', '', sql, flags=re.MULTILINE | re.IGNORECASE)
+        
+        # Remove closing markdown code fence
+        sql = re.sub(r'\n?\s*```\s*$', '', sql, flags=re.MULTILINE | re.IGNORECASE)
+        
+        # Strip leading/trailing whitespace
+        sql = sql.strip()
+        
+        return sql
+
+    def _build_schema_validation_map(self, sml: SMLModel) -> Dict[str, set[str]]:
+        """
+        Build a schema validation map from SML model.
+        
+        Maps each dataset name to the set of physical column names that exist
+        for that dataset. Used to validate metric SQL expressions reference
+        only columns that actually exist in Snowflake.
+        
+        Returns:
+            Dict[dataset_name, set[column_names]]
+            
+        Example:
+            {
+                'salesfact': {'REVENUE', 'UNITS', 'DATE_ID', ...},
+                'date': {'DATE_ID', 'YEAR', 'MONTH', ...},
+                'product': {'PRODUCT_ID', 'NAME', 'CATEGORY', ...}
+            }
+        """
+        schema_map: Dict[str, set[str]] = {}
+        
+        for dataset in sml.datasets:
+            columns = set()
+            
+            # Add all non-calculated columns
+            for col in dataset.columns:
+                # Skip internal columns
+                if col.unique_name.startswith("_") or col.unique_name.startswith("RowNumber"):
+                    continue
+                
+                # Skip calculated columns (they don't exist physically)
+                source_expr = getattr(col, 'source_expression', None)
+                if source_expr and not self._is_physical_source_column(source_expr):
+                    logger.debug(
+                        f"Excluding calculated column '{col.unique_name}' from schema validation"
+                    )
+                    continue
+                
+                # Sanitize to match Snowflake physical column names
+                sanitized = self._sanitize_col_name(col.unique_name)
+                columns.add(sanitized)
+            
+            schema_map[dataset.unique_name] = columns
+            logger.debug(f"Schema validation map for '{dataset.unique_name}': {columns}")
+        
+        return schema_map
+
+    def _try_llm_metric_fallback_expression(
+        self,
+        *,
+        metric: SMLMetric,
+        metric_name: str,
+        table_alias: str,
+        alias_by_raw: Dict[str, str],
+        dataset_col_lookup: Dict[str, set[str]],
+        dataset_aliases: Dict[str, str],
+        metric_name_set: set[str],
+        all_physical_col_names: set[str],
+        emittable_metric_name_set: set[str],
+        skipped_metric_names: set[str],
+    ) -> Optional[str]:
+        """Attempt LLM translation for a metric when deterministic handling fails.
+
+        This is a last-resort, generic recovery path and does not use
+        model/domain-specific hardcoded logic.
+        """
+        dax_expression = (getattr(metric, "expression", None) or "").strip()
+        if not dax_expression:
+            return None
+
+        candidate_expressions: list[str] = []
+
+        # First try local deterministic translation for simple DAX to avoid
+        # unnecessary LLM dependence and confidence gating.
+        try:
+            from semabridge.converter.dax_rule_translator import (
+                is_simple_metric,
+                rule_based_translation,
+            )
+            if is_simple_metric(dax_expression):
+                local_expr = rule_based_translation(
+                    dax_expression,
+                    table_alias.lower(),
+                )
+                if local_expr:
+                    candidate_expressions.append(local_expr)
+        except Exception as ex:
+            logger.debug(
+                f"Local fallback unavailable for metric '{metric.unique_name}': {ex}"
+            )
+
+        try:
+            from semabridge.converter.gemini_dax_translator import get_gemini_translator
+            translator = get_gemini_translator()
+        except Exception as ex:
+            logger.debug(f"LLM fallback unavailable for metric '{metric.unique_name}': {ex}")
+            translator = None
+
+        if translator and getattr(translator, "use_gemini", False) and getattr(translator, "api_key", None):
+            schema_context = {
+                ds_name: sorted(list(cols))
+                for ds_name, cols in dataset_col_lookup.items()
+            }
+
+            llm_result = translator.translate(
+                dax=dax_expression,
+                table_alias=table_alias.lower(),
+                dataset_name=metric.dataset,
+                metric_name=metric.unique_name,
+                schema_context=schema_context,
+            )
+
+            if llm_result and llm_result.is_valid and llm_result.sql:
+                candidate_expressions.append(llm_result.sql)
+            else:
+                logger.debug(
+                    f"LLM fallback failed for metric '{metric.unique_name}': "
+                    f"{getattr(llm_result, 'error', 'invalid translation')}"
+                )
+
+        for candidate_sql in candidate_expressions:
+            expr = self._sanitize_sql_markdown(candidate_sql)
+            if not expr or "SELECT" in expr.upper():
+                continue
+
+            expr = self._id.resolve_dot_notation(
+                expr,
+                alias_by_raw,
+                sanitize_col_fn=self._sanitize_col_name,
+            )
+            expr = self._normalize_metric_column_references(
+                expr,
+                metric.unique_name,
+                dataset_col_lookup,
+                dataset_aliases,
+                metric_names=metric_name_set,
+            )
+
+            is_valid, _ = self._validate_metric_column_references(
+                expr,
+                metric.unique_name,
+                dataset_col_lookup,
+                dataset_aliases,
+                metric_names=metric_name_set,
+            )
+            if not is_valid:
+                continue
+
+            if not expr.strip():
+                continue
+            expr_upper = expr.upper().strip()
+            if expr_upper == 'SUM(*)' or expr_upper.endswith('SUM(*)'):
+                continue
+
+            unresolved_metric_refs = [
+                r for r in re.findall(r'"([A-Z_][A-Z0-9_]*)"', expr)
+                if r in metric_name_set
+                and r not in all_physical_col_names
+                and (
+                    r not in emittable_metric_name_set
+                    or r in skipped_metric_names
+                )
+                and r != metric_name
+            ]
+            if unresolved_metric_refs:
+                continue
+
+            logger.info(f"Recovered metric '{metric.unique_name}' via fallback translation")
+            return expr
+
+        return None
+
+    def _validate_metric_column_references(
+        self,
+        metric_sql: str,
+        metric_name: str,
+        dataset_col_lookup: Dict[str, set[str]],
+        dataset_aliases: Dict[str, str],
+        metric_names: Optional[set[str]] = None,
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Validate that metric SQL references only columns that exist in the schema.
+        
+        This is a CRITICAL SAFETY CHECK to prevent "invalid identifier" errors
+        when the metric SQL is deployed to Snowflake. It verifies that every 
+        TABLE.COLUMN reference in the SQL actually corresponds to a column that
+        exists in the Snowflake physical schema.
+        
+        Args:
+            metric_sql: The metric SQL expression to validate
+            metric_name: Name of the metric (for logging)
+            dataset_col_lookup: Dict[dataset_name, set[column_names]] 
+                                Map of datasets to their physical columns
+            dataset_aliases: Dict[dataset_name, alias] mapping for cross-table refs
+            
+        Returns:
+            Tuple[is_valid, error_message]
+            - is_valid: True if all column references are valid
+            - error_message: Description of any validation failures (or None if valid)
+        """
+        import re
+        
+        # Create reverse alias map: alias -> dataset_name
+        alias_to_dataset = {v: k for k, v in dataset_aliases.items()}
+        
+        # Find all TABLE.COLUMN patterns
+        # Matches: table."COLUMN", table.COLUMN, etc.
+        patterns = [
+            r'(\w+)\."([^"]+)"',                 # table."ColumnName"
+            r'(\w+)\.([A-Za-z_][A-Za-z0-9_]*)',    # table.ColumnName
+        ]
+        
+        all_refs = []
+        for pattern in patterns:
+            matches = re.findall(pattern, metric_sql)
+            all_refs.extend(matches)
+        
+        if not all_refs:
+            # No TABLE.COLUMN refs found — simple aggregation, should be OK
+            logger.debug(f"No cross-table references found in metric '{metric_name}'")
+            return True, None
+        
+        # Validate each TABLE.COLUMN reference
+        for table_alias, col_name in all_refs:
+            # Map alias back to dataset
+            dataset_name = alias_to_dataset.get(table_alias)
+            
+            if not dataset_name:
+                error = f"Alias '{table_alias}' not found in dataset mapping"
+                logger.debug(f"Metric '{metric_name}': {error}")
+                return False, error
+            
+            # Check if column exists in this dataset
+            # CRITICAL: Sanitize col_name to match how known_columns are stored
+            # (which are already sanitized, e.g. "PRODUCT" not "Product")
+            known_columns = dataset_col_lookup.get(dataset_name, set())
+            sanitized_col_name = self._sanitize_col_name(col_name)
+            resolved_metric_ref = self._resolve_metric_reference_name(
+                metric_names,
+                sanitized_col_name,
+                allow_fuzzy=False,
+            )
+            if resolved_metric_ref:
+                # Allow references to previously defined semantic metrics.
+                continue
+
+            # If strict metric resolution failed, allow fuzzy semantic-metric
+            # matching as a validation fallback. This avoids dropping valid
+            # derived expressions that reference metric names with minor drift.
+            fuzzy_metric_ref = self._resolve_metric_reference_name(
+                metric_names,
+                sanitized_col_name,
+                allow_fuzzy=True,
+            )
+            if fuzzy_metric_ref:
+                continue
+            resolved_col = self._resolve_column_name_for_dataset(
+                known_columns,
+                sanitized_col_name,
+            )
+            if not resolved_col:
+                owners = [
+                    ds for ds, cols in dataset_col_lookup.items()
+                    if self._resolve_column_name_for_dataset(cols, sanitized_col_name)
+                ]
+                if len(owners) == 1:
+                    # Allow validation to pass when a unique owning dataset exists;
+                    # normalization may remap alias/column accordingly.
+                    continue
+                error = (
+                    f"Column '{col_name}' (sanitized: '{sanitized_col_name}') not found in dataset '{dataset_name}'. "
+                    f"Available columns: {sorted(known_columns)}"
+                )
+                logger.debug(f"Metric '{metric_name}': {error}")
+                return False, error
+        
+        # All references validated successfully
+        logger.debug(f"Metric '{metric_name}': All column references valid")
+        return True, None
+
+    def _normalize_metric_column_references(
+        self,
+        metric_sql: str,
+        metric_name: str,
+        dataset_col_lookup: Dict[str, set[str]],
+        dataset_aliases: Dict[str, str],
+        metric_names: Optional[set[str]] = None,
+    ) -> str:
+        """
+        Normalize column references in metric SQL to use unquoted uppercase identifiers.
+        
+        Converts patterns like:
+        - TABLE."ColumnName" → TABLE.COLUMN_NAME
+        - TABLE."Product" → TABLE.PRODUCT
+        
+        This ensures Snowflake can find the physical columns without quote confusion.
+        
+        Args:
+            metric_sql: The metric SQL expression to normalize
+            metric_name: Name of the metric (for logging)
+            dataset_col_lookup: Dict[dataset_name, set[column_names]]
+            dataset_aliases: Dict[dataset_name, alias] mapping
+            
+        Returns:
+            Normalized SQL expression with unquoted uppercase column references
+        """
+        import re
+        
+        # Create reverse alias map: alias -> dataset_name
+        alias_to_dataset = {v: k for k, v in dataset_aliases.items()}
+        
+        normalized_sql = metric_sql
+
+        # Pattern 1: Match quoted column references: alias."ColumnName" or alias.'ColumnName'
+        # This handles LLM-generated SQL with mixed case like PRODUCT."Product"
+        quoted_pattern = r'(\w+)\.(["\'])([^"\']+)\2'
+        
+        for match in re.finditer(quoted_pattern, normalized_sql):
+            table_alias = match.group(1)
+            col_name = match.group(3)  # content inside quotes
+            
+            dataset_name = alias_to_dataset.get(table_alias)
+            if not dataset_name:
+                continue
+            
+            # Sanitize to uppercase: Product → PRODUCT
+            sanitized_col_name = self._sanitize_col_name(col_name)
+
+            # If this token is actually another metric reference, remove table
+            # qualification so it can be resolved as a semantic metric.
+            resolved_metric_ref = self._resolve_metric_reference_name(
+                metric_names,
+                sanitized_col_name,
+                allow_fuzzy=False,
+            )
+            if resolved_metric_ref:
+                old_ref = match.group(0)
+                new_ref = resolved_metric_ref
+                normalized_sql = normalized_sql.replace(old_ref, new_ref)
+                continue
+
+            # If the column does not exist on this alias table, try remapping
+            # to the unique dataset that owns this column.
+            known_columns = dataset_col_lookup.get(dataset_name, set())
+            resolved_col = self._resolve_column_name_for_dataset(
+                known_columns,
+                sanitized_col_name,
+            )
+            if not resolved_col:
+                fuzzy_metric_ref = self._resolve_metric_reference_name(
+                    metric_names,
+                    sanitized_col_name,
+                    allow_fuzzy=True,
+                )
+                if fuzzy_metric_ref:
+                    old_ref = match.group(0)
+                    normalized_sql = normalized_sql.replace(old_ref, fuzzy_metric_ref)
+                    logger.debug(
+                        f"Normalized metric '{metric_name}': remapped {old_ref} → {fuzzy_metric_ref}"
+                    )
+                    continue
+
+                owners = [
+                    ds for ds, cols in dataset_col_lookup.items()
+                    if self._resolve_column_name_for_dataset(cols, sanitized_col_name)
+                ]
+                if len(owners) == 1:
+                    owner_alias = dataset_aliases.get(owners[0])
+                    if owner_alias:
+                        owner_col = self._resolve_column_name_for_dataset(
+                            dataset_col_lookup.get(owners[0], set()),
+                            sanitized_col_name,
+                        ) or sanitized_col_name
+                        old_ref = match.group(0)
+                        new_ref = f'{owner_alias}.{owner_col}'
+                        normalized_sql = normalized_sql.replace(old_ref, new_ref)
+                        logger.debug(
+                            f"Normalized metric '{metric_name}': remapped {old_ref} → {new_ref}"
+                        )
+                        continue
+            elif resolved_col != sanitized_col_name:
+                old_ref = match.group(0)
+                new_ref = f'{table_alias}.{resolved_col}'
+                normalized_sql = normalized_sql.replace(old_ref, new_ref)
+                continue
+            
+            # Replace: alias."ColumnName" → alias.COLUMN_NAME (unquoted)
+            old_ref = match.group(0)
+            new_ref = f'{table_alias}.{sanitized_col_name}'
+            normalized_sql = normalized_sql.replace(old_ref, new_ref)
+            
+            logger.debug(
+                f"Normalized metric '{metric_name}': {old_ref} → {new_ref}"
+            )
+        
+        # Pattern 2: Match unquoted references: alias.ColumnName / alias.COLUMN_NAME
+        # Convert/resolve to physical names and aliases as needed.
+        unquoted_pattern = r'(\w+)\.([A-Za-z_][A-Za-z0-9_]*)'
+        
+        for match in re.finditer(unquoted_pattern, normalized_sql):
+            table_alias = match.group(1)
+            col_name = match.group(2)
+            
+            dataset_name = alias_to_dataset.get(table_alias)
+            if not dataset_name:
+                continue
+            
+            # Sanitize to uppercase
+            sanitized_col_name = self._sanitize_col_name(col_name)
+
+            resolved_metric_ref = self._resolve_metric_reference_name(
+                metric_names,
+                sanitized_col_name,
+                allow_fuzzy=False,
+            )
+            if resolved_metric_ref:
+                old_ref = match.group(0)
+                new_ref = resolved_metric_ref
+                normalized_sql = normalized_sql.replace(old_ref, new_ref)
+                continue
+
+            known_columns = dataset_col_lookup.get(dataset_name, set())
+            resolved_col = self._resolve_column_name_for_dataset(
+                known_columns,
+                sanitized_col_name,
+            )
+            if not resolved_col:
+                fuzzy_metric_ref = self._resolve_metric_reference_name(
+                    metric_names,
+                    sanitized_col_name,
+                    allow_fuzzy=True,
+                )
+                if fuzzy_metric_ref:
+                    old_ref = match.group(0)
+                    normalized_sql = normalized_sql.replace(old_ref, fuzzy_metric_ref)
+                    logger.debug(
+                        f"Normalized metric '{metric_name}': remapped {old_ref} → {fuzzy_metric_ref}"
+                    )
+                    continue
+
+                owners = [
+                    ds for ds, cols in dataset_col_lookup.items()
+                    if self._resolve_column_name_for_dataset(cols, sanitized_col_name)
+                ]
+                if len(owners) == 1:
+                    owner_alias = dataset_aliases.get(owners[0])
+                    if owner_alias:
+                        owner_col = self._resolve_column_name_for_dataset(
+                            dataset_col_lookup.get(owners[0], set()),
+                            sanitized_col_name,
+                        ) or sanitized_col_name
+                        old_ref = match.group(0)
+                        new_ref = f'{owner_alias}.{owner_col}'
+                        normalized_sql = normalized_sql.replace(old_ref, new_ref)
+                        logger.debug(
+                            f"Normalized metric '{metric_name}': remapped {old_ref} → {new_ref}"
+                        )
+                        continue
+            elif resolved_col != sanitized_col_name:
+                old_ref = match.group(0)
+                new_ref = f'{table_alias}.{resolved_col}'
+                normalized_sql = normalized_sql.replace(old_ref, new_ref)
+                continue
+            
+            if col_name != sanitized_col_name:
+                old_ref = match.group(0)
+                new_ref = f'{table_alias}.{sanitized_col_name}'
+                normalized_sql = normalized_sql.replace(old_ref, new_ref)
+                
+                logger.debug(
+                    f"Normalized metric '{metric_name}': {old_ref} → {new_ref}"
+                )
+        
+        # Pattern 3: quote bare metric references to avoid parser ambiguity
+        # when a metric name collides with a table/alias token (e.g., SENTIMENT).
+        normalized_sql = self._quote_bare_metric_references(
+            normalized_sql,
+            metric_names,
+        )
+
+        normalized_sql = self._rewrite_metric_aggregate_wrappers(
+            normalized_sql,
+            metric_names,
+        )
+
+        normalized_sql = self._normalize_date_part_arguments(normalized_sql)
+        normalized_sql = self._normalize_rolling_monthindex_max_predicates(normalized_sql)
+
+        return normalized_sql
+
+    @staticmethod
+    def _resolve_column_name_for_dataset(
+        known_columns: set[str],
+        candidate: str,
+    ) -> Optional[str]:
+        """Resolve LLM-drifted column names to an actual dataset column."""
+        if not known_columns:
+            return None
+
+        if candidate in known_columns:
+            return candidate
+
+        # underscore-insensitive match: IS_VAN_ARSDEL -> ISVANARSDEL
+        compact = candidate.replace("_", "")
+        for col in known_columns:
+            if col.replace("_", "") == compact:
+                return col
+
+        # common LLM drift: TOTAL_UNITS -> UNITS
+        if candidate.startswith("TOTAL_"):
+            base = candidate[len("TOTAL_"):]
+            if base in known_columns:
+                return base
+
+        # lightweight stemming for token overlap: UNITS ~= UNIT, CATEGORIES ~= CATEGORY
+        def _stem(token: str) -> str:
+            t = token.upper()
+            if len(t) > 4 and t.endswith("IES"):
+                return t[:-3] + "Y"
+            if len(t) > 3 and t.endswith("S"):
+                return t[:-1]
+            return t
+
+        # Generic token-based fallback for LLM drift without domain-specific
+        # hardcoding. Pick a unique best overlap candidate when available.
+        candidate_tokens = [t for t in candidate.split("_") if t]
+        if candidate_tokens:
+            scored: list[tuple[int, str]] = []
+            candidate_token_set = {_stem(t) for t in candidate_tokens}
+            for col in known_columns:
+                col_tokens = [t for t in col.split("_") if t]
+                if not col_tokens:
+                    continue
+                col_token_set = {_stem(t) for t in col_tokens}
+                overlap = len(candidate_token_set.intersection(col_token_set))
+                if overlap == 0:
+                    continue
+                # Prefer higher overlap and shorter distance in token length.
+                score = overlap * 10 - abs(len(candidate_tokens) - len(col_tokens))
+                scored.append((score, col))
+
+            if scored:
+                scored.sort(key=lambda x: x[0], reverse=True)
+                best_score = scored[0][0]
+                best = [col for score, col in scored if score == best_score]
+                if len(best) == 1:
+                    return best[0]
+
+        # Generic semantic synonym fallback for common business-measure drift.
+        # Only apply when it yields exactly one deterministic match.
+        synonym_groups = [
+            {"AMOUNT", "REVENUE", "SALES", "VALUE"},
+            {"UNIT", "UNITS", "QUANTITY", "QTY", "COUNT", "VOLUME"},
+        ]
+        compact_candidate_tokens = {_stem(t) for t in candidate.split("_") if t}
+        for group in synonym_groups:
+            normalized_group = {_stem(t) for t in group}
+            if not compact_candidate_tokens.intersection(normalized_group):
+                continue
+            candidates_in_group = []
+            for col in known_columns:
+                col_tokens = {_stem(t) for t in col.split("_") if t}
+                if col_tokens.intersection(normalized_group):
+                    candidates_in_group.append(col)
+            if len(candidates_in_group) == 1:
+                return candidates_in_group[0]
+
+        # common drift: SALES_DATE -> DATE
+        if candidate.endswith("_DATE") and "DATE" in known_columns:
+            return "DATE"
+
+        return None
+
+    @staticmethod
+    def _resolve_metric_reference_name(
+        metric_names: Optional[set[str]],
+        candidate: str,
+        *,
+        allow_fuzzy: bool = True,
+    ) -> Optional[str]:
+        """Resolve a possibly drifted identifier to a known semantic metric name."""
+        if not metric_names:
+            return None
+
+        if candidate in metric_names:
+            return candidate
+
+        compact_candidate = candidate.replace("_", "")
+        compact_matches = [
+            m for m in metric_names
+            if m.replace("_", "") == compact_candidate
+        ]
+        if len(compact_matches) == 1:
+            return compact_matches[0]
+
+        if not allow_fuzzy:
+            # For qualified TABLE.COLUMN references we should be strict.
+            # Fuzzy matching can incorrectly reinterpret physical columns as
+            # semantic metrics and trigger avoidable drops.
+            return None
+
+        suffix_matches = [
+            m for m in metric_names
+            if m.endswith(f"_{candidate}") or m.startswith(f"{candidate}_")
+        ]
+        if len(suffix_matches) == 1:
+            return suffix_matches[0]
+
+        contains_matches = [
+            m for m in metric_names
+            if candidate in m
+        ]
+        if len(contains_matches) == 1:
+            return contains_matches[0]
+
+        return None
+
+    @staticmethod
+    def _quote_bare_metric_references(
+        metric_sql: str,
+        metric_names: Optional[set[str]],
+    ) -> str:
+        """Quote bare metric references so they are treated as metric identifiers."""
+        if not metric_names:
+            return metric_sql
+
+        import re
+
+        normalized = metric_sql
+        for metric_name in sorted(metric_names, key=len, reverse=True):
+            pattern = rf'(?<![\w\.\"])\b{re.escape(metric_name)}\b(?![\w\."])'
+            normalized = re.sub(pattern, f'"{metric_name}"', normalized)
+
+        return normalized
+
+    @staticmethod
+    def _rewrite_metric_aggregate_wrappers(
+        metric_sql: str,
+        metric_names: Optional[set[str]],
+    ) -> str:
+        """Rewrite invalid AGG("METRIC") forms to direct metric references."""
+        if not metric_names:
+            return metric_sql
+
+        import re
+
+        normalized = metric_sql
+        agg_pattern = r'\b(SUM|AVG|MIN|MAX|COUNT)\s*\(\s*"([A-Z_][A-Z0-9_]*)"\s*\)(?!\s+OVER\b)'
+
+        def _replace(match: re.Match) -> str:
+            metric_name = match.group(2)
+            if metric_name in metric_names:
+                return f'"{metric_name}"'
+            return match.group(0)
+
+        normalized = re.sub(agg_pattern, _replace, normalized)
+
+        # Snowflake semantic metrics reject wrappers like
+        # SUM("M1" - "M2") where the argument is already metric-level arithmetic.
+        # Unwrap these to "M1" - "M2" while leaving physical-column aggregates intact.
+        composite_agg_pattern = r'\b(SUM|AVG|MIN|MAX|COUNT)\s*\(\s*((?:"[A-Z_][A-Z0-9_]*"\s*[+\-*/]\s*)+"[A-Z_][A-Z0-9_]*")\s*\)'
+
+        def _replace_composite(match: re.Match) -> str:
+            expr = match.group(2)
+            metric_refs = set(re.findall(r'"([A-Z_][A-Z0-9_]*)"', expr))
+            if metric_refs and all(ref in metric_names for ref in metric_refs):
+                return expr
+            return match.group(0)
+
+        return re.sub(composite_agg_pattern, _replace_composite, normalized)
+
+    @staticmethod
+    def _prune_unresolved_metric_lines(
+        metrics_lines: list[str],
+        metric_name_set: Optional[set[str]],
+    ) -> list[str]:
+        """Drop metrics that still reference unresolved semantic metrics."""
+        if not metrics_lines or not metric_name_set:
+            return metrics_lines
+
+        import re
+
+        current = list(metrics_lines)
+        while True:
+            defined: set[str] = set()
+            window_metrics: set[str] = set()
+            parsed: list[tuple[str, Optional[str], Optional[str], str]] = []
+            expr_by_name: dict[str, str] = {}
+            for line in current:
+                m = re.search(r'([A-Z_][A-Z0-9_]*)\."([^\"]+)"\s+AS\s+(.+?)\s*$', line.strip().rstrip(','))
+                if not m:
+                    parsed.append((line, None, None, ""))
+                    continue
+                alias = m.group(1)
+                name = m.group(2)
+                expr = m.group(3)
+                defined.add(name)
+                expr_by_name[name] = expr
+                if re.search(r'\bOVER\b', expr, flags=re.IGNORECASE):
+                    window_metrics.add(name)
+                parsed.append((line, alias, name, expr))
+
+            removed = False
+            rewritten = False
+            next_lines: list[str] = []
+            for line, alias, name, expr in parsed:
+                if not name:
+                    next_lines.append(line)
+                    continue
+
+                refs = set(re.findall(r'"([A-Z_][A-Z0-9_]*)"', expr))
+                unresolved = [
+                    r for r in refs
+                    if r in metric_name_set and r not in defined and r != name
+                ]
+                if unresolved:
+                    logger.warning(
+                        "Dropping metric '%s' due unresolved metric refs %s",
+                        name,
+                        sorted(unresolved),
+                    )
+                    removed = True
+                    continue
+
+                window_refs = [
+                    r for r in refs
+                    if r in window_metrics and r != name
+                ]
+                if window_refs:
+                    expanded_expr = expr
+                    substituted = False
+                    for ref_name in sorted(set(window_refs)):
+                        ref_expr = expr_by_name.get(ref_name)
+                        if not ref_expr:
+                            continue
+                        # Inline the referenced window metric expression so the
+                        # dependent metric does not directly reference a window metric.
+                        expanded_expr = re.sub(
+                            rf'"{re.escape(ref_name)}"',
+                            f'({ref_expr})',
+                            expanded_expr,
+                        )
+                        substituted = True
+
+                    if substituted:
+                        next_lines.append(f'  {alias}."{name}" AS {expanded_expr}')
+                        rewritten = True
+                        continue
+
+                    logger.warning(
+                        "Dropping metric '%s' because Snowflake disallows using window metrics in derived expressions: %s",
+                        name,
+                        sorted(window_refs),
+                    )
+                    removed = True
+                    continue
+
+                next_lines.append(line)
+
+            current = next_lines
+            if not removed and not rewritten:
+                return current
+
+    @staticmethod
+    def _normalize_date_part_arguments(metric_sql: str) -> str:
+        """Cast date-like identifiers in date-part functions to DATE."""
+        import re
+
+        normalized = metric_sql
+
+        def _is_date_like(identifier: str) -> bool:
+            upper = identifier.upper()
+            return upper.endswith('.DATE') or upper.endswith('_DATE')
+
+        def _wrap_try_to_date(match: re.Match) -> str:
+            fn = match.group(1)
+            arg = match.group(2).strip()
+            if _is_date_like(arg) and 'TRY_TO_DATE(' not in arg.upper():
+                return f"{fn}(TRY_TO_DATE({arg}))"
+            return match.group(0)
+
+        normalized = re.sub(
+            r'\b(YEAR|MONTH|DAY|WEEK|QUARTER)\s*\(\s*([^\)]+)\)',
+            _wrap_try_to_date,
+            normalized,
+            flags=re.IGNORECASE,
+        )
+
+        def _wrap_extract(match: re.Match) -> str:
+            part = match.group(1)
+            arg = match.group(2).strip()
+            if _is_date_like(arg) and 'TRY_TO_DATE(' not in arg.upper():
+                return f"EXTRACT({part} FROM TRY_TO_DATE({arg}))"
+            return match.group(0)
+
+        normalized = re.sub(
+            r'\bEXTRACT\s*\(\s*([A-Z_]+)\s+FROM\s+([^\)]+)\)',
+            _wrap_extract,
+            normalized,
+            flags=re.IGNORECASE,
+        )
+
+        return normalized
+
+    @staticmethod
+    def _normalize_rolling_monthindex_max_predicates(metric_sql: str) -> str:
+        """Rewrite MAX-based rolling month predicates into row-level predicates.
+
+        Snowflake semantic metrics require a single aggregate over a row-level
+        expression. Predicates like
+        `MONTHINDEX <= MAX(MONTHINDEX) AND MONTHINDEX > MAX(MONTHINDEX)-12`
+        embed nested aggregates and fail compilation.
+        """
+        import re
+
+        normalized = metric_sql
+
+        pattern = (
+            r'(?P<id>[A-Z_][A-Z0-9_\.]+)\s*<=\s*MAX\(\s*(?P=id)\s*\)\s*'
+            r'AND\s*(?P=id)\s*>\s*MAX\(\s*(?P=id)\s*\)\s*-\s*12'
+        )
+
+        def _replace(match: re.Match) -> str:
+            month_index_id = match.group('id')
+            return (
+                f"{month_index_id} > ((YEAR(CURRENT_DATE()) * 12) + "
+                "MONTH(CURRENT_DATE()) - 12)"
+            )
+
+        return re.sub(pattern, _replace, normalized, flags=re.IGNORECASE)
 
     def authenticate(self) -> None:
         """Establish connection to Snowflake."""
@@ -197,7 +1058,14 @@ class SnowflakeEmitter(BaseEmitter):
             try:
                 return cursor.execute(sql)
             except snowflake.connector.errors.ProgrammingError as e:
-                # Non-transient – fail immediately
+                # Non-transient SQL issues: log statement context before failing.
+                sql_preview = "\\n".join(sql.splitlines()[:40])
+                logger.error(
+                    "Snowflake ProgrammingError during SQL execution "
+                    f"(errno={getattr(e, 'errno', 'n/a')}, sqlstate={getattr(e, 'sqlstate', 'n/a')}, "
+                    f"sfqid={getattr(e, 'sfqid', 'n/a')}): {e}"
+                )
+                logger.error(f"Failing SQL preview (first 40 lines):\\n{sql_preview}")
                 raise
             except snowflake.connector.errors.DatabaseError as e:
                 err_msg = str(e).lower()
@@ -460,7 +1328,18 @@ class SnowflakeEmitter(BaseEmitter):
                 for i, ddl in enumerate(ddls):
                     logger.info(f"Executing DDL statement {i+1}/{len(ddls)}...")
                     logger.debug(f"DDL Content:\n{ddl}")
-                    self._execute_with_retry(cur, ddl)
+                    try:
+                        self._execute_with_retry(cur, ddl)
+                    except Exception as ddl_ex:
+                        ddl_preview = "\\n".join(ddl.splitlines()[:60])
+                        logger.error(
+                            f"DDL statement {i+1}/{len(ddls)} failed "
+                            f"(length={len(ddl)} chars): {ddl_ex}"
+                        )
+                        logger.error(
+                            f"DDL statement {i+1} preview (first 60 lines):\\n{ddl_preview}"
+                        )
+                        raise
                 
                 # Step 3: Generate and Save Cortex YAML
                 try:
@@ -1212,15 +2091,33 @@ class SnowflakeEmitter(BaseEmitter):
         # METRICS clause
         # =====================================================================
         metrics_lines = []
+        used_metric_names: set[str] = set()
+        skipped_metric_names: set[str] = set()
+        metric_name_set = {
+            self._sanitize_alias(m.unique_name)
+            for m in sml.metrics
+        }
+        all_physical_col_names: set[str] = set()
+        for cols in dataset_col_lookup.values():
+            all_physical_col_names.update(cols)
+        emittable_metric_name_set = {
+            self._sanitize_alias(m.unique_name)
+            for m in sml.metrics
+            if (m.source_column and m.aggregation) or m.sql_expression
+        }
 
         for metric in sml.metrics:
             alias = dataset_aliases.get(metric.dataset)
             if not alias: continue
             
-            metric_name = self._sanitize_alias(metric.unique_name)
+            metric_name = self._resolve_unique_metric_alias(
+                self._sanitize_alias(metric.unique_name),
+                used_metric_names,
+                metric.unique_name,
+            )
             
             # Use source_column aggregation if available (safest for sanitization)
-            if metric.source_column and metric.aggregation:
+            if metric.source_column and metric.aggregation and not metric.sql_expression:
                 # Physical column must use sanitized name (underscores) to match Snowflake
                 col_name = self._sanitize_col_name(metric.source_column)
                 agg = metric.aggregation.value.upper()
@@ -1228,6 +2125,21 @@ class SnowflakeEmitter(BaseEmitter):
                 # Validate column exists in the physical table
                 known_cols = dataset_col_lookup.get(metric.dataset, set())
                 if col_name not in known_cols:
+                    llm_expr = self._try_llm_metric_fallback_expression(
+                        metric=metric,
+                        metric_name=metric_name,
+                        table_alias=alias,
+                        alias_by_raw=_alias_by_raw,
+                        dataset_col_lookup=dataset_col_lookup,
+                        dataset_aliases=dataset_aliases,
+                        metric_name_set=metric_name_set,
+                        all_physical_col_names=all_physical_col_names,
+                        emittable_metric_name_set=emittable_metric_name_set,
+                        skipped_metric_names=skipped_metric_names,
+                    )
+                    if llm_expr:
+                        metrics_lines.append(f'  {alias}."{metric_name}" AS {llm_expr}')
+                        continue
                     logger.warning(
                         f"Skipping metric '{metric.unique_name}': column "
                         f"'{col_name}' not in dataset '{metric.dataset}'"
@@ -1246,6 +2158,8 @@ class SnowflakeEmitter(BaseEmitter):
             # Fallback to expression if explicitly provided and not handled above
             elif metric.sql_expression:
                 expr = metric.sql_expression
+                # CRITICAL FIX: Strip markdown code blocks from SQL expression
+                expr = self._sanitize_sql_markdown(expr)
 
                 # CRITICAL SAFETY CHECK: Reject SELECT statements in metric expressions
                 # These would cause "syntax error: unexpected SELECT" in METRICS clause
@@ -1298,7 +2212,14 @@ class SnowflakeEmitter(BaseEmitter):
                         alias_to_dataset[dataset_aliases[ds.unique_name]] = ds.unique_name
                     
                     # Find all TABLE.COLUMN patterns in the resolved expression
-                    table_col_refs = _re.findall(r'(\w+)\."([A-Z_][A-Z0-9_]*)"', expr)
+                    # CRITICAL: Must match both quoted and unquoted column references
+                    # Quoted: SALESFACT."COL_NAME"
+                    # Unquoted: SALESFACT.COL_NAME
+                    table_col_refs = _re.findall(r'(\w+)\."([^"]+)"', expr)
+                    table_col_refs_unquoted = _re.findall(
+                        r'(\w+)\.([A-Za-z_][A-Za-z0-9_]*)(?!["\w])', expr
+                    )
+                    table_col_refs.extend(table_col_refs_unquoted)
                     
                     for table_alias, col_name in table_col_refs:
                         # Map alias back to dataset
@@ -1311,12 +2232,14 @@ class SnowflakeEmitter(BaseEmitter):
                             continue
                         
                         # Check if column exists in this dataset's physical columns
+                        # CRITICAL: Sanitize col_name to match known_cols which are sanitized
                         known_cols = dataset_col_lookup.get(ds_name, set())
-                        if col_name not in known_cols:
+                        sanitized_col_name = self._sanitize_col_name(col_name)
+                        if sanitized_col_name not in known_cols:
                             logger.debug(
                                 f"Skipping metric '{metric.unique_name}': "
                                 f"references {table_alias}.\"{col_name}\" but column "
-                                f"'{col_name}' not found in {ds_name}."
+                                f"'{sanitized_col_name}' not found in {ds_name}."
                             )
                             # Mark for skipping
                             invalid_table_refs = [table_alias]
@@ -1361,9 +2284,134 @@ class SnowflakeEmitter(BaseEmitter):
                         f"Including manual SQL override metric: {metric.unique_name}"
                     )
                 
-                logger.debug(f"Adding metric to DDL: {alias}.\"{metric_name}\" AS {expr}")
+                # Normalize column/table references before validation so we can
+                # fix common LLM alias drift (e.g., SALESFACT.IS_VAN_ARSDEL).
+                expr = self._normalize_metric_column_references(
+                    expr,
+                    metric.unique_name,
+                    dataset_col_lookup,
+                    dataset_aliases,
+                    metric_names=metric_name_set,
+                )
+
+                # ===== NEW: Enhanced Column Reference Validation =====
+                # Before adding to DDL, perform comprehensive validation that
+                # the metric SQL only references columns that actually exist.
+                # This prevents "invalid identifier" errors during Snowflake execution.
+                is_valid, error_msg = self._validate_metric_column_references(
+                    expr,
+                    metric.unique_name,
+                    dataset_col_lookup,
+                    dataset_aliases,
+                    metric_names=metric_name_set,
+                )
+                
+                if not is_valid:
+                    llm_expr = self._try_llm_metric_fallback_expression(
+                        metric=metric,
+                        metric_name=metric_name,
+                        table_alias=alias,
+                        alias_by_raw=_alias_by_raw,
+                        dataset_col_lookup=dataset_col_lookup,
+                        dataset_aliases=dataset_aliases,
+                        metric_name_set=metric_name_set,
+                        all_physical_col_names=all_physical_col_names,
+                        emittable_metric_name_set=emittable_metric_name_set,
+                        skipped_metric_names=skipped_metric_names,
+                    )
+                    if llm_expr:
+                        expr = llm_expr
+                    else:
+                        logger.warning(
+                            f"Skipping metric '{metric.unique_name}': {error_msg}"
+                        )
+                        continue
+
+                unresolved_metric_refs = [
+                    r for r in _re.findall(r'"([A-Z_][A-Z0-9_]*)"', expr)
+                    if r in metric_name_set
+                    and r not in all_physical_col_names
+                    and (
+                        r not in emittable_metric_name_set
+                        or r in skipped_metric_names
+                    )
+                    and r != metric_name
+                ]
+                if unresolved_metric_refs:
+                    llm_expr = self._try_llm_metric_fallback_expression(
+                        metric=metric,
+                        metric_name=metric_name,
+                        table_alias=alias,
+                        alias_by_raw=_alias_by_raw,
+                        dataset_col_lookup=dataset_col_lookup,
+                        dataset_aliases=dataset_aliases,
+                        metric_name_set=metric_name_set,
+                        all_physical_col_names=all_physical_col_names,
+                        emittable_metric_name_set=emittable_metric_name_set,
+                        skipped_metric_names=skipped_metric_names,
+                    )
+                    if llm_expr:
+                        expr = llm_expr
+                    else:
+                        logger.warning(
+                            f"Skipping metric '{metric.unique_name}': unresolved metric "
+                            f"dependencies {sorted(set(unresolved_metric_refs))}"
+                        )
+                        skipped_metric_names.add(metric_name)
+                        continue
+                
+                # CRITICAL: Validate expression before appending to DDL
+                # Prevent empty expressions and invalid patterns like SUM(*)
+                if not expr or not expr.strip():
+                    logger.warning(
+                        f"Skipping metric '{metric.unique_name}': expression is empty"
+                    )
+                    continue
+
+                self_ref_pattern = rf'(?<![\w\."])"{_re.escape(metric_name)}"(?![\w"])|(?<![\w\."])\b{_re.escape(metric_name)}\b(?![\w"])'
+                if _re.search(self_ref_pattern, expr):
+                    logger.warning(
+                        f"Skipping metric '{metric.unique_name}': self-referential expression '{expr[:120]}'"
+                    )
+                    skipped_metric_names.add(metric_name)
+                    continue
+                
+                # Check for invalid aggregation pattern SUM(*)
+                expr_upper = expr.upper().strip()
+                if expr_upper == 'SUM(*)' or expr_upper.endswith('SUM(*)'):
+                    logger.warning(
+                        f"Skipping metric '{metric.unique_name}': Invalid SUM(*) pattern detected"
+                    )
+                    continue
+                
+                logger.debug(f"Adding metric to DDL: {metric_name} = {expr}")
                 metrics_lines.append(f'  {alias}."{metric_name}" AS {expr}')
+
+            elif metric.expression:
+                llm_expr = self._try_llm_metric_fallback_expression(
+                    metric=metric,
+                    metric_name=metric_name,
+                    table_alias=alias,
+                    alias_by_raw=_alias_by_raw,
+                    dataset_col_lookup=dataset_col_lookup,
+                    dataset_aliases=dataset_aliases,
+                    metric_name_set=metric_name_set,
+                    all_physical_col_names=all_physical_col_names,
+                    emittable_metric_name_set=emittable_metric_name_set,
+                    skipped_metric_names=skipped_metric_names,
+                )
+                if llm_expr:
+                    metrics_lines.append(f'  {alias}."{metric_name}" AS {llm_expr}')
+                else:
+                    logger.warning(
+                        f"Skipping metric '{metric.unique_name}': no usable SQL expression and LLM fallback failed"
+                    )
         
+        metrics_lines = self._prune_unresolved_metric_lines(
+            metrics_lines,
+            metric_name_set,
+        )
+
         logger.info(f"=== METRICS GENERATION END (total lines: {len(metrics_lines)}) ===")
                 
         if metrics_lines:
@@ -1394,6 +2442,31 @@ class SnowflakeEmitter(BaseEmitter):
     def _sanitize_alias(self, name: str) -> str:
         """Sanitize alias names via unified IdentifierSanitizer (Mandate 1)."""
         return self._id.sanitize_alias(name)
+
+    def _resolve_unique_metric_alias(
+        self,
+        base_alias: str,
+        used_aliases: set[str],
+        original_metric_name: str,
+    ) -> str:
+        """Ensure metric alias is unique within a single METRICS clause."""
+        if base_alias not in used_aliases:
+            used_aliases.add(base_alias)
+            return base_alias
+
+        idx = 2
+        while True:
+            candidate = f"{base_alias}_{idx}"
+            if candidate not in used_aliases:
+                used_aliases.add(candidate)
+                logger.warning(
+                    "Metric alias collision for '%s' (base '%s'); using '%s'",
+                    original_metric_name,
+                    base_alias,
+                    candidate,
+                )
+                return candidate
+            idx += 1
 
     def _quote_if_needed(self, name: str) -> str:
         """Quote column names to preserve case."""
@@ -1467,8 +2540,8 @@ class SnowflakeEmitter(BaseEmitter):
                     }
                     
                     if metric.sql_expression:
-                        # SQL expression available - use it
-                        measure_def["expr"] = metric.sql_expression
+                        # SQL expression available - use it - CRITICAL: strip markdown
+                        measure_def["expr"] = self._sanitize_sql_markdown(metric.sql_expression)
                     elif metric.expression:
                         # DAX expression only - include as metadata for Cortex context
                         # Use a placeholder SQL that returns NULL (Cortex can still use the description)
@@ -2778,18 +3851,51 @@ class SnowflakeEmitter(BaseEmitter):
         # METRICS
         # =================================================================
         metrics_lines: list[str] = []
+        used_metric_names: set[str] = set()
+        skipped_metric_names: set[str] = set()
+        metric_name_set = {
+            self._sanitize_alias(m.unique_name)
+            for m in osi.metrics
+        }
+        all_physical_col_names: set[str] = set()
+        for cols in dataset_col_lookup.values():
+            all_physical_col_names.update(cols)
+        emittable_metric_name_set = {
+            self._sanitize_alias(m.unique_name)
+            for m in osi.metrics
+            if (m.source_column and m.aggregation) or m.sql_expression
+        }
 
         for metric in osi.metrics:
             alias = dataset_aliases.get(metric.dataset)
             if not alias:
                 continue
-            metric_name = self._sanitize_alias(metric.unique_name)
+            metric_name = self._resolve_unique_metric_alias(
+                self._sanitize_alias(metric.unique_name),
+                used_metric_names,
+                metric.unique_name,
+            )
 
-            if metric.source_column and metric.aggregation:
+            if metric.source_column and metric.aggregation and not metric.sql_expression:
                 col_name = self._sanitize_col_name(metric.source_column)
                 agg = metric.aggregation.value.upper()
                 known_cols = dataset_col_lookup.get(metric.dataset, set())
                 if col_name not in known_cols:
+                    llm_expr = self._try_llm_metric_fallback_expression(
+                        metric=metric,
+                        metric_name=metric_name,
+                        table_alias=alias,
+                        alias_by_raw=_alias_by_raw,
+                        dataset_col_lookup=dataset_col_lookup,
+                        dataset_aliases=dataset_aliases,
+                        metric_name_set=metric_name_set,
+                        all_physical_col_names=all_physical_col_names,
+                        emittable_metric_name_set=emittable_metric_name_set,
+                        skipped_metric_names=skipped_metric_names,
+                    )
+                    if llm_expr:
+                        metrics_lines.append(f'  {alias}."{metric_name}" AS {llm_expr}')
+                        continue
                     logger.warning(
                         f"Skipping metric '{metric.unique_name}': column "
                         f"'{col_name}' not in dataset '{metric.dataset}'"
@@ -2808,6 +3914,8 @@ class SnowflakeEmitter(BaseEmitter):
             elif metric.sql_expression:
                 import re as _re
                 expr = metric.sql_expression
+                # CRITICAL FIX: Strip markdown code blocks from SQL expression
+                expr = self._sanitize_sql_markdown(expr)
                 is_override = getattr(metric, "complexity_tier", 0) >= 3
                 if not is_override:
                     # Step A: Sanitize DAX-style [Column Name] → "COLUMN_NAME"
@@ -2871,9 +3979,101 @@ class SnowflakeEmitter(BaseEmitter):
                         f"Including manual SQL override metric: "
                         f"{metric.unique_name}"
                     )
+                
+                # Normalize column references to use unquoted uppercase (e.g., TABLE.COLUMN)
+                expr = self._normalize_metric_column_references(
+                    expr,
+                    metric.unique_name,
+                    dataset_col_lookup,
+                    dataset_aliases,
+                    metric_names=metric_name_set,
+                )
+                
+                # CRITICAL: Validate expression before appending to DDL
+                # Prevent empty expressions and invalid patterns like SUM(*)
+                if not expr or not expr.strip():
+                    logger.warning(
+                        f"Skipping metric '{metric.unique_name}': expression is empty"
+                    )
+                    continue
+
+                self_ref_pattern = rf'(?<![\w\."])"{_re.escape(metric_name)}"(?![\w"])|(?<![\w\."])\b{_re.escape(metric_name)}\b(?![\w"])'
+                if _re.search(self_ref_pattern, expr):
+                    logger.warning(
+                        f"Skipping metric '{metric.unique_name}': self-referential expression '{expr[:120]}'"
+                    )
+                    skipped_metric_names.add(metric_name)
+                    continue
+                
+                # Check for invalid aggregation pattern SUM(*)
+                expr_upper = expr.upper().strip()
+                if expr_upper == 'SUM(*)' or expr_upper.endswith('SUM(*)'):
+                    logger.warning(
+                        f"Skipping metric '{metric.unique_name}': Invalid SUM(*) pattern detected"
+                    )
+                    continue
+
+                unresolved_metric_refs = [
+                    r for r in _re.findall(r'"([A-Z_][A-Z0-9_]*)"', expr)
+                    if r in metric_name_set
+                    and r not in all_physical_col_names
+                    and (
+                        r not in emittable_metric_name_set
+                        or r in skipped_metric_names
+                    )
+                    and r != metric_name
+                ]
+                if unresolved_metric_refs:
+                    llm_expr = self._try_llm_metric_fallback_expression(
+                        metric=metric,
+                        metric_name=metric_name,
+                        table_alias=alias,
+                        alias_by_raw=_alias_by_raw,
+                        dataset_col_lookup=dataset_col_lookup,
+                        dataset_aliases=dataset_aliases,
+                        metric_name_set=metric_name_set,
+                        all_physical_col_names=all_physical_col_names,
+                        emittable_metric_name_set=emittable_metric_name_set,
+                        skipped_metric_names=skipped_metric_names,
+                    )
+                    if llm_expr:
+                        expr = llm_expr
+                    else:
+                        logger.warning(
+                            f"Skipping metric '{metric.unique_name}': unresolved metric "
+                            f"dependencies {sorted(set(unresolved_metric_refs))}"
+                        )
+                        skipped_metric_names.add(metric_name)
+                        continue
+                
                 metrics_lines.append(
                     f'  {alias}."{metric_name}" AS {expr}'
                 )
+
+            elif metric.expression:
+                llm_expr = self._try_llm_metric_fallback_expression(
+                    metric=metric,
+                    metric_name=metric_name,
+                    table_alias=alias,
+                    alias_by_raw=_alias_by_raw,
+                    dataset_col_lookup=dataset_col_lookup,
+                    dataset_aliases=dataset_aliases,
+                    metric_name_set=metric_name_set,
+                    all_physical_col_names=all_physical_col_names,
+                    emittable_metric_name_set=emittable_metric_name_set,
+                    skipped_metric_names=skipped_metric_names,
+                )
+                if llm_expr:
+                    metrics_lines.append(f'  {alias}."{metric_name}" AS {llm_expr}')
+                else:
+                    logger.warning(
+                        f"Skipping metric '{metric.unique_name}': no usable SQL expression and LLM fallback failed"
+                    )
+
+        metrics_lines = self._prune_unresolved_metric_lines(
+            metrics_lines,
+            metric_name_set,
+        )
 
         if metrics_lines:
             definitions.append(
@@ -2936,7 +4136,8 @@ class SnowflakeEmitter(BaseEmitter):
                         "description": metric.description or "",
                     }
                     if metric.sql_expression:
-                        measure_def["expr"] = metric.sql_expression
+                        # CRITICAL: strip markdown from SQL expression
+                        measure_def["expr"] = self._sanitize_sql_markdown(metric.sql_expression)
                     elif metric.expression:
                         measure_def["expr"] = "NULL"
                         dax_note = (

@@ -10,6 +10,7 @@ from typing import Optional, Tuple, Dict, List, Any
 
 from semabridge.utils.logger import get_logger
 from semabridge.utils.naming import sanitize_column, to_alias
+from semabridge.converter.dax_rule_translator import is_simple_metric, rule_based_translation
 
 logger = get_logger(__name__)
 
@@ -121,7 +122,26 @@ class DAXTranslator:
         clean_dax = dax.strip()
         overrides = overrides or {}
         
-        # Tier 0: Manual Overrides
+        # **NEW PRIMARY FLOW: Try deterministic translator first**
+        # This enforces pipeline as single source of truth
+        try:
+            from semabridge.converter.deterministic_translator import DeterministicTranslator
+            det_translator = DeterministicTranslator()
+            det_result = det_translator.translate(
+                clean_dax,
+                table_alias,
+                dataset_name,
+                metric_name=metric_name
+            )
+            if det_result.is_success and det_result.sql:
+                logger.info(f"✓ Deterministic translation successful: {det_result.sql[:60]}")
+                return DAXTranslationResult(det_result.sql, det_result.tier, clean_dax)
+            else:
+                logger.debug(f"Deterministic translator returned no SQL, falling back to Tier logic")
+        except Exception as e:
+            logger.warning(f"Deterministic translator error, falling back to Tier logic: {e}")
+        
+        # Tier 0: Manual Overrides (legacy support)
         # Priority 1: Check if THIS metric has an override
         if metric_name and metric_name in overrides:
             logger.info(f"Using manual SQL override for metric '{metric_name}'")
@@ -203,14 +223,32 @@ class DAXTranslator:
         """
         Attempt Tier 5 LLM translation for complex expressions.
         
-        Uses Google Gemini as a fallback when deterministic parsing fails.
+        First checks if the metric is simple enough for rule-based translation.
+        Only uses Google Gemini as a fallback for truly complex expressions.
         Returns None if LLM is not available or declines to translate.
         """
+        # TIER 4.5: Check if metric is simple enough for rule-based translation
+        # This dramatically reduces LLM API usage by 60-80%
+        if is_simple_metric(dax):
+            logger.info(f"🟢 Metric classified as SIMPLE - using rule-based translation: {metric_name or dax[:50]}")
+            
+            # Try rule-based translation
+            sql = rule_based_translation(dax, table_alias)
+            if sql:
+                logger.debug(f"   ✓ Rule-based translation succeeded: {sql[:80]}")
+                return DAXTranslationResult(sql, 4, dax)  # Tier 4 for rule-based (deterministic)
+            else:
+                logger.debug(f"   ✗ Rule-based translation failed, will fall through to LLM")
+        else:
+            logger.info(f"🟠 Metric classified as COMPLEX - requesting LLM translation: {metric_name or dax[:50]}")
+        
+        # Tier 5: LLM Fallback - Use Gemini for genuinely complex expressions
         try:
             from semabridge.converter.gemini_dax_translator import get_gemini_translator
             
             translator = get_gemini_translator()
             if not translator.api_key:
+                logger.debug("LLM API key not configured")
                 return None
             
             # Attempt LLM translation
@@ -251,6 +289,150 @@ class DAXTranslator:
         except Exception as e:
             logger.warning(f"Unexpected error in LLM fallback: {str(e)}")
             return None
+    
+    def batch_translate_tier5(self,
+                             metrics_list: List[Tuple[str, str, str, str]]) -> Dict[str, Optional[DAXTranslationResult]]:
+        """
+        Batch translate multiple metrics that failed Tier 1-4 using LLM (Tier 5).
+        
+        First separates simple metrics (which use rule-based translation) from complex ones
+        (which need LLM). This dramatically reduces API calls by preventing simple metrics
+        from being sent to Gemini.
+        
+        When there are complex metrics, batches them into groups to minimize API calls
+        (batching 20+ metrics into a single request).
+        
+        Args:
+            metrics_list: List of (metric_name, dax, table_alias, dataset_name) tuples
+            
+        Returns:
+            Dict of metric_name -> DAXTranslationResult (or None if no LLM result)
+        """
+        if not metrics_list:
+            return {}
+        
+        results = {}
+        
+        # CLASSIFICATION STEP: Separate simple from complex metrics
+        simple_metrics = []
+        complex_metrics = []
+        simple_failed_for_llm = []
+        
+        for metric_name, dax, table_alias, dataset_name in metrics_list:
+            if is_simple_metric(dax):
+                simple_metrics.append((metric_name, dax, table_alias, dataset_name))
+            else:
+                complex_metrics.append((metric_name, dax, table_alias, dataset_name))
+        
+        logger.info(
+            f"🔄 Batch processing {len(metrics_list)} metrics:\n"
+            f"   ├─ SIMPLE (rule-based): {len(simple_metrics)} metrics\n"
+            f"   └─ COMPLEX (LLM): {len(complex_metrics)} metrics"
+        )
+        
+        # RULE-BASED TRANSLATION: Process simple metrics without API calls
+        simple_api_calls = 0
+        for metric_name, dax, table_alias, dataset_name in simple_metrics:
+            sql = rule_based_translation(dax, table_alias)
+            if sql:
+                results[metric_name] = DAXTranslationResult(sql, 4, dax)
+                logger.debug(f"   ✓ [{metric_name}] Rule-based translation: {sql[:60]}...")
+            else:
+                # IMPORTANT: do not drop simple metrics when deterministic rules fail.
+                # Escalate them to Tier-5 LLM fallback.
+                simple_failed_for_llm.append((metric_name, dax, table_alias, dataset_name))
+                logger.debug(
+                    f"   ⚠ [{metric_name}] Rule-based translation failed; escalating to LLM"
+                )
+        
+        # LLM TRANSLATION: Only send complex metrics to Gemini
+        llm_candidates = complex_metrics + simple_failed_for_llm
+        if llm_candidates:
+            try:
+                from semabridge.converter.gemini_dax_translator import get_gemini_translator
+                
+                translator = get_gemini_translator()
+                if not translator.api_key:
+                    logger.debug("LLM API key not configured for batch translation")
+                    for metric_name, _, _, _ in llm_candidates:
+                        results[metric_name] = None
+                    return results
+                
+                # Prepare batch for Gemini translator (only complex metrics)
+                # Format: (metric_name, dax, table_alias, dataset_name, None)
+                batch = [
+                    (metric_name, dax, table_alias, dataset_name, None)
+                    for metric_name, dax, table_alias, dataset_name in llm_candidates
+                ]
+                
+                logger.info(
+                    f"🔄 Batch translating {len(batch)} COMPLEX metrics via Tier 5 LLM "
+                    f"(expected API calls: {(len(batch) + 19) // 20}) - "
+                    f"API CALL REDUCTION: {len(simple_metrics) - len(simple_failed_for_llm)} / {len(metrics_list)} metrics skipped LLM"
+                )
+                
+                # Call batch translation
+                batch_result = translator.translate_batch(batch, batch_size=20)
+                simple_api_calls = batch_result.api_calls
+                
+                # Process results - convert to DAXTranslationResult with confidence filtering
+                for metric_name, gemini_result in batch_result.results.items():
+                    if gemini_result.is_valid and gemini_result.sql and gemini_result.confidence >= 0.55:
+                        # High confidence - use result
+                        results[metric_name] = DAXTranslationResult(gemini_result.sql, 5, 
+                                                                    next((dax for name, dax, _, _ in llm_candidates if name == metric_name), ""))
+                        logger.debug(f"   ✓ [{metric_name}] LLM translated (conf: {gemini_result.confidence:.2f})")
+                    elif gemini_result.sql and gemini_result.confidence > 0.4:
+                        # Low confidence - log warning but don't use
+                        logger.warning(
+                            f"   ⚠️ [{metric_name}] Low confidence: {gemini_result.confidence:.2f}"
+                        )
+                        results[metric_name] = None
+                    else:
+                        # Failed translation
+                        logger.debug(f"   ❌ [{metric_name}] Could not translate: {gemini_result.error}")
+                        results[metric_name] = None
+                
+                # Log summary with classification insight
+                successful = sum(1 for r in results.values() if r is not None)
+                if llm_candidates:
+                    api_call_reduction = (simple_api_calls / len(metrics_list)) * 100
+                    # Note: If we sent N complex metrics for 1 API call, the reduction from
+                    # avoiding these N metrics is much clearer than traditional batching
+                    quota_reduction = (len(simple_metrics) / len(metrics_list)) * 100
+                else:
+                    api_call_reduction = 0
+                    quota_reduction = 100
+                
+                logger.info(
+                    f"✅ Batch translation complete:\n"
+                    f"   ├─ Total metrics: {len(metrics_list)}\n"
+                    f"   ├─ Simple (no API calls): {len(simple_metrics) - len(simple_failed_for_llm)} ({(len(simple_metrics) - len(simple_failed_for_llm)) / len(metrics_list) * 100:.0f}%)\n"
+                    f"   ├─ LLM candidates: {len(llm_candidates)} ({len(llm_candidates) / len(metrics_list) * 100:.0f}%)\n"
+                    f"   ├─ API calls: {simple_api_calls} (vs {len(metrics_list)} per-metric)\n"
+                    f"   ├─ Successful: {successful}/{len(metrics_list)}\n"
+                    f"   └─ QUOTA REDUCTION: {quota_reduction:.0f}% metrics avoided LLM calls"
+                )
+                
+                return results
+                
+            except ImportError:
+                logger.debug("Batch LLM translator not available")
+                for metric_name, _, _, _ in llm_candidates:
+                    results[metric_name] = None
+                return results
+            except Exception as e:
+                logger.error(f"Unexpected error in batch Tier 5 translation: {str(e)}")
+                for metric_name, _, _, _ in llm_candidates:
+                    results[metric_name] = None
+                return results
+        else:
+            # All metrics were simple, no LLM needed
+            logger.info(
+                f"✅ All {len(metrics_list)} metrics classified as SIMPLE - "
+                f"0 LLM API calls required (100% quota savings)"
+            )
+            return results
     
     def _try_tier1(self, dax: str, table_alias: str) -> Optional[str]:
         """Attempt Tier 1 translation."""

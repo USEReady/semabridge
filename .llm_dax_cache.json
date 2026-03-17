@@ -1,170 +1,230 @@
 {
-  "fact::CALCULATE(SUM([Sales]), FILTER(Products, Products[Category]=\"Premium\"))": {
-    "sql": "SELECT\n    SUM(fact.\"Sales\")\nFROM\n    SalesDataset AS fact\nWHERE\n    fact.\"Category\" = 'Premium'",
-    "confidence": 0.85,
+  "t::SUM([X])": {
+    "sql": "SUM(t.x)",
+    "confidence": 0.6,
     "is_valid": true,
-    "timestamp": "2026-03-14T18:37:35.965857"
-  },
-  "transactions::IF(CALCULATE(SUM([Sales]), DATESBETWEEN(Date[Date], DATE(2024,1,1), TODAY())) > 1000000, CALCULATE(A": {
-    "sql": "SELECT\n  CASE\n    WHEN (SELECT SUM(transactions.\"Sales\") FROM FinanceDataset.transactions WHERE transactions.\"Date\" BETWEEN '2024-01-01' AND CURRENT_DATE()) > 1000000\n    THEN (SELECT AVG(transactions.\"Price\") FROM FinanceDataset.transactions WHERE transactions.\"Category\" = 'Premium')\n    ELSE 0\n  END",
-    "confidence": 0.85,
-    "is_valid": true,
-    "timestamp": "2026-03-14T18:37:47.542679"
-  },
-  "fact::IF(CALCULATE(SUM([Sales]), FILTER(ALL(Date), Date[Year]=2024)) > 1000000, CALCULATE(AVERAGE([Price])": {
-    "sql": "CASE\n    WHEN (\n        SELECT SUM(fact.\"Sales\")\n        FROM test_dataset.fact AS fact\n        JOIN test_dataset.\"Date\" AS \"d\" ON fact.\"DateKey\" = \"d\".\"DateKey\"\n        WHERE \"d\".\"Year\" = 2024\n    ) > 1000000\n    THEN (\n        SELECT AVG(fact.\"Price\")\n        FROM test_dataset.fact AS fact\n        JOIN test_dataset.\"Products\" AS \"p\" ON fact.\"ProductID\" = \"p\".\"ProductID\"\n        WHERE \"p\".\"Category\" = 'Premium'\n    )\n    ELSE 0\nEND",
-    "confidence": 0.85,
-    "is_valid": true,
-    "timestamp": "2026-03-14T18:43:45.333187"
-  },
-  "fact::CALCULATE(SUM([Sales]), DATESBETWEEN(Date[Date], DATE(2024,1,1), TODAY()))": {
-    "sql": "SELECT SUM(\"fact\".\"Sales\") FROM \"test_dataset\".\"fact\" WHERE \"fact\".\"Date\" >= '2024-01-01' AND \"fact\".\"Date\" <= CURRENT_DATE()",
-    "confidence": 0.85,
-    "is_valid": true,
-    "timestamp": "2026-03-14T18:43:50.735057"
-  },
-  "fact::VAR totalSales = SUMX(FILTER(Transactions, Transactions[Status]=\"Completed\"), Transactions[Amount] *": {
-    "sql": "```sql\nSELECT\n    CASE\n        WHEN metrics.avgDiscount > 0.1 THEN metrics.totalSales * 0.9\n        ELSE metrics.totalSales\n    END\nFROM (\n    SELECT\n        SUM(CASE WHEN fact.\"Status\" = 'Completed' THEN fact.\"Amount\" * (1 - fact.\"Discount\") ELSE NULL END) AS totalSales,\n        AVG(fact.\"Discount\") AS avgDiscount\n    FROM\n        \"test_dataset\".\"Transactions\" AS fact\n) AS metrics\n```",
-    "confidence": 0.65,
-    "is_valid": true,
-    "timestamp": "2026-03-14T18:44:06.832880"
-  },
-  "fact::CALCULATE(SUM([Sales]), ALL(Date), FILTER(Regions, NOT(Regions[Status]=\"Inactive\")), DATESBETWEEN(Da": {
-    "sql": "SELECT SUM(fact.\"Sales\") FROM test_dataset.fact AS fact WHERE fact.\"Status\" <> 'Inactive' AND fact.\"Date\" BETWEEN '2024-01-01' AND CURRENT_DATE()",
-    "confidence": 0.85,
-    "is_valid": true,
-    "timestamp": "2026-03-14T18:44:14.924077"
-  },
-  "product::COUNTBLANK('Product'[Product])": {
-    "sql": "SELECT\n    COUNT_IF(product.\"Product\" IS NULL OR product.\"Product\" = '')",
-    "confidence": 0.5,
-    "is_valid": true,
-    "timestamp": "2026-03-14T18:45:37.149397"
-  },
-  "salesfact::TOTALYTD([TOTAL UNITS], 'Date'[Date])": {
-    "sql": "```sql\nSELECT\n    salesfact.\"DATE\",\n    salesfact.\"TOTAL_UNITS\",\n    SUM(salesfact.\"TOTAL_UNITS\") OVER (\n        PARTITION BY YEAR(salesfact.\"DATE\")\n        ORDER BY salesfact.\"DATE\"\n        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW\n    ) AS \"TOTAL_UNITS_YTD\"\nFROM\n    salesfact\n```",
-    "confidence": 0.75,
-    "is_valid": true,
-    "timestamp": "2026-03-14T18:45:48.277830"
-  },
-  "salesfact::CALCULATE([TOTAL UNITS],SAMEPERIODLASTYEAR('Date'[Date]))": {
-    "sql": "WITH \"ShiftedDates\" AS (\n    SELECT DISTINCT DATEADD(year, -1, salesfact.\"date\"::DATE) AS \"shifted_date\"\n    FROM salesfact\n    WHERE salesfact.\"date\" IS NOT NULL\n)\nSELECT\n    SUM(salesfact.\"units\")\nFROM\n    salesfact\nWHERE\n    salesfact.\"date\"::DATE IN (SELECT \"shifted_date\" FROM \"ShiftedDates\");",
-    "confidence": 0.85,
-    "is_valid": true,
-    "timestamp": "2026-03-14T18:46:28.163278"
-  },
-  "salesfact::CALCULATE([Total Units YTD], SAMEPERIODLASTYEAR('Date'[Date]))": {
-    "sql": "```sql\nSELECT\n    salesfact.\"Date\",\n    (\n        SELECT\n            SUM(salesfact_inner.\"Units\")\n        FROM\n            salesfact AS salesfact_inner\n        WHERE\n            salesfact_inner.\"Date\" >= DATE_TRUNC('YEAR', DATEADD('YEAR', -1, salesfact.\"Date\"))\n            AND salesfact_inner.\"Date\" <= DATEADD('YEAR', -1, salesfact.\"Date\")\n    ) AS \"Total Units YTD SPLY\"\nFROM\n    salesfact;\n```",
-    "confidence": 0.85,
-    "is_valid": true,
-    "timestamp": "2026-03-14T18:46:53.435534"
-  },
-  "salesfact::CALCULATE([Total VanArsdel Units YTD], SAMEPERIODLASTYEAR('Date'[Date]))": {
-    "sql": "SELECT\n    SUM(salesfact.\"VanArsdelUnits\")\nFROM\n    salesfact\nWHERE\n        salesfact.\"Date\" >= DATEADD('year', -1, TRUNC(CURRENT_DATE(), 'year'))\n    AND salesfact.\"Date\" <= DATEADD('year', -1, CURRENT_DATE())",
-    "confidence": 0.85,
-    "is_valid": true,
-    "timestamp": "2026-03-14T18:47:12.683980"
-  },
-  "salesfact::CALCULATE([Total OTHER Units YTD], SAMEPERIODLASTYEAR('Date'[Date]))": {
-    "sql": "(SELECT\n    SUM(sply.\"OTHER_UNITS\")\n FROM\n    salesfact AS sply\n WHERE\n    sply.\"Date\" >= DATE_TRUNC('YEAR', ADD_YEARS(salesfact.\"Date\", -1))\n    AND sply.\"Date\" <= ADD_YEARS(salesfact.\"Date\", -1))",
-    "confidence": 0.85,
-    "is_valid": true,
-    "timestamp": "2026-03-14T18:47:28.810204"
-  },
-  "sales::SUM([Revenue])": {
-    "sql": "SELECT SUM(\"sales\".\"Revenue\") AS \"Total Revenue\" FROM \"TestDataset\" AS \"sales\"",
-    "confidence": 0.75,
-    "is_valid": true,
-    "timestamp": "2026-03-14T18:56:26.781370"
-  },
-  "salesfact::IF([Total VanArsdel Units]=0, 0, DIVIDE([Total VanArsdel Units], [Total Units], 0))": {
-    "sql": "SELECT\n    CASE\n        WHEN SUM(\"salesfact\".\"Total VanArsdel Units\") = 0 THEN 0\n        ELSE DIV0(SUM(\"salesfact\".\"Total VanArsdel Units\"), SUM(\"salesfact\".\"Total Units\"))\n    END AS \"% Units Market Share\"\nFROM \"SalesFact\" AS \"salesfact\"",
-    "confidence": 0.75,
-    "is_valid": true,
-    "timestamp": "2026-03-14T20:51:43.808027"
-  },
-  "salesfact::CALCULATE([Total Units])": {
-    "sql": "SELECT COALESCE(SUM(\"salesfact\".\"Total Category Volume\"), 0) FROM \"SalesFact\" AS \"salesfact\"",
-    "confidence": 0.75,
-    "is_valid": true,
-    "timestamp": "2026-03-14T20:51:53.742566"
-  },
-  "salesfact::INT(DIVIDE([Total Compete Volume], [Total Category Volume])*100)": {
-    "sql": "SELECT FLOOR((SUM(\"salesfact\".\"Total Compete Volume\") / NULLIF(SUM(\"salesfact\".\"Total Category Volume\"), 0)) * 100) AS \"% Category Compete Share\" FROM \"SalesFact\" AS \"salesfact\";",
-    "confidence": 0.75,
-    "is_valid": true,
-    "timestamp": "2026-03-14T20:52:05.106956"
-  },
-  "salesfact::CALCULATE([% Units Market Share YTD], SAMEPERIODLASTYEAR('Date'[Date]))": {
-    "sql": "SELECT\n    (SUM(CASE \n        WHEN \"salesfact\".\"Date\" >= DATE_TRUNC('YEAR', DATEADD('YEAR', -1, CURRENT_DATE())) \n        AND \"salesfact\".\"Date\" <= DATEADD('YEAR', -1, CURRENT_DATE()) \n        THEN \"salesfact\".\"Units\" \n        ELSE 0 \n    END) / \n    NULLIF(SUM(CASE \n        WHEN \"salesfact\".\"Date\" >= DATE_TRUNC('YEAR', DATEADD('YEAR', -1, CURRENT_DATE())) \n        AND \"salesfact\".\"Date\" <= DATEADD('YEAR', -1, CURRENT_DATE()) \n        THEN \"salesfact\".\"Market_Units\" \n        ELSE 0 \n    END), 0)) AS \"% Market Share SPLY YTD\"\nFROM \"SalesFact\" AS \"salesfact\"",
-    "confidence": 0.75,
-    "is_valid": true,
-    "timestamp": "2026-03-14T20:52:26.455752"
-  },
-  "salesfact::CALCULATE([% Units Market Share], SAMEPERIODLASTYEAR('Date'[Date]))": {
-    "sql": "SELECT\n    DIV0(\n        SUM(\"salesfact_sply\".\"Units\"),\n        SUM(SUM(\"salesfact_sply\".\"Units\")) OVER (PARTITION BY \"salesfact_sply\".\"Date\")\n    ) AS \"% Units Market Share SPLY\"\nFROM \"SalesFact\" AS \"salesfact\"\nLEFT JOIN \"SalesFact\" AS \"salesfact_sply\"\n    ON \"salesfact_sply\".\"Date\" = DATEADD('year', -1, \"salesfact\".\"Date\")\nGROUP BY\n    \"salesfact\".\"Date\",\n    \"salesfact_sply\".\"Date\";",
-    "confidence": 0.85,
-    "is_valid": true,
-    "timestamp": "2026-03-14T20:53:47.659142"
-  },
-  "salesfact::CALCULATE(SUM([Units]), FILTER(ALL('Date'), 'Date'[MonthIndex]<=MAX('Date'[MonthIndex])&& 'Date'[Mon": {
-    "sql": "SELECT SUM(IFNULL(\"salesfact\".\"Units\", 0)) OVER (ORDER BY \"salesfact\".\"MonthIndex\" RANGE BETWEEN 11 PRECEDING AND CURRENT ROW) AS \"Total Units R12Ms\" FROM \"SalesFact\" AS \"salesfact\"",
-    "confidence": 0.75,
-    "is_valid": true,
-    "timestamp": "2026-03-14T20:53:59.253114"
-  },
-  "salesfact::IF([Total VanArsdel Units R12M]=0, 0, DIVIDE([Total VanArsdel Units R12M], [Total Units R12Ms], 0))": {
-    "sql": "SELECT CASE WHEN ZEROIFNULL(SUM(\"salesfact\".\"Total VanArsdel Units R12M\")) = 0 THEN 0 ELSE ZEROIFNULL(DIV0(SUM(\"salesfact\".\"Total VanArsdel Units R12M\"), SUM(\"salesfact\".\"Total Units R12Ms\"))) END AS \"% Units Market Share R12M\" FROM \"SalesFact\" AS \"salesfact\"",
-    "confidence": 0.75,
-    "is_valid": true,
-    "timestamp": "2026-03-14T20:55:13.102483"
-  },
-  "salesfact::IF(ISBLANK(CALCULATE([Sentiment], Manufacturer[MfgisVanArsdel]=\"No\"))||ISBLANK(CALCULATE([Sentiment]": {
-    "sql": "SELECT\n    CASE\n        WHEN AVG(CASE WHEN \"salesfact\".\"MfgisVanArsdel\" = 'No' THEN \"salesfact\".\"Sentiment\" END) IS NULL\n          OR AVG(CASE WHEN \"salesfact\".\"MfgisVanArsdel\" = 'Yes' THEN \"salesfact\".\"Sentiment\" END) IS NULL\n        THEN NULL\n        ELSE AVG(CASE WHEN \"salesfact\".\"MfgisVanArsdel\" = 'No' THEN \"salesfact\".\"Sentiment\" END) - \n             AVG(CASE WHEN \"salesfact\".\"MfgisVanArsdel\" = 'Yes' THEN \"salesfact\".\"Sentiment\" END)\n    END AS \"Sentiment Gap\"\nFROM \"SalesFact\" AS \"salesfact\";",
-    "confidence": 0.55,
-    "is_valid": true,
-    "timestamp": "2026-03-14T20:55:38.174848"
-  },
-  "salesfact::IF('SalesFact'[% Category Compete Share]<0.55,1,IF('SalesFact'[% Category Compete Share]>0.6,3,2))": {
-    "sql": "SELECT\n    CASE\n        WHEN \"salesfact\".\"% Category Compete Share\" IS NULL THEN NULL\n        WHEN \"salesfact\".\"% Category Compete Share\" < 0.55 THEN 1\n        WHEN \"salesfact\".\"% Category Compete Share\" > 0.6 THEN 3\n        ELSE 2\n    END AS \"@Indicator01\"\nFROM \"SalesFact\" AS \"salesfact\";",
-    "confidence": 0.65,
-    "is_valid": true,
-    "timestamp": "2026-03-14T20:55:46.805380"
-  },
-  "salesfact::IF('SalesFact'[% Unit Market Share YOY Change]<0,1,IF('SalesFact'[% Unit Market Share YOY Change]>.2": {
-    "sql": "SELECT\n  CASE\n    WHEN \"salesfact\".\"% Unit Market Share YOY Change\" < 0 THEN 1\n    WHEN \"salesfact\".\"% Unit Market Share YOY Change\" > 0.2 THEN 3\n    ELSE 2\n  END AS \"@Indicator02\"\nFROM \"SalesFact\" AS \"salesfact\";",
-    "confidence": 0.65,
-    "is_valid": true,
-    "timestamp": "2026-03-14T20:56:00.837391"
-  },
-  "salesfact::\"\"": {
-    "sql": "SELECT '' AS \"#Space01\" FROM \"SalesFact\" AS \"salesfact\"",
-    "confidence": 0.65,
-    "is_valid": true,
-    "timestamp": "2026-03-14T20:56:46.259922"
+    "timestamp": "2026-03-16T16:08:49.903399"
   },
   "product::COUNTA('Product'[Product])": {
-    "sql": "SELECT COUNT(\"product\".\"Product\") AS \"Count of Product\" FROM \"Product\" AS \"product\"",
-    "confidence": 0.65,
+    "sql": "COUNT(product.\"Product\")",
+    "confidence": 0.55,
     "is_valid": true,
-    "timestamp": "2026-03-14T20:57:07.184873"
+    "timestamp": "2026-03-17T11:46:32.118486"
+  },
+  "salesfact::TOTALYTD([TOTAL UNITS], 'Date'[Date])": {
+    "sql": "SUM(salesfact.\"TOTAL_UNITS\") OVER (PARTITION BY YEAR(salesfact.\"SALES_DATE\") ORDER BY salesfact.\"SALES_DATE\" ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:24:44.759017"
+  },
+  "salesfact::CALCULATE([Total Units], FILTER(ALL(Product[isVanArsdel]), Product[isVanArsdel]=\"No\"))": {
+    "sql": "SUM(CASE WHEN salesfact.\"isVanArsdel\" = 'No' THEN salesfact.\"Units\" END)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:26:23.776653"
+  },
+  "salesfact::CALCULATE([Total Units])": {
+    "sql": "SUM(salesfact.\"Units\")",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:26:58.049582"
+  },
+  "salesfact::CALCULATE([Total VanArsdel Units YTD], SAMEPERIODLASTYEAR('Date'[Date]))": {
+    "sql": "SUM(CASE WHEN salesfact.\"Company\" = 'VanArsdel' AND salesfact.\"Date\" >= DATE_FROM_PARTS(YEAR(MAX(salesfact.\"Date\")) - 1, 1, 1) AND salesfact.\"Date\" <= ADD_YEARS(MAX(salesfact.\"Date\"), -1) THEN salesfact.\"Units\" END)",
+    "confidence": 0.3,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:29:29.162542"
+  },
+  "product::COUNTBLANK('Product'[Product])": {
+    "sql": "COUNT(CASE WHEN product.PRODUCT IS NULL OR product.PRODUCT = '' THEN 1 END)",
+    "confidence": 0.55,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:39:45.982587"
   },
   "salesfact::CALCULATE([Total Units YTD], FILTER(ALL(Product[isVanArsdel]), Product[isVanArsdel]=\"Yes\"))": {
-    "sql": "SELECT SUM(IFF(\"salesfact\".\"isVanArsdel\" = 'Yes' AND \"salesfact\".\"Date\" >= DATE_TRUNC('YEAR', CURRENT_DATE()) AND \"salesfact\".\"Date\" <= CURRENT_DATE(), COALESCE(\"salesfact\".\"Units\", 0), 0)) AS \"Total VanArsdel Units YTD\" FROM \"SalesFact\" AS \"salesfact\"",
-    "confidence": 0.75,
+    "sql": "SUM(CASE WHEN salesfact.IS_VAN_ARSDEL = 'Yes' THEN salesfact.UNITS ELSE 0 END)",
+    "confidence": 0.6,
     "is_valid": true,
-    "timestamp": "2026-03-14T20:57:34.124512"
+    "timestamp": "2026-03-17T12:40:07.903934"
   },
   "salesfact::CALCULATE([Total Units YTD], FILTER(ALL(Product[isVanArsdel]), Product[isVanArsdel]=\"No\"))": {
-    "sql": "SELECT\n    SUM(ZEROIFNULL(\"salesfact\".\"Units\")) AS \"Total OTHER Units YTD\"\nFROM \"SalesFact\" AS \"salesfact\"\nWHERE\n    \"salesfact\".\"isVanArsdel\" = 'No'\n    AND \"salesfact\".\"Date\" >= DATE_TRUNC('YEAR', CURRENT_DATE())\n    AND \"salesfact\".\"Date\" <= CURRENT_DATE()",
-    "confidence": 0.85,
+    "sql": "SUM(CASE WHEN salesfact.IS_VAN_ARSDEL = 'No' AND salesfact.ORDER_DATE >= DATE_TRUNC('year', CURRENT_DATE()) AND salesfact.ORDER_DATE <= CURRENT_DATE() THEN salesfact.AMOUNT ELSE 0 END)",
+    "confidence": 0.6,
     "is_valid": true,
-    "timestamp": "2026-03-14T20:57:50.506864"
+    "timestamp": "2026-03-17T12:40:35.955158"
   },
   "salesfact::CALCULATE([Total Units], FILTER(ALL(Product[isVanArsdel]), Product[isVanArsdel]=\"Yes\"))": {
-    "sql": "SELECT\n    SUM(CASE WHEN \"salesfact\".\"isVanArsdel\" = 'Yes' THEN \"salesfact\".\"Units\" ELSE 0 END) AS \"Total VanArsdel Units\"\nFROM\n    \"SalesFact\" AS \"salesfact\";",
-    "confidence": 0.75,
+    "sql": "SUM(CASE WHEN salesfact.IS_VANARSDEL = 'Yes' THEN salesfact.UNITS ELSE 0 END)",
+    "confidence": 0.6,
     "is_valid": true,
-    "timestamp": "2026-03-14T20:58:02.465040"
+    "timestamp": "2026-03-17T12:40:53.361873"
+  },
+  "salesfact::IF([Total VanArsdel Units]=0, 0, DIVIDE([Total VanArsdel Units], [Total Units], 0))": {
+    "sql": "CASE WHEN SUM(salesfact.AMOUNT) = 0 THEN 0 ELSE 1 END",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:41:27.799824"
+  },
+  "salesfact::CALCULATE([Total Units], FILTER('Product', Product[isVanArsdel]=\"No\"))": {
+    "sql": "SUM(CASE WHEN salesfact.IS_VAN_ARSDEL = 'No' THEN salesfact.UNIT_COUNT ELSE 0 END)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:41:45.935641"
+  },
+  "salesfact::INT(DIVIDE([Total Compete Volume], [Total Category Volume])*100)": {
+    "sql": "CAST((SUM(salesfact.COMPETE_VOLUME) / SUM(salesfact.CATEGORY_VOLUME)) * 100 AS INTEGER)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:42:03.602425"
+  },
+  "salesfact::CALCULATE([TOTAL UNITS],SAMEPERIODLASTYEAR('Date'[Date]))": {
+    "sql": "SUM(salesfact.AMOUNT)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:42:25.658236"
+  },
+  "salesfact::CALCULATE([Total Units YTD], SAMEPERIODLASTYEAR('Date'[Date]))": {
+    "sql": "SUM(salesfact.UNITS)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:53:42.827106"
+  },
+  "salesfact::CALCULATE([Total OTHER Units YTD], SAMEPERIODLASTYEAR('Date'[Date]))": {
+    "sql": "SUM(salesfact.AMOUNT)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:54:05.424948"
+  },
+  "salesfact::DIVIDE([Total VanArsdel Units YTD], [Total Units YTD])": {
+    "sql": "SUM(CASE WHEN salesfact.BRAND_NAME = 'VanArsdel' THEN salesfact.UNITS ELSE 0 END) / NULLIF(SUM(salesfact.UNITS), 0)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:54:24.577832"
+  },
+  "salesfact::CALCULATE([% Units Market Share YTD], SAMEPERIODLASTYEAR('Date'[Date]))": {
+    "sql": "SUM(salesfact.AMOUNT)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:54:42.496433"
+  },
+  "salesfact::[% Units Market Share]-[% Units Market Share SPLY]": {
+    "sql": "SUM(salesfact.UNITS_MARKET_SHARE - salesfact.UNITS_MARKET_SHARE_SPLY)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:55:12.194567"
+  },
+  "salesfact::CALCULATE([% Units Market Share], SAMEPERIODLASTYEAR('Date'[Date]))": {
+    "sql": "SUM(salesfact.AMOUNT)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:55:35.949497"
+  },
+  "salesfact::CALCULATE(SUM([Units]), FILTER(ALL('Date'), 'Date'[MonthIndex]<=MAX('Date'[MonthIndex])&& 'Date'[Mon": {
+    "sql": "SUM(CASE WHEN salesfact.MONTH_INDEX <= MAX(salesfact.MONTH_INDEX) AND salesfact.MONTH_INDEX > MAX(salesfact.MONTH_INDEX) - 12 THEN salesfact.UNITS ELSE 0 END)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:56:08.817730"
+  },
+  "salesfact::CALCULATE([Total Units R12Ms], FILTER(ALL(Product[isVanArsdel]), Product[isVanArsdel]=\"Yes\"))": {
+    "sql": "SUM(CASE WHEN salesfact.IS_VANARSDEL = 'Yes' THEN salesfact.UNITS ELSE 0 END)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:56:28.805839"
+  },
+  "salesfact::CALCULATE([Total Units R12Ms], FILTER(ALL(Product[isVanArsdel]), Product[isVanArsdel]=\"No\"))": {
+    "sql": "SUM(CASE WHEN salesfact.IS_VANARSDEL = 'No' THEN salesfact.UNITS ELSE 0 END)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:56:51.519970"
+  },
+  "salesfact::IF([Total VanArsdel Units R12M]=0, 0, DIVIDE([Total VanArsdel Units R12M], [Total Units R12Ms], 0))": {
+    "sql": "CASE WHEN SUM(CASE WHEN salesfact.BRAND_NAME = 'VanArsdel' THEN salesfact.UNITS_SOLD ELSE 0 END) = 0 THEN 0 WHEN SUM(salesfact.UNITS_SOLD) = 0 THEN 0 ELSE SUM(CASE WHEN salesfact.BRAND_NAME = 'VanArsdel' THEN salesfact.UNITS_SOLD ELSE 0 END) / SUM(salesfact.UNITS_SOLD) END",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:57:14.458699"
+  },
+  "salesfact::IF(ISBLANK(CALCULATE([Sentiment], Manufacturer[MfgisVanArsdel]=\"No\"))||ISBLANK(CALCULATE([Sentiment]": {
+    "sql": "SUM(salesfact.SENTIMENT)",
+    "confidence": 0.5,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:58:12.651350"
+  },
+  "salesfact::[Total Units YTD]-[Total Units YTD SPLY]": {
+    "sql": "SUM(salesfact.TOTAL_UNITS_YTD)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:58:58.822103"
+  },
+  "salesfact::DIVIDE([Total Units YTD Var],[TOTAL UNITS SPLY])": {
+    "sql": "SUM(salesfact.TOTAL_UNITS_YTD_VAR)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T12:59:45.109549"
+  },
+  "salesfact::IF('SalesFact'[% Category Compete Share]<0.55,1,IF('SalesFact'[% Category Compete Share]>0.6,3,2))": {
+    "sql": "SUM(salesfact.__CATEGORY_COMPETE_SHARE)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T13:00:31.454011"
+  },
+  "salesfact::IF('SalesFact'[% Unit Market Share YOY Change]<0,1,IF('SalesFact'[% Unit Market Share YOY Change]>.2": {
+    "sql": "SUM(salesfact.__UNIT_MARKET_SHARE_YOY_CHANGE)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T13:01:17.663083"
+  },
+  "salesfact::IF('SalesFact'[Total Units YTD Var %]<0,1,IF('SalesFact'[Total Units YTD Var %]>0.1,3,2))": {
+    "sql": "SUM(salesfact.TOTAL_UNITS_YTD_VAR__)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T13:02:50.433172"
+  },
+  "salesfact::IF('SalesFact'[Sentiment]<65,1,IF('SalesFact'[Sentiment]>67,3,2))": {
+    "sql": "SUM(salesfact.SENTIMENT)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T13:03:36.926255"
+  },
+  "salesfact::IF('SalesFact'[Sentiment Gap]<15,1,IF('SalesFact'[Sentiment Gap]>25,3,2))": {
+    "sql": "SUM(salesfact.SENTIMENT_GAP)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T13:04:23.237926"
+  },
+  "salesfact::IF('SalesFact'[@Indicator04]=1,\"Low Sentiment Rate\",IF('SalesFact'[@Indicator04]=3,\"High Sentiment R": {
+    "sql": "SUM(salesfact._INDICATOR04)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T13:05:09.812932"
+  },
+  "salesfact::IF('SalesFact'[@Indicator05]=1,\"Low Sentiment Gap\",IF('SalesFact'[@Indicator05]=3,\"High Sentiment Ga": {
+    "sql": "SUM(salesfact._INDICATOR05)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T13:05:56.194260"
+  },
+  "salesfact::INT(DIVIDE([Total Units YTD Var],[TOTAL UNITS SPLY])*100)": {
+    "sql": "SUM(salesfact.TOTAL_UNITS_YTD_VAR)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T13:06:42.554479"
+  },
+  "kpi::IF(SUM('KPI'[KPI])=1,CONCATENATE(LEFT([Total Units YTD Var %2],3),(\" % ROI (Return on Investment)\"))": {
+    "sql": "SUM(kpi.KPI)",
+    "confidence": 0.5,
+    "is_valid": true,
+    "timestamp": "2026-03-17T13:07:28.831183"
+  },
+  "kpi::IF(SUM('KPI'[KPI])=1,(CALCULATE([Total Category Volume],'Date'[Running Year]=1)),IF(SUM('KPI'[KPI])=": {
+    "sql": "SUM(kpi.KPI)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T13:08:15.242366"
+  },
+  "salesfact::\"\"": {
+    "sql": "SUM(salesfact.AMOUNT)",
+    "confidence": 0.6,
+    "is_valid": true,
+    "timestamp": "2026-03-17T16:08:24.469089"
   }
 }

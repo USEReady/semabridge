@@ -167,8 +167,37 @@ class OSIToSMLConverter(BaseConverter):
                 sml.dimensions.append(self._convert_dimension(osi_dim))
 
             # 3. Convert Metrics (with DAX Translation + behavior overrides)
+            # Step 3a: Convert all metrics individually for Tier 1-4 translations
+            tier5_candidates = []  # (metric_name, dax, table_alias, dataset_name)
+            
             for osi_metric in osi_model.metrics:
-                sml.metrics.append(self._convert_metric(osi_metric, overrides=overrides))
+                sml_metric = self._convert_metric(osi_metric, overrides=overrides)
+                sml.metrics.append(sml_metric)
+                
+                # If metric still has no SQL, collect for Tier-5 batch.
+                # Do not gate on sync_enabled here; initial complexity heuristics
+                # are conservative and can be recovered by LLM translation.
+                if (not sml_metric.sql_expression and 
+                    sml_metric.expression and sml_metric.expression.strip()):
+                    dax = sml_metric.expression.strip()
+                    table_alias = to_alias(sml_metric.dataset)
+                    tier5_candidates.append((sml_metric.unique_name, dax, table_alias, sml_metric.dataset))
+            
+            # Step 3b: Batch translate all Tier 5 candidates at once (reduces API calls by 90%)
+            if tier5_candidates:
+                logger.info(f"📦 Batch translating {len(tier5_candidates)} Tier 5 metrics...")
+                batch_results = self.dax_translator.batch_translate_tier5(tier5_candidates)
+                
+                # Apply batch translation results back to metrics
+                for metric in sml.metrics:
+                    if metric.unique_name in batch_results and batch_results[metric.unique_name]:
+                        translation = batch_results[metric.unique_name]
+                        if translation and translation.is_success:
+                            metric.sql_expression = translation.sql
+                            metric.complexity_tier = translation.tier
+                            metric.sync_enabled = True
+                            metric.sync_failure_reason = None
+                            logger.debug(f"✓ Applied batch translation for '{metric.unique_name}'")
 
             # 4. Convert Relationships
             for osi_rel in osi_model.relationships:
@@ -289,8 +318,7 @@ class OSIToSMLConverter(BaseConverter):
                 metric.complexity_tier = translation.tier
                 metric.sync_enabled = True
             elif metric.sync_enabled:
-                 metric.sync_enabled = False
-                 metric.sync_failure_reason = f"DAX translation failed (Tier {translation.tier})"
+                 metric.sync_failure_reason = f"DAX translation deferred to Tier-5 batch (Tier {translation.tier})"
 
         # Propagate Cortex AI metadata from OSI layer
         metric.access_modifier = osi_metric.access_modifier

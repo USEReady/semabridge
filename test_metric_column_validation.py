@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+"""
+Tests for metric column reference validation in SnowflakeEmitter.
+
+This test suite verifies that:
+1. Invalid column references are caught and skipped
+2. Valid column references pass validation
+3. Error messages are clear and helpful
+4. Column name case sensitivity is handled correctly
+5. Cross-table references are properly validated
+"""
+
+import sys
+import pytest
+from pathlib import Path
+
+# Add src to path
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+
+from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+from semabridge.core.settings import SnowflakeConfig
+from semabridge.core.behavior import ConnectorBehavior
+from unittest.mock import MagicMock
+
+
+class TestMetricColumnValidation:
+    """Test metric SQL column reference validation."""
+    
+    @pytest.fixture
+    def emitter(self):
+        """Create a SnowflakeEmitter instance for testing."""
+        config = SnowflakeConfig(
+            account="test.local",
+            user="test_user",
+            password="test_password",  # noqa: S106
+            warehouse="test_wh",
+            database="test_db",
+            schema_name="test_schema",
+            role="test_role"
+        )
+        behavior = ConnectorBehavior()
+        return SnowflakeEmitter(config, behavior)
+    
+    def test_valid_single_table_column_reference(self, emitter):
+        """Test that simple single-table column references pass validation."""
+        metric_sql = 'SUM(sf."REVENUE")'
+        metric_name = "total_revenue"
+        dataset_col_lookup = {
+            "salesfact": {"REVENUE", "UNITS", "DATE_ID"},
+        }
+        dataset_aliases = {"salesfact": "sf"}
+        
+        is_valid, error = emitter._validate_metric_column_references(
+            metric_sql, metric_name, dataset_col_lookup, dataset_aliases
+        )
+        
+        assert is_valid is True
+        assert error is None
+    
+    def test_invalid_column_not_in_dataset(self, emitter):
+        """Test that references to non-existent columns are caught."""
+        metric_sql = 'SUM(sf."INVALID_COL")'
+        metric_name = "bad_metric"
+        dataset_col_lookup = {
+            "salesfact": {"REVENUE", "UNITS", "DATE_ID"},
+        }
+        dataset_aliases = {"salesfact": "sf"}
+        
+        is_valid, error = emitter._validate_metric_column_references(
+            metric_sql, metric_name, dataset_col_lookup, dataset_aliases
+        )
+        
+        assert is_valid is False
+        assert error is not None
+        assert "INVALID_COL" in error
+        assert "not found" in error.lower()
+    
+    def test_valid_cross_table_reference(self, emitter):
+        """Test that valid cross-table references pass validation."""
+        metric_sql = 'SUM(sf."REVENUE") / NULLIF(COUNT(DISTINCT d."DATE_ID"), 0)'
+        metric_name = "revenue_per_date"
+        dataset_col_lookup = {
+            "salesfact": {"REVENUE", "UNITS", "DATE_ID"},
+            "date": {"DATE_ID", "YEAR", "MONTH"},
+        }
+        dataset_aliases = {
+            "salesfact": "sf",
+            "date": "d",
+        }
+        
+        is_valid, error = emitter._validate_metric_column_references(
+            metric_sql, metric_name, dataset_col_lookup, dataset_aliases
+        )
+        
+        assert is_valid is True
+        assert error is None
+    
+    def test_invalid_cross_table_wrong_column_in_target_table(self, emitter):
+        """Test that column mismatch across tables is caught."""
+        metric_sql = 'SUM(sf."REVENUE") / NULLIF(COUNT(DISTINCT d."REVENUE"), 0)'
+        metric_name = "bad_cross_table"
+        dataset_col_lookup = {
+            "salesfact": {"REVENUE", "UNITS", "DATE_ID"},
+            "date": {"DATE_ID", "YEAR", "MONTH"},
+        }
+        dataset_aliases = {
+            "salesfact": "sf",
+            "date": "d",
+        }
+        
+        is_valid, error = emitter._validate_metric_column_references(
+            metric_sql, metric_name, dataset_col_lookup, dataset_aliases
+        )
+        
+        assert is_valid is False
+        assert error is not None
+        assert "REVENUE" in error
+        assert "not found" in error.lower()
+    
+    def test_unknown_alias_in_reference(self, emitter):
+        """Test that unknown aliases are caught."""
+        metric_sql = 'SUM(unknown."REVENUE")'
+        metric_name = "unknown_alias_metric"
+        dataset_col_lookup = {
+            "salesfact": {"REVENUE", "UNITS", "DATE_ID"},
+        }
+        dataset_aliases = {"salesfact": "sf"}
+        
+        is_valid, error = emitter._validate_metric_column_references(
+            metric_sql, metric_name, dataset_col_lookup, dataset_aliases
+        )
+        
+        assert is_valid is False
+        assert error is not None
+        assert "unknown" in error.lower()
+    
+    def test_no_table_reference_simple_aggregation(self, emitter):
+        """Test that simple aggregations without table refs pass."""
+        metric_sql = 'SUM(some_column)'  # No TABLE.COLUMN reference
+        metric_name = "simple"
+        dataset_col_lookup = {
+            "salesfact": {"REVENUE", "UNITS", "DATE_ID"},
+        }
+        dataset_aliases = {"salesfact": "sf"}
+        
+        is_valid, error = emitter._validate_metric_column_references(
+            metric_sql, metric_name, dataset_col_lookup, dataset_aliases
+        )
+        
+        # Should pass because there are no TABLE.COLUMN refs to validate
+        assert is_valid is True
+        assert error is None
+    
+    def test_multiple_valid_references(self, emitter):
+        """Test multiple valid column references in one metric."""
+        metric_sql = 'AVG(sf."PRICE" * sf."QUANTITY") / NULLIF(COUNT(sf."UNITS"), 0)'
+        metric_name = "complex_metric"
+        dataset_col_lookup = {
+            "salesfact": {"REVENUE", "PRICE", "QUANTITY", "UNITS", "DATE_ID"},
+        }
+        dataset_aliases = {"salesfact": "sf"}
+        
+        is_valid, error = emitter._validate_metric_column_references(
+            metric_sql, metric_name, dataset_col_lookup, dataset_aliases
+        )
+        
+        assert is_valid is True
+        assert error is None
+    
+    def test_mixed_valid_invalid_references(self, emitter):
+        """Test that one invalid ref causes entire validation to fail."""
+        metric_sql = 'SUM(sf."REVENUE") + COUNT(sf."NONEXISTENT")'
+        metric_name = "mixed_metric"
+        dataset_col_lookup = {
+            "salesfact": {"REVENUE", "UNITS", "DATE_ID"},
+        }
+        dataset_aliases = {"salesfact": "sf"}
+        
+        is_valid, error = emitter._validate_metric_column_references(
+            metric_sql, metric_name, dataset_col_lookup, dataset_aliases
+        )
+        
+        assert is_valid is False
+        assert error is not None
+        assert "NONEXISTENT" in error
+    
+    
+    def test_empty_column_lookup(self, emitter):
+        """Test handling of empty column lookup (no columns known)."""
+        metric_sql = 'SUM(sf."REVENUE")'
+        metric_name = "no_columns_metric"
+        dataset_col_lookup = {
+            "salesfact": set(),  # Empty set
+        }
+        dataset_aliases = {"salesfact": "sf"}
+        
+        is_valid, error = emitter._validate_metric_column_references(
+            metric_sql, metric_name, dataset_col_lookup, dataset_aliases
+        )
+        
+        assert is_valid is False
+        assert error is not None
+
+
+class TestBuildSchemaValidationMap:
+    """Test schema map building from SML model."""
+    
+    @pytest.fixture
+    def emitter(self):
+        """Create a SnowflakeEmitter instance for testing."""
+        config = SnowflakeConfig(
+            account="test.local",
+            user="test_user",
+            password="test_password",  # noqa: S106
+            warehouse="test_wh",
+            database="test_db",
+            schema_name="test_schema",
+            role="test_role"
+        )
+        behavior = ConnectorBehavior()
+        return SnowflakeEmitter(config, behavior)
+    
+    def test_build_schema_map_basic(self, emitter):
+        """Test basic schema map building."""
+        # Create mock SML model
+        from semabridge.formats.sml.models import SMLModel, SMLDataset, SMLDimension, SMLColumn
+        
+        col1 = MagicMock()
+        col1.unique_name = "revenue"
+        col1.source_expression = None
+        
+        col2 = MagicMock()
+        col2.unique_name = "units"
+        col2.source_expression = None
+        
+        ds = MagicMock()
+        ds.unique_name = "salesfact"
+        ds.columns = [col1, col2]
+        
+        sml = MagicMock()
+        sml.datasets = [ds]
+        
+        schema_map = emitter._build_schema_validation_map(sml)
+        
+        assert "salesfact" in schema_map
+        assert "REVENUE" in schema_map["salesfact"]
+        assert "UNITS" in schema_map["salesfact"]
+    
+    def test_build_schema_map_excludes_calculated_columns(self, emitter):
+        """Test that calculated columns are excluded from schema map."""
+        # Create mock SML
+        col1 = MagicMock()
+        col1.unique_name = "revenue"
+        col1.source_expression = None
+        
+        col2 = MagicMock()
+        col2.unique_name = "calculated_metric"
+        col2.source_expression = "[revenue] * 2"  # Calculated
+        
+        ds = MagicMock()
+        ds.unique_name = "salesfact"
+        ds.columns = [col1, col2]
+        
+        sml = MagicMock()
+        sml.datasets = [ds]
+        
+        schema_map = emitter._build_schema_validation_map(sml)
+        
+        # Calculated column should not be in map
+        assert "REVENUE" in schema_map["salesfact"]
+        assert len(schema_map["salesfact"]) == 1  # Only revenue
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v", "-s"])
