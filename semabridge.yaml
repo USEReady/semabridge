@@ -1,19 +1,19 @@
-project_name: "qqqqq"
+project_name: SAA
 source:
   type: fabric
-  workspace_id: "semabridge-local"
-  workspace: "SemaBridge Workspace"
+  workspace_id: semabridge-local
+  workspace: SemaBridge Workspace
   models:
-    - "continent"
+    - Employee
 target:
   type: snowflake
 ui:
-  output_format: "osi"
-  editor_mode: "yaml"
+  output_format: osi
+  editor_mode: yaml
 selection:
   model_ids:
-    - "d32e8900-31cc-4647-872d-08a7e62bf03b"
+    - c7004446-7db0-42fc-b6c9-a213f969e515
 options:
   auto_relationships: true
-  include_hidden_fields: true
+  include_hidden_fields: false
   generate_descriptions: true

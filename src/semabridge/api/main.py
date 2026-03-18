@@ -1340,80 +1340,70 @@ def _check_inline_secrets(data: Any, path: str, errors: list) -> None:
 @app.post("/api/config/generate")
 async def generate_config(payload: Dict[str, Any]):
     """
-    Generate full SemaBridge YAML configuration
-    based on selected models.
+    Generate semabridge.yaml configuration based on selected models.
+    Output intentionally follows the same schema used by the project config UI.
     """
     try:
         settings = get_settings()
         selected_models: List[str] = payload.get("models", [])
+        model_ids: List[str] = payload.get("modelIds", [])
         source_type: str = payload.get("sourceType", "fabric")
         target_type: str = payload.get("targetType", "snowflake")
         pbix_folder: str = str(payload.get("pbixFolder", "") or "").strip()
 
-        # Default model_name logic
-        if selected_models:
-            # Clean up extension for model name
-            model_name = selected_models[0].replace(".yaml", "").replace(".yml", "").replace(".json", "")
-        else:
-            model_name = settings.model.name
+        # If modelIds were not provided explicitly, infer UUID-like values from model list.
+        if not model_ids and selected_models:
+            uuid_like = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+            model_ids = [m for m in selected_models if isinstance(m, str) and uuid_like.match(m.strip())]
 
-        lines: List[str] = [
-            "# Generated SemaBridge Configuration",
-            "# Use 'Generate from Selection' after picking models in the Source Browser",
-            "",
-            "# Required: Source connector configuration",
-            "source:",
-            f"  type: {source_type}",
-        ]
+        project_name = str(payload.get("projectName") or settings.model.name or "semabridge-project").strip()
+        workspace_name = str(payload.get("workspaceName") or "SemaBridge Workspace").strip()
+
+        source_cfg: Dict[str, Any] = {
+            "type": source_type,
+        }
 
         if source_type == "fabric":
-             workspace_id = settings.fabric.workspace_id
-             lines.append(f'  workspace_id: "{workspace_id}"')
+            source_cfg["workspace_id"] = settings.fabric.workspace_id or ""
+            source_cfg["workspace"] = workspace_name
         elif source_type == "snowflake":
-             lines.append(f'  database: "{settings.snowflake.database}"')
-             lines.append(f'  schema: "{settings.snowflake.schema_name}"')
+            source_cfg["database"] = settings.snowflake.database or ""
+            source_cfg["schema"] = settings.snowflake.schema_name or "PUBLIC"
         elif source_type == "pbix":
-             local_models_path = pbix_folder or str(_resolve_models_path())
-             safe_pbix_folder = local_models_path.replace("\\", "/")
-             lines.append(f'  pbix_folder: "{safe_pbix_folder}"')
+            local_models_path = pbix_folder or str(_resolve_models_path())
+            source_cfg["pbix_folder"] = local_models_path.replace("\\", "/")
 
-        # Models block
         if selected_models:
-            lines.append("  models:")
-            for model in selected_models:
-                lines.append(f'    - "{model}"')
+            source_cfg["models"] = selected_models
         else:
-            lines.append('  model: "*"')
+            source_cfg["model"] = "*"
 
-        # Target block
-        lines.extend([
-            "",
-            "# Optional: Target connector configuration",
-            "target:",
-            f"  type: {target_type}",
-            "  deploy: true  # Set to true to enable deployment",
-            "",
-            f'model_name: "{model_name}"',
-            '# Optional: Semantic model name (defaults to source.model if omitted)',
-            '# model_name: "continent"',
-            "",
-            "# Optional: Snapshot version to sync",
-            'version_tag: "v1.0"',
-            "",
-            "# Optional: Sync direction",
-            "# sync_direction: source_to_target",
-            "",
-            "# Optional: Logging configuration",
-            "logging:",
-            "  level: INFO",
-            "  format: text",
-            "",
-            "# Optional: Behavior policy path",
-            'policy_path: "policies/standard.yaml"',
-            ""
-        ])
+        config_doc: Dict[str, Any] = {
+            "project_name": project_name,
+            "source": source_cfg,
+            "target": {
+                "type": target_type,
+            },
+            "ui": {
+                "output_format": "osi",
+                "editor_mode": "yaml",
+            },
+            "options": {
+                "auto_relationships": True,
+                "include_hidden_fields": True,
+                "generate_descriptions": True,
+            },
+        }
 
-        yaml_content = "\n".join(lines)
+        if model_ids:
+            config_doc["selection"] = {"model_ids": model_ids}
+
+        yaml_content = yaml.safe_dump(
+            config_doc,
+            sort_keys=False,
+            allow_unicode=True,
+            default_flow_style=False,
+        )
 
         return {"content": yaml_content}
 
@@ -1623,11 +1613,20 @@ async def sync_models(payload: Dict[str, Any]):
         elif source_type in ("snowflake", "snowflake_semantic_view"):
             source_cfg = config.get("source", {})
             model_list = source_cfg.get("models") or []
-            # If no models list, try single model_name at top level
+            # If no models list, try single model fields
             if not model_list:
-                single = config.get("model_name") or source_cfg.get("view") or source_cfg.get("table")
+                single = (
+                    source_cfg.get("model")
+                    or config.get("model_name")
+                    or source_cfg.get("view")
+                    or source_cfg.get("table")
+                )
                 if single:
-                    model_list = [single]
+                    # Support comma-separated single field from UI/manual YAML.
+                    if isinstance(single, str) and "," in single:
+                        model_list = [part.strip() for part in single.split(",") if part.strip()]
+                    else:
+                        model_list = [single]
             if not model_list:
                 raise HTTPException(
                     status_code=400,
@@ -2267,7 +2266,10 @@ async def get_project_config_compat(project_id: str):
             "target": {"type": "snowflake"},
         })
         _compat_projects[project_id] = project
-    yaml_text = _compat_load_repo_yaml_text() or _compat_project_configs.get(project_id) or _compat_default_project_yaml(project)
+    # IMPORTANT: prefer per-project config first so "Copy Presets" can load
+    # different YAMLs for different projects. Fall back to repository file only
+    # when the project has no stored config.
+    yaml_text = _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(project)
     _compat_project_configs[project_id] = yaml_text
     return {"project_id": project_id, "config_yaml": yaml_text, "yaml_path": str(_compat_repo_yaml_path().resolve()).replace('\\\\', '/')}
 
@@ -2396,6 +2398,7 @@ async def run_project_now_compat(project_id: str):
     if project_id not in _compat_projects:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    started = _time.time()
     run_id = f"run-{int(_time.time() * 1000)}"
     run = {
         "run_id": run_id,
@@ -2408,6 +2411,37 @@ async def run_project_now_compat(project_id: str):
         "started_at": _compat_now_iso(),
     }
     _compat_project_runs.setdefault(project_id, []).insert(0, run)
+
+    project_cfg = _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(_compat_projects[project_id])
+
+    try:
+        sync_result = await sync_models({"content": project_cfg})
+        elapsed_ms = int((_time.time() - started) * 1000)
+        run["duration_ms"] = elapsed_ms
+
+        overall = str((sync_result or {}).get("status") or "").lower()
+        if overall == "success":
+            run["status"] = "success"
+        elif overall == "partial":
+            run["status"] = "warning"
+        else:
+            run["status"] = "failed"
+
+        run["summary"] = (sync_result or {}).get("summary") or {}
+        run["results"] = (sync_result or {}).get("results") or []
+        run["models_synced"] = int((sync_result or {}).get("models_synced") or 0)
+        run["total_models"] = int((sync_result or {}).get("total_models") or 0)
+    except HTTPException as exc:
+        elapsed_ms = int((_time.time() - started) * 1000)
+        run["duration_ms"] = elapsed_ms
+        run["status"] = "failed"
+        run["error"] = str(exc.detail)
+    except Exception as exc:
+        elapsed_ms = int((_time.time() - started) * 1000)
+        run["duration_ms"] = elapsed_ms
+        run["status"] = "failed"
+        run["error"] = str(exc)
+
     _compat_save_store()
     return run
 

@@ -8,6 +8,7 @@ import { yaml as yamlLang } from '@codemirror/lang-yaml';
 import GlobalConfigModal from '../components/projects/GlobalConfigModal';
 import SearchableSelect from '../components/common/SearchableSelect';
 import { useTheme } from '../context/ThemeProvider';
+import { useLogs } from '../context/LogsContext';
 import { api } from '../utils/api';
 
 const INPUT = {
@@ -27,11 +28,13 @@ export default function ProjectConfigPage() {
   const { id } = useParams();
   const [searchParams] = useSearchParams();
   const { theme } = useTheme();
+  const { addLog } = useLogs();
   const isInvalidProjectId = !id || id === 'null' || id === 'undefined';
   const yamlExtensions = useMemo(() => [yamlLang()], []);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [project, setProject] = useState(null);
   const [allProjects, setAllProjects] = useState([]);
   const [selectedPresetProjectId, setSelectedPresetProjectId] = useState(null);
@@ -101,6 +104,7 @@ export default function ProjectConfigPage() {
         setLoading(false);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, isInvalidProjectId, navigate]);
 
   const isLikelyBinaryOrGarbage = (text) => {
@@ -283,8 +287,11 @@ export default function ProjectConfigPage() {
       } else {
         setSaveInfo('Config saved. Project semabridge.yaml updated.');
       }
+      return true;
     } catch (err) {
       setSaveInfo(`Invalid semabridge.yaml format: ${err?.message || 'Unable to parse YAML'}`);
+      addLog('error', 'Project Config', `Save failed: ${err?.message || 'Invalid semabridge.yaml format'}`);
+      return false;
     } finally {
       setSaving(false);
     }
@@ -303,6 +310,11 @@ export default function ProjectConfigPage() {
       const next = cfg?.config_yaml || '';
       setYamlText(next);
       hydrateFormFromYaml(next, project);
+      // Show copied preset immediately in YAML workspace, like classic editor flow.
+      if (viewMode !== 'yaml') {
+        localStorage.setItem(`project_${id}_viewMode`, 'yaml');
+        setViewMode('yaml');
+      }
       setSaveInfo(`Preset copied from project ${selectedPreset?.name || fromProjectId}.`);
     } catch (err) {
       setSaveInfo(`Failed to load preset: ${err?.message || 'Unknown error'}`);
@@ -310,8 +322,35 @@ export default function ProjectConfigPage() {
   };
 
   const handleRunNow = async () => {
-    await handleSave();
-    await api.runProjectNow(id);
+    setSyncing(true);
+    try {
+      const saved = await handleSave();
+      if (!saved) {
+        addLog('error', 'Sync', 'Sync not started because config save/validation failed.');
+        return;
+      }
+
+      const run = await api.runProjectNow(id);
+      const status = String(run?.status || '').toLowerCase();
+
+      if (status === 'success') {
+        addLog('success', 'Sync', 'Sync completed successfully.');
+        setSaveInfo('Sync completed successfully.');
+      } else if (status === 'warning' || status === 'partial') {
+        addLog('warning', 'Sync', `Sync completed with warnings${run?.error ? `: ${run.error}` : ''}`);
+        setSaveInfo('Sync completed with warnings. Check logs for details.');
+      } else {
+        const msg = run?.error || 'Sync failed.';
+        addLog('error', 'Sync', msg);
+        setSaveInfo(`Sync failed: ${msg}`);
+      }
+    } catch (err) {
+      const msg = err?.message || 'Sync failed due to unexpected error.';
+      addLog('error', 'Sync', msg);
+      setSaveInfo(`Sync failed: ${msg}`);
+    } finally {
+      setSyncing(false);
+    }
   };
 
   const handleCreateJob = async () => {
@@ -414,7 +453,20 @@ export default function ProjectConfigPage() {
               <FormEditor value={configForm} onChange={setConfigForm} />
             ) : (
               <div style={{ padding: 12, height: '100%' }}>
-                <div style={{ height: '100%', border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg-input)' }}>
+                <div style={{ height: '100%', border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg-input)', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '8px 10px',
+                    borderBottom: '1px solid var(--border-main)',
+                    background: 'var(--bg-surface)',
+                    fontSize: 12,
+                    color: 'var(--text-secondary)',
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                  }}>
+                    <span style={{ color: 'var(--text-tertiary)' }}>YAML Workspace</span>
+                    <span style={{ color: 'var(--border-main)' }}>•</span>
+                    <span>semabridge.yaml</span>
+                  </div>
                   <CodeMirror
                     value={yamlText}
                     height="100%"
@@ -457,12 +509,12 @@ export default function ProjectConfigPage() {
         <button onClick={handleCreateJob} style={secondaryBtn}>
           <CalendarClock size={13} /> Create Job for Later
         </button>
-        <button onClick={handleSave} disabled={saving} style={secondaryBtn}>
+        <button onClick={handleSave} disabled={saving || syncing} style={secondaryBtn}>
           {saving ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Save size={13} />}
           Save Config
         </button>
-        <button onClick={handleRunNow} style={primaryBtn}>
-          <Play size={13} /> Sync Now
+        <button onClick={handleRunNow} disabled={saving || syncing} style={{ ...primaryBtn, opacity: (saving || syncing) ? 0.7 : 1, cursor: (saving || syncing) ? 'not-allowed' : 'pointer' }}>
+          {syncing ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={13} />} {syncing ? 'Syncing…' : 'Sync Now'}
         </button>
       </div>
 
