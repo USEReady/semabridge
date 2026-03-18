@@ -1,9 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Save, Play, CalendarClock, Settings2, FileCode2, SlidersHorizontal, Loader2 } from 'lucide-react';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import CodeMirror from '@uiw/react-codemirror';
+import { yaml as yamlLang } from '@codemirror/lang-yaml';
 
 import GlobalConfigModal from '../components/projects/GlobalConfigModal';
 import SearchableSelect from '../components/common/SearchableSelect';
+import { useTheme } from '../context/ThemeProvider';
 import { api } from '../utils/api';
 
 const INPUT = {
@@ -22,7 +26,9 @@ export default function ProjectConfigPage() {
   const navigate = useNavigate();
   const { id } = useParams();
   const [searchParams] = useSearchParams();
+  const { theme } = useTheme();
   const isInvalidProjectId = !id || id === 'null' || id === 'undefined';
+  const yamlExtensions = useMemo(() => [yamlLang()], []);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -31,6 +37,7 @@ export default function ProjectConfigPage() {
   const [selectedPresetProjectId, setSelectedPresetProjectId] = useState(null);
   const [yamlPath, setYamlPath] = useState('');
   const [saveInfo, setSaveInfo] = useState('');
+  const [configTree, setConfigTree] = useState({});
 
   const [viewMode, setViewMode] = useState('form'); // form | yaml
   const [yamlText, setYamlText] = useState('');
@@ -77,7 +84,17 @@ export default function ProjectConfigPage() {
         setYamlText(cfg?.config_yaml || '');
         setYamlPath(cfg?.yaml_path || '');
         setAllProjects(all.filter(x => String(x.id) !== String(id)));
-        hydrateFormFromYaml(cfg?.config_yaml || '', p);
+        try {
+          hydrateFormFromYaml(cfg?.config_yaml || '', p);
+        } catch (err) {
+          setConfigTree({});
+          setSaveInfo(`Invalid semabridge.yaml format loaded: ${err?.message || 'Unable to parse YAML'}`);
+          setConfigForm(prev => ({
+            ...prev,
+            source_type: p?.source || 'fabric',
+            target_type: p?.target_type || 'snowflake',
+          }));
+        }
       } catch {
         setProject(null);
       } finally {
@@ -86,100 +103,178 @@ export default function ProjectConfigPage() {
     })();
   }, [id, isInvalidProjectId, navigate]);
 
-  const hydrateFormFromYaml = (yaml, projectMeta) => {
-    const get = (re, fallback = '') => (yaml.match(re)?.[1] ?? fallback).trim();
-    const getBlock = (key) => yaml.match(new RegExp(`^${key}:\\s*$([\\s\\S]*?)(?=^\\S|\\Z)`, 'm'))?.[1] ?? '';
-    const getFromBlock = (block, key, fallback = '') => (
-      block.match(new RegExp(`^\\s{2}${key}:\\s*(.+)$`, 'm'))?.[1] ?? fallback
-    ).trim().replace(/["']/g, '');
-    const getListFromBlock = (block, key) => {
-      const listBlock = block.match(new RegExp(`^\\s{2}${key}:\\s*$([\\s\\S]*?)(?=^\\s{2}\\S|^\\S|\\Z)`, 'm'))?.[1] ?? '';
-      return listBlock
-        .split('\n')
-        .map(line => line.trim())
-        .filter(line => line.startsWith('-'))
-        .map(line => line.replace(/^[-\s]+/, '').replace(/["']/g, ''));
+  const isLikelyBinaryOrGarbage = (text) => {
+    const t = String(text || '').trim();
+    if (!t) return false;
+    if (t.startsWith('/9j/')) return true; // common JPEG base64 prefix
+    const hasYamlShape = /(^|\n)\s*[a-zA-Z_][\w.-]*\s*:/.test(t);
+    return !hasYamlShape && t.length > 300;
+  };
+
+  const normalizeTreeForYaml = (value) => {
+    if (Array.isArray(value)) return value.map(normalizeTreeForYaml);
+    if (value && typeof value === 'object') {
+      const out = {};
+      Object.entries(value).forEach(([k, v]) => {
+        if (v === undefined) return;
+        out[k] = normalizeTreeForYaml(v);
+      });
+      return out;
+    }
+    return value;
+  };
+
+  const parseProjectYaml = (yaml, projectMeta) => {
+    const raw = String(yaml || '').trim();
+    const fallbackTarget = ['fabric', 'snowflake'].includes(projectMeta?.target_type) ? projectMeta.target_type : 'snowflake';
+    const fallbackSource = projectMeta?.source || 'fabric';
+
+    if (!raw) {
+      return {
+        tree: {},
+        form: {
+          source_type: fallbackSource,
+          target_type: fallbackTarget,
+          output_format: 'osi',
+          workspace_id: '',
+          database: '',
+          schema: '',
+          target_database: '',
+          target_schema: '',
+          allow_models: '',
+          block_models: '',
+        },
+      };
+    }
+
+    if (isLikelyBinaryOrGarbage(raw)) {
+      throw new Error('Input is not valid semabridge.yaml content');
+    }
+
+    const parsed = parseYaml(raw);
+    const tree = parsed && typeof parsed === 'object' ? parsed : {};
+
+    const source = tree.source && typeof tree.source === 'object' ? tree.source : {};
+    const target = tree.target && typeof tree.target === 'object' ? tree.target : {};
+    const ui = tree.ui && typeof tree.ui === 'object' ? tree.ui : {};
+    const options = tree.options && typeof tree.options === 'object' ? tree.options : {};
+
+    const sourceModels = Array.isArray(source.models) ? source.models.map(v => String(v).trim()).filter(Boolean) : [];
+    const sourceModel = source.model ? String(source.model).trim() : '';
+    const allowModels = sourceModels.length
+      ? sourceModels
+      : (sourceModel && sourceModel !== '*' ? [sourceModel] : []);
+
+    const blockedModelsRaw = options.exclude_model;
+    const blockedModels = Array.isArray(blockedModelsRaw)
+      ? blockedModelsRaw.map(v => String(v).trim()).filter(Boolean)
+      : (blockedModelsRaw ? [String(blockedModelsRaw).trim()] : []);
+
+    return {
+      tree,
+      form: {
+        source_type: String(source.type || fallbackSource),
+        target_type: String(target.type || fallbackTarget),
+        output_format: String(ui.output_format || 'osi'),
+        workspace_id: String(source.workspace_id || ''),
+        database: String(source.database || ''),
+        schema: String(source.schema || ''),
+        target_database: String(target.database || ''),
+        target_schema: String(target.schema || ''),
+        allow_models: allowModels.join(', '),
+        block_models: blockedModels.join(', '),
+      },
     };
+  };
 
-    const sourceBlock = getBlock('source');
-    const targetBlock = getBlock('target');
-    const uiBlock = getBlock('ui');
-    const optionsBlock = getBlock('options');
-    const sourceModels = getListFromBlock(sourceBlock, 'models');
-    const sourceModel = getFromBlock(sourceBlock, 'model', get(/^\s*model:\s*(.+)$/m, '')).replace(/['"]/g, '');
-    const allowModelValue = sourceModels.length
-      ? sourceModels.join(', ')
-      : (sourceModel && sourceModel !== '*' ? sourceModel : '');
-    const legacyTarget = get(/^target_type:\s*(.+)$/m, projectMeta?.target_type || '').replace(/["']/g, '');
-    const targetConnector = getFromBlock(targetBlock, 'type', ['fabric', 'snowflake'].includes(legacyTarget) ? legacyTarget : 'snowflake');
-    const outputFormat = getFromBlock(uiBlock, 'output_format', ['fabric', 'snowflake'].includes(legacyTarget) ? 'osi' : (legacyTarget || 'osi'));
-
-    setConfigForm({
-      source_type: getFromBlock(sourceBlock, 'type', get(/^source_type:\s*(.+)$/m, projectMeta?.source || 'fabric')).replace(/["']/g, ''),
-      target_type: targetConnector,
-      output_format: outputFormat,
-      workspace_id: getFromBlock(sourceBlock, 'workspace_id', get(/^\s*workspace_id:\s*(.+)$/m, '')).replace(/["']/g, ''),
-      database: getFromBlock(sourceBlock, 'database', get(/^\s*database:\s*(.+)$/m, '')).replace(/["']/g, ''),
-      schema: getFromBlock(sourceBlock, 'schema', get(/^\s*schema:\s*(.+)$/m, '')).replace(/["']/g, ''),
-      target_database: getFromBlock(targetBlock, 'database', '').replace(/["']/g, ''),
-      target_schema: getFromBlock(targetBlock, 'schema', '').replace(/["']/g, ''),
-      allow_models: allowModelValue,
-      block_models: getListFromBlock(optionsBlock, 'exclude_model').join(', '),
-    });
+  const hydrateFormFromYaml = (yaml, projectMeta) => {
+    const parsed = parseProjectYaml(yaml, projectMeta);
+    setConfigTree(parsed.tree || {});
+    setConfigForm(parsed.form);
   };
 
   const buildYamlFromForm = () => {
     const allow = configForm.allow_models.split(',').map(s => s.trim()).filter(Boolean);
     const block = configForm.block_models.split(',').map(s => s.trim()).filter(Boolean);
 
-    const lines = [
-      `project_name: "${project?.name || ''}"`,
-    ];
-
-    lines.push('source:');
-    lines.push(`  type: ${configForm.source_type}`);
+    const nextTree = {
+      ...(configTree && typeof configTree === 'object' ? configTree : {}),
+      project_name: project?.name || '',
+      source: {
+        ...((configTree?.source && typeof configTree.source === 'object') ? configTree.source : {}),
+        type: configForm.source_type,
+      },
+      target: {
+        ...((configTree?.target && typeof configTree.target === 'object') ? configTree.target : {}),
+        type: configForm.target_type,
+      },
+      ui: {
+        ...((configTree?.ui && typeof configTree.ui === 'object') ? configTree.ui : {}),
+        output_format: configForm.output_format,
+      },
+      options: {
+        ...((configTree?.options && typeof configTree.options === 'object') ? configTree.options : {}),
+      },
+    };
 
     if (configForm.source_type === 'fabric') {
-      lines.push(`  workspace_id: "${configForm.workspace_id || ''}"`);
-    }
-    if (configForm.source_type === 'snowflake') {
-      lines.push(`  database: "${configForm.database || ''}"`);
-      lines.push(`  schema: "${configForm.schema || ''}"`);
+      nextTree.source.workspace_id = configForm.workspace_id || '';
+      delete nextTree.source.database;
+      delete nextTree.source.schema;
+    } else if (configForm.source_type === 'snowflake') {
+      nextTree.source.database = configForm.database || '';
+      nextTree.source.schema = configForm.schema || '';
+      delete nextTree.source.workspace_id;
+    } else {
+      delete nextTree.source.workspace_id;
+      delete nextTree.source.database;
+      delete nextTree.source.schema;
     }
 
     if (allow.length > 1) {
-      lines.push('  models:');
-      allow.forEach(v => lines.push(`    - "${v}"`));
-    } else if (allow.length === 1) {
-      lines.push(`  model: "${allow[0]}"`);
+      nextTree.source.models = allow;
+      delete nextTree.source.model;
     } else {
-      lines.push('  model: "*"');
+      nextTree.source.model = allow[0] || '*';
+      delete nextTree.source.models;
     }
 
-    lines.push('target:');
-    lines.push(`  type: ${configForm.target_type}`);
     if (configForm.target_type === 'snowflake') {
-      if (configForm.target_database) lines.push(`  database: "${configForm.target_database}"`);
-      if (configForm.target_schema) lines.push(`  schema: "${configForm.target_schema}"`);
+      if (configForm.target_database) nextTree.target.database = configForm.target_database;
+      else delete nextTree.target.database;
+      if (configForm.target_schema) nextTree.target.schema = configForm.target_schema;
+      else delete nextTree.target.schema;
+    } else {
+      delete nextTree.target.database;
+      delete nextTree.target.schema;
     }
 
-    lines.push('ui:');
-    lines.push(`  output_format: "${configForm.output_format}"`);
+    if (block.length) nextTree.options.exclude_model = block;
+    else delete nextTree.options.exclude_model;
 
-    if (block.length) {
-      lines.push('options:');
-      lines.push('  exclude_model:');
-      block.forEach(v => lines.push(`    - "${v}"`));
-    }
+    if (Object.keys(nextTree.options).length === 0) delete nextTree.options;
 
-    return lines.join('\n');
+    const normalized = normalizeTreeForYaml(nextTree);
+    return stringifyYaml(normalized, { lineWidth: 0 });
   };
 
   const handleSave = async () => {
     setSaving(true);
     setSaveInfo('');
     try {
-      const nextYaml = viewMode === 'yaml' ? yamlText : buildYamlFromForm();
+      let nextYaml = '';
+      if (viewMode === 'yaml') {
+        const parsed = parseProjectYaml(yamlText, project);
+        setConfigTree(parsed.tree || {});
+        setConfigForm(parsed.form);
+        nextYaml = stringifyYaml(normalizeTreeForYaml(parsed.tree || {}), { lineWidth: 0 });
+      } else {
+        nextYaml = buildYamlFromForm();
+        const parsed = parseProjectYaml(nextYaml, project);
+        setConfigTree(parsed.tree || {});
+        setConfigForm(parsed.form);
+      }
+
       const response = await api.saveProjectConfig(id, nextYaml);
       setYamlText(nextYaml);
       if (response?.yaml_path) setYamlPath(response.yaml_path);
@@ -188,6 +283,8 @@ export default function ProjectConfigPage() {
       } else {
         setSaveInfo('Config saved. Project semabridge.yaml updated.');
       }
+    } catch (err) {
+      setSaveInfo(`Invalid semabridge.yaml format: ${err?.message || 'Unable to parse YAML'}`);
     } finally {
       setSaving(false);
     }
@@ -226,9 +323,21 @@ export default function ProjectConfigPage() {
     if (nextMode === viewMode) return;
 
     if (nextMode === 'yaml') {
-      setYamlText(buildYamlFromForm());
+      const nextYaml = buildYamlFromForm();
+      setYamlText(nextYaml);
+      try {
+        const parsed = parseProjectYaml(nextYaml, project);
+        setConfigTree(parsed.tree || {});
+      } catch {
+        // no-op: form generated YAML should be valid, keep view switch resilient.
+      }
     } else {
-      hydrateFormFromYaml(yamlText, project);
+      try {
+        hydrateFormFromYaml(yamlText, project);
+      } catch (err) {
+        setSaveInfo(`Invalid semabridge.yaml format: ${err?.message || 'Unable to parse YAML'}`);
+        return;
+      }
     }
 
     localStorage.setItem(`project_${id}_viewMode`, nextMode);
@@ -305,17 +414,25 @@ export default function ProjectConfigPage() {
               <FormEditor value={configForm} onChange={setConfigForm} />
             ) : (
               <div style={{ padding: 12, height: '100%' }}>
-                <textarea
-                  value={yamlText}
-                  onChange={e => setYamlText(e.target.value)}
-                  style={{
-                    width: '100%', height: '100%', background: 'var(--bg-input)',
-                    color: 'var(--text-primary)', border: '1px solid var(--border-main)', borderRadius: 8,
-                    padding: 12, fontSize: 12, lineHeight: 1.5,
-                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                    outline: 'none', boxSizing: 'border-box',
-                  }}
-                />
+                <div style={{ height: '100%', border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg-input)' }}>
+                  <CodeMirror
+                    value={yamlText}
+                    height="100%"
+                    theme={theme === 'dark' ? 'dark' : 'light'}
+                    extensions={yamlExtensions}
+                    onChange={(val) => setYamlText(val)}
+                    basicSetup={{
+                      lineNumbers: true,
+                      foldGutter: true,
+                      dropCursor: true,
+                      allowMultipleSelections: true,
+                      indentOnInput: true,
+                      highlightActiveLine: true,
+                      scrollPastEnd: true,
+                    }}
+                    style={{ fontSize: 12, lineHeight: 1.5 }}
+                  />
+                </div>
               </div>
             )}
           </div>
