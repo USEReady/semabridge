@@ -21,6 +21,7 @@ Usage::
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -57,6 +58,9 @@ class ModelRepository:
             is used.
     """
 
+    _schema_init_lock = threading.Lock()
+    _schema_initialized_urls: set[str] = set()
+
     def __init__(self, url_override: Optional[str] = None) -> None:
         # When a url_override is given this instance owns its own engine.
         # When using the shared singleton, we delegate to db_manager on every
@@ -70,15 +74,7 @@ class ModelRepository:
             self._SessionLocal: sessionmaker[Session] = sessionmaker(
                 bind=self._engine, expire_on_commit=False
             )
-            try:
-                Base.metadata.create_all(self._engine)
-            except NotImplementedError as e:
-                # Snowflake doesn't support indexes on regular tables
-                # Skip index creation and continue
-                if "Snowflake" in str(e) or "index" in str(e).lower():
-                    logger.warning(f"Skipping index creation (not supported on this dialect): {e}")
-                else:
-                    raise
+            self._ensure_schema_initialized_once(self._engine)
         else:
             from semabridge.repository.orm.session_factory import db_manager as _dm
 
@@ -87,16 +83,49 @@ class ModelRepository:
             # any subsequent rotation events.
             engine = _dm.get_engine()
             self._engine = engine
+            self._ensure_schema_initialized_once(engine)
+            self._SessionLocal = _dm.get_session_factory()
+
+    @classmethod
+    def _ensure_schema_initialized_once(cls, engine: Any) -> None:
+        """Initialize ORM schema once per database URL.
+
+        Repeated create_all calls on DuckDB during concurrent requests can
+        trigger nested transaction errors. This guard keeps initialization
+        idempotent and process-safe.
+        """
+        if engine.dialect.name == "snowflake":
+            return
+
+        url_key = engine.url.render_as_string(hide_password=True)
+        if url_key in cls._schema_initialized_urls:
+            return
+
+        with cls._schema_init_lock:
+            if url_key in cls._schema_initialized_urls:
+                return
             try:
-                Base.metadata.create_all(engine)
+                with engine.begin() as conn:
+                    Base.metadata.create_all(bind=conn)
+                cls._schema_initialized_urls.add(url_key)
             except NotImplementedError as e:
-                # Snowflake doesn't support indexes on regular tables
-                # Skip index creation and continue
                 if "Snowflake" in str(e) or "index" in str(e).lower():
-                    logger.warning(f"Skipping index creation (not supported on this dialect): {e}")
+                    logger.warning(
+                        f"Skipping index creation (not supported on this dialect): {e}"
+                    )
+                    cls._schema_initialized_urls.add(url_key)
                 else:
                     raise
-            self._SessionLocal = _dm.get_session_factory()
+            except Exception as e:
+                # If schema check fails due a transient/aborted DuckDB transaction,
+                # avoid retrying on every request (which causes repeated 500 noise).
+                # Core tables are typically already present after initial bootstrap.
+                logger.warning(
+                    "Skipping repeated schema initialization for %s due to error: %s",
+                    url_key,
+                    e,
+                )
+                cls._schema_initialized_urls.add(url_key)
 
     # ------------------------------------------------------------------
     # Internal helpers

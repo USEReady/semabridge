@@ -1,32 +1,19 @@
-# Generated SemaBridge Configuration
-# Use 'Generate from Selection' after picking models in the Source Browser
-
-# Required: Source connector configuration
+project_name: "qqqqq"
 source:
   type: fabric
-  workspace_id: "d875c0c3-59e9-4d55-a7f0-99595b756718"
+  workspace_id: "semabridge-local"
+  workspace: "SemaBridge Workspace"
   models:
-    - "Competitive Marketing Analysis"
-
-# Optional: Target connector configuration
+    - "continent"
 target:
   type: snowflake
-  deploy: true  # Set to true to enable deployment
-
-model_name: "Competitive Marketing Analysis"
-# Optional: Semantic model name (defaults to source.model if omitted)
-# model_name: "continent"
-
-# Optional: Snapshot version to sync
-version_tag: "v1.0"
-
-# Optional: Sync direction
-# sync_direction: source_to_target
-
-# Optional: Logging configuration
-logging:
-  level: INFO
-  format: text
-
-# Optional: Behavior policy path
-policy_path: "policies/standard.yaml"
+ui:
+  output_format: "osi"
+  editor_mode: "yaml"
+selection:
+  model_ids:
+    - "d32e8900-31cc-4647-872d-08a7e62bf03b"
+options:
+  auto_relationships: true
+  include_hidden_fields: true
+  generate_descriptions: true

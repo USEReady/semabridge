@@ -26,5 +26,5 @@ options:
   global_exclude_models: []
 config_path: C:\Users\Premasai\Documents\workspace\demo\semabridge\config.yaml
 fabric:
-  workspace_id: 8bdf7f63-16ce-46f2-aeb1-921392b2abbb
-  workspace_name: My workspace
+  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
+  workspace_name: semabridge

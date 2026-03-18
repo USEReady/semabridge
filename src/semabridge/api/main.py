@@ -20,6 +20,7 @@ except ImportError:
     pass  # python-dotenv optional — env vars already set by the OS are used as-is
 
 from pathlib import Path
+from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException
@@ -584,6 +585,15 @@ async def discover_fabric_models():
             status_code=500,
             detail=f"Fabric discovery failed ({type(e).__name__}): {err_str}",
         )
+
+
+@app.get("/api/discovery/fabric/workspaces/{workspace_id}/models")
+async def discover_fabric_models_by_workspace(workspace_id: str):
+    """Compatibility route for workspace-scoped Fabric discovery."""
+    workspace_id = (workspace_id or "").strip()
+    if workspace_id:
+        os.environ["FABRIC_WORKSPACE_ID"] = workspace_id
+    return await discover_fabric_models()
 
 
 @app.get("/api/discovery/snowflake")
@@ -1896,6 +1906,725 @@ async def list_workspaces():
     except Exception as e:
         logger.warning(f"Failed to list workspaces: {e}")
         return [{"id": "default", "name": "Default Workspace"}]
+
+
+# -------------------------------------------------------
+# Compatibility endpoints (newfrontend)
+# -------------------------------------------------------
+
+_compat_projects: Dict[str, Dict[str, Any]] = {}
+_compat_project_configs: Dict[str, str] = {}
+_compat_project_runs: Dict[str, List[Dict[str, Any]]] = {}
+_compat_folders: Dict[str, Dict[str, Any]] = {}
+_compat_mappings: Dict[str, Dict[str, Any]] = {}
+_compat_job_config: Dict[str, Any] = {
+    "schedule_type": "Manual Trigger Only",
+    "cron": "0 0 * * *",
+    "timezone": "UTC",
+    "enabled": False,
+    "mode": "local",
+}
+_compat_store_loaded: bool = False
+
+
+def _compat_now_iso() -> str:
+    return datetime.utcnow().isoformat()
+
+
+def _compat_store_path() -> Path:
+    return Path(".semabridge_compat_store.json")
+
+
+def _compat_save_store() -> None:
+    payload = {
+        "projects": _compat_projects,
+        "project_configs": _compat_project_configs,
+        "project_runs": _compat_project_runs,
+        "folders": _compat_folders,
+        "mappings": _compat_mappings,
+        "job_config": _compat_job_config,
+    }
+    try:
+        _compat_store_path().write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Failed to persist compat store: %s", exc)
+
+
+def _compat_load_store() -> None:
+    global _compat_store_loaded
+    if _compat_store_loaded:
+        return
+
+    p = _compat_store_path()
+    if not p.exists():
+        _compat_store_loaded = True
+        return
+
+    try:
+        data = json.loads(p.read_text(encoding="utf-8")) or {}
+        if isinstance(data.get("projects"), dict):
+            _compat_projects.update(data.get("projects") or {})
+        if isinstance(data.get("project_configs"), dict):
+            _compat_project_configs.update(data.get("project_configs") or {})
+        if isinstance(data.get("project_runs"), dict):
+            _compat_project_runs.update(data.get("project_runs") or {})
+        if isinstance(data.get("folders"), dict):
+            _compat_folders.update(data.get("folders") or {})
+        if isinstance(data.get("mappings"), dict):
+            _compat_mappings.update(data.get("mappings") or {})
+        if isinstance(data.get("job_config"), dict):
+            _compat_job_config.update(data.get("job_config") or {})
+    except Exception as exc:
+        logger.warning("Failed to load compat store: %s", exc)
+    finally:
+        _compat_store_loaded = True
+
+
+def _compat_bootstrap_projects_from_orm() -> None:
+    """Seed compatibility project cache from persisted ORM projects when memory is empty."""
+    if _compat_projects:
+        return
+
+    try:
+        from semabridge.repository.orm.models import Project
+        from sqlalchemy import select
+
+        session = db_manager._session()
+        try:
+            rows = session.execute(
+                select(Project).order_by(Project.last_updated.desc().nullslast()).limit(500)
+            ).scalars().all()
+        finally:
+            session.close()
+
+        for row in rows:
+            pid = str(row.project_id or "").strip()
+            if not pid:
+                continue
+            project = {
+                "id": pid,
+                "project_id": pid,
+                "name": _compat_clean_project_name(row.name, f"Project {pid[-6:]}"),
+                "description": "",
+                "source": row.adapter or "fabric",
+                "adapter": row.adapter or "fabric",
+                "workspace_id": row.workspace_id or "",
+                "target_type": "snowflake",
+                "folder_id": None,
+                "status": "draft",
+                "created_at": _compat_now_iso(),
+                "updated_at": _compat_now_iso(),
+            }
+            _compat_projects[pid] = project
+            _compat_project_configs.setdefault(pid, _compat_load_repo_yaml_text() or _compat_default_project_yaml(project))
+            _compat_project_runs.setdefault(pid, [])
+    except Exception as exc:
+        logger.debug("ORM project bootstrap skipped: %s", exc)
+
+
+def _compat_bootstrap_project_from_repo_yaml() -> None:
+    """Ensure at least one visible project from root semabridge.yaml if present."""
+    if _compat_projects:
+        return
+
+    yaml_text = _compat_load_repo_yaml_text()
+    if not yaml_text:
+        return
+
+    try:
+        parsed = yaml.safe_load(yaml_text) or {}
+    except Exception:
+        parsed = {}
+
+    pname = _compat_clean_project_name(parsed.get("project_name"), "SemaBridge Project")
+    pid_hash = hashlib.sha1(pname.encode("utf-8")).hexdigest()[:12]
+    project_id = f"proj-{pid_hash}"
+
+    source_cfg = parsed.get("source") if isinstance(parsed.get("source"), dict) else {}
+    target_cfg = parsed.get("target") if isinstance(parsed.get("target"), dict) else {}
+
+    project = {
+        "id": project_id,
+        "project_id": project_id,
+        "name": pname,
+        "description": str(parsed.get("description") or ""),
+        "source": source_cfg.get("type") or "fabric",
+        "adapter": source_cfg.get("type") or "fabric",
+        "workspace_id": str(source_cfg.get("workspace_id") or ""),
+        "target_type": target_cfg.get("type") or "snowflake",
+        "folder_id": None,
+        "status": "draft",
+        "created_at": _compat_now_iso(),
+        "updated_at": _compat_now_iso(),
+    }
+    _compat_projects[project_id] = project
+    _compat_project_configs[project_id] = yaml_text
+    _compat_project_runs.setdefault(project_id, [])
+
+
+def _compat_ensure_loaded() -> None:
+    _compat_load_store()
+    _compat_bootstrap_projects_from_orm()
+    _compat_bootstrap_project_from_repo_yaml()
+
+
+def _compat_repo_yaml_path() -> Path:
+    return Path("semabridge.yaml")
+
+
+def _compat_load_repo_yaml_text() -> str:
+    try:
+        p = _compat_repo_yaml_path()
+        if p.exists():
+            text = p.read_text(encoding="utf-8")
+            if text.strip():
+                return text
+    except Exception:
+        pass
+    return ""
+
+
+def _compat_save_repo_yaml_text(yaml_text: str) -> None:
+    p = _compat_repo_yaml_path()
+    p.write_text(yaml_text, encoding="utf-8")
+
+
+def _compat_clean_project_name(raw: Any, fallback: str = "Untitled Project") -> str:
+    if isinstance(raw, str):
+        text = raw.strip()
+        if text and text.lower() != "[object object]":
+            return text
+    return fallback
+
+
+def _compat_project_payload(project_id: str, payload: dict) -> Dict[str, Any]:
+    source_obj = payload.get("source") if isinstance(payload.get("source"), dict) else {}
+    target_obj = payload.get("target") if isinstance(payload.get("target"), dict) else {}
+    project_name = _compat_clean_project_name(payload.get("name"), f"Project {project_id[-6:]}")
+    return {
+        "id": project_id,
+        "project_id": project_id,
+        "name": project_name,
+        "description": payload.get("description") or "",
+        "source": source_obj.get("type") or payload.get("source_type") or "fabric",
+        "adapter": source_obj.get("type") or payload.get("source_type") or "fabric",
+        "workspace_id": source_obj.get("workspace_id") or "",
+        "target_type": target_obj.get("type") or payload.get("target_type") or "snowflake",
+        "folder_id": payload.get("folder_id"),
+        "status": "draft",
+        "created_at": _compat_now_iso(),
+        "updated_at": _compat_now_iso(),
+    }
+
+
+def _compat_default_project_yaml(project: Dict[str, Any]) -> str:
+    name = _compat_clean_project_name(project.get("name"), "Untitled Project").replace('"', '\\"')
+    src = project.get("source") or "fabric"
+    target = project.get("target_type") or "snowflake"
+    lines = [
+        f'project_name: "{name}"',
+        "source:",
+        f"  type: {src}",
+    ]
+    workspace_id = project.get("workspace_id")
+    if workspace_id:
+        lines.append(f'  workspace_id: "{str(workspace_id).replace("\"", "\\\"")}"')
+    lines.extend([
+        '  model: "*"',
+        "target:",
+        f"  type: {target}",
+        "ui:",
+        '  output_format: "osi"',
+    ])
+    return "\n".join(lines)
+
+@app.get("/api/projects")
+async def list_projects_compat():
+    """Compatibility: newfrontend expects a projects collection."""
+    _compat_ensure_loaded()
+    deduped: Dict[str, Dict[str, Any]] = {}
+    for p in _compat_projects.values():
+        pid = str(p.get("id") or p.get("project_id") or "").strip()
+        if not pid:
+            continue
+        current = deduped.get(pid)
+        if not current:
+            deduped[pid] = p
+            continue
+        cur_ts = str(current.get("updated_at") or current.get("created_at") or "")
+        new_ts = str(p.get("updated_at") or p.get("created_at") or "")
+        if new_ts >= cur_ts:
+            deduped[pid] = p
+
+    return list(deduped.values())
+
+
+@app.post("/api/projects")
+async def create_project_compat(request: dict):
+    """Compatibility: create in-memory project for UI continuity."""
+    _compat_ensure_loaded()
+    payload = request or {}
+    payload_name = _compat_clean_project_name(payload.get("name"), "")
+    src = payload.get("source") if isinstance(payload.get("source"), dict) else {}
+    src_type = (src.get("type") or payload.get("source_type") or "fabric").strip().lower()
+    ws_id = str(src.get("workspace_id") or payload.get("workspace_id") or "").strip()
+
+    # Idempotency guard: if a project with same name/source/workspace already exists,
+    # return it instead of creating a duplicate entry.
+    if payload_name:
+        for existing in _compat_projects.values():
+            ex_name = _compat_clean_project_name(existing.get("name"), "")
+            ex_src = str(existing.get("source") or existing.get("adapter") or "").strip().lower()
+            ex_ws = str(existing.get("workspace_id") or "").strip()
+            if ex_name == payload_name and ex_src == src_type and ex_ws == ws_id:
+                existing["updated_at"] = _compat_now_iso()
+                _compat_projects[str(existing.get("id") or existing.get("project_id"))] = existing
+                return existing
+
+    project_id = str(payload.get("id") or payload.get("project_id") or f"proj-{int(_time.time() * 1000)}")
+    project = _compat_project_payload(project_id, payload)
+    _compat_projects[project_id] = project
+
+    config_yaml = payload.get("config_yaml")
+    if isinstance(config_yaml, str) and config_yaml.strip():
+        _compat_project_configs[project_id] = config_yaml
+        try:
+            _compat_save_repo_yaml_text(config_yaml)
+        except Exception as exc:
+            logger.warning("Failed to persist project config to semabridge.yaml: %s", exc)
+    else:
+        repo_yaml = _compat_load_repo_yaml_text()
+        _compat_project_configs.setdefault(project_id, repo_yaml or _compat_default_project_yaml(project))
+
+    _compat_project_runs.setdefault(project_id, [])
+    _compat_save_store()
+    return project
+
+
+@app.get("/api/projects/{project_id}")
+async def get_project_compat(project_id: str):
+    _compat_ensure_loaded()
+    project = _compat_projects.get(project_id)
+    if not project:
+        # Compatibility upsert for stale in-memory cache after reload.
+        project = _compat_project_payload(project_id, {
+            "id": project_id,
+            "name": f"Recovered {project_id}",
+            "source": {"type": "fabric"},
+            "target": {"type": "snowflake"},
+        })
+        _compat_projects[project_id] = project
+        _compat_save_store()
+    return project
+
+
+@app.patch("/api/projects/{project_id}")
+async def patch_project_compat(project_id: str, payload: dict):
+    _compat_ensure_loaded()
+    project = _compat_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    for key in ("name", "description", "folder_id", "status"):
+        if key in (payload or {}):
+            project[key] = payload.get(key)
+
+    if isinstance(payload.get("source"), dict):
+        project["source"] = payload["source"].get("type") or project.get("source")
+        project["adapter"] = project["source"]
+        if "workspace_id" in payload["source"]:
+            project["workspace_id"] = payload["source"].get("workspace_id")
+
+    if isinstance(payload.get("target"), dict):
+        project["target_type"] = payload["target"].get("type") or project.get("target_type")
+
+    project["updated_at"] = _compat_now_iso()
+    _compat_projects[project_id] = project
+    _compat_save_store()
+    return project
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project_compat(project_id: str):
+    _compat_ensure_loaded()
+    _compat_projects.pop(project_id, None)
+    _compat_project_configs.pop(project_id, None)
+    _compat_project_runs.pop(project_id, None)
+    _compat_save_store()
+    return Response(status_code=204)
+
+
+@app.get("/api/projects/{project_id}/config")
+async def get_project_config_compat(project_id: str):
+    _compat_ensure_loaded()
+    project = _compat_projects.get(project_id)
+    if not project:
+        # Compatibility upsert: keep UI editable even if project cache was reset.
+        project = _compat_project_payload(project_id, {
+            "id": project_id,
+            "name": f"Recovered {project_id}",
+            "source": {"type": "fabric"},
+            "target": {"type": "snowflake"},
+        })
+        _compat_projects[project_id] = project
+    yaml_text = _compat_load_repo_yaml_text() or _compat_project_configs.get(project_id) or _compat_default_project_yaml(project)
+    _compat_project_configs[project_id] = yaml_text
+    return {"project_id": project_id, "config_yaml": yaml_text, "yaml_path": str(_compat_repo_yaml_path().resolve()).replace('\\\\', '/')}
+
+
+@app.put("/api/projects/{project_id}/config")
+async def save_project_config_compat(project_id: str, payload: dict):
+    _compat_ensure_loaded()
+    project = _compat_projects.get(project_id)
+    if not project:
+        # Compatibility upsert: allow saving config even when only project_id is known.
+        project = _compat_project_payload(project_id, {
+            "id": project_id,
+            "name": f"Recovered {project_id}",
+            "source": {"type": "fabric"},
+            "target": {"type": "snowflake"},
+        })
+        _compat_projects[project_id] = project
+    yaml_text = str((payload or {}).get("config_yaml") or "").strip()
+    if not yaml_text:
+        raise HTTPException(status_code=400, detail="config_yaml is required")
+    _compat_project_configs[project_id] = yaml_text
+    try:
+        _compat_save_repo_yaml_text(yaml_text)
+    except Exception as exc:
+        logger.warning("Failed to persist project config to semabridge.yaml: %s", exc)
+    project["updated_at"] = _compat_now_iso()
+    _compat_save_store()
+    return {
+        "status": "saved",
+        "project_id": project_id,
+        "yaml_path": str(_compat_repo_yaml_path().resolve()).replace('\\\\', '/'),
+        "warnings": [],
+    }
+
+
+@app.get("/api/graph/{model_name}/snapshots")
+async def graph_snapshots_compat(model_name: str):
+    """Compatibility endpoint for Explore/TimeMachine history requests.
+    
+    Returns list of snapshots for a model ordered by timestamp (newest first).
+    Each snapshot includes: snapshot_id, timestamp, version_tag, status.
+    """
+    try:
+        snapshots = db_manager.list_snapshots(model_name, limit=100)
+        return [
+            {
+                "snapshot_id": s.snapshot_id,
+                "timestamp": s.timestamp,
+                "version_tag": s.version_tag or f"v{s.snapshot_id[:8]}",
+                "status": s.status or "success",
+                "duration_ms": s.duration_ms or 0,
+                "model_name": model_name,
+            }
+            for s in snapshots
+        ]
+    except Exception as exc:
+        logger.debug("Failed to list snapshots for %s: %s", model_name, exc)
+        return []
+
+
+@app.get("/api/graph/{model_name}/snapshot/{snapshot_id}")
+async def graph_snapshot_compat(model_name: str, snapshot_id: str):
+    """Compatibility endpoint for loading a graph for a selected snapshot.
+    
+    Reconstructs the semantic model graph from a specific snapshot's SML blob.
+    Returns nodes and edges suitable for React Flow visualization.
+    """
+    try:
+        snapshot = db_manager.get_snapshot(snapshot_id)
+        if not snapshot:
+            logger.warning("Snapshot %s not found", snapshot_id)
+            return {"nodes": [], "edges": [], "snapshot_id": snapshot_id, "model": model_name}
+        
+        sml = snapshot.sml_blob or {}
+        nodes = []
+        edges = []
+        
+        # Extract entities/datasources as nodes
+        entities = sml.get("entities", {})
+        for ent_name, ent_def in entities.items():
+            if isinstance(ent_def, dict):
+                nodes.append({
+                    "id": ent_name,
+                    "data": {"label": ent_name, "type": "entity"},
+                    "position": {"x": 0, "y": 0},
+                    "type": "default",
+                })
+        
+        # Extract relationships/measures as edges
+        relationships = sml.get("relationships", [])
+        if isinstance(relationships, list):
+            for rel in relationships:
+                if isinstance(rel, dict):
+                    src = rel.get("from")
+                    tgt = rel.get("to")
+                    if src and tgt:
+                        edges.append({
+                            "id": f"{src}-{tgt}",
+                            "source": src,
+                            "target": tgt,
+                            "label": rel.get("name", ""),
+                        })
+        
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "snapshot_id": snapshot_id,
+            "model": model_name,
+            "timestamp": snapshot.timestamp,
+            "version_tag": snapshot.version_tag,
+        }
+    except Exception as exc:
+        logger.debug("Failed to load snapshot graph %s: %s", snapshot_id, exc)
+        return {"nodes": [], "edges": [], "snapshot_id": snapshot_id, "model": model_name}
+
+
+@app.get("/api/projects/{project_id}/runs")
+async def get_project_runs_compat(project_id: str):
+    _compat_ensure_loaded()
+    return _compat_project_runs.get(project_id, [])
+
+
+@app.post("/api/projects/{project_id}/run")
+async def run_project_now_compat(project_id: str):
+    _compat_ensure_loaded()
+    if project_id not in _compat_projects:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    run_id = f"run-{int(_time.time() * 1000)}"
+    run = {
+        "run_id": run_id,
+        "id": run_id,
+        "project_id": project_id,
+        "project_name": _compat_projects[project_id].get("name", project_id),
+        "schedule": "Manual",
+        "status": "running",
+        "duration_ms": 0,
+        "started_at": _compat_now_iso(),
+    }
+    _compat_project_runs.setdefault(project_id, []).insert(0, run)
+    _compat_save_store()
+    return run
+
+
+@app.get("/api/folders")
+async def list_folders_compat():
+    """Compatibility: newfrontend expects a folders collection."""
+    return list(_compat_folders.values())
+
+
+@app.post("/api/folders")
+async def create_folder_compat(payload: dict):
+    folder_id = str((payload or {}).get("id") or (payload or {}).get("folder_id") or f"folder-{int(_time.time() * 1000)}")
+    folder = {
+        "id": folder_id,
+        "folder_id": folder_id,
+        "name": (payload or {}).get("name") or f"Folder {folder_id[-4:]}",
+        "color": (payload or {}).get("color") or "#6366f1",
+    }
+    _compat_folders[folder_id] = folder
+    return folder
+
+
+@app.patch("/api/folders/{folder_id}")
+async def rename_folder_compat(folder_id: str, payload: dict):
+    folder = _compat_folders.get(folder_id)
+    if not folder:
+        raise HTTPException(status_code=404, detail="Folder not found")
+    if "name" in (payload or {}):
+        folder["name"] = (payload or {}).get("name")
+    if "color" in (payload or {}):
+        folder["color"] = (payload or {}).get("color")
+    _compat_folders[folder_id] = folder
+    return folder
+
+
+@app.delete("/api/folders/{folder_id}")
+async def delete_folder_compat(folder_id: str):
+    _compat_folders.pop(folder_id, None)
+    for project in _compat_projects.values():
+        if project.get("folder_id") == folder_id:
+            project["folder_id"] = None
+            project["updated_at"] = _compat_now_iso()
+    return Response(status_code=204)
+
+
+@app.patch("/api/projects/{project_id}/folder")
+async def move_project_to_folder_compat(project_id: str, payload: dict):
+    project = _compat_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    folder_id = (payload or {}).get("folder_id")
+    if folder_id is not None and folder_id not in _compat_folders:
+        raise HTTPException(status_code=404, detail="Folder not found")
+    project["folder_id"] = folder_id
+    project["updated_at"] = _compat_now_iso()
+    _compat_projects[project_id] = project
+    return project
+
+
+@app.get("/api/jobs/runs")
+async def list_job_runs_compat():
+    """Compatibility: return empty runs when scheduler APIs are absent."""
+    all_runs: List[Dict[str, Any]] = []
+    for runs in _compat_project_runs.values():
+        all_runs.extend(runs)
+    all_runs.sort(key=lambda x: x.get("started_at") or "", reverse=True)
+    return all_runs
+
+
+@app.get("/api/jobs/config")
+async def get_jobs_config_compat():
+    """Compatibility: return non-failing default scheduler config."""
+    return _compat_job_config
+
+
+@app.put("/api/jobs/config")
+async def update_jobs_config_compat(payload: dict):
+    """Compatibility: accept schedule config updates without failing."""
+    merged = {**_compat_job_config, **(payload or {})}
+    _compat_job_config.update(merged)
+    return {"status": "saved", **merged}
+
+
+@app.post("/api/jobs/trigger")
+async def trigger_job_compat(payload: dict):
+    """Compatibility: acknowledge trigger requests without 404."""
+    run_id = f"run-{int(_time.time() * 1000)}"
+    project_id = str((payload or {}).get("project_id") or "default")
+    project_name = _compat_projects.get(project_id, {}).get("name") or project_id
+    run = {
+        "id": run_id,
+        "run_id": run_id,
+        "project_id": project_id,
+        "project_name": project_name,
+        "schedule": "Manual",
+        "status": "running",
+        "duration_ms": 0,
+        "started_at": _compat_now_iso(),
+        "message": "Job trigger accepted (compat mode).",
+    }
+    _compat_project_runs.setdefault(project_id, []).insert(0, run)
+    return run
+
+
+@app.get("/api/mappings")
+async def list_mappings_compat(project_id: Optional[str] = None):
+    pid = str(project_id or "").strip()
+
+    def _seed_for_project(seed_project_id: str) -> Dict[str, Any]:
+        source_fields = [
+            {"name": "transaction_id", "type": "uuid"},
+            {"name": "amount", "type": "decimal"},
+            {"name": "customer_ref", "type": "string"},
+            {"name": "created_at", "type": "timestamp"},
+            {"name": "status_code", "type": "integer"},
+            {"name": "contact_email", "type": "string"},
+            {"name": "region_id", "type": "integer"},
+        ]
+        target_fields = [
+            {"name": "txn_id", "type": "varchar"},
+            {"name": "sale_amount", "type": "float"},
+            {"name": "customer_key", "type": "varchar"},
+            {"name": "sale_date", "type": "date"},
+            {"name": "order_status", "type": "integer"},
+            {"name": "email_address", "type": "varchar"},
+            {"name": "region_key", "type": "integer"},
+        ]
+
+        seeded = []
+        for idx, src in enumerate(source_fields):
+            tgt = target_fields[idx] if idx < len(target_fields) else None
+            mapping_id = f"{seed_project_id}-map-{idx + 1}"
+            existing = _compat_mappings.get(mapping_id, {})
+            mapping = {
+                "id": mapping_id,
+                "project_id": seed_project_id,
+                "source_field": src["name"],
+                "source_type": src["type"],
+                "target_field": tgt["name"] if tgt else None,
+                "target_type": tgt["type"] if tgt else None,
+                "status": existing.get("status") or "auto",
+                "transform": existing.get("transform") or "",
+                "validation": existing.get("validation") or "None",
+            }
+            _compat_mappings[mapping_id] = mapping
+            seeded.append(mapping)
+
+        return {
+            "source_fields": source_fields,
+            "target_fields": target_fields,
+            "mappings": seeded,
+        }
+
+    if pid:
+        mappings = [
+            m for m in _compat_mappings.values()
+            if str(m.get("project_id") or "") == pid
+        ]
+        if not mappings:
+            return _seed_for_project(pid)
+        return {
+            "source_fields": [],
+            "target_fields": [],
+            "mappings": mappings,
+        }
+
+    # No project filter: ensure at least one dataset exists for UI usability.
+    if not _compat_mappings:
+        return _seed_for_project("default")
+
+    return {
+        "source_fields": [],
+        "target_fields": [],
+        "mappings": list(_compat_mappings.values()),
+    }
+
+
+@app.post("/api/mappings/auto")
+async def auto_map_compat(payload: dict):
+    project_id = str((payload or {}).get("project_id") or "default")
+    data = await list_mappings_compat(project_id=project_id)
+    mappings = data.get("mappings", []) if isinstance(data, dict) else []
+
+    # Auto-map marks all available mappings as auto when triggered.
+    for mapping in mappings:
+        mapping_id = str(mapping.get("id") or "")
+        if not mapping_id:
+            continue
+        mapping["status"] = "auto"
+        _compat_mappings[mapping_id] = mapping
+
+    return {
+        "source_fields": data.get("source_fields", []) if isinstance(data, dict) else [],
+        "target_fields": data.get("target_fields", []) if isinstance(data, dict) else [],
+        "mappings": mappings,
+        "status": "ok",
+    }
+
+
+@app.put("/api/mappings/{mapping_id}")
+async def update_mapping_compat(mapping_id: str, payload: dict):
+    existing = _compat_mappings.get(mapping_id, {"id": mapping_id, "project_id": (payload or {}).get("project_id")})
+    existing.update(payload or {})
+    existing["id"] = mapping_id
+    _compat_mappings[mapping_id] = existing
+    return existing
+
+
+@app.delete("/api/mappings")
+async def delete_mappings_compat(project_id: Optional[str] = None):
+    if project_id:
+        for mapping_id in [k for k, v in _compat_mappings.items() if str(v.get("project_id") or "") == str(project_id)]:
+            _compat_mappings.pop(mapping_id, None)
+    else:
+        _compat_mappings.clear()
+    return Response(status_code=204)
 
 
 # -------------------------------------------------------
