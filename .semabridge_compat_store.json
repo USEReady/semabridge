@@ -1,0 +1,2228 @@
+{
+  "projects": {
+    "e1f19d58-85c3-4c90-a6a0-57c9db6f348b": {
+      "id": "e1f19d58-85c3-4c90-a6a0-57c9db6f348b",
+      "project_id": "e1f19d58-85c3-4c90-a6a0-57c9db6f348b",
+      "name": "test",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-19T06:50:15.931497",
+      "updated_at": "2026-03-19T06:50:15.931497"
+    },
+    "continent": {
+      "id": "continent",
+      "project_id": "continent",
+      "name": "FabricModel",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-19T06:50:15.931497",
+      "updated_at": "2026-03-19T06:50:15.931497"
+    },
+    "662d5729-8499-49a8-a74d-b3af587e9481": {
+      "id": "662d5729-8499-49a8-a74d-b3af587e9481",
+      "project_id": "662d5729-8499-49a8-a74d-b3af587e9481",
+      "name": "test",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-19T06:50:15.932511",
+      "updated_at": "2026-03-19T06:50:15.932511"
+    },
+    "c79a3ad7-3f92-4803-9b57-abbfce65a3ac": {
+      "id": "c79a3ad7-3f92-4803-9b57-abbfce65a3ac",
+      "project_id": "c79a3ad7-3f92-4803-9b57-abbfce65a3ac",
+      "name": "TEST",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-19T06:50:15.932511",
+      "updated_at": "2026-03-19T06:50:15.932511"
+    },
+    "9b62a7ab-4d5d-488b-92cb-868fd3afe30a": {
+      "id": "9b62a7ab-4d5d-488b-92cb-868fd3afe30a",
+      "project_id": "9b62a7ab-4d5d-488b-92cb-868fd3afe30a",
+      "name": "TEST",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-19T06:50:15.933512",
+      "updated_at": "2026-03-19T06:50:15.933512"
+    },
+    "67facf43-44c5-4b9b-8e5d-1b7c983676d6": {
+      "id": "67facf43-44c5-4b9b-8e5d-1b7c983676d6",
+      "project_id": "67facf43-44c5-4b9b-8e5d-1b7c983676d6",
+      "name": "TESt",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-19T06:50:15.933512",
+      "updated_at": "2026-03-19T06:50:15.933512"
+    },
+    "0f3314ad-86dd-4b96-a52e-87d36ce87ac4": {
+      "id": "0f3314ad-86dd-4b96-a52e-87d36ce87ac4",
+      "project_id": "0f3314ad-86dd-4b96-a52e-87d36ce87ac4",
+      "name": "test",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-19T06:50:15.934921",
+      "updated_at": "2026-03-19T06:50:15.934921"
+    },
+    "2ef6edeb-175f-46b6-9365-32e41e08c426": {
+      "id": "2ef6edeb-175f-46b6-9365-32e41e08c426",
+      "project_id": "2ef6edeb-175f-46b6-9365-32e41e08c426",
+      "name": "test",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-19T06:50:15.935928",
+      "updated_at": "2026-03-19T06:50:15.935928"
+    },
+    "annual": {
+      "id": "annual",
+      "project_id": "annual",
+      "name": "FabricModel",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-19T06:50:15.936918",
+      "updated_at": "2026-03-19T06:50:15.936918"
+    },
+    "Competitive Marketing Analysis": {
+      "id": "Competitive Marketing Analysis",
+      "project_id": "Competitive Marketing Analysis",
+      "name": "FabricModel",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-19T06:50:15.937926",
+      "updated_at": "2026-03-19T06:50:15.937926"
+    },
+    "Core_Finance_v1.pbix": {
+      "id": "Core_Finance_v1.pbix",
+      "project_id": "Core_Finance_v1.pbix",
+      "name": "Core_Finance_v1",
+      "description": "",
+      "source": "pbix",
+      "adapter": "pbix",
+      "workspace_id": "local",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-19T06:50:15.937926",
+      "updated_at": "2026-03-19T06:50:15.937926"
+    },
+    "L_DATE": {
+      "id": "L_DATE",
+      "project_id": "L_DATE",
+      "name": "Competitive Marketing Analysis",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-19T06:50:15.939435",
+      "updated_at": "2026-03-19T06:50:15.939435"
+    },
+    "Core_Finance_v1": {
+      "id": "Core_Finance_v1",
+      "project_id": "Core_Finance_v1",
+      "name": "FabricModel",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-19T06:50:15.939435",
+      "updated_at": "2026-03-19T06:50:15.939435"
+    },
+    "Corporate Spend": {
+      "id": "Corporate Spend",
+      "project_id": "Corporate Spend",
+      "name": "FabricModel",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-19T06:50:15.940496",
+      "updated_at": "2026-03-19T06:50:15.940496"
+    },
+    "proj-1773903459681": {
+      "id": "proj-1773903459681",
+      "project_id": "proj-1773903459681",
+      "name": "c",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "semabridge-local",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-19T06:57:39.681366",
+      "updated_at": "2026-03-19T07:01:36.810649"
+    },
+    "proj-1773904076169": {
+      "id": "proj-1773904076169",
+      "project_id": "proj-1773904076169",
+      "name": "tb",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "semabridge-local",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-19T07:07:56.169060",
+      "updated_at": "2026-03-19T07:19:22.841190"
+    }
+  },
+  "project_configs": {
+    "e1f19d58-85c3-4c90-a6a0-57c9db6f348b": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
+    "continent": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
+    "662d5729-8499-49a8-a74d-b3af587e9481": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
+    "c79a3ad7-3f92-4803-9b57-abbfce65a3ac": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
+    "9b62a7ab-4d5d-488b-92cb-868fd3afe30a": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
+    "67facf43-44c5-4b9b-8e5d-1b7c983676d6": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
+    "0f3314ad-86dd-4b96-a52e-87d36ce87ac4": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
+    "2ef6edeb-175f-46b6-9365-32e41e08c426": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
+    "annual": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
+    "Competitive Marketing Analysis": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
+    "Core_Finance_v1.pbix": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
+    "L_DATE": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
+    "Core_Finance_v1": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
+    "Corporate Spend": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
+    "proj-1773903459681": "project_name: c\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Client Data\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - 0794fdcc-d85f-4d93-a42c-8bacaad04819\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
+    "proj-1773904076169": "project_name: tb\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Client Data\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - 0794fdcc-d85f-4d93-a42c-8bacaad04819\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true"
+  },
+  "project_runs": {
+    "e1f19d58-85c3-4c90-a6a0-57c9db6f348b": [],
+    "continent": [],
+    "662d5729-8499-49a8-a74d-b3af587e9481": [],
+    "c79a3ad7-3f92-4803-9b57-abbfce65a3ac": [],
+    "9b62a7ab-4d5d-488b-92cb-868fd3afe30a": [],
+    "67facf43-44c5-4b9b-8e5d-1b7c983676d6": [],
+    "0f3314ad-86dd-4b96-a52e-87d36ce87ac4": [],
+    "2ef6edeb-175f-46b6-9365-32e41e08c426": [],
+    "annual": [],
+    "Competitive Marketing Analysis": [],
+    "Core_Finance_v1.pbix": [],
+    "L_DATE": [],
+    "Core_Finance_v1": [],
+    "Corporate Spend": [],
+    "proj-1773903459681": [
+      {
+        "run_id": "run-1773904631461",
+        "id": "run-1773904631461",
+        "project_id": "proj-1773903459681",
+        "project_name": "c",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 1000,
+        "started_at": "2026-03-19T07:17:11.461769",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "a81c18b2-9178-4f3a-959d-457999ea978d",
+          "status": "FAILED",
+          "started_at": "2026-03-19T07:17:11.859721",
+          "completed_at": "2026-03-19T07:17:12.459636",
+          "duration_ms": 599,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:17:11.859721",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:17:12.059985",
+              "duration_ms": null,
+              "message": "Authentication resolved from ENV",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:17:12.451068",
+              "duration_ms": null,
+              "message": "No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:17:12.458642",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "error_type": "ExtractionError",
+              "message": "Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 616, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 696, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 95, in resolve_model_id\n    models = self.list_semantic_models()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 59, in list_semantic_models\n    response = requests.get(api_url, headers=self._get_headers(), timeout=15)\n                                             ^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 220, in _get_headers\n    \"Authorization\": f\"Bearer {self._get_access_token()}\",\n                               ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 211, in _get_access_token\n    raise FabricExtractionError(\nsemabridge.connectors.fabric_extractor.FabricExtractionError: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 275, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 624, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "a81c18b2-9178-4f3a-959d-457999ea978d",
+              "status": "FAILED",
+              "started_at": "2026-03-19T07:17:11.859721",
+              "completed_at": "2026-03-19T07:17:12.459636",
+              "duration_ms": 599,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:17:11.859721",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:17:12.059985",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from ENV",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:17:12.451068",
+                  "duration_ms": null,
+                  "message": "No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:17:12.458642",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "error_type": "ExtractionError",
+                  "message": "Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 616, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 696, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 95, in resolve_model_id\n    models = self.list_semantic_models()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 59, in list_semantic_models\n    response = requests.get(api_url, headers=self._get_headers(), timeout=15)\n                                             ^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 220, in _get_headers\n    \"Authorization\": f\"Bearer {self._get_access_token()}\",\n                               ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 211, in _get_access_token\n    raise FabricExtractionError(\nsemabridge.connectors.fabric_extractor.FabricExtractionError: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 275, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 624, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1773904619708",
+        "id": "run-1773904619708",
+        "project_id": "proj-1773903459681",
+        "project_name": "c",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 962,
+        "started_at": "2026-03-19T07:16:59.708144",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "11b101de-709d-4a98-be70-92ca8fb507db",
+          "status": "FAILED",
+          "started_at": "2026-03-19T07:16:59.797613",
+          "completed_at": "2026-03-19T07:17:00.484386",
+          "duration_ms": 686,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:16:59.797613",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:17:00.013206",
+              "duration_ms": null,
+              "message": "Authentication resolved from ENV",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:17:00.470118",
+              "duration_ms": null,
+              "message": "No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:17:00.484386",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "error_type": "ExtractionError",
+              "message": "Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 616, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 696, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 95, in resolve_model_id\n    models = self.list_semantic_models()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 59, in list_semantic_models\n    response = requests.get(api_url, headers=self._get_headers(), timeout=15)\n                                             ^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 220, in _get_headers\n    \"Authorization\": f\"Bearer {self._get_access_token()}\",\n                               ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 211, in _get_access_token\n    raise FabricExtractionError(\nsemabridge.connectors.fabric_extractor.FabricExtractionError: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 275, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 624, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "11b101de-709d-4a98-be70-92ca8fb507db",
+              "status": "FAILED",
+              "started_at": "2026-03-19T07:16:59.797613",
+              "completed_at": "2026-03-19T07:17:00.484386",
+              "duration_ms": 686,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:16:59.797613",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:17:00.013206",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from ENV",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:17:00.470118",
+                  "duration_ms": null,
+                  "message": "No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:17:00.484386",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "error_type": "ExtractionError",
+                  "message": "Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 616, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 696, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 95, in resolve_model_id\n    models = self.list_semantic_models()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 59, in list_semantic_models\n    response = requests.get(api_url, headers=self._get_headers(), timeout=15)\n                                             ^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 220, in _get_headers\n    \"Authorization\": f\"Bearer {self._get_access_token()}\",\n                               ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 211, in _get_access_token\n    raise FabricExtractionError(\nsemabridge.connectors.fabric_extractor.FabricExtractionError: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 275, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 624, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1773904001085",
+        "id": "run-1773904001085",
+        "project_id": "proj-1773903459681",
+        "project_name": "c",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 37493,
+        "started_at": "2026-03-19T07:06:41.085935",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "efab334e-1958-43fb-8910-c1f78a73fc48",
+          "status": "FAILED",
+          "started_at": "2026-03-19T07:06:41.160023",
+          "completed_at": "2026-03-19T07:07:18.574705",
+          "duration_ms": 37414,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:06:41.161044",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:06:41.362447",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:07:18.506734",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:07:18.509759",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:07:18.528687",
+              "duration_ms": null,
+              "message": "Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:07:18.574705",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "error_type": "ConversionError",
+              "message": "SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 87, in to_osi\n    dataset = self._parse_dataset(table)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 177, in _parse_dataset\n    columns.append(self._parse_column(col))\n                   ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 226, in _parse_column\n    # Fabric may emit calculated column expressions as a list of lines.\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\pydantic\\main.py\", line 250, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 892, in _step6_convert_to_sml\n    return self._convert_fabric_to_sml(context, workspace_id, dataset_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1037, in _convert_fabric_to_sml\n    osi_model = TMSLToOSIConverter().to_osi(source_data)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 126, in to_osi\n    raise ConversionError(\nsemabridge.core.exceptions.ConversionError: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 284, in execute\n    sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 900, in _step6_convert_to_sml\n    raise ConversionError(f\"SML conversion failed: {e}\") from e\nsemabridge.core.execution_engine.ConversionError: SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "efab334e-1958-43fb-8910-c1f78a73fc48",
+              "status": "FAILED",
+              "started_at": "2026-03-19T07:06:41.160023",
+              "completed_at": "2026-03-19T07:07:18.574705",
+              "duration_ms": 37414,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:06:41.161044",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:06:41.362447",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:07:18.506734",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:07:18.509759",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:07:18.528687",
+                  "duration_ms": null,
+                  "message": "Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:07:18.574705",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "error_type": "ConversionError",
+                  "message": "SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 87, in to_osi\n    dataset = self._parse_dataset(table)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 177, in _parse_dataset\n    columns.append(self._parse_column(col))\n                   ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 226, in _parse_column\n    # Fabric may emit calculated column expressions as a list of lines.\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\pydantic\\main.py\", line 250, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 892, in _step6_convert_to_sml\n    return self._convert_fabric_to_sml(context, workspace_id, dataset_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1037, in _convert_fabric_to_sml\n    osi_model = TMSLToOSIConverter().to_osi(source_data)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 126, in to_osi\n    raise ConversionError(\nsemabridge.core.exceptions.ConversionError: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 284, in execute\n    sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 900, in _step6_convert_to_sml\n    raise ConversionError(f\"SML conversion failed: {e}\") from e\nsemabridge.core.execution_engine.ConversionError: SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1773903696848",
+        "id": "run-1773903696848",
+        "project_id": "proj-1773903459681",
+        "project_name": "c",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 36766,
+        "started_at": "2026-03-19T07:01:36.848846",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "53c0b84e-8c0c-4b72-aec1-1beb50b42b32",
+          "status": "FAILED",
+          "started_at": "2026-03-19T07:01:36.975889",
+          "completed_at": "2026-03-19T07:02:13.603893",
+          "duration_ms": 36628,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:01:36.975889",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:01:37.224758",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:02:13.556207",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:02:13.560760",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:02:13.579405",
+              "duration_ms": null,
+              "message": "Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:02:13.603378",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "error_type": "ConversionError",
+              "message": "SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 87, in to_osi\n    dataset = self._parse_dataset(table)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 177, in _parse_dataset\n    columns.append(self._parse_column(col))\n                   ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 226, in _parse_column\n    return OSIColumn(\n           ^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\pydantic\\main.py\", line 250, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 892, in _step6_convert_to_sml\n    return self._convert_fabric_to_sml(context, workspace_id, dataset_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1037, in _convert_fabric_to_sml\n    osi_model = TMSLToOSIConverter().to_osi(source_data)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 126, in to_osi\n    raise ConversionError(\nsemabridge.core.exceptions.ConversionError: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 284, in execute\n    sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 900, in _step6_convert_to_sml\n    raise ConversionError(f\"SML conversion failed: {e}\") from e\nsemabridge.core.execution_engine.ConversionError: SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "53c0b84e-8c0c-4b72-aec1-1beb50b42b32",
+              "status": "FAILED",
+              "started_at": "2026-03-19T07:01:36.975889",
+              "completed_at": "2026-03-19T07:02:13.603893",
+              "duration_ms": 36628,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:01:36.975889",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:01:37.224758",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:02:13.556207",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:02:13.560760",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:02:13.579405",
+                  "duration_ms": null,
+                  "message": "Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:02:13.603378",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "error_type": "ConversionError",
+                  "message": "SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 87, in to_osi\n    dataset = self._parse_dataset(table)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 177, in _parse_dataset\n    columns.append(self._parse_column(col))\n                   ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 226, in _parse_column\n    return OSIColumn(\n           ^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\pydantic\\main.py\", line 250, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 892, in _step6_convert_to_sml\n    return self._convert_fabric_to_sml(context, workspace_id, dataset_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1037, in _convert_fabric_to_sml\n    osi_model = TMSLToOSIConverter().to_osi(source_data)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 126, in to_osi\n    raise ConversionError(\nsemabridge.core.exceptions.ConversionError: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 284, in execute\n    sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 900, in _step6_convert_to_sml\n    raise ConversionError(f\"SML conversion failed: {e}\") from e\nsemabridge.core.execution_engine.ConversionError: SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1773903459725",
+        "id": "run-1773903459725",
+        "project_id": "proj-1773903459681",
+        "project_name": "c",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 38320,
+        "started_at": "2026-03-19T06:57:39.725286",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "0cd8d4e9-2f71-4708-b7da-e39fe68321b2",
+          "status": "FAILED",
+          "started_at": "2026-03-19T06:57:39.862461",
+          "completed_at": "2026-03-19T06:58:17.849773",
+          "duration_ms": 37987,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T06:57:39.863462",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T06:57:40.099391",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T06:58:17.587575",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T06:58:17.590217",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-19T06:58:17.690671",
+              "duration_ms": null,
+              "message": "Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T06:58:17.849773",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "error_type": "ConversionError",
+              "message": "SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 87, in to_osi\n    dataset = self._parse_dataset(table)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 177, in _parse_dataset\n    columns.append(self._parse_column(col))\n                   ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 226, in _parse_column\n    return OSIColumn(\n           ^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\pydantic\\main.py\", line 250, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 892, in _step6_convert_to_sml\n    return self._convert_fabric_to_sml(context, workspace_id, dataset_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1037, in _convert_fabric_to_sml\n    osi_model = TMSLToOSIConverter().to_osi(source_data)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 126, in to_osi\n    raise ConversionError(\nsemabridge.core.exceptions.ConversionError: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 284, in execute\n    sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 900, in _step6_convert_to_sml\n    raise ConversionError(f\"SML conversion failed: {e}\") from e\nsemabridge.core.execution_engine.ConversionError: SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "0cd8d4e9-2f71-4708-b7da-e39fe68321b2",
+              "status": "FAILED",
+              "started_at": "2026-03-19T06:57:39.862461",
+              "completed_at": "2026-03-19T06:58:17.849773",
+              "duration_ms": 37987,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T06:57:39.863462",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T06:57:40.099391",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T06:58:17.587575",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T06:58:17.590217",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T06:58:17.690671",
+                  "duration_ms": null,
+                  "message": "Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T06:58:17.849773",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "error_type": "ConversionError",
+                  "message": "SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 87, in to_osi\n    dataset = self._parse_dataset(table)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 177, in _parse_dataset\n    columns.append(self._parse_column(col))\n                   ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 226, in _parse_column\n    return OSIColumn(\n           ^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\pydantic\\main.py\", line 250, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 892, in _step6_convert_to_sml\n    return self._convert_fabric_to_sml(context, workspace_id, dataset_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1037, in _convert_fabric_to_sml\n    osi_model = TMSLToOSIConverter().to_osi(source_data)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 126, in to_osi\n    raise ConversionError(\nsemabridge.core.exceptions.ConversionError: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 284, in execute\n    sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 900, in _step6_convert_to_sml\n    raise ConversionError(f\"SML conversion failed: {e}\") from e\nsemabridge.core.execution_engine.ConversionError: SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      }
+    ],
+    "default": [
+      {
+        "id": "run-1773903740299",
+        "run_id": "run-1773903740299",
+        "project_id": "default",
+        "project_name": "default",
+        "schedule": "Manual",
+        "status": "running",
+        "duration_ms": 0,
+        "started_at": "2026-03-19T07:02:20.299877",
+        "message": "Job trigger accepted (compat mode)."
+      }
+    ],
+    "proj-1773904076169": [
+      {
+        "run_id": "run-1773905995207",
+        "id": "run-1773905995207",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 67706,
+        "started_at": "2026-03-19T07:39:55.207128",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "8433e730-fe41-4724-acf5-e322e9d0805c",
+          "status": "SUCCESS",
+          "started_at": "2026-03-19T07:39:55.291358",
+          "completed_at": "2026-03-19T07:41:02.845346",
+          "duration_ms": 67553,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:39:55.291358",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:39:55.489903",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:40:35.583021",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:40:35.587573",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:40:35.756842",
+              "duration_ms": null,
+              "message": "26 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:40:35.932789",
+              "duration_ms": null,
+              "message": "Snapshot 1e0f961a... committed",
+              "artifact_ids": [
+                "1e0f961a-baaf-462e-ad85-a36b489c5788",
+                "2d92a4f8-586a-411e-9a62-cba013db0164"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:40:36.354970",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:41:02.840337",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:41:02.844346",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "2d92a4f8-586a-411e-9a62-cba013db0164",
+          "sml_snapshot_id": "1e0f961a-baaf-462e-ad85-a36b489c5788",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "success",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "8433e730-fe41-4724-acf5-e322e9d0805c",
+              "status": "SUCCESS",
+              "started_at": "2026-03-19T07:39:55.291358",
+              "completed_at": "2026-03-19T07:41:02.845346",
+              "duration_ms": 67553,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:39:55.291358",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:39:55.489903",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:40:35.583021",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:40:35.587573",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:40:35.756842",
+                  "duration_ms": null,
+                  "message": "26 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:40:35.932789",
+                  "duration_ms": null,
+                  "message": "Snapshot 1e0f961a... committed",
+                  "artifact_ids": [
+                    "1e0f961a-baaf-462e-ad85-a36b489c5788",
+                    "2d92a4f8-586a-411e-9a62-cba013db0164"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:40:36.354970",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:41:02.840337",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:41:02.844346",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "2d92a4f8-586a-411e-9a62-cba013db0164",
+              "sml_snapshot_id": "1e0f961a-baaf-462e-ad85-a36b489c5788",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1773905891374",
+        "id": "run-1773905891374",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 6451,
+        "started_at": "2026-03-19T07:38:11.374192",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "3a6ff7ce-b9c5-4bdf-9089-98285ef431ac",
+          "status": "FAILED",
+          "started_at": "2026-03-19T07:38:11.484577",
+          "completed_at": "2026-03-19T07:38:17.614812",
+          "duration_ms": 6130,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:38:11.485586",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:38:11.693433",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:38:17.553806",
+              "duration_ms": null,
+              "message": "Failed to initiate model extraction: 404 Client Error: Not Found for url: https://api.fabric.microsoft.com/v1/workspaces/459a30fc-2ca3-45bf-8783-5dc1f65f6656/semanticModels/Client%20Data/getDefinition?format=TMSL",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:38:17.614812",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "error_type": "ExtractionError",
+              "message": "Extraction failed: Failed to initiate model extraction: 404 Client Error: Not Found for url: https://api.fabric.microsoft.com/v1/workspaces/459a30fc-2ca3-45bf-8783-5dc1f65f6656/semanticModels/Client%20Data/getDefinition?format=TMSL",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 279, in get_model_definition\n    response.raise_for_status()\n  File \"C:\\Users\\Premasai\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\requests\\models.py\", line 1026, in raise_for_status\n    raise HTTPError(http_error_msg, response=self)\nrequests.exceptions.HTTPError: 404 Client Error: Not Found for url: https://api.fabric.microsoft.com/v1/workspaces/459a30fc-2ca3-45bf-8783-5dc1f65f6656/semanticModels/Client%20Data/getDefinition?format=TMSL\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 616, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 698, in _extract_fabric\n    tmsl = extractor.get_model_definition(resolved_dataset_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 294, in get_model_definition\n    raise FabricExtractionError(f\"Failed to initiate model extraction: {e}\")\nsemabridge.connectors.fabric_extractor.FabricExtractionError: Failed to initiate model extraction: 404 Client Error: Not Found for url: https://api.fabric.microsoft.com/v1/workspaces/459a30fc-2ca3-45bf-8783-5dc1f65f6656/semanticModels/Client%20Data/getDefinition?format=TMSL\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 275, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 624, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: Failed to initiate model extraction: 404 Client Error: Not Found for url: https://api.fabric.microsoft.com/v1/workspaces/459a30fc-2ca3-45bf-8783-5dc1f65f6656/semanticModels/Client%20Data/getDefinition?format=TMSL\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "3a6ff7ce-b9c5-4bdf-9089-98285ef431ac",
+              "status": "FAILED",
+              "started_at": "2026-03-19T07:38:11.484577",
+              "completed_at": "2026-03-19T07:38:17.614812",
+              "duration_ms": 6130,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:38:11.485586",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:38:11.693433",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:38:17.553806",
+                  "duration_ms": null,
+                  "message": "Failed to initiate model extraction: 404 Client Error: Not Found for url: https://api.fabric.microsoft.com/v1/workspaces/459a30fc-2ca3-45bf-8783-5dc1f65f6656/semanticModels/Client%20Data/getDefinition?format=TMSL",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:38:17.614812",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "error_type": "ExtractionError",
+                  "message": "Extraction failed: Failed to initiate model extraction: 404 Client Error: Not Found for url: https://api.fabric.microsoft.com/v1/workspaces/459a30fc-2ca3-45bf-8783-5dc1f65f6656/semanticModels/Client%20Data/getDefinition?format=TMSL",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 279, in get_model_definition\n    response.raise_for_status()\n  File \"C:\\Users\\Premasai\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\requests\\models.py\", line 1026, in raise_for_status\n    raise HTTPError(http_error_msg, response=self)\nrequests.exceptions.HTTPError: 404 Client Error: Not Found for url: https://api.fabric.microsoft.com/v1/workspaces/459a30fc-2ca3-45bf-8783-5dc1f65f6656/semanticModels/Client%20Data/getDefinition?format=TMSL\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 616, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 698, in _extract_fabric\n    tmsl = extractor.get_model_definition(resolved_dataset_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 294, in get_model_definition\n    raise FabricExtractionError(f\"Failed to initiate model extraction: {e}\")\nsemabridge.connectors.fabric_extractor.FabricExtractionError: Failed to initiate model extraction: 404 Client Error: Not Found for url: https://api.fabric.microsoft.com/v1/workspaces/459a30fc-2ca3-45bf-8783-5dc1f65f6656/semanticModels/Client%20Data/getDefinition?format=TMSL\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 275, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 624, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: Failed to initiate model extraction: 404 Client Error: Not Found for url: https://api.fabric.microsoft.com/v1/workspaces/459a30fc-2ca3-45bf-8783-5dc1f65f6656/semanticModels/Client%20Data/getDefinition?format=TMSL\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1773905267984",
+        "id": "run-1773905267984",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 1133,
+        "started_at": "2026-03-19T07:27:47.984645",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "54660c0b-2a5c-425f-8ded-4f37ec5b0e6c",
+          "status": "FAILED",
+          "started_at": "2026-03-19T07:27:48.310754",
+          "completed_at": "2026-03-19T07:27:48.927564",
+          "duration_ms": 616,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:27:48.310754",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:27:48.514367",
+              "duration_ms": null,
+              "message": "Authentication resolved from ENV",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:27:48.915653",
+              "duration_ms": null,
+              "message": "No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:27:48.927564",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "error_type": "ExtractionError",
+              "message": "Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 616, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 696, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 101, in resolve_model_id\n    models = self.list_semantic_models()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 65, in list_semantic_models\n    response = requests.get(api_url, headers=self._get_headers(), timeout=15)\n                                             ^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 226, in _get_headers\n    \"Authorization\": f\"Bearer {self._get_access_token()}\",\n                               ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 217, in _get_access_token\n    raise FabricExtractionError(\nsemabridge.connectors.fabric_extractor.FabricExtractionError: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 275, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 624, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "54660c0b-2a5c-425f-8ded-4f37ec5b0e6c",
+              "status": "FAILED",
+              "started_at": "2026-03-19T07:27:48.310754",
+              "completed_at": "2026-03-19T07:27:48.927564",
+              "duration_ms": 616,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:27:48.310754",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:27:48.514367",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from ENV",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:27:48.915653",
+                  "duration_ms": null,
+                  "message": "No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:27:48.927564",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "error_type": "ExtractionError",
+                  "message": "Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 616, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 696, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 101, in resolve_model_id\n    models = self.list_semantic_models()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 65, in list_semantic_models\n    response = requests.get(api_url, headers=self._get_headers(), timeout=15)\n                                             ^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 226, in _get_headers\n    \"Authorization\": f\"Bearer {self._get_access_token()}\",\n                               ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 217, in _get_access_token\n    raise FabricExtractionError(\nsemabridge.connectors.fabric_extractor.FabricExtractionError: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 275, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 624, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1773904762880",
+        "id": "run-1773904762880",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 809,
+        "started_at": "2026-03-19T07:19:22.880964",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "307ac5af-9568-4756-9f2c-801ff525cc9d",
+          "status": "FAILED",
+          "started_at": "2026-03-19T07:19:22.983121",
+          "completed_at": "2026-03-19T07:19:23.684462",
+          "duration_ms": 701,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:19:22.983121",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:19:23.206284",
+              "duration_ms": null,
+              "message": "Authentication resolved from ENV",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:19:23.675745",
+              "duration_ms": null,
+              "message": "No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:19:23.684462",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "error_type": "ExtractionError",
+              "message": "Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 616, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 696, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 95, in resolve_model_id\n    models = self.list_semantic_models()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 59, in list_semantic_models\n    response = requests.get(api_url, headers=self._get_headers(), timeout=15)\n                                             ^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 220, in _get_headers\n    \"Authorization\": f\"Bearer {self._get_access_token()}\",\n                               ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 211, in _get_access_token\n    raise FabricExtractionError(\nsemabridge.connectors.fabric_extractor.FabricExtractionError: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 275, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 624, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "307ac5af-9568-4756-9f2c-801ff525cc9d",
+              "status": "FAILED",
+              "started_at": "2026-03-19T07:19:22.983121",
+              "completed_at": "2026-03-19T07:19:23.684462",
+              "duration_ms": 701,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:19:22.983121",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:19:23.206284",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from ENV",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:19:23.675745",
+                  "duration_ms": null,
+                  "message": "No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:19:23.684462",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "error_type": "ExtractionError",
+                  "message": "Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 616, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 696, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 95, in resolve_model_id\n    models = self.list_semantic_models()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 59, in list_semantic_models\n    response = requests.get(api_url, headers=self._get_headers(), timeout=15)\n                                             ^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 220, in _get_headers\n    \"Authorization\": f\"Bearer {self._get_access_token()}\",\n                               ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 211, in _get_access_token\n    raise FabricExtractionError(\nsemabridge.connectors.fabric_extractor.FabricExtractionError: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 275, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 624, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1773904150985",
+        "id": "run-1773904150985",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 37448,
+        "started_at": "2026-03-19T07:09:10.985584",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "9ee24ee8-d46e-4d4a-9127-a0f51e414f2c",
+          "status": "FAILED",
+          "started_at": "2026-03-19T07:09:11.098226",
+          "completed_at": "2026-03-19T07:09:48.429559",
+          "duration_ms": 37331,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:09:11.099411",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:09:11.353179",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:09:48.387212",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:09:48.390299",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:09:48.412414",
+              "duration_ms": null,
+              "message": "Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:09:48.429559",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "error_type": "ConversionError",
+              "message": "SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 87, in to_osi\n    dataset = self._parse_dataset(table)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 177, in _parse_dataset\n    columns.append(self._parse_column(col))\n                   ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 226, in _parse_column\n    # Fabric may emit calculated column expressions as a list of lines.\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\pydantic\\main.py\", line 250, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 892, in _step6_convert_to_sml\n    return self._convert_fabric_to_sml(context, workspace_id, dataset_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1037, in _convert_fabric_to_sml\n    osi_model = TMSLToOSIConverter().to_osi(source_data)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 126, in to_osi\n    raise ConversionError(\nsemabridge.core.exceptions.ConversionError: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 284, in execute\n    sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 900, in _step6_convert_to_sml\n    raise ConversionError(f\"SML conversion failed: {e}\") from e\nsemabridge.core.execution_engine.ConversionError: SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "9ee24ee8-d46e-4d4a-9127-a0f51e414f2c",
+              "status": "FAILED",
+              "started_at": "2026-03-19T07:09:11.098226",
+              "completed_at": "2026-03-19T07:09:48.429559",
+              "duration_ms": 37331,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:09:11.099411",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:09:11.353179",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:09:48.387212",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:09:48.390299",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:09:48.412414",
+                  "duration_ms": null,
+                  "message": "Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:09:48.429559",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "error_type": "ConversionError",
+                  "message": "SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 87, in to_osi\n    dataset = self._parse_dataset(table)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 177, in _parse_dataset\n    columns.append(self._parse_column(col))\n                   ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 226, in _parse_column\n    # Fabric may emit calculated column expressions as a list of lines.\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\pydantic\\main.py\", line 250, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 892, in _step6_convert_to_sml\n    return self._convert_fabric_to_sml(context, workspace_id, dataset_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1037, in _convert_fabric_to_sml\n    osi_model = TMSLToOSIConverter().to_osi(source_data)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 126, in to_osi\n    raise ConversionError(\nsemabridge.core.exceptions.ConversionError: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 284, in execute\n    sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 900, in _step6_convert_to_sml\n    raise ConversionError(f\"SML conversion failed: {e}\") from e\nsemabridge.core.execution_engine.ConversionError: SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1773904076206",
+        "id": "run-1773904076206",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 37717,
+        "started_at": "2026-03-19T07:07:56.206483",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "8336fa66-830c-45e5-b267-03da8ae1713f",
+          "status": "FAILED",
+          "started_at": "2026-03-19T07:07:56.320505",
+          "completed_at": "2026-03-19T07:08:33.919009",
+          "duration_ms": 37598,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:07:56.320505",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:07:56.525376",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:08:33.883756",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:08:33.888834",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:08:33.905675",
+              "duration_ms": null,
+              "message": "Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T07:08:33.919009",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "error_type": "ConversionError",
+              "message": "SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 87, in to_osi\n    dataset = self._parse_dataset(table)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 177, in _parse_dataset\n    columns.append(self._parse_column(col))\n                   ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 226, in _parse_column\n    # Fabric may emit calculated column expressions as a list of lines.\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\pydantic\\main.py\", line 250, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 892, in _step6_convert_to_sml\n    return self._convert_fabric_to_sml(context, workspace_id, dataset_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1037, in _convert_fabric_to_sml\n    osi_model = TMSLToOSIConverter().to_osi(source_data)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 126, in to_osi\n    raise ConversionError(\nsemabridge.core.exceptions.ConversionError: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 284, in execute\n    sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 900, in _step6_convert_to_sml\n    raise ConversionError(f\"SML conversion failed: {e}\") from e\nsemabridge.core.execution_engine.ConversionError: SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "8336fa66-830c-45e5-b267-03da8ae1713f",
+              "status": "FAILED",
+              "started_at": "2026-03-19T07:07:56.320505",
+              "completed_at": "2026-03-19T07:08:33.919009",
+              "duration_ms": 37598,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:07:56.320505",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:07:56.525376",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:08:33.883756",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:08:33.888834",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:08:33.905675",
+                  "duration_ms": null,
+                  "message": "Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T07:08:33.919009",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "error_type": "ConversionError",
+                  "message": "SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 87, in to_osi\n    dataset = self._parse_dataset(table)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 177, in _parse_dataset\n    columns.append(self._parse_column(col))\n                   ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 226, in _parse_column\n    # Fabric may emit calculated column expressions as a list of lines.\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\pydantic\\main.py\", line 250, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 892, in _step6_convert_to_sml\n    return self._convert_fabric_to_sml(context, workspace_id, dataset_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1037, in _convert_fabric_to_sml\n    osi_model = TMSLToOSIConverter().to_osi(source_data)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 126, in to_osi\n    raise ConversionError(\nsemabridge.core.exceptions.ConversionError: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 284, in execute\n    sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 900, in _step6_convert_to_sml\n    raise ConversionError(f\"SML conversion failed: {e}\") from e\nsemabridge.core.execution_engine.ConversionError: SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      }
+    ]
+  },
+  "folders": {},
+  "mappings": {},
+  "job_config": {
+    "schedule_type": "Manual Trigger Only",
+    "cron": "0 0 * * *",
+    "timezone": "UTC",
+    "enabled": false,
+    "mode": "local"
+  }
+}

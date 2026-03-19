@@ -1,0 +1,11 @@
+
+semantic_model:
+  metric_overrides:
+    # Explicit override for Time Intelligence
+    "Revenue SPLY": "LAG(SUM(FACT.\"REVENUE\"), 12) OVER (PARTITION BY PRODUCT.\"PRODUCT KEY\" ORDER BY CALENDAR.\"YEARPERIOD\")"
+    
+    # Explicit override for simple filter
+    "Revenue Budget": "SUM(CASE WHEN SCENARIO.\"SCENARIO\" = 'Budget' THEN FACT.\"REVENUE\" ELSE 0 END)"
+    
+    # Just to prove branching works, I WON'T override 'YoY Rev Var'. 
+    # It should be detected as [Total Revenue] - [Revenue SPLY]

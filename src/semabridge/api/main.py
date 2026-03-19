@@ -23,7 +23,7 @@ from pathlib import Path
 from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Dict, Any, List, Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -2127,7 +2127,8 @@ def _compat_default_project_yaml(project: Dict[str, Any]) -> str:
     ]
     workspace_id = project.get("workspace_id")
     if workspace_id:
-        lines.append(f'  workspace_id: "{str(workspace_id).replace("\"", "\\\"")}"')
+        workspace_id_escaped = str(workspace_id).replace('"', '\\"')
+        lines.append(f'  workspace_id: "{workspace_id_escaped}"')
     lines.extend([
         '  model: "*"',
         "target:",
@@ -3292,6 +3293,8 @@ import threading as _threading
 # _poll_state: idle | polling | success | failed
 _poll_state: Dict[str, Any] = {"status": "idle"}
 _poll_thread: Any = None
+_fabric_session_token: Optional[str] = None
+_fabric_session_token_expires_at: float = 0.0
 
 # Module-level MSAL app instance cache (keyed by authority URL)
 _msal_app_cache: Dict[str, Any] = {}
@@ -3421,7 +3424,7 @@ async def fabric_device_code_poll():
     responds instantly without blocking the event loop.
     """
     from semabridge.repository.credential_manager import CredentialManager
-    global _poll_state
+    global _poll_state, _fabric_session_token, _fabric_session_token_expires_at
 
     state = _poll_state.copy()
 
@@ -3434,6 +3437,8 @@ async def fabric_device_code_poll():
     if state["status"] == "success":
         # Persist token now (only once — reset state so duplicate poll calls are safe)
         _poll_state = {"status": "idle"}
+        _fabric_session_token = state["access_token"]
+        _fabric_session_token_expires_at = _time.time() + int(state.get("expires_in", 3600))
         try:
             cm = CredentialManager()
             cm.save_msal_token(
@@ -3442,6 +3447,14 @@ async def fabric_device_code_poll():
                 account_username=state.get("username", "unknown"),
                 tenant_id=state.get("tenant_id", "organizations"),
                 expires_in=state.get("expires_in", 3600),
+            )
+            # Backward-compatible mirror for flows that still read fabric credentials.
+            cm.save_credentials(
+                "fabric",
+                {
+                    "access_token": state["access_token"],
+                    "refresh_token": state.get("refresh_token", ""),
+                },
             )
         except Exception as exc:
             logger.exception("Failed to persist MSAL token: %s", exc)
@@ -3502,11 +3515,14 @@ async def fabric_auth_status():
 async def fabric_logout():
     """Clear stored Fabric tokens and workspace config (full logout)."""
     from semabridge.repository.credential_manager import CredentialManager
+    global _fabric_session_token, _fabric_session_token_expires_at
 
     try:
         cm = CredentialManager()
         cm.delete_credentials("fabric_token")
         cm.delete_credentials("fabric")
+        _fabric_session_token = None
+        _fabric_session_token_expires_at = 0.0
         _clear_fabric_from_config()
         logger.info("Fabric interactive session and workspace config cleared")
         return {"status": "logged_out"}
@@ -3585,10 +3601,10 @@ def _get_valid_fabric_token() -> str:
     tenant_id = token_data.get("tenant_id", "organizations")
 
     if not refresh_token:
-        raise HTTPException(
-            status_code=401,
-            detail="Token expired and no refresh token available. Please sign in again.",
-        )
+        # Backward-compat: some older saved sessions may not contain refresh token
+        # metadata even though an access token still works.
+        logger.warning("Fabric token has no refresh token; trying existing access token as fallback")
+        return token_data["access_token"]
 
     authority = f"https://login.microsoftonline.com/{tenant_id}"
 
@@ -3621,6 +3637,10 @@ def _get_valid_fabric_token() -> str:
         else:
             error = result.get("error_description", result.get("error", "unknown"))
             logger.warning(f"Token refresh failed: {error}")
+            # Backward-compat fallback to existing token if present.
+            if token_data.get("access_token"):
+                logger.warning("Using existing Fabric access token after refresh failure")
+                return token_data["access_token"]
             raise HTTPException(
                 status_code=401,
                 detail=f"Token refresh failed: {error}. Please sign in again.",
@@ -3636,8 +3656,88 @@ def _get_valid_fabric_token() -> str:
         )
 
 
+def _extract_bearer_token(
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+) -> Optional[str]:
+    """Extract a bearer token from Authorization header.
+
+    Accepts header format: ``Authorization: Bearer <token>``.
+    Returns ``None`` when no header is provided so existing auth flows can
+    continue to use stored credentials or env-token fallback.
+    """
+    if not authorization:
+        logger.info("Fabric request received without Authorization header")
+        return None
+
+    scheme, _, token = authorization.partition(" ")
+    token = token.strip()
+    if scheme.lower() != "bearer" or not token:
+        logger.warning("Invalid Authorization header format for Fabric request")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Authorization header format. Expected: Bearer <token>",
+        )
+
+    logger.info("Fabric bearer token received in Authorization header")
+    return token
+
+
+def _resolve_fabric_access_token(header_bearer_token: Optional[str]) -> str:
+    """Resolve Fabric access token with compatibility-safe precedence.
+
+    Precedence:
+    1. Authorization header bearer token from current request.
+    2. Stored MSAL token from interactive Connections login flow.
+    3. FABRIC_ACCESS_TOKEN environment variable (dev/CI fallback).
+    """
+    if header_bearer_token:
+        logger.info("Using Fabric token from Authorization header")
+        return header_bearer_token
+
+    # In-process token from recent device-code login success.
+    if _fabric_session_token and _time.time() < (_fabric_session_token_expires_at - 60):
+        logger.info("Using Fabric token from in-memory session cache")
+        return _fabric_session_token
+
+    try:
+        stored_token = _get_valid_fabric_token()
+        logger.info("Using Fabric token from stored MSAL credentials")
+        return stored_token
+    except HTTPException:
+        pass
+
+    # Legacy fallback: some flows persisted token under service='fabric'.
+    try:
+        from semabridge.repository.credential_manager import CredentialManager
+
+        cm = CredentialManager()
+        fabric_creds = cm.get_credentials("fabric", mask_secrets=False)
+        legacy_token = (fabric_creds.get("access_token") or "").strip()
+        if legacy_token:
+            logger.info("Using Fabric token from stored fabric credentials")
+            return legacy_token
+    except Exception as exc:
+        logger.warning("Legacy fabric token lookup failed: %s", exc)
+
+    env_token = os.environ.get("FABRIC_ACCESS_TOKEN", "").strip()
+    if env_token:
+        logger.info("Using Fabric token from FABRIC_ACCESS_TOKEN environment variable")
+        return env_token
+
+    logger.warning("No valid Fabric access token available")
+    raise HTTPException(
+        status_code=401,
+        detail=(
+            "No valid Fabric access token available. Provide Authorization: Bearer <token>, "
+            "sign in via Connections panel, or set FABRIC_ACCESS_TOKEN."
+        ),
+    )
+
+
 @app.get("/api/connections/fabric/workspaces")
-async def fabric_list_workspaces():
+async def fabric_list_workspaces(
+    bearer_token: Optional[str] = Depends(_extract_bearer_token),
+):
     """Discover all Fabric workspaces accessible to the logged-in user.
 
     Uses the stored MSAL access token (auto-refreshing if expired) to call
@@ -3646,7 +3746,8 @@ async def fabric_list_workspaces():
     """
     import httpx
 
-    access_token = _get_valid_fabric_token()
+    access_token = _resolve_fabric_access_token(bearer_token)
+    logger.info("Calling Fabric workspaces API with resolved access token")
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -3682,6 +3783,26 @@ async def fabric_list_workspaces():
 
     except httpx.RequestError as exc:
         raise HTTPException(status_code=502, detail=f"Network error reaching Fabric API: {exc}")
+
+
+@app.get("/api/debug/token")
+async def debug_token_header(
+    bearer_token: Optional[str] = Depends(_extract_bearer_token),
+):
+    """Debug helper for validating Authorization header wiring in development."""
+    if not bearer_token:
+        return {
+            "received_authorization_header": False,
+            "token_present": False,
+            "message": "No Authorization header provided",
+        }
+
+    return {
+        "received_authorization_header": True,
+        "token_present": True,
+        "token_preview": f"{bearer_token[:8]}...",
+        "message": "Bearer token parsed successfully",
+    }
 
 
 @app.post("/api/connections/fabric/select-workspace")

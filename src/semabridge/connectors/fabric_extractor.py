@@ -32,17 +32,23 @@ class FabricExtractor:
     Extracts semantic model definitions from Microsoft Fabric.
     """
     
-    def __init__(self, config: FabricConfig):
+    def __init__(self, config: FabricConfig, access_token: Optional[str] = None):
         """
         Initialize the extractor.
         
         Args:
             config: Fabric configuration with credentials
+            access_token: Optional pre-issued/delegated bearer token from request
         """
         self.config = config
-        self._access_token: Optional[str] = None
+        self._access_token: Optional[str] = access_token.strip() if access_token else None
         self._token_expires_at: float = 0
         self._model_cache: dict[str, dict] = {}  # Cache for model lookups
+
+        if self._access_token:
+            # Conservative lifetime for request-provided tokens.
+            self._token_expires_at = time.time() + 600
+            logger.info("FabricExtractor initialized with request-provided access token")
     
     def list_semantic_models(self) -> list[dict[str, Any]]:
         """
