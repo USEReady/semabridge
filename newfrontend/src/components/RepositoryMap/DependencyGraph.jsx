@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
     ReactFlow,
     MiniMap,
@@ -8,6 +8,7 @@ import {
     useEdgesState,
     Panel,
 } from '@xyflow/react';
+import { Loader2, Database } from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
 
@@ -79,6 +80,8 @@ export default function DependencyGraph({
     filterType,
     showVersionBadges,
     onNodeClick,
+    isLoading = false,
+    snapshotId = null,
 }) {
     const [nodes, setNodes, onNodesChange] = useNodesState([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -167,7 +170,7 @@ export default function DependencyGraph({
 
         setNodes(filteredNodes);
         setEdges(filteredEdges);
-    }, [graphData, layout, searchQuery, filterType, showVersionBadges, versionCounts]);
+    }, [graphData, layout, searchQuery, filterType, showVersionBadges, versionCounts, setNodes, setEdges]);
 
     // ── Node click handler ──────────────────────
     const handleNodeClick = useCallback((_, node) => {
@@ -175,7 +178,7 @@ export default function DependencyGraph({
     }, [onNodeClick]);
 
     return (
-        <div style={{ width: '100%', height: '100%' }}>
+        <div style={{ width: '100%', height: '100%', position: 'relative' }}>
             <ReactFlow
                 nodes={nodes}
                 edges={edges}
@@ -192,6 +195,28 @@ export default function DependencyGraph({
                 }}
                 style={{ background: 'var(--bg-app)' }}
             >
+                {snapshotId && (
+                    <Panel position="top-left">
+                        <div style={{
+                            background: 'var(--bg-surface)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: 8,
+                            padding: '8px 10px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            fontSize: 11,
+                            color: 'var(--text-secondary)',
+                        }}>
+                            <Database size={12} style={{ color: '#818CF8' }} />
+                            <span style={{ textTransform: 'uppercase', letterSpacing: '.04em', fontWeight: 700, color: 'var(--text-tertiary)' }}>Snapshot</span>
+                            <span style={{ color: '#818CF8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }}>
+                                {String(snapshotId).slice(0, 8)}
+                            </span>
+                        </div>
+                    </Panel>
+                )}
+
                 <Controls
                     position="bottom-left"
                     style={{
@@ -247,6 +272,34 @@ export default function DependencyGraph({
                     </div>
                 </Panel>
             </ReactFlow>
+
+            {isLoading && (
+                <div style={{
+                    position: 'absolute',
+                    inset: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: 'rgba(2, 6, 23, 0.55)',
+                    backdropFilter: 'blur(2px)',
+                    zIndex: 5,
+                }}>
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '10px 14px',
+                        borderRadius: 10,
+                        background: 'var(--bg-surface)',
+                        border: '1px solid var(--border-color)',
+                        color: 'var(--text-secondary)',
+                        fontSize: 12,
+                    }}>
+                        <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: '#818CF8' }} />
+                        <span>{snapshotId ? 'Loading snapshot graph...' : 'Loading dependency graph...'}</span>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

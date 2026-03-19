@@ -1,20 +1,10 @@
-project_name: multiple=check
+project_name: hee
 source:
   type: fabric
   workspace_id: semabridge-local
   workspace: SemaBridge Workspace
   models:
-    - annual
-    - DEMO_TABLE_SEMATIC
-    - Customer Profitability
-    - Corporate Spend
     - Core_Finance_v1
-    - Employee
-    - Device
-    - FabricModel
-    - Employee Hiring and History
-    - demo Table
-    - continent
 target:
   type: snowflake
 ui:
@@ -22,17 +12,7 @@ ui:
   editor_mode: form
 selection:
   model_ids:
-    - a3eb7be8-2df8-482b-872b-9d661659895a
-    - 1de94708-b786-4843-9280-e2d04de43144
-    - 83686c9b-2320-466a-a7a8-c3975d6998e7
-    - cfbd1669-4cbe-4dbb-a291-ff3bcd6b1053
     - bbe97d8c-bf99-457f-b322-6c5e7a948171
-    - c7004446-7db0-42fc-b6c9-a213f969e515
-    - 974e7d48-4a76-4518-99d7-6ea751e37ce8
-    - ae98cc64-5a15-4c3e-b327-ddcafa3e3c02
-    - 0380514b-a532-4a82-9066-09de85a65d19
-    - 9c4b4093-97b3-40d1-94c1-0b2edb26dc93
-    - d32e8900-31cc-4647-872d-08a7e62bf03b
 options:
   auto_relationships: true
   include_hidden_fields: false

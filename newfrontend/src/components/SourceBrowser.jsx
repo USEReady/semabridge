@@ -214,7 +214,7 @@ function TreeItem({
                 {/* Platform badge for semantic objects */}
                 {item.platform && (
                     <span
-                        className={`px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0 border ${
+                        className={`px-1.5 py-0.5 rounded-full text-[9px] font-semibold shrink-0 border ${
                             item.platform === 'fabric'
                                 ? 'bg-indigo-500/15 text-indigo-400 border-indigo-500/30'
                                 : 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30'
@@ -226,7 +226,7 @@ function TreeItem({
 
                 {item.status && !item.platform && (
                     <span
-                        className="px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0"
+                        className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold shrink-0"
                         style={BADGE_STYLES[item.status] || {}}
                     >
                         {item.status}

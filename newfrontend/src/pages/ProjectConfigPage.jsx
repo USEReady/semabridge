@@ -384,7 +384,12 @@ export default function ProjectConfigPage() {
   };
 
   if (loading) {
-    return <div style={{ padding: 36, color: 'var(--text-tertiary)', fontSize: 13 }}>Loading project configuration...</div>;
+    return (
+      <div style={{ padding: 36, color: 'var(--text-tertiary)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+        <span>Loading project configuration...</span>
+      </div>
+    );
   }
 
   if (!project) {

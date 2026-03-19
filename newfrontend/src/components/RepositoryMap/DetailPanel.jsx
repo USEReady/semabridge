@@ -156,6 +156,12 @@ export default function DetailPanel({ filePreview, selectedNode, onClose }) {
                                 <Row label="Table" value={selectedNode.table_name} />
                                 <Row label="Schema" value={selectedNode.schema || 'PUBLIC'} />
                                 <Row label="Source" value={selectedNode.source_type || 'snowflake'} />
+                                <Row label="Origin" value={
+                                    <OriginBadge
+                                        tableName={selectedNode.table_name || selectedNode.label}
+                                        schema={selectedNode.schema}
+                                    />
+                                } />
                                 <Row label="Status" value={
                                     <StatusBadge status={selectedNode.status} />
                                 } />
@@ -254,6 +260,34 @@ function StatusBadge({ status }) {
             border: `1px solid ${isBroken ? 'rgba(239,68,68,.3)' : 'rgba(34,197,94,.3)'}`,
         }}>
             {isBroken ? '✕ Broken' : '✓ Valid'}
+        </span>
+    );
+}
+
+function OriginBadge({ tableName, schema }) {
+    const fullName = `${schema ? `${schema}.` : ''}${tableName || ''}`.toLowerCase();
+    const isSystem =
+        fullName.startsWith('information_schema.') ||
+        fullName.startsWith('pg_') ||
+        fullName.startsWith('sqlite_') ||
+        fullName.startsWith('duckdb_') ||
+        fullName.startsWith('sys.') ||
+        fullName.startsWith('__');
+
+    return (
+        <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+            padding: '2px 8px',
+            borderRadius: 10,
+            fontSize: 10,
+            fontWeight: 700,
+            background: isSystem ? 'rgba(245,158,11,.15)' : 'rgba(99,102,241,.15)',
+            color: isSystem ? '#F59E0B' : '#818CF8',
+            border: `1px solid ${isSystem ? 'rgba(245,158,11,.35)' : 'rgba(99,102,241,.35)'}`,
+        }}>
+            {isSystem ? 'System Generated' : 'Original Schema'}
         </span>
     );
 }

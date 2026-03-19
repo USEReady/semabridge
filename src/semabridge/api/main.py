@@ -2343,7 +2343,7 @@ async def graph_snapshots_compat(model_name: str):
 
 
 @app.get("/api/graph/{model_name}/snapshot/{snapshot_id}")
-async def graph_snapshot_compat(model_name: str, snapshot_id: str):
+async def graph_snapshot_compat(model_name: str, snapshot_id: str, include_system_tables: bool = False):
     """Compatibility endpoint for loading a graph for a selected snapshot.
     
     Reconstructs the semantic model graph from a specific snapshot's SML blob.
@@ -2354,37 +2354,214 @@ async def graph_snapshot_compat(model_name: str, snapshot_id: str):
         if not snapshot:
             logger.warning("Snapshot %s not found", snapshot_id)
             return {"nodes": [], "edges": [], "snapshot_id": snapshot_id, "model": model_name}
-        
+
         sml = snapshot.sml_blob or {}
-        nodes = []
-        edges = []
-        
-        # Extract entities/datasources as nodes
+        if not isinstance(sml, dict):
+            sml = {}
+
+        def _safe_id(raw: str) -> str:
+            return re.sub(r"[^a-zA-Z0-9_\-:.]", "_", str(raw or "unknown"))
+
+        system_prefixes = (
+            "information_schema.",
+            "pg_",
+            "sqlite_",
+            "duckdb_",
+            "sys.",
+            "__",
+        )
+
+        def _is_system_table(table_name: str) -> bool:
+            val = str(table_name or "").strip().lower()
+            if not val:
+                return False
+            return val.startswith(system_prefixes)
+
+        def _qualify(schema_name: str, table_name: str) -> str:
+            schema_name = str(schema_name or "").strip()
+            table_name = str(table_name or "").strip()
+            if not table_name:
+                return ""
+            if "." in table_name:
+                return table_name
+            if schema_name:
+                return f"{schema_name}.{table_name}"
+            return table_name
+
+        detected_model = str(sml.get("model_name") or model_name or snapshot.project_id or "model").strip()
+        model_node_id = f"model-{_safe_id(detected_model)}"
+
+        nodes: List[Dict[str, Any]] = [{
+            "id": model_node_id,
+            "type": "modelNode",
+            "position": {"x": 400, "y": 150},
+            "data": {
+                "label": detected_model,
+                "model_id": detected_model,
+                "workspace_id": str(sml.get("workspace_id") or ""),
+                "description": str(sml.get("description") or ""),
+                "status": "valid",
+                "nodeType": "model",
+            },
+        }]
+        edges: List[Dict[str, Any]] = []
+
+        table_nodes: Dict[str, str] = {}
+        excluded_system_tables = 0
+
+        datasets = sml.get("datasets", [])
+        if not isinstance(datasets, list):
+            datasets = []
+
         entities = sml.get("entities", {})
-        for ent_name, ent_def in entities.items():
-            if isinstance(ent_def, dict):
-                nodes.append({
-                    "id": ent_name,
-                    "data": {"label": ent_name, "type": "entity"},
-                    "position": {"x": 0, "y": 0},
-                    "type": "default",
+        if isinstance(entities, dict):
+            for ent_name, ent_def in entities.items():
+                if not isinstance(ent_def, dict):
+                    continue
+                datasets.append({
+                    "name": ent_name,
+                    "table": ent_def.get("table") or ent_name,
+                    "schema": ent_def.get("schema") or ent_def.get("database_schema") or "PUBLIC",
+                    "source_type": ent_def.get("source_type") or "snapshot",
+                    "columns": ent_def.get("columns") or [],
                 })
-        
-        # Extract relationships/measures as edges
+
+        for idx, ds in enumerate(datasets):
+            if not isinstance(ds, dict):
+                continue
+            schema = str(ds.get("schema") or ds.get("database_schema") or "PUBLIC")
+            table = str(ds.get("table") or ds.get("name") or f"table_{idx}")
+            qualified = _qualify(schema, table)
+
+            if not include_system_tables and _is_system_table(qualified):
+                excluded_system_tables += 1
+                continue
+
+            if qualified in table_nodes:
+                continue
+
+            table_node_id = f"table-{_safe_id(qualified)}"
+            table_nodes[qualified] = table_node_id
+            columns = ds.get("columns") if isinstance(ds.get("columns"), list) else []
+
+            nodes.append({
+                "id": table_node_id,
+                "type": "tableNode",
+                "position": {"x": 120 + (len(table_nodes) - 1) * 260, "y": 0},
+                "data": {
+                    "label": qualified,
+                    "table_name": table,
+                    "schema": schema,
+                    "source_type": str(ds.get("source_type") or "snapshot"),
+                    "columns": columns,
+                    "nodeType": "table",
+                    "status": "valid",
+                },
+            })
+
+            edges.append({
+                "id": f"e-{table_node_id}-{model_node_id}",
+                "source": table_node_id,
+                "target": model_node_id,
+                "animated": True,
+                "style": {"stroke": "#22C55E"},
+            })
+
+        measures = sml.get("metrics", sml.get("measures", []))
+        if not isinstance(measures, list):
+            measures = []
+
+        for midx, measure in enumerate(measures):
+            if not isinstance(measure, dict):
+                continue
+            measure_name = str(measure.get("name") or f"measure_{midx}")
+            measure_node_id = f"measure-{_safe_id(detected_model)}-{midx}"
+            nodes.append({
+                "id": measure_node_id,
+                "type": "measureNode",
+                "position": {"x": 120 + midx * 260, "y": 320},
+                "data": {
+                    "label": measure_name,
+                    "expression": str(measure.get("expression") or ""),
+                    "data_type": str(measure.get("data_type") or measure.get("format_string") or ""),
+                    "parent_model": detected_model,
+                    "nodeType": "measure",
+                },
+            })
+            edges.append({
+                "id": f"e-{model_node_id}-{measure_node_id}",
+                "source": model_node_id,
+                "target": measure_node_id,
+                "animated": False,
+                "style": {"stroke": "#EAB308"},
+            })
+
         relationships = sml.get("relationships", [])
-        if isinstance(relationships, list):
-            for rel in relationships:
-                if isinstance(rel, dict):
-                    src = rel.get("from")
-                    tgt = rel.get("to")
-                    if src and tgt:
-                        edges.append({
-                            "id": f"{src}-{tgt}",
-                            "source": src,
-                            "target": tgt,
-                            "label": rel.get("name", ""),
-                        })
-        
+        if not isinstance(relationships, list):
+            relationships = []
+
+        for ridx, rel in enumerate(relationships):
+            if not isinstance(rel, dict):
+                continue
+
+            from_schema = rel.get("from_schema") or rel.get("source_schema") or ""
+            to_schema = rel.get("to_schema") or rel.get("target_schema") or ""
+            from_table = rel.get("from_table") or rel.get("from_model") or rel.get("from") or rel.get("source")
+            to_table = rel.get("to_table") or rel.get("to_model") or rel.get("to") or rel.get("target")
+
+            from_key = _qualify(from_schema, str(from_table or "")).strip()
+            to_key = _qualify(to_schema, str(to_table or "")).strip()
+
+            if not from_key or not to_key:
+                continue
+            if (not include_system_tables) and (_is_system_table(from_key) or _is_system_table(to_key)):
+                continue
+
+            if from_key not in table_nodes:
+                nid = f"table-{_safe_id(from_key)}"
+                table_nodes[from_key] = nid
+                nodes.append({
+                    "id": nid,
+                    "type": "tableNode",
+                    "position": {"x": 120 + (len(table_nodes) - 1) * 260, "y": 0},
+                    "data": {
+                        "label": from_key,
+                        "table_name": from_key,
+                        "schema": from_schema or "PUBLIC",
+                        "source_type": "snapshot",
+                        "columns": [],
+                        "nodeType": "table",
+                        "status": "broken",
+                    },
+                })
+
+            if to_key not in table_nodes:
+                nid = f"table-{_safe_id(to_key)}"
+                table_nodes[to_key] = nid
+                nodes.append({
+                    "id": nid,
+                    "type": "tableNode",
+                    "position": {"x": 120 + (len(table_nodes) - 1) * 260, "y": 0},
+                    "data": {
+                        "label": to_key,
+                        "table_name": to_key,
+                        "schema": to_schema or "PUBLIC",
+                        "source_type": "snapshot",
+                        "columns": [],
+                        "nodeType": "table",
+                        "status": "broken",
+                    },
+                })
+
+            edges.append({
+                "id": f"rel-{ridx}-{table_nodes[from_key]}-{table_nodes[to_key]}",
+                "source": table_nodes[from_key],
+                "target": table_nodes[to_key],
+                "label": str(rel.get("join_key") or rel.get("from_column") or rel.get("name") or ""),
+                "type": "smoothstep",
+                "style": {"stroke": "#818CF8", "strokeDasharray": "6 3"},
+            })
+
         return {
             "nodes": nodes,
             "edges": edges,
@@ -2392,6 +2569,11 @@ async def graph_snapshot_compat(model_name: str, snapshot_id: str):
             "model": model_name,
             "timestamp": snapshot.timestamp,
             "version_tag": snapshot.version_tag,
+            "meta": {
+                "tables_included": len(table_nodes),
+                "system_tables_excluded": excluded_system_tables,
+                "include_system_tables": include_system_tables,
+            },
         }
     except Exception as exc:
         logger.debug("Failed to load snapshot graph %s: %s", snapshot_id, exc)

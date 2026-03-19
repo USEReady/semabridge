@@ -814,7 +814,7 @@ function StepSourceBrowser({
 
       {/* Flat search results */}
       {displayModels && (
-        <div style={{ maxHeight: 320, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
+        <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
           {displayModels.map(m => (
             <ModelRow key={m._id} model={m} selected={selectedModels.has(m._id)} onToggle={() => toggleModel(m._id, m.name || m.id)} showWs />
           ))}
@@ -823,7 +823,7 @@ function StepSourceBrowser({
 
       {/* Tree view when no search */}
       {!displayModels && (
-        <div style={{ maxHeight: 380, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden' }}>
+        <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden' }}>
           {wsLoading ? (
             <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
               <Loader2 size={18} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 8px', display: 'block' }} />
@@ -875,15 +875,19 @@ function WorkspaceRow({ ws, expanded, models, selectedModels, onToggle, onModelT
           <span style={{ fontSize: 11, color: 'var(--text-tertiary)', marginLeft: 4 }}>({models.length} models)</span>
         )}
       </div>
-      {expanded && models && models.map(m => (
-        <ModelRow
-          key={m.id}
-          model={{ ...m, _id: `${ws.id}::${m.id}` }}
-          selected={selectedModels.has(`${ws.id}::${m.id}`)}
-          onToggle={() => onModelToggle(m.id, m.name || m.id)}
-          indent
-        />
-      ))}
+      {expanded && models && (
+        <div className="custom-scrollbar" style={{ maxHeight: 250, overflowY: 'auto' }}>
+          {models.map(m => (
+            <ModelRow
+              key={m.id}
+              model={{ ...m, _id: `${ws.id}::${m.id}` }}
+              selected={selectedModels.has(`${ws.id}::${m.id}`)}
+              onToggle={() => onModelToggle(m.id, m.name || m.id)}
+              indent
+            />
+          ))}
+        </div>
+      )}
       {expanded && !models && (
         <div style={{ padding: '8px 32px', fontSize: 12, color: 'var(--text-tertiary)' }}>
           <Loader2 size={12} style={{ animation: 'spin 1s linear infinite', display: 'inline', marginRight: 6 }} />
@@ -1000,6 +1004,20 @@ function StepFinish({
   navigate,
 }) {
   const createdProjectId = createdProject?.id || createdProject?.project_id;
+
+  if (saving && !createdProject) {
+    return (
+      <div style={{ textAlign: 'center', padding: '40px 0' }}>
+        <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--accent-blue)20', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+          <Loader2 size={28} style={{ color: 'var(--accent-blue)', animation: 'spin 1s linear infinite' }} />
+        </div>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Creating Project</h2>
+        <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 24 }}>
+          Setting up configurations and initializing "{name}"...
+        </p>
+      </div>
+    );
+  }
 
   if (createdProject) {
     return (

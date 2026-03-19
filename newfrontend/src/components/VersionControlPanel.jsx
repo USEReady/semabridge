@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
     X,
     GitCommit,
@@ -32,31 +32,31 @@ function DiffTable({ diffs, objectTypeFilter, changeTypeFilter }) {
     return (
         <div className="overflow-x-auto">
             <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-surface-raised border-b border-main">
+                <thead className="sticky top-0 bg-slate-900/80 border-b border-slate-800/70 backdrop-blur-md">
                     <tr>
-                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-tertiary">Object Name</th>
-                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-tertiary">Type</th>
-                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-tertiary">Property</th>
-                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-tertiary">
+                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">Object Name</th>
+                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">Type</th>
+                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">Property</th>
+                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                             Old Value {filtered[0]?.old_version_tag ? `(${filtered[0].old_version_tag})` : ''}
                         </th>
-                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-tertiary">
+                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                             New Value {filtered[0]?.new_version_tag ? `(${filtered[0].new_version_tag})` : ''}
                         </th>
-                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-tertiary">Change</th>
+                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">Change</th>
                     </tr>
                 </thead>
                 <tbody>
                     {filtered.map((d, idx) => (
-                        <tr key={idx} className="border-b border-main hover:bg-surface-hover transition-colors">
-                            <td className="px-3 py-2 font-medium text-primary">{d.object_name}</td>
-                            <td className="px-3 py-2 text-secondary">{d.object_type}</td>
-                            <td className="px-3 py-2 text-secondary font-mono">{d.property}</td>
+                        <tr key={idx} className="border-b border-slate-800/70 hover:bg-slate-800/40 transition-colors">
+                            <td className="px-3 py-2 font-medium text-slate-100">{d.object_name}</td>
+                            <td className="px-3 py-2 text-slate-300">{d.object_type}</td>
+                            <td className="px-3 py-2 text-slate-300 font-mono">{d.property}</td>
                             <td className="px-3 py-2">
-                                {d.old_value && <span className="bg-red-500/10 text-red-400 px-1.5 py-0.5 rounded text-[10px] font-mono">{d.old_value}</span>}
+                                {d.old_value && <span className="bg-red-500/10 text-red-400 px-1.5 py-0.5 rounded-full text-[10px] font-mono">{d.old_value}</span>}
                             </td>
                             <td className="px-3 py-2">
-                                {d.new_value && <span className="bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded text-[10px] font-mono">{d.new_value}</span>}
+                                {d.new_value && <span className="bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded-full text-[10px] font-mono">{d.new_value}</span>}
                             </td>
                             <td className="px-3 py-2">
                                 <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${d.change_type === 'Added' ? 'bg-emerald-500/15 text-emerald-400' :
@@ -90,18 +90,7 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
     const switchTimerRef = useRef(null);
     const { addLog } = useLogs();
 
-    // Reload versions when panel opens or active model changes
-    useEffect(() => {
-        if (isOpen) loadVersions();
-    }, [isOpen, activeModelId]);
-
-    useEffect(() => {
-        return () => {
-            if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
-        };
-    }, []);
-
-    const loadVersions = async () => {
+    const loadVersions = useCallback(async () => {
         setIsLoading(true);
         setDiffs(null);
         setSelectedForCompare([]);
@@ -124,7 +113,18 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [activeModelId, addLog]);
+
+    // Reload versions when panel opens or active model changes
+    useEffect(() => {
+        if (isOpen) loadVersions();
+    }, [isOpen, loadVersions]);
+
+    useEffect(() => {
+        return () => {
+            if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
+        };
+    }, []);
 
     const handleCompare = async () => {
         if (selectedForCompare.length !== 2) return;
@@ -225,37 +225,40 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
     const activeSnapshotLabel = activeVersion
         ? (activeVersion.version_tag || activeVersion.version_id?.substring(0, 8))
         : 'None';
-    const timelineEntries = versions.slice(0, 10);
+    const timelineEntries = versions;
 
     if (!isOpen) return null;
 
     return (
         <div className="fixed inset-0 z-50 flex justify-end">
-            <div className="absolute inset-0 backdrop-blur-sm" style={{ background: 'var(--bg-backdrop)' }} onClick={onClose} />
-            <div className="relative w-full h-full bg-surface border-l border-main flex flex-col shadow-2xl animate-in slide-in-from-right duration-300 text-primary">
+            <div className="absolute inset-0 backdrop-blur-sm bg-[#020617]/65" onClick={onClose} />
+            <div className="relative w-full h-full bg-[#020617] border-l border-slate-800/70 flex flex-col shadow-2xl animate-in slide-in-from-right duration-300 text-slate-200">
                 {/* Header */}
-                <div className="h-16 px-6 flex items-center justify-between border-b border-main bg-surface-raised backdrop-blur-md">
+                <div className="h-16 px-6 flex items-center justify-between border-b border-slate-800/60 bg-[#020617]/80 backdrop-blur-md">
                     <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-accent-blue/15 text-accent-blue border border-accent-blue/30">
+                        <div className="p-2 rounded-lg bg-[#6467f2]/20 text-[#6467f2] border border-[#6467f2]/35 shadow-lg shadow-[#6467f2]/15">
                             <GitCommit size={20} />
                         </div>
                         <div>
-                            <h2 className="text-lg font-bold text-primary">DataStore <span className="text-accent-blue">Snapshot</span></h2>
-                            <p className="text-xs text-tertiary">
+                            <h2 className="text-lg font-bold text-slate-100">DataStore <span className="text-[#6467f2]">Snapshot</span></h2>
+                            <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-widest">
                                 {activeModelId
                                     ? `${versions.length} version(s) for ${activeModelId}`
                                     : `${versions.length} version(s) across all models`}
                             </p>
-                            <p className="text-[11px] font-mono text-accent-blue mt-1">Active Snapshot: {activeSnapshotLabel}</p>
+                            <p className="text-[10px] mt-1 uppercase tracking-widest text-slate-500 font-semibold">
+                                Active Snapshot:
+                                <span className="ml-2 text-xs font-mono text-[#6467f2] bg-[#6467f2]/10 px-2 py-0.5 rounded-full border border-[#6467f2]/20 normal-case">{activeSnapshotLabel}</span>
+                            </p>
                         </div>
                     </div>
                     <div className="flex items-center gap-4">
-                        <div className="flex items-center bg-surface border border-main p-1 rounded-full">
+                        <div className="flex items-center bg-slate-900/50 border border-slate-800 p-1 rounded-full">
                             <button
                                 onClick={() => setViewMode('history')}
                                 className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all ${viewMode === 'history'
-                                        ? 'bg-accent-blue text-white shadow-lg shadow-accent-blue/20'
-                                        : 'text-tertiary hover:text-primary'
+                                        ? 'bg-[#6467f2] text-white shadow-lg shadow-[#6467f2]/25'
+                                        : 'text-slate-400 hover:text-[#6467f2]'
                                     }`}
                             >
                                 History
@@ -263,14 +266,14 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                             <button
                                 onClick={() => setViewMode('diff')}
                                 className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all ${viewMode === 'diff'
-                                        ? 'bg-accent-blue text-white shadow-lg shadow-accent-blue/20'
-                                        : 'text-tertiary hover:text-primary'
+                                        ? 'bg-[#6467f2] text-white shadow-lg shadow-[#6467f2]/25'
+                                        : 'text-slate-400 hover:text-[#6467f2]'
                                     }`}
                             >
                                 Diff Mode
                             </button>
                         </div>
-                        <button onClick={onClose} className="p-2 hover:bg-surface-hover rounded-full text-tertiary">
+                        <button onClick={onClose} className="p-2 hover:bg-slate-800/70 rounded-full text-slate-400 transition-colors">
                             <X size={20} />
                         </button>
                     </div>
@@ -281,41 +284,41 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                     {/* Snapshot workspace */}
                     <div className="p-6 pb-4">
                         <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-4 min-h-[420px]">
-                            <section className="relative rounded-xl border border-main bg-surface-raised overflow-hidden">
-                                <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-30" viewBox="0 0 1200 700" preserveAspectRatio="none">
-                                    <path d="M260,260 C440,260 440,480 620,480" stroke="var(--accent-blue)" strokeWidth="2" fill="none" opacity="0.45" />
-                                    <path d="M260,300 C440,300 440,180 620,180" stroke="var(--accent-blue)" strokeWidth="2" fill="none" opacity="0.45" />
+                            <section className="relative rounded-lg border border-slate-800/70 overflow-hidden bg-[radial-gradient(circle_at_20%_35%,_#0f172a_0%,_#020617_100%)]">
+                                <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-40" viewBox="0 0 1200 700" preserveAspectRatio="none">
+                                    <path d="M260,260 C440,260 440,480 620,480" stroke="#6467f2" strokeWidth="2" fill="none" opacity="0.3" />
+                                    <path d="M260,300 C440,300 440,180 620,180" stroke="#6467f2" strokeWidth="2" fill="none" opacity="0.3" />
                                 </svg>
 
                                 <div className="relative h-full min-h-[420px] p-6">
                                     <div className="absolute inset-x-6 top-6 bottom-6 [perspective:1200px]">
-                                        <div className="absolute inset-[16%_9%_16%_9%] rounded-xl border-2 border-main bg-surface/40 blur-sm" />
-                                        <div className="absolute inset-[13%_7%_13%_7%] rounded-xl border-2 border-main bg-surface/50 blur-[2px]" />
-                                        <div className="absolute inset-[10%_5%_10%_5%] rounded-xl border border-accent-blue/30 bg-surface-raised shadow-2xl p-6">
+                                        <div className="absolute inset-[16%_9%_16%_9%] rounded-lg border-2 border-slate-800/40 bg-slate-900/20 blur-sm" />
+                                        <div className="absolute inset-[13%_7%_13%_7%] rounded-lg border-2 border-slate-800/40 bg-slate-900/20 blur-[2px]" />
+                                        <div className="absolute inset-[10%_5%_10%_5%] rounded-lg border border-[#6467f2]/30 bg-slate-900/85 shadow-2xl p-6 backdrop-blur-xl">
                                             <div className={`grid grid-cols-1 md:grid-cols-2 gap-5 transition-opacity duration-150 ${isSnapshotSwitching ? 'opacity-70' : 'opacity-100'}`}>
-                                                <article className="rounded-xl border border-accent-blue/35 bg-surface-raised overflow-hidden">
-                                                    <div className="p-4 border-b border-accent-blue/25 bg-accent-blue/10">
-                                                        <h3 className="text-sm font-bold text-accent-blue">{activeModelId || activeVersion?.model_id || 'Orders_Fact'}</h3>
-                                                        <p className="text-[10px] uppercase tracking-wider text-tertiary mt-1">Primary Transactional Model</p>
+                                                <article className="rounded-lg border border-[#6467f2]/30 bg-slate-900/95 overflow-hidden shadow-xl ring-1 ring-white/5">
+                                                    <div className="p-4 border-b border-[#6467f2]/20 bg-[#6467f2]/10">
+                                                        <h3 className="text-sm font-bold text-[#6467f2]">{activeModelId || activeVersion?.model_id || 'Orders_Fact'}</h3>
+                                                        <p className="text-[10px] uppercase tracking-wider text-slate-500 mt-1 font-bold">Primary Transactional Model</p>
                                                     </div>
                                                     <div className="p-4 space-y-2 text-xs">
-                                                        <div className="flex justify-between"><span className="text-tertiary">Version:</span><span className="text-accent-blue font-mono">{activeSnapshotLabel}</span></div>
-                                                        <div className="flex justify-between"><span className="text-tertiary">Author:</span><span className="text-primary">{activeVersion?.author || 'system'}</span></div>
-                                                        <div className="flex justify-between"><span className="text-tertiary">Timestamp:</span><span className="text-primary">{activeVersion?.timestamp ? new Date(activeVersion.timestamp).toLocaleString() : '—'}</span></div>
-                                                        <div className="border-t border-main pt-2 text-secondary">{activeVersion?.description || 'Snapshot selected from timeline.'}</div>
+                                                        <div className="flex justify-between"><span className="text-slate-400">Version:</span><span className="text-[#6467f2] font-mono">{activeSnapshotLabel}</span></div>
+                                                        <div className="flex justify-between"><span className="text-slate-400">Author:</span><span className="text-slate-200">{activeVersion?.author || 'system'}</span></div>
+                                                        <div className="flex justify-between"><span className="text-slate-400">Timestamp:</span><span className="text-slate-200">{activeVersion?.timestamp ? new Date(activeVersion.timestamp).toLocaleString() : '—'}</span></div>
+                                                        <div className="border-t border-slate-800/60 pt-2 text-slate-300">{activeVersion?.description || 'Snapshot selected from timeline.'}</div>
                                                     </div>
                                                 </article>
 
-                                                <article className="rounded-xl border border-accent-blue/35 bg-surface-raised overflow-hidden">
-                                                    <div className="p-4 border-b border-accent-blue/25 bg-accent-blue/10">
-                                                        <h3 className="text-sm font-bold text-accent-blue">Customers_Dim</h3>
-                                                        <p className="text-[10px] uppercase tracking-wider text-tertiary mt-1">Core Dimension</p>
+                                                <article className="rounded-lg border border-[#6467f2]/30 bg-slate-900/95 overflow-hidden shadow-xl ring-1 ring-white/5">
+                                                    <div className="p-4 border-b border-[#6467f2]/20 bg-[#6467f2]/10">
+                                                        <h3 className="text-sm font-bold text-[#6467f2]">Customers_Dim</h3>
+                                                        <p className="text-[10px] uppercase tracking-wider text-slate-500 mt-1 font-bold">Core Dimension</p>
                                                     </div>
                                                     <div className="p-4 space-y-2 text-xs">
-                                                        <div className="flex justify-between"><span className="text-tertiary">Diff Selected:</span><span className="text-primary">{selectedForCompare.length}/2</span></div>
-                                                        <div className="flex justify-between"><span className="text-tertiary">Changes Loaded:</span><span className="text-emerald-400">{(diffs || []).length}</span></div>
-                                                        <div className="flex justify-between"><span className="text-tertiary">Rollback Ready:</span><span className="text-amber-400">{activeVersion?.can_rollback === false ? 'No' : 'Yes'}</span></div>
-                                                        <div className="border-t border-main pt-2 text-secondary">Click a timeline entry to switch active snapshot instantly.</div>
+                                                        <div className="flex justify-between"><span className="text-slate-400">Diff Selected:</span><span className="text-slate-200">{selectedForCompare.length}/2</span></div>
+                                                        <div className="flex justify-between"><span className="text-slate-400">Changes Loaded:</span><span className="text-emerald-400">{(diffs || []).length}</span></div>
+                                                        <div className="flex justify-between"><span className="text-slate-400">Rollback Ready:</span><span className="text-amber-400">{activeVersion?.can_rollback === false ? 'No' : 'Yes'}</span></div>
+                                                        <div className="border-t border-slate-800/60 pt-2 text-slate-300">Click a timeline entry to switch active snapshot instantly.</div>
                                                     </div>
                                                 </article>
                                             </div>
@@ -324,14 +327,14 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                                 </div>
                             </section>
 
-                            <aside className="rounded-xl border border-main bg-surface-raised backdrop-blur flex flex-col min-h-[420px]">
-                                <div className="p-4 border-b border-main flex items-center justify-between">
-                                    <h3 className="text-sm font-bold text-primary">Timeline</h3>
-                                    <span className="text-[10px] uppercase tracking-wider text-tertiary">2026</span>
+                            <aside className="rounded-lg border border-slate-800/80 bg-slate-900/90 backdrop-blur-2xl flex flex-col min-h-[420px]">
+                                <div className="p-4 border-b border-slate-800/60 flex items-center justify-between bg-slate-900/40">
+                                    <h3 className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Timeline</h3>
+                                    <span className="text-[10px] uppercase tracking-widest text-slate-500">2026</span>
                                 </div>
-                                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                                <div className="flex-1 overflow-y-auto max-h-[56vh] p-4 space-y-6 custom-scrollbar">
                                     {timelineEntries.length === 0 && (
-                                        <p className="text-xs text-tertiary">No snapshots available yet.</p>
+                                        <p className="text-xs text-slate-500">No snapshots available yet.</p>
                                     )}
                                     {timelineEntries.map((v, idx) => {
                                         const isActive = v.version_id === activeVersion?.version_id;
@@ -339,32 +342,32 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                                             <button
                                                 key={v.version_id}
                                                 onClick={() => handleVersionSelect(v)}
-                                                className={`w-full text-left relative pl-5 border-l-2 transition-colors ${isActive ? 'border-accent-blue' : 'border-main hover:border-accent-blue/50'}`}
+                                                className={`w-full text-left relative pl-5 pr-2 py-1 border-l-2 rounded-r-lg transition-all duration-150 ${isActive ? 'border-[#6467f2] bg-[#6467f2]/8' : 'border-slate-800 hover:border-[#6467f2]/40 hover:bg-slate-800/35 hover:translate-x-0.5'} group`}
                                             >
                                                 <span
-                                                    className="absolute -left-[7px] top-1.5 w-3 h-3 rounded-full border-2 border-main"
-                                                    style={{ backgroundColor: isActive ? 'var(--accent-blue)' : 'var(--text-tertiary)' }}
+                                                    className="absolute -left-[7px] top-1.5 w-3 h-3 rounded-full border-2 border-slate-900"
+                                                    style={{ backgroundColor: isActive ? '#6467f2' : '#1f2937' }}
                                                 />
-                                                <div className={`pb-3 ${idx === timelineEntries.length - 1 ? 'pb-0' : ''}`}>
-                                                    <p className={`text-[10px] uppercase tracking-wider ${isActive ? 'text-accent-blue' : 'text-tertiary'}`}>
+                                                <div className={`pb-4 ${idx === timelineEntries.length - 1 ? 'pb-0' : ''} ${isActive ? 'opacity-100' : 'opacity-60 group-hover:opacity-100'} transition-opacity`}>
+                                                    <p className={`text-[10px] uppercase tracking-wider font-bold ${isActive ? 'text-[#6467f2]' : 'text-slate-500'}`}>
                                                         {v.timestamp ? new Date(v.timestamp).toLocaleDateString() : 'Now'}
                                                     </p>
-                                                    <p className={`text-sm font-semibold mt-1 ${isActive ? 'text-primary' : 'text-secondary'}`}>
+                                                    <p className={`text-sm font-semibold mt-1 ${isActive ? 'text-slate-100' : 'text-slate-300'}`}>
                                                         {v.version_tag || `v${v.version_id.substring(0, 6)}`}
                                                     </p>
-                                                    <p className="text-xs text-tertiary truncate">{v.description || 'Config snapshot'}</p>
+                                                    <p className="text-xs text-slate-500 truncate">{v.description || 'Config snapshot'}</p>
                                                 </div>
                                             </button>
                                         );
                                     })}
                                 </div>
 
-                                <div className="p-4 border-t border-main bg-surface">
-                                    <h4 className="text-[10px] uppercase tracking-widest text-tertiary mb-3">Metadata Inspector</h4>
+                                <div className="p-5 border-t border-slate-800/80 bg-slate-950/80">
+                                    <h4 className="text-[10px] uppercase tracking-[0.15em] text-slate-500 font-bold mb-4">Metadata Inspector</h4>
                                     <div className="space-y-2 text-xs">
-                                        <div className="flex justify-between"><span className="text-tertiary">Total Models:</span><span className="text-primary">{new Set(versions.map(v => v.model_id).filter(Boolean)).size || (activeModelId ? 1 : 0)}</span></div>
-                                        <div className="flex justify-between"><span className="text-tertiary">Snapshots:</span><span className="text-primary">{versions.length}</span></div>
-                                        <div className="flex justify-between"><span className="text-tertiary">Current:</span><span className="px-2 py-0.5 rounded bg-accent-blue/10 border border-accent-blue/30 text-accent-blue font-mono">{activeSnapshotLabel}</span></div>
+                                        <div className="flex justify-between"><span className="text-slate-400">Total Models:</span><span className="text-slate-200">{new Set(versions.map(v => v.model_id).filter(Boolean)).size || (activeModelId ? 1 : 0)}</span></div>
+                                        <div className="flex justify-between"><span className="text-slate-400">Snapshots:</span><span className="text-slate-200">{versions.length}</span></div>
+                                        <div className="flex justify-between"><span className="text-slate-400">Current:</span><span className="px-2 py-0.5 rounded-full bg-[#6467f2]/15 border border-[#6467f2]/30 text-[#6467f2] font-mono font-bold">{activeSnapshotLabel}</span></div>
                                     </div>
                                 </div>
                             </aside>
@@ -373,14 +376,14 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
 
                     {viewMode === 'history' && (
                         <div className="px-6 pb-6">
-                            <div className="h-12 border border-main bg-surface-raised rounded-lg px-4 flex items-center justify-between text-[10px] font-bold text-tertiary uppercase tracking-wide">
+                            <div className="h-12 border border-slate-800/80 bg-[#020617] rounded-lg px-4 flex items-center justify-between text-[10px] font-bold text-slate-500 uppercase tracking-wide">
                                 <div className="flex items-center gap-4">
                                     <span className="inline-flex items-center gap-2">
-                                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                                        <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(74,222,128,0.6)] animate-pulse" />
                                         Live Sync Connected
                                     </span>
-                                    <span className="h-4 w-px bg-main" />
-                                    <span className="normal-case">Query Engine: BigQuery</span>
+                                    <span className="h-4 w-px bg-slate-800/80" />
+                                    <span className="normal-case font-medium">Query Engine: BigQuery</span>
                                 </div>
                                 <div className="flex items-center gap-4 normal-case">
                                     <span>Space: Play History</span>
@@ -420,11 +423,11 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
 
                         {isLoading ? (
                             <div className="flex items-center justify-center py-8">
-                                <Loader2 size={24} className="animate-spin text-accent-blue" />
+                                <Loader2 size={24} className="animate-spin text-[#6467f2]" />
                             </div>
                         ) : (
                             <div
-                                className={`border border-main rounded-xl overflow-hidden bg-surface-raised transition-opacity duration-150 ${isSnapshotSwitching ? 'opacity-70' : 'opacity-100'}`}
+                                className={`border border-slate-800/70 rounded-lg overflow-hidden bg-slate-900/70 transition-opacity duration-150 ${isSnapshotSwitching ? 'opacity-70' : 'opacity-100'}`}
                                 onMouseMove={handleHistoryMouseMove}
                                 onMouseLeave={handleHistoryMouseLeave}
                                 style={{
@@ -434,16 +437,16 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                                 }}
                             >
                                 <table className="w-full text-xs">
-                                    <thead className="border-b border-main bg-surface-raised">
+                                    <thead className="border-b border-slate-800/70 bg-slate-900/80">
                                         <tr>
                                             <th className="w-10 px-3 py-2.5"></th>
-                                            <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-tertiary">Version ID</th>
-                                            <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-tertiary">Tag</th>
-                                            <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-tertiary">Model</th>
-                                            <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-tertiary">Timestamp</th>
-                                            <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-tertiary">Author</th>
-                                            <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-tertiary">Summary</th>
-                                            <th className="text-right px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-tertiary">Actions</th>
+                                            <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Version ID</th>
+                                            <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Tag</th>
+                                            <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Model</th>
+                                            <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Timestamp</th>
+                                            <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Author</th>
+                                            <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Summary</th>
+                                            <th className="text-right px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -464,7 +467,7 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                                                 <tr
                                                     key={v.version_id}
                                                     onClick={() => handleVersionSelect(v)}
-                                                    className={`border-b border-main last:border-0 hover:bg-surface-hover transition-colors cursor-pointer ${activeVersionId === v.version_id ? 'bg-accent-blue/10' : ''}`}
+                                                    className={`border-b border-slate-800/70 last:border-0 hover:bg-slate-800/40 transition-colors cursor-pointer ${activeVersionId === v.version_id ? 'bg-[#6467f2]/10' : ''}`}
                                                 >
                                                     <td className="px-3 py-2.5">
                                                         <input
@@ -473,10 +476,10 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                                                             onChange={() => toggleCompareSelection(v.version_id)}
                                                             onClick={(e) => e.stopPropagation()}
                                                             disabled={!canCompare}
-                                                            className="rounded border-main accent-[var(--accent-blue)]"
+                                                            className="rounded border-slate-700 accent-[#6467f2]"
                                                         />
                                                     </td>
-                                                    <td className="px-3 py-2.5 font-mono text-accent-blue font-bold">{v.version_id?.substring(0, 8)}</td>
+                                                    <td className="px-3 py-2.5 font-mono text-[#6467f2] font-bold">{v.version_id?.substring(0, 8)}</td>
                                                     <td className="px-3 py-2.5">
                                                         {v.version_tag ? (
                                                             <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-purple-500/15 text-purple-400 border border-purple-500/30">
@@ -491,17 +494,17 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                                                             {v.model_id || '—'}
                                                         </span>
                                                     </td>
-                                                    <td className="px-3 py-2.5 text-secondary">
+                                                    <td className="px-3 py-2.5 text-slate-300">
                                                         <div className="flex items-center gap-1">
-                                                            <Clock size={10} className="text-tertiary" />
+                                                            <Clock size={10} className="text-slate-500" />
                                                             {new Date(v.timestamp).toLocaleString()}
                                                         </div>
                                                     </td>
-                                                    <td className="px-3 py-2.5 text-secondary capitalize">{v.author || 'system'}</td>
-                                                    <td className="px-3 py-2.5 text-primary">
+                                                    <td className="px-3 py-2.5 text-slate-300 capitalize">{v.author || 'system'}</td>
+                                                    <td className="px-3 py-2.5 text-slate-100">
                                                         <div className="flex items-center gap-1.5">
                                                             {v.is_rollback && (
-                                                                <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                                                                <span className="px-1.5 py-0.5 rounded-full text-[8px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
                                                                     ↩ ROLLBACK
                                                                 </span>
                                                             )}
@@ -646,9 +649,9 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                 )}
 
                 {/* Footer */}
-                <div className="h-12 px-6 bg-surface-raised border-t border-main flex justify-between items-center">
-                    <span className="text-[10px] uppercase tracking-wider text-tertiary">© 2026 DataStore Labs</span>
-                    <button onClick={onClose} className="px-5 py-2 bg-accent-blue text-white rounded-lg text-sm font-bold hover:bg-accent-blue-hover active:scale-95 transition-all">
+                <div className="h-12 px-6 bg-[#020617] border-t border-slate-800/80 flex justify-between items-center">
+                    <span className="text-[10px] uppercase tracking-wider text-slate-500">© 2026 DataStore Labs</span>
+                    <button onClick={onClose} className="px-5 py-2 bg-[#6467f2] text-white rounded-lg text-sm font-bold hover:bg-[#4f46e5] active:scale-95 transition-all">
                         Done
                     </button>
                 </div>

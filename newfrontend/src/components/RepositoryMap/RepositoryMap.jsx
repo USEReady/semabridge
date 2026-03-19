@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Map, RefreshCw, GitBranch, Clock,
     LayoutGrid, Waypoints,
@@ -7,10 +7,70 @@ import {
     Database, FolderOpen,
 } from 'lucide-react';
 import { api } from '../../utils/api';
-import { useWorkspace } from '../../context/WorkspaceContext';
 import FileTreePanel from './FileTreePanel';
 import DependencyGraph from './DependencyGraph';
 import DetailPanel from './DetailPanel';
+
+function normalizeGraphPayload(rawGraph) {
+    const rawNodes = Array.isArray(rawGraph?.nodes) ? rawGraph.nodes : [];
+    const rawEdges = Array.isArray(rawGraph?.edges) ? rawGraph.edges : [];
+
+    const nodes = rawNodes.map((node, idx) => {
+        const nodeId = String(node?.id ?? `n-${idx}`);
+        const incomingData = node?.data && typeof node.data === 'object' ? node.data : {};
+        const semanticType = String(incomingData.nodeType || incomingData.type || '').toLowerCase();
+
+        let nodeType = node?.type;
+        if (!['modelNode', 'tableNode', 'measureNode'].includes(nodeType)) {
+            if (semanticType === 'table') nodeType = 'tableNode';
+            else if (semanticType === 'measure') nodeType = 'measureNode';
+            else nodeType = 'modelNode';
+        }
+
+        return {
+            ...node,
+            id: nodeId,
+            type: nodeType,
+            data: {
+                ...incomingData,
+                nodeType: incomingData.nodeType || (nodeType === 'tableNode' ? 'table' : nodeType === 'measureNode' ? 'measure' : 'model'),
+                label: incomingData.label || nodeId,
+                model_id: incomingData.model_id || nodeId,
+            },
+            position: node?.position && typeof node.position.x === 'number' && typeof node.position.y === 'number'
+                ? node.position
+                : { x: 0, y: 0 },
+        };
+    });
+
+    const edges = rawEdges
+        .filter((edge) => edge?.source && edge?.target)
+        .map((edge, idx) => ({
+            ...edge,
+            id: String(edge.id || `e-${idx}-${edge.source}-${edge.target}`),
+            source: String(edge.source),
+            target: String(edge.target),
+        }));
+
+    return {
+        nodes,
+        edges,
+        meta: rawGraph?.meta && typeof rawGraph.meta === 'object' ? rawGraph.meta : {},
+    };
+}
+
+function isSystemTableName(name) {
+    const v = String(name || '').trim().toLowerCase();
+    if (!v) return false;
+    return (
+        v.startsWith('information_schema.') ||
+        v.startsWith('pg_') ||
+        v.startsWith('sqlite_') ||
+        v.startsWith('duckdb_') ||
+        v.startsWith('sys.') ||
+        v.startsWith('__')
+    );
+}
 
 /**
  * RepositoryMap — master container for the visual repo explorer.
@@ -24,8 +84,7 @@ export default function RepositoryMap({ onClose, snapshotId }) {
     // ── data ──
     const [treeData, setTreeData] = useState(null);
     const [snapshotTreeData, setSnapshotTreeData] = useState(null);
-    const [models, setModels] = useState([]);
-    const [graphData, setGraphData] = useState({ nodes: [], edges: [] });
+    const [graphData, setGraphData] = useState({ nodes: [], edges: [], meta: {} });
 
     // ── UI state ──
     const [treeSource, setTreeSource] = useState('snapshots');      // 'filesystem' | 'snapshots'
@@ -37,6 +96,7 @@ export default function RepositoryMap({ onClose, snapshotId }) {
     const [searchQuery, setSearchQuery] = useState('');
     const [filterType, setFilterType] = useState('all');            // all | models | tables | broken
     const [showVersionBadges, setShowVersionBadges] = useState(false);
+    const [includeSystemTables, setIncludeSystemTables] = useState(false);
 
     const [syncing, setSyncing] = useState(false);
     const [lastSynced, setLastSynced] = useState(null);
@@ -44,22 +104,18 @@ export default function RepositoryMap({ onClose, snapshotId }) {
     const [gitCommit, setGitCommit] = useState(null);
     const [loading, setLoading] = useState(true);
 
-    const { activeWorkspaceId } = useWorkspace();
-
     // ── initial load ────────────────────────────────
     const loadData = useCallback(async () => {
         setLoading(true);
         try {
-            const [treeResp, modelsResp, snapshotResp] = await Promise.all([
+            const [treeResp, snapshotResp] = await Promise.all([
                 api.getRepoTree(),
-                api.getRepoModels(activeWorkspaceId || ''),
                 api.getSnapshotTree().catch(() => ({ root: null })),
             ]);
             
             let graphResp;
             if (snapshotId) {
-                const res = await fetch(`/api/graph/__all__/snapshot/${snapshotId}`);
-                if (res.ok) graphResp = await res.json();
+                graphResp = await api.getGraphSnapshot('__all__', snapshotId, includeSystemTables).catch(() => null);
             }
             if (!graphResp) {
                  graphResp = await api.getModelGraph('__all__');
@@ -67,8 +123,7 @@ export default function RepositoryMap({ onClose, snapshotId }) {
 
             setTreeData(treeResp.root);
             setSnapshotTreeData(snapshotResp.root);
-            setModels(modelsResp.models || []);
-            setGraphData(graphResp);
+            setGraphData(normalizeGraphPayload(graphResp));
             
             if (treeResp.last_synced) setLastSynced(treeResp.last_synced);
             if (treeResp.git_branch) setGitBranch(treeResp.git_branch);
@@ -78,7 +133,7 @@ export default function RepositoryMap({ onClose, snapshotId }) {
         } finally {
             setLoading(false);
         }
-    }, [activeWorkspaceId, snapshotId]);
+    }, [snapshotId, includeSystemTables]);
 
     useEffect(() => { loadData(); }, [loadData]);
 
@@ -113,7 +168,7 @@ export default function RepositoryMap({ onClose, snapshotId }) {
                 data = await api.getRepoFile(filePath);
             }
             setFilePreview(data);
-        } catch (err) {
+        } catch {
             setFilePreview({ name: filePath, content: '(failed to load)', language: 'text' });
         }
     };
@@ -132,6 +187,29 @@ export default function RepositoryMap({ onClose, snapshotId }) {
     };
 
     const showDetail = !!(filePreview || selectedNode);
+
+    const snapshotAudit = useMemo(() => {
+        if (!snapshotId) return null;
+
+        const allNodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
+        const allEdges = Array.isArray(graphData?.edges) ? graphData.edges : [];
+        const tableNodes = allNodes.filter(n => n?.data?.nodeType === 'table');
+        const brokenTables = tableNodes.filter(n => n?.data?.status === 'broken').length;
+        const relationshipEdges = allEdges.filter(e => String(e?.id || '').startsWith('rel-')).length;
+        const systemDetected = tableNodes.filter(n => {
+            const schema = n?.data?.schema ? `${n.data.schema}.` : '';
+            const table = n?.data?.table_name || n?.data?.label || '';
+            return isSystemTableName(`${schema}${table}`);
+        }).length;
+
+        return {
+            totalTables: tableNodes.length,
+            totalRelationships: relationshipEdges,
+            brokenTables,
+            systemDetected,
+            systemExcluded: Number(graphData?.meta?.system_tables_excluded || 0),
+        };
+    }, [graphData, snapshotId]);
 
     // ── filter chips ────────────────────────────────
     const chips = [
@@ -221,6 +299,20 @@ export default function RepositoryMap({ onClose, snapshotId }) {
                     <span style={{ fontSize: 11 }}>Versions</span>
                 </button>
 
+                {snapshotId && (
+                    <button
+                        onClick={() => setIncludeSystemTables(v => !v)}
+                        title="Include system-generated tables in snapshot"
+                        style={{
+                            ...toolBtnStyle,
+                            color: includeSystemTables ? '#818CF8' : 'var(--text-tertiary)',
+                        }}
+                    >
+                        <Filter size={15} />
+                        <span style={{ fontSize: 11 }}>{includeSystemTables ? 'System: On' : 'System: Off'}</span>
+                    </button>
+                )}
+
                 {/* Layout toggles */}
                 <button
                     onClick={() => setLayout('hierarchical')}
@@ -292,6 +384,26 @@ export default function RepositoryMap({ onClose, snapshotId }) {
                 )}
             </div>
 
+            {snapshotAudit && (
+                <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(4, minmax(120px, 1fr))',
+                    gap: 10,
+                    padding: '10px 16px',
+                    borderBottom: '1px solid var(--border-color)',
+                    background: 'var(--bg-surface)',
+                }}>
+                    <AuditCard label="Total Tables" value={snapshotAudit.totalTables} tone="#818CF8" />
+                    <AuditCard label="Relationships" value={snapshotAudit.totalRelationships} tone="#22C55E" />
+                    <AuditCard label="Broken Refs" value={snapshotAudit.brokenTables} tone={snapshotAudit.brokenTables > 0 ? '#EF4444' : '#22C55E'} />
+                    <AuditCard
+                        label={includeSystemTables ? 'System Included' : 'System Excluded'}
+                        value={includeSystemTables ? snapshotAudit.systemDetected : snapshotAudit.systemExcluded}
+                        tone={includeSystemTables ? '#F59E0B' : '#818CF8'}
+                    />
+                </div>
+            )}
+
             {/* ─── BODY ─── */}
             <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
                 {/* File Tree */}
@@ -349,23 +461,16 @@ export default function RepositoryMap({ onClose, snapshotId }) {
 
                 {/* Dependency Graph */}
                 <div style={{ flex: 1, position: 'relative' }}>
-                    {loading ? (
-                        <div style={{
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            height: '100%', color: 'var(--text-tertiary)', fontSize: 13,
-                        }}>
-                            Loading dependency graph...
-                        </div>
-                    ) : (
-                        <DependencyGraph
-                            graphData={graphData}
-                            layout={layout}
-                            searchQuery={searchQuery}
-                            filterType={filterType}
-                            showVersionBadges={showVersionBadges}
-                            onNodeClick={handleNodeClick}
-                        />
-                    )}
+                    <DependencyGraph
+                        graphData={graphData}
+                        layout={layout}
+                        searchQuery={searchQuery}
+                        filterType={filterType}
+                        showVersionBadges={showVersionBadges}
+                        onNodeClick={handleNodeClick}
+                        isLoading={loading}
+                        snapshotId={snapshotId}
+                    />
                 </div>
 
                 {/* Detail / Preview Panel */}
@@ -416,3 +521,21 @@ const activeChipStyle = {
     color: '#fff',
     fontWeight: 600,
 };
+
+function AuditCard({ label, value, tone }) {
+    return (
+        <div style={{
+            border: '1px solid var(--border-color)',
+            borderRadius: 8,
+            padding: '8px 10px',
+            background: 'var(--bg-app)',
+        }}>
+            <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-tertiary)', marginBottom: 4 }}>
+                {label}
+            </div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: tone }}>
+                {value}
+            </div>
+        </div>
+    );
+}

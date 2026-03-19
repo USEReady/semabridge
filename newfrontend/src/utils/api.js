@@ -236,6 +236,17 @@ export const api = {
         return handleResponse(res);
     },
 
+    async getGraphSnapshot(modelId = '__all__', snapshotId, includeSystemTables = false) {
+        if (!snapshotId) {
+            throw new Error('snapshotId is required');
+        }
+        const params = new URLSearchParams({
+            include_system_tables: includeSystemTables ? 'true' : 'false',
+        });
+        const res = await authFetch(`${API_BASE_URL}/graph/${encodeURIComponent(modelId)}/snapshot/${encodeURIComponent(snapshotId)}?${params}`);
+        return handleResponse(res);
+    },
+
     async getRepoFile(path) {
         const res = await authFetch(`${API_BASE_URL}/repo/file?path=${encodeURIComponent(path)}`);
         return handleResponse(res);

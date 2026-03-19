@@ -168,7 +168,7 @@ export default function Header({ onToggleLogs, onToggleVersionControl, onToggleR
                                 <div className="px-3 py-2 border-b border-main">
                                     <p className="text-xs font-semibold text-primary truncate">{user?.username}</p>
                                     <p className="text-[10px] text-tertiary truncate">{user?.email}</p>
-                                    <span className="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-medium"
+                                    <span className="inline-block mt-1 px-1.5 py-0.5 rounded-full text-[9px] font-medium"
                                         style={{ background: 'var(--color-accent-faint)', color: 'var(--accent-blue)' }}>
                                         {user?.role}
                                     </span>
