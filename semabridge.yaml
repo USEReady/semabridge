@@ -1,10 +1,10 @@
-project_name: SAA
+project_name: testt
 source:
   type: fabric
   workspace_id: semabridge-local
   workspace: SemaBridge Workspace
   models:
-    - Employee
+    - annual
 target:
   type: snowflake
 ui:
@@ -12,8 +12,8 @@ ui:
   editor_mode: yaml
 selection:
   model_ids:
-    - c7004446-7db0-42fc-b6c9-a213f969e515
+    - a3eb7be8-2df8-482b-872b-9d661659895a
 options:
   auto_relationships: true
-  include_hidden_fields: false
+  include_hidden_fields: true
   generate_descriptions: true

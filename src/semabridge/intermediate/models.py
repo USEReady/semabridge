@@ -16,11 +16,44 @@ Note:
     vendor-neutral intermediate representation.
 """
 
+import logging
+import os
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+logger = logging.getLogger("semabridge.intermediate.models")
+
+
+def _get_int_env(name: str, default: int) -> int:
+    """Read positive integer from environment with safe fallback."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+        if value < 1:
+            raise ValueError("must be >= 1")
+        return value
+    except Exception:
+        logger.warning(
+            "Invalid environment value for %s=%r; using default %s",
+            name,
+            raw,
+            default,
+        )
+        return default
+
+
+RECOMMENDED_DATASET_COLUMN_LIMIT = _get_int_env(
+    "SEMABRIDGE_RECOMMENDED_DATASET_COLUMN_LIMIT", 75
+)
+RECOMMENDED_MODEL_TOTAL_COLUMN_LIMIT = _get_int_env(
+    "SEMABRIDGE_RECOMMENDED_MODEL_TOTAL_COLUMN_LIMIT", 100
+)
 
 
 class OSIAggregationType(str, Enum):
@@ -180,9 +213,13 @@ class OSIDataset(OSIBaseModel):
     @field_validator("columns")
     @classmethod
     def validate_columns_count(cls, v: List[OSIColumn]) -> List[OSIColumn]:
-        """Ensure column count does not exceed PRD architectural limits."""
-        if len(v) > 75:
-            raise ValueError(f"Dataset exceeds maximum 75 columns limit limit for Power BI (has {len(v)})")
+        """Log warning when dataset exceeds recommended per-dataset column count."""
+        if len(v) > RECOMMENDED_DATASET_COLUMN_LIMIT:
+            logger.warning(
+                "Dataset has %s columns, exceeding recommended %s-column design boundary",
+                len(v),
+                RECOMMENDED_DATASET_COLUMN_LIMIT,
+            )
         return v
 
     def model_post_init(self, __context: Any) -> None:
@@ -497,12 +534,12 @@ class OSIModel(OSIBaseModel):
             raise ValueError(f"OSIModel exceeds maximum 75 relationships per model (has {len(self.relationships)})")
             
         total_columns = sum(len(ds.columns) for ds in self.datasets)
-        if total_columns > 100:
-            import logging
-            # PRD notes Snowflake Cortex LLM Context limit is 50-100 columns total
-            logging.getLogger("semabridge.intermediate.models").warning(
+        if total_columns > RECOMMENDED_MODEL_TOTAL_COLUMN_LIMIT:
+            # PRD notes Snowflake Cortex LLM context recommendations may vary by workload.
+            logger.warning(
                 f"[RunID: N/A] OSIModel '{self.unique_name}' has {total_columns} total columns, "
-                f"which exceeds the Snowflake Cortex recommended maximum of 100 columns "
+                f"which exceeds the configured recommended maximum of "
+                f"{RECOMMENDED_MODEL_TOTAL_COLUMN_LIMIT} total columns "
                 f"for semantic views. This may cause LLM context window exhaustion."
             )
             

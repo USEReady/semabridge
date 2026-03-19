@@ -223,6 +223,16 @@ class TMSLToOSIConverter(BaseConverter):
             or mapped_type == OSIDataType.BOOLEAN
         )
 
+        # Fabric may emit calculated column expressions as a list of lines.
+        # OSIColumn.source_expression expects a string.
+        source_expr = col_def.get("sourceColumn") or col_def.get("expression") or ""
+        if isinstance(source_expr, list):
+            source_expr = "\n".join(str(x) for x in source_expr)
+        elif source_expr is None:
+            source_expr = ""
+        else:
+            source_expr = str(source_expr)
+
         return OSIColumn(
             unique_name=col_name,
             label=col_name,
@@ -231,7 +241,7 @@ class TMSLToOSIConverter(BaseConverter):
             is_hidden=col_def.get("isHidden", False),
             format_string=col_def.get("formatString"),
             is_key=is_key,
-            source_expression=col_def.get("sourceColumn") or col_def.get("expression"),
+            source_expression=source_expr,
             synonyms=synonyms,
             is_enum=is_enum,
         )

@@ -1797,6 +1797,11 @@ class SnowflakeEmitter(BaseEmitter):
         """
         import re as _re
 
+        # One-time safety migration: Snowflake semantic identifiers cannot
+        # reliably start with digits in Horizon object explorer parsing.
+        # Normalize model identifiers before DDL assembly.
+        self._migrate_numeric_leading_identifiers(sml)
+
         view_name = self._get_safe_object_name(sml.unique_name or sml.label)
         suffix = self.behavior.semantic_model.view_suffix or "_SEMANTIC"
         
@@ -2418,6 +2423,69 @@ class SnowflakeEmitter(BaseEmitter):
             definitions.append("METRICS (\n" + ",\n".join(metrics_lines) + "\n)")
         
         return lines[0] + "\n" + "\n".join(definitions) + ";"
+
+    def _migrate_numeric_leading_identifiers(self, sml: SMLModel) -> None:
+        """Prefix metric/dimension identifiers that begin with numeric tokens.
+
+        This mutates the in-memory model only for the current emission cycle.
+        It keeps labels untouched and updates internal references for renamed
+        items to avoid broken hierarchy/measure dependencies.
+        """
+        def _starts_with_digit(name: str) -> bool:
+            sanitized = self._id.sanitize_column(name)
+            return bool(sanitized and sanitized[0].isdigit())
+
+        metric_rename_map: dict[str, str] = {}
+        attr_rename_map: dict[tuple[str, str], str] = {}
+        metric_changes = 0
+        attr_changes = 0
+
+        # Metrics: 18_MONTH... -> L_18_MONTH...
+        for metric in getattr(sml, "metrics", []):
+            old_name = metric.unique_name
+            if _starts_with_digit(old_name):
+                new_name = old_name if old_name.startswith("L_") else f"L_{old_name}"
+                if new_name != old_name:
+                    metric.unique_name = new_name
+                    metric_rename_map[old_name] = new_name
+                    metric_changes += 1
+
+        # Dimensions/attributes/hierarchy levels: 18_MONTH... -> N_18_MONTH...
+        for dim in getattr(sml, "dimensions", []):
+            dim_name = getattr(dim, "unique_name", "")
+
+            for attr in getattr(dim, "attributes", []):
+                old_attr = attr.unique_name
+                if _starts_with_digit(old_attr):
+                    new_attr = old_attr if old_attr.startswith("N_") else f"N_{old_attr}"
+                    if new_attr != old_attr:
+                        attr.unique_name = new_attr
+                        attr_rename_map[(dim_name, old_attr)] = new_attr
+                        attr_changes += 1
+
+            for lvl in getattr(dim, "hierarchies", []):
+                if _starts_with_digit(lvl.unique_name):
+                    if not lvl.unique_name.startswith("N_"):
+                        lvl.unique_name = f"N_{lvl.unique_name}"
+                old_ref = lvl.attribute
+                mapped_ref = attr_rename_map.get((dim_name, old_ref))
+                if mapped_ref:
+                    lvl.attribute = mapped_ref
+
+        # Update metric dependency references if names were rewritten.
+        if metric_rename_map:
+            for metric in getattr(sml, "metrics", []):
+                deps = list(getattr(metric, "depends_on_measures", []) or [])
+                if deps:
+                    metric.depends_on_measures = [metric_rename_map.get(d, d) for d in deps]
+
+        if metric_changes or attr_changes:
+            logger.warning(
+                "Applied identifier migration before semantic view emit: "
+                "%s metric(s), %s attribute(s) renamed to avoid numeric-leading identifiers",
+                metric_changes,
+                attr_changes,
+            )
     
     def _sanitize_col_name(self, name: str) -> str:
         """Sanitize column name via unified IdentifierSanitizer (Mandate 1)."""
@@ -2429,8 +2497,11 @@ class SnowflakeEmitter(BaseEmitter):
         return IdentifierSanitizer.is_physical_source_column(source_expression)
 
     def _sanitize_semantic_name(self, name: str) -> str:
-        """Alias for _sanitize_col_name for semantic consistency."""
-        return self._id.sanitize_column(name)
+        """Sanitize semantic name and ensure it does not start with a digit."""
+        sanitized = self._id.sanitize_column(name)
+        if sanitized and sanitized[0].isdigit():
+            sanitized = f"N_{sanitized}"
+        return sanitized
 
     def _get_safe_object_name(self, name: str) -> str:
         """Sanitize object name for Snowflake."""
@@ -2440,8 +2511,11 @@ class SnowflakeEmitter(BaseEmitter):
         return self._id.sanitize_column(name)
 
     def _sanitize_alias(self, name: str) -> str:
-        """Sanitize alias names via unified IdentifierSanitizer (Mandate 1)."""
-        return self._id.sanitize_alias(name)
+        """Sanitize alias names and ensure they do not start with a digit."""
+        sanitized = self._id.sanitize_alias(name)
+        if sanitized and sanitized[0].isdigit():
+            sanitized = f"L_{sanitized}"
+        return sanitized
 
     def _resolve_unique_metric_alias(
         self,
