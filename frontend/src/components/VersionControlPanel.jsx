@@ -1,13 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
     X,
     GitCommit,
     GitCompare,
     RotateCcw,
-    ChevronDown,
     Clock,
     AlertTriangle,
-    CheckCircle2,
     Filter,
     Loader2,
     Trash2,
@@ -85,12 +83,23 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
     const [isDeleting, setIsDeleting] = useState(false);
     const [objectTypeFilter, setObjectTypeFilter] = useState('All');
     const [changeTypeFilter, setChangeTypeFilter] = useState('All');
+    const [activeVersionId, setActiveVersionId] = useState(null);
+    const [isSnapshotSwitching, setIsSnapshotSwitching] = useState(false);
+    const [historyTilt, setHistoryTilt] = useState({ x: 0, y: 0 });
+    const [viewMode, setViewMode] = useState('history');
+    const switchTimerRef = useRef(null);
     const { addLog } = useLogs();
 
     // Reload versions when panel opens or active model changes
     useEffect(() => {
         if (isOpen) loadVersions();
     }, [isOpen, activeModelId]);
+
+    useEffect(() => {
+        return () => {
+            if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
+        };
+    }, []);
 
     const loadVersions = async () => {
         setIsLoading(true);
@@ -100,11 +109,17 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
             // When no model is selected, fetch versions for all models.
             const data = await api.getModelVersions(activeModelId || '');
             setVersions(data || []);
+            if ((data || []).length > 0) {
+                setActiveVersionId(data[0].version_id);
+            } else {
+                setActiveVersionId(null);
+            }
             const label = activeModelId ? `for ${activeModelId}` : 'across all models';
             addLog('info', 'Version Control', `Loaded ${(data || []).length} versions ${label}`);
         } catch (err) {
             console.error('Failed to load versions:', err);
             setVersions([]);
+            setActiveVersionId(null);
             addLog('error', 'Version Control', `Failed to load versions: ${err.message}`);
         } finally {
             setIsLoading(false);
@@ -183,41 +198,203 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
         });
     };
 
-    if (!isOpen) return null;
+    const handleVersionSelect = (version) => {
+        if (!version?.version_id || version.version_id === activeVersionId) return;
+        setActiveVersionId(version.version_id);
+        setIsSnapshotSwitching(true);
+        if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
+        switchTimerRef.current = setTimeout(() => setIsSnapshotSwitching(false), 180);
+    };
+
+    const handleHistoryMouseMove = (e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const normalizedX = (e.clientX - rect.left) / rect.width - 0.5;
+        const normalizedY = (e.clientY - rect.top) / rect.height - 0.5;
+        setHistoryTilt({ x: -(normalizedY * 1.2), y: normalizedX * 1.2 });
+    };
+
+    const handleHistoryMouseLeave = () => {
+        setHistoryTilt({ x: 0, y: 0 });
+    };
 
     const objectTypes = ['All', ...new Set((diffs || []).map(d => d.object_type))];
     const changeTypes = ['All', ...new Set((diffs || []).map(d => d.change_type))];
+    const activeVersion = versions.length === 0
+        ? null
+        : (versions.find(v => v.version_id === activeVersionId) || versions[0]);
+    const activeSnapshotLabel = activeVersion
+        ? (activeVersion.version_tag || activeVersion.version_id?.substring(0, 8))
+        : 'None';
+    const timelineEntries = versions.slice(0, 10);
+
+    if (!isOpen) return null;
 
     return (
         <div className="fixed inset-0 z-50 flex justify-end">
             <div className="absolute inset-0 backdrop-blur-sm" style={{ background: 'var(--bg-backdrop)' }} onClick={onClose} />
-            <div className="relative w-full max-w-5xl h-full bg-surface border-l border-main flex flex-col shadow-2xl animate-in slide-in-from-right duration-300">
+            <div className="relative w-full h-full bg-surface border-l border-main flex flex-col shadow-2xl animate-in slide-in-from-right duration-300 text-primary">
                 {/* Header */}
-                <div className="px-6 py-4 flex items-center justify-between border-b border-main bg-surface-raised">
+                <div className="h-16 px-6 flex items-center justify-between border-b border-main bg-surface-raised backdrop-blur-md">
                     <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-accent-blue/15 text-accent-blue">
+                        <div className="p-2 rounded-lg bg-accent-blue/15 text-accent-blue border border-accent-blue/30">
                             <GitCommit size={20} />
                         </div>
                         <div>
-                            <h2 className="text-lg font-bold text-primary">Version Control</h2>
+                            <h2 className="text-lg font-bold text-primary">DataStore <span className="text-accent-blue">Snapshot</span></h2>
                             <p className="text-xs text-tertiary">
                                 {activeModelId
                                     ? `${versions.length} version(s) for ${activeModelId}`
                                     : `${versions.length} version(s) across all models`}
                             </p>
+                            <p className="text-[11px] font-mono text-accent-blue mt-1">Active Snapshot: {activeSnapshotLabel}</p>
                         </div>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-surface-hover rounded-full text-tertiary">
-                        <X size={20} />
-                    </button>
+                    <div className="flex items-center gap-4">
+                        <div className="flex items-center bg-surface border border-main p-1 rounded-full">
+                            <button
+                                onClick={() => setViewMode('history')}
+                                className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all ${viewMode === 'history'
+                                        ? 'bg-accent-blue text-white shadow-lg shadow-accent-blue/20'
+                                        : 'text-tertiary hover:text-primary'
+                                    }`}
+                            >
+                                History
+                            </button>
+                            <button
+                                onClick={() => setViewMode('diff')}
+                                className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all ${viewMode === 'diff'
+                                        ? 'bg-accent-blue text-white shadow-lg shadow-accent-blue/20'
+                                        : 'text-tertiary hover:text-primary'
+                                    }`}
+                            >
+                                Diff Mode
+                            </button>
+                        </div>
+                        <button onClick={onClose} className="p-2 hover:bg-surface-hover rounded-full text-tertiary">
+                            <X size={20} />
+                        </button>
+                    </div>
                 </div>
 
                 {/* Content */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+                <div className="flex-1 overflow-y-auto custom-scrollbar">
+                    {/* Snapshot workspace */}
+                    <div className="p-6 pb-4">
+                        <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-4 min-h-[420px]">
+                            <section className="relative rounded-xl border border-main bg-surface-raised overflow-hidden">
+                                <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-30" viewBox="0 0 1200 700" preserveAspectRatio="none">
+                                    <path d="M260,260 C440,260 440,480 620,480" stroke="var(--accent-blue)" strokeWidth="2" fill="none" opacity="0.45" />
+                                    <path d="M260,300 C440,300 440,180 620,180" stroke="var(--accent-blue)" strokeWidth="2" fill="none" opacity="0.45" />
+                                </svg>
+
+                                <div className="relative h-full min-h-[420px] p-6">
+                                    <div className="absolute inset-x-6 top-6 bottom-6 [perspective:1200px]">
+                                        <div className="absolute inset-[16%_9%_16%_9%] rounded-xl border-2 border-main bg-surface/40 blur-sm" />
+                                        <div className="absolute inset-[13%_7%_13%_7%] rounded-xl border-2 border-main bg-surface/50 blur-[2px]" />
+                                        <div className="absolute inset-[10%_5%_10%_5%] rounded-xl border border-accent-blue/30 bg-surface-raised shadow-2xl p-6">
+                                            <div className={`grid grid-cols-1 md:grid-cols-2 gap-5 transition-opacity duration-150 ${isSnapshotSwitching ? 'opacity-70' : 'opacity-100'}`}>
+                                                <article className="rounded-xl border border-accent-blue/35 bg-surface-raised overflow-hidden">
+                                                    <div className="p-4 border-b border-accent-blue/25 bg-accent-blue/10">
+                                                        <h3 className="text-sm font-bold text-accent-blue">{activeModelId || activeVersion?.model_id || 'Orders_Fact'}</h3>
+                                                        <p className="text-[10px] uppercase tracking-wider text-tertiary mt-1">Primary Transactional Model</p>
+                                                    </div>
+                                                    <div className="p-4 space-y-2 text-xs">
+                                                        <div className="flex justify-between"><span className="text-tertiary">Version:</span><span className="text-accent-blue font-mono">{activeSnapshotLabel}</span></div>
+                                                        <div className="flex justify-between"><span className="text-tertiary">Author:</span><span className="text-primary">{activeVersion?.author || 'system'}</span></div>
+                                                        <div className="flex justify-between"><span className="text-tertiary">Timestamp:</span><span className="text-primary">{activeVersion?.timestamp ? new Date(activeVersion.timestamp).toLocaleString() : '—'}</span></div>
+                                                        <div className="border-t border-main pt-2 text-secondary">{activeVersion?.description || 'Snapshot selected from timeline.'}</div>
+                                                    </div>
+                                                </article>
+
+                                                <article className="rounded-xl border border-accent-blue/35 bg-surface-raised overflow-hidden">
+                                                    <div className="p-4 border-b border-accent-blue/25 bg-accent-blue/10">
+                                                        <h3 className="text-sm font-bold text-accent-blue">Customers_Dim</h3>
+                                                        <p className="text-[10px] uppercase tracking-wider text-tertiary mt-1">Core Dimension</p>
+                                                    </div>
+                                                    <div className="p-4 space-y-2 text-xs">
+                                                        <div className="flex justify-between"><span className="text-tertiary">Diff Selected:</span><span className="text-primary">{selectedForCompare.length}/2</span></div>
+                                                        <div className="flex justify-between"><span className="text-tertiary">Changes Loaded:</span><span className="text-emerald-400">{(diffs || []).length}</span></div>
+                                                        <div className="flex justify-between"><span className="text-tertiary">Rollback Ready:</span><span className="text-amber-400">{activeVersion?.can_rollback === false ? 'No' : 'Yes'}</span></div>
+                                                        <div className="border-t border-main pt-2 text-secondary">Click a timeline entry to switch active snapshot instantly.</div>
+                                                    </div>
+                                                </article>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <aside className="rounded-xl border border-main bg-surface-raised backdrop-blur flex flex-col min-h-[420px]">
+                                <div className="p-4 border-b border-main flex items-center justify-between">
+                                    <h3 className="text-sm font-bold text-primary">Timeline</h3>
+                                    <span className="text-[10px] uppercase tracking-wider text-tertiary">2026</span>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                                    {timelineEntries.length === 0 && (
+                                        <p className="text-xs text-tertiary">No snapshots available yet.</p>
+                                    )}
+                                    {timelineEntries.map((v, idx) => {
+                                        const isActive = v.version_id === activeVersion?.version_id;
+                                        return (
+                                            <button
+                                                key={v.version_id}
+                                                onClick={() => handleVersionSelect(v)}
+                                                className={`w-full text-left relative pl-5 border-l-2 transition-colors ${isActive ? 'border-accent-blue' : 'border-main hover:border-accent-blue/50'}`}
+                                            >
+                                                <span
+                                                    className="absolute -left-[7px] top-1.5 w-3 h-3 rounded-full border-2 border-main"
+                                                    style={{ backgroundColor: isActive ? 'var(--accent-blue)' : 'var(--text-tertiary)' }}
+                                                />
+                                                <div className={`pb-3 ${idx === timelineEntries.length - 1 ? 'pb-0' : ''}`}>
+                                                    <p className={`text-[10px] uppercase tracking-wider ${isActive ? 'text-accent-blue' : 'text-tertiary'}`}>
+                                                        {v.timestamp ? new Date(v.timestamp).toLocaleDateString() : 'Now'}
+                                                    </p>
+                                                    <p className={`text-sm font-semibold mt-1 ${isActive ? 'text-primary' : 'text-secondary'}`}>
+                                                        {v.version_tag || `v${v.version_id.substring(0, 6)}`}
+                                                    </p>
+                                                    <p className="text-xs text-tertiary truncate">{v.description || 'Config snapshot'}</p>
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+
+                                <div className="p-4 border-t border-main bg-surface">
+                                    <h4 className="text-[10px] uppercase tracking-widest text-tertiary mb-3">Metadata Inspector</h4>
+                                    <div className="space-y-2 text-xs">
+                                        <div className="flex justify-between"><span className="text-tertiary">Total Models:</span><span className="text-primary">{new Set(versions.map(v => v.model_id).filter(Boolean)).size || (activeModelId ? 1 : 0)}</span></div>
+                                        <div className="flex justify-between"><span className="text-tertiary">Snapshots:</span><span className="text-primary">{versions.length}</span></div>
+                                        <div className="flex justify-between"><span className="text-tertiary">Current:</span><span className="px-2 py-0.5 rounded bg-accent-blue/10 border border-accent-blue/30 text-accent-blue font-mono">{activeSnapshotLabel}</span></div>
+                                    </div>
+                                </div>
+                            </aside>
+                        </div>
+                    </div>
+
+                    {viewMode === 'history' && (
+                        <div className="px-6 pb-6">
+                            <div className="h-12 border border-main bg-surface-raised rounded-lg px-4 flex items-center justify-between text-[10px] font-bold text-tertiary uppercase tracking-wide">
+                                <div className="flex items-center gap-4">
+                                    <span className="inline-flex items-center gap-2">
+                                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                                        Live Sync Connected
+                                    </span>
+                                    <span className="h-4 w-px bg-main" />
+                                    <span className="normal-case">Query Engine: BigQuery</span>
+                                </div>
+                                <div className="flex items-center gap-4 normal-case">
+                                    <span>Space: Play History</span>
+                                    <span>S: Split Screen</span>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {viewMode === 'diff' && <div className="px-6 pb-6 space-y-6">
                     {/* Version History List */}
                     <div className="space-y-3">
                         <div className="flex items-center justify-between">
-                            <h3 className="text-sm font-bold text-secondary">Version History</h3>
+                            <h3 className="text-sm font-bold text-primary">Version History • {activeSnapshotLabel}</h3>
                             <div className="flex items-center gap-2">
                             <button
                                 onClick={() => versions.length > 0 && setDeleteConfirm(true)}
@@ -246,9 +423,18 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                                 <Loader2 size={24} className="animate-spin text-accent-blue" />
                             </div>
                         ) : (
-                            <div className="border border-main rounded-xl overflow-hidden bg-surface-raised">
+                            <div
+                                className={`border border-main rounded-xl overflow-hidden bg-surface-raised transition-opacity duration-150 ${isSnapshotSwitching ? 'opacity-70' : 'opacity-100'}`}
+                                onMouseMove={handleHistoryMouseMove}
+                                onMouseLeave={handleHistoryMouseLeave}
+                                style={{
+                                    transform: `perspective(1200px) rotateX(${historyTilt.x}deg) rotateY(${historyTilt.y}deg)`,
+                                    transition: 'transform 180ms ease-out, opacity 150ms ease-out',
+                                    willChange: 'transform, opacity',
+                                }}
+                            >
                                 <table className="w-full text-xs">
-                                    <thead className="border-b border-main">
+                                    <thead className="border-b border-main bg-surface-raised">
                                         <tr>
                                             <th className="w-10 px-3 py-2.5"></th>
                                             <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-tertiary">Version ID</th>
@@ -275,12 +461,17 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                                             const canCompare = v.can_compare !== false;
                                             const canRollback = v.can_rollback !== false;
                                             return (
-                                                <tr key={v.version_id} className="border-b border-main last:border-0 hover:bg-surface-hover transition-colors">
+                                                <tr
+                                                    key={v.version_id}
+                                                    onClick={() => handleVersionSelect(v)}
+                                                    className={`border-b border-main last:border-0 hover:bg-surface-hover transition-colors cursor-pointer ${activeVersionId === v.version_id ? 'bg-accent-blue/10' : ''}`}
+                                                >
                                                     <td className="px-3 py-2.5">
                                                         <input
                                                             type="checkbox"
                                                             checked={isChecked}
                                                             onChange={() => toggleCompareSelection(v.version_id)}
+                                                            onClick={(e) => e.stopPropagation()}
                                                             disabled={!canCompare}
                                                             className="rounded border-main accent-[var(--accent-blue)]"
                                                         />
@@ -319,7 +510,10 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                                                     </td>
                                                     <td className="px-3 py-2.5 text-right">
                                                         <button
-                                                            onClick={() => canRollback && setRollbackTarget(v)}
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                canRollback && setRollbackTarget(v);
+                                                            }}
                                                             disabled={!canRollback}
                                                             className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold transition-colors ${
                                                                 canRollback
@@ -342,31 +536,32 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                     {/* Diff Table */}
                     {diffs && (
                         <div className="space-y-3">
-                            <h3 className="text-sm font-bold text-secondary">Comparison Results</h3>
+                            <h3 className="text-sm font-bold text-primary">Comparison Results</h3>
                             <div className="flex items-center gap-3">
                                 <div className="flex items-center gap-2">
                                     <Filter size={12} className="text-tertiary" />
                                     <select
                                         value={objectTypeFilter}
                                         onChange={e => setObjectTypeFilter(e.target.value)}
-                                        className="bg-app border border-main rounded-md px-2 py-1 text-[11px] text-primary"
+                                        className="bg-surface border border-main rounded-md px-2 py-1 text-[11px] text-primary"
                                     >
                                         {objectTypes.map(t => <option key={t} value={t}>{t}</option>)}
                                     </select>
                                     <select
                                         value={changeTypeFilter}
                                         onChange={e => setChangeTypeFilter(e.target.value)}
-                                        className="bg-app border border-main rounded-md px-2 py-1 text-[11px] text-primary"
+                                        className="bg-surface border border-main rounded-md px-2 py-1 text-[11px] text-primary"
                                     >
                                         {changeTypes.map(t => <option key={t} value={t}>{t}</option>)}
                                     </select>
                                 </div>
                             </div>
-                            <div className="border border-main rounded-xl overflow-hidden">
+                            <div className="border border-main rounded-xl overflow-hidden bg-surface-raised">
                                 <DiffTable diffs={diffs} objectTypeFilter={objectTypeFilter} changeTypeFilter={changeTypeFilter} />
                             </div>
                         </div>
                     )}
+                    </div>}
                 </div>
 
                 {/* Delete All Confirmation Dialog */}
@@ -451,7 +646,8 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                 )}
 
                 {/* Footer */}
-                <div className="px-6 py-4 bg-surface-raised border-t border-main flex justify-end">
+                <div className="h-12 px-6 bg-surface-raised border-t border-main flex justify-between items-center">
+                    <span className="text-[10px] uppercase tracking-wider text-tertiary">© 2026 DataStore Labs</span>
                     <button onClick={onClose} className="px-5 py-2 bg-accent-blue text-white rounded-lg text-sm font-bold hover:bg-accent-blue-hover active:scale-95 transition-all">
                         Done
                     </button>
@@ -460,3 +656,4 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
         </div>
     );
 }
+

@@ -140,34 +140,6 @@
       "created_at": "2026-03-19T06:50:15.937926",
       "updated_at": "2026-03-19T06:50:15.937926"
     },
-    "Core_Finance_v1.pbix": {
-      "id": "Core_Finance_v1.pbix",
-      "project_id": "Core_Finance_v1.pbix",
-      "name": "Core_Finance_v1",
-      "description": "",
-      "source": "pbix",
-      "adapter": "pbix",
-      "workspace_id": "local",
-      "target_type": "snowflake",
-      "folder_id": null,
-      "status": "draft",
-      "created_at": "2026-03-19T06:50:15.937926",
-      "updated_at": "2026-03-19T06:50:15.937926"
-    },
-    "L_DATE": {
-      "id": "L_DATE",
-      "project_id": "L_DATE",
-      "name": "Competitive Marketing Analysis",
-      "description": "",
-      "source": "fabric",
-      "adapter": "fabric",
-      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
-      "target_type": "snowflake",
-      "folder_id": null,
-      "status": "draft",
-      "created_at": "2026-03-19T06:50:15.939435",
-      "updated_at": "2026-03-19T06:50:15.939435"
-    },
     "Core_Finance_v1": {
       "id": "Core_Finance_v1",
       "project_id": "Core_Finance_v1",
@@ -196,20 +168,6 @@
       "created_at": "2026-03-19T06:50:15.940496",
       "updated_at": "2026-03-19T06:50:15.940496"
     },
-    "proj-1773903459681": {
-      "id": "proj-1773903459681",
-      "project_id": "proj-1773903459681",
-      "name": "c",
-      "description": "",
-      "source": "fabric",
-      "adapter": "fabric",
-      "workspace_id": "semabridge-local",
-      "target_type": "snowflake",
-      "folder_id": null,
-      "status": "draft",
-      "created_at": "2026-03-19T06:57:39.681366",
-      "updated_at": "2026-03-19T07:01:36.810649"
-    },
     "proj-1773904076169": {
       "id": "proj-1773904076169",
       "project_id": "proj-1773904076169",
@@ -223,6 +181,34 @@
       "status": "draft",
       "created_at": "2026-03-19T07:07:56.169060",
       "updated_at": "2026-03-19T07:19:22.841190"
+    },
+    "proj-1773909316547": {
+      "id": "proj-1773909316547",
+      "project_id": "proj-1773909316547",
+      "name": "h",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "semabridge-local",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-19T08:35:16.547993",
+      "updated_at": "2026-03-19T08:36:13.747689"
+    },
+    "proj-1773915308718": {
+      "id": "proj-1773915308718",
+      "project_id": "proj-1773915308718",
+      "name": "f",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "semabridge-local",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-19T10:15:08.718635",
+      "updated_at": "2026-03-19T10:28:00.036231"
     }
   },
   "project_configs": {
@@ -236,12 +222,11 @@
     "2ef6edeb-175f-46b6-9365-32e41e08c426": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
     "annual": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
     "Competitive Marketing Analysis": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
-    "Core_Finance_v1.pbix": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
-    "L_DATE": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
     "Core_Finance_v1": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
     "Corporate Spend": "project_name: SAA\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Employee\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - c7004446-7db0-42fc-b6c9-a213f969e515\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
-    "proj-1773903459681": "project_name: c\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Client Data\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - 0794fdcc-d85f-4d93-a42c-8bacaad04819\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
-    "proj-1773904076169": "project_name: tb\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Client Data\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - 0794fdcc-d85f-4d93-a42c-8bacaad04819\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true"
+    "proj-1773904076169": "project_name: tb\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Client Data\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - 0794fdcc-d85f-4d93-a42c-8bacaad04819\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
+    "proj-1773909316547": "project_name: h\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Customer Profitability\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - 83686c9b-2320-466a-a7a8-c3975d6998e7\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
+    "proj-1773915308718": "project_name: f\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Device\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: form\nselection:\n  model_ids:\n    - 974e7d48-4a76-4518-99d7-6ea751e37ce8\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true"
   },
   "project_runs": {
     "e1f19d58-85c3-4c90-a6a0-57c9db6f348b": [],
@@ -254,27 +239,24 @@
     "2ef6edeb-175f-46b6-9365-32e41e08c426": [],
     "annual": [],
     "Competitive Marketing Analysis": [],
-    "Core_Finance_v1.pbix": [],
-    "L_DATE": [],
     "Core_Finance_v1": [],
-    "Corporate Spend": [],
-    "proj-1773903459681": [
+    "Corporate Spend": [
       {
-        "run_id": "run-1773904631461",
-        "id": "run-1773904631461",
-        "project_id": "proj-1773903459681",
-        "project_name": "c",
+        "run_id": "run-1773907948286",
+        "id": "run-1773907948286",
+        "project_id": "Corporate Spend",
+        "project_name": "FabricModel",
         "schedule": "Manual",
-        "status": "failed",
-        "duration_ms": 1000,
-        "started_at": "2026-03-19T07:17:11.461769",
+        "status": "success",
+        "duration_ms": 40348,
+        "started_at": "2026-03-19T08:12:28.286873",
         "summary": {
-          "project_id": "Client Data",
-          "run_id": "a81c18b2-9178-4f3a-959d-457999ea978d",
-          "status": "FAILED",
-          "started_at": "2026-03-19T07:17:11.859721",
-          "completed_at": "2026-03-19T07:17:12.459636",
-          "duration_ms": 599,
+          "project_id": "Employee",
+          "run_id": "b638fe9f-d3a5-48ae-96eb-53d1fd9d98d7",
+          "status": "SUCCESS",
+          "started_at": "2026-03-19T08:12:28.421218",
+          "completed_at": "2026-03-19T08:13:08.598564",
+          "duration_ms": 40177,
           "source_type": "fabric",
           "target_type": "snowflake",
           "steps_completed": [
@@ -283,7 +265,7 @@
               "step_name": "Load & Validate Configuration",
               "status": "success",
               "started_at": null,
-              "completed_at": "2026-03-19T07:17:11.859721",
+              "completed_at": "2026-03-19T08:12:28.422209",
               "duration_ms": null,
               "message": "Configuration validated",
               "artifact_ids": []
@@ -293,307 +275,7 @@
               "step_name": "Resolve Authentication",
               "status": "success",
               "started_at": null,
-              "completed_at": "2026-03-19T07:17:12.059985",
-              "duration_ms": null,
-              "message": "Authentication resolved from ENV",
-              "artifact_ids": []
-            },
-            {
-              "step_number": 4,
-              "step_name": "Extract from Source",
-              "status": "failed",
-              "started_at": null,
-              "completed_at": "2026-03-19T07:17:12.451068",
-              "duration_ms": null,
-              "message": "No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
-              "artifact_ids": []
-            },
-            {
-              "step_number": 10,
-              "step_name": "Finalize Run",
-              "status": "success",
-              "started_at": null,
-              "completed_at": "2026-03-19T07:17:12.458642",
-              "duration_ms": null,
-              "message": "Status: FAILED",
-              "artifact_ids": []
-            }
-          ],
-          "last_successful_step": 10,
-          "total_steps": 10,
-          "source_artifact_id": null,
-          "sml_snapshot_id": null,
-          "target_artifact_path": null,
-          "errors": [
-            {
-              "step_number": 4,
-              "step_name": "Extract from Source",
-              "error_type": "ExtractionError",
-              "message": "Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
-              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 616, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 696, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 95, in resolve_model_id\n    models = self.list_semantic_models()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 59, in list_semantic_models\n    response = requests.get(api_url, headers=self._get_headers(), timeout=15)\n                                             ^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 220, in _get_headers\n    \"Authorization\": f\"Bearer {self._get_access_token()}\",\n                               ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 211, in _get_access_token\n    raise FabricExtractionError(\nsemabridge.connectors.fabric_extractor.FabricExtractionError: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 275, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 624, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n"
-            }
-          ]
-        },
-        "results": [
-          {
-            "model": "Client Data",
-            "status": "failed",
-            "summary": {
-              "project_id": "Client Data",
-              "run_id": "a81c18b2-9178-4f3a-959d-457999ea978d",
-              "status": "FAILED",
-              "started_at": "2026-03-19T07:17:11.859721",
-              "completed_at": "2026-03-19T07:17:12.459636",
-              "duration_ms": 599,
-              "source_type": "fabric",
-              "target_type": "snowflake",
-              "steps_completed": [
-                {
-                  "step_number": 1,
-                  "step_name": "Load & Validate Configuration",
-                  "status": "success",
-                  "started_at": null,
-                  "completed_at": "2026-03-19T07:17:11.859721",
-                  "duration_ms": null,
-                  "message": "Configuration validated",
-                  "artifact_ids": []
-                },
-                {
-                  "step_number": 3,
-                  "step_name": "Resolve Authentication",
-                  "status": "success",
-                  "started_at": null,
-                  "completed_at": "2026-03-19T07:17:12.059985",
-                  "duration_ms": null,
-                  "message": "Authentication resolved from ENV",
-                  "artifact_ids": []
-                },
-                {
-                  "step_number": 4,
-                  "step_name": "Extract from Source",
-                  "status": "failed",
-                  "started_at": null,
-                  "completed_at": "2026-03-19T07:17:12.451068",
-                  "duration_ms": null,
-                  "message": "No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
-                  "artifact_ids": []
-                },
-                {
-                  "step_number": 10,
-                  "step_name": "Finalize Run",
-                  "status": "success",
-                  "started_at": null,
-                  "completed_at": "2026-03-19T07:17:12.458642",
-                  "duration_ms": null,
-                  "message": "Status: FAILED",
-                  "artifact_ids": []
-                }
-              ],
-              "last_successful_step": 10,
-              "total_steps": 10,
-              "source_artifact_id": null,
-              "sml_snapshot_id": null,
-              "target_artifact_path": null,
-              "errors": [
-                {
-                  "step_number": 4,
-                  "step_name": "Extract from Source",
-                  "error_type": "ExtractionError",
-                  "message": "Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
-                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 616, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 696, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 95, in resolve_model_id\n    models = self.list_semantic_models()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 59, in list_semantic_models\n    response = requests.get(api_url, headers=self._get_headers(), timeout=15)\n                                             ^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 220, in _get_headers\n    \"Authorization\": f\"Bearer {self._get_access_token()}\",\n                               ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 211, in _get_access_token\n    raise FabricExtractionError(\nsemabridge.connectors.fabric_extractor.FabricExtractionError: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 275, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 624, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n"
-                }
-              ]
-            }
-          }
-        ],
-        "models_synced": 0,
-        "total_models": 1
-      },
-      {
-        "run_id": "run-1773904619708",
-        "id": "run-1773904619708",
-        "project_id": "proj-1773903459681",
-        "project_name": "c",
-        "schedule": "Manual",
-        "status": "failed",
-        "duration_ms": 962,
-        "started_at": "2026-03-19T07:16:59.708144",
-        "summary": {
-          "project_id": "Client Data",
-          "run_id": "11b101de-709d-4a98-be70-92ca8fb507db",
-          "status": "FAILED",
-          "started_at": "2026-03-19T07:16:59.797613",
-          "completed_at": "2026-03-19T07:17:00.484386",
-          "duration_ms": 686,
-          "source_type": "fabric",
-          "target_type": "snowflake",
-          "steps_completed": [
-            {
-              "step_number": 1,
-              "step_name": "Load & Validate Configuration",
-              "status": "success",
-              "started_at": null,
-              "completed_at": "2026-03-19T07:16:59.797613",
-              "duration_ms": null,
-              "message": "Configuration validated",
-              "artifact_ids": []
-            },
-            {
-              "step_number": 3,
-              "step_name": "Resolve Authentication",
-              "status": "success",
-              "started_at": null,
-              "completed_at": "2026-03-19T07:17:00.013206",
-              "duration_ms": null,
-              "message": "Authentication resolved from ENV",
-              "artifact_ids": []
-            },
-            {
-              "step_number": 4,
-              "step_name": "Extract from Source",
-              "status": "failed",
-              "started_at": null,
-              "completed_at": "2026-03-19T07:17:00.470118",
-              "duration_ms": null,
-              "message": "No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
-              "artifact_ids": []
-            },
-            {
-              "step_number": 10,
-              "step_name": "Finalize Run",
-              "status": "success",
-              "started_at": null,
-              "completed_at": "2026-03-19T07:17:00.484386",
-              "duration_ms": null,
-              "message": "Status: FAILED",
-              "artifact_ids": []
-            }
-          ],
-          "last_successful_step": 10,
-          "total_steps": 10,
-          "source_artifact_id": null,
-          "sml_snapshot_id": null,
-          "target_artifact_path": null,
-          "errors": [
-            {
-              "step_number": 4,
-              "step_name": "Extract from Source",
-              "error_type": "ExtractionError",
-              "message": "Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
-              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 616, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 696, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 95, in resolve_model_id\n    models = self.list_semantic_models()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 59, in list_semantic_models\n    response = requests.get(api_url, headers=self._get_headers(), timeout=15)\n                                             ^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 220, in _get_headers\n    \"Authorization\": f\"Bearer {self._get_access_token()}\",\n                               ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 211, in _get_access_token\n    raise FabricExtractionError(\nsemabridge.connectors.fabric_extractor.FabricExtractionError: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 275, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 624, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n"
-            }
-          ]
-        },
-        "results": [
-          {
-            "model": "Client Data",
-            "status": "failed",
-            "summary": {
-              "project_id": "Client Data",
-              "run_id": "11b101de-709d-4a98-be70-92ca8fb507db",
-              "status": "FAILED",
-              "started_at": "2026-03-19T07:16:59.797613",
-              "completed_at": "2026-03-19T07:17:00.484386",
-              "duration_ms": 686,
-              "source_type": "fabric",
-              "target_type": "snowflake",
-              "steps_completed": [
-                {
-                  "step_number": 1,
-                  "step_name": "Load & Validate Configuration",
-                  "status": "success",
-                  "started_at": null,
-                  "completed_at": "2026-03-19T07:16:59.797613",
-                  "duration_ms": null,
-                  "message": "Configuration validated",
-                  "artifact_ids": []
-                },
-                {
-                  "step_number": 3,
-                  "step_name": "Resolve Authentication",
-                  "status": "success",
-                  "started_at": null,
-                  "completed_at": "2026-03-19T07:17:00.013206",
-                  "duration_ms": null,
-                  "message": "Authentication resolved from ENV",
-                  "artifact_ids": []
-                },
-                {
-                  "step_number": 4,
-                  "step_name": "Extract from Source",
-                  "status": "failed",
-                  "started_at": null,
-                  "completed_at": "2026-03-19T07:17:00.470118",
-                  "duration_ms": null,
-                  "message": "No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
-                  "artifact_ids": []
-                },
-                {
-                  "step_number": 10,
-                  "step_name": "Finalize Run",
-                  "status": "success",
-                  "started_at": null,
-                  "completed_at": "2026-03-19T07:17:00.484386",
-                  "duration_ms": null,
-                  "message": "Status: FAILED",
-                  "artifact_ids": []
-                }
-              ],
-              "last_successful_step": 10,
-              "total_steps": 10,
-              "source_artifact_id": null,
-              "sml_snapshot_id": null,
-              "target_artifact_path": null,
-              "errors": [
-                {
-                  "step_number": 4,
-                  "step_name": "Extract from Source",
-                  "error_type": "ExtractionError",
-                  "message": "Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.",
-                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 616, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 696, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 95, in resolve_model_id\n    models = self.list_semantic_models()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 59, in list_semantic_models\n    response = requests.get(api_url, headers=self._get_headers(), timeout=15)\n                                             ^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 220, in _get_headers\n    \"Authorization\": f\"Bearer {self._get_access_token()}\",\n                               ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 211, in _get_access_token\n    raise FabricExtractionError(\nsemabridge.connectors.fabric_extractor.FabricExtractionError: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 275, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 624, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: No valid Fabric access token available. Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET for service-principal auth.\n"
-                }
-              ]
-            }
-          }
-        ],
-        "models_synced": 0,
-        "total_models": 1
-      },
-      {
-        "run_id": "run-1773904001085",
-        "id": "run-1773904001085",
-        "project_id": "proj-1773903459681",
-        "project_name": "c",
-        "schedule": "Manual",
-        "status": "failed",
-        "duration_ms": 37493,
-        "started_at": "2026-03-19T07:06:41.085935",
-        "summary": {
-          "project_id": "Client Data",
-          "run_id": "efab334e-1958-43fb-8910-c1f78a73fc48",
-          "status": "FAILED",
-          "started_at": "2026-03-19T07:06:41.160023",
-          "completed_at": "2026-03-19T07:07:18.574705",
-          "duration_ms": 37414,
-          "source_type": "fabric",
-          "target_type": "snowflake",
-          "steps_completed": [
-            {
-              "step_number": 1,
-              "step_name": "Load & Validate Configuration",
-              "status": "success",
-              "started_at": null,
-              "completed_at": "2026-03-19T07:06:41.161044",
-              "duration_ms": null,
-              "message": "Configuration validated",
-              "artifact_ids": []
-            },
-            {
-              "step_number": 3,
-              "step_name": "Resolve Authentication",
-              "status": "success",
-              "started_at": null,
-              "completed_at": "2026-03-19T07:06:41.362447",
+              "completed_at": "2026-03-19T08:12:28.630241",
               "duration_ms": null,
               "message": "Authentication resolved from UI token",
               "artifact_ids": []
@@ -603,7 +285,7 @@
               "step_name": "Extract from Source",
               "status": "success",
               "started_at": null,
-              "completed_at": "2026-03-19T07:07:18.506734",
+              "completed_at": "2026-03-19T08:13:00.843306",
               "duration_ms": null,
               "message": "Extracted TMSL definition",
               "artifact_ids": []
@@ -613,7 +295,7 @@
               "step_name": "Validate & Parse Source Format",
               "status": "success",
               "started_at": null,
-              "completed_at": "2026-03-19T07:07:18.509759",
+              "completed_at": "2026-03-19T08:13:00.846836",
               "duration_ms": null,
               "message": "Source format valid",
               "artifact_ids": []
@@ -621,11 +303,44 @@
             {
               "step_number": 6,
               "step_name": "Convert to Canonical SML",
-              "status": "failed",
+              "status": "success",
               "started_at": null,
-              "completed_at": "2026-03-19T07:07:18.528687",
+              "completed_at": "2026-03-19T08:13:00.855378",
               "duration_ms": null,
-              "message": "Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+              "message": "2 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:13:00.957648",
+              "duration_ms": null,
+              "message": "Snapshot c963716c... committed",
+              "artifact_ids": [
+                "c963716c-1e90-4a88-98bf-48f599585ce4",
+                "f69e967d-ef96-43a3-a476-89ce40aada0e"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:13:00.979316",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:13:08.595557",
+              "duration_ms": null,
+              "message": "Deployment complete",
               "artifact_ids": []
             },
             {
@@ -633,38 +348,30 @@
               "step_name": "Finalize Run",
               "status": "success",
               "started_at": null,
-              "completed_at": "2026-03-19T07:07:18.574705",
+              "completed_at": "2026-03-19T08:13:08.598564",
               "duration_ms": null,
-              "message": "Status: FAILED",
+              "message": "Status: SUCCESS",
               "artifact_ids": []
             }
           ],
           "last_successful_step": 10,
           "total_steps": 10,
-          "source_artifact_id": null,
-          "sml_snapshot_id": null,
-          "target_artifact_path": null,
-          "errors": [
-            {
-              "step_number": 6,
-              "step_name": "Convert to Canonical SML",
-              "error_type": "ConversionError",
-              "message": "SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
-              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 87, in to_osi\n    dataset = self._parse_dataset(table)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 177, in _parse_dataset\n    columns.append(self._parse_column(col))\n                   ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 226, in _parse_column\n    # Fabric may emit calculated column expressions as a list of lines.\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\pydantic\\main.py\", line 250, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 892, in _step6_convert_to_sml\n    return self._convert_fabric_to_sml(context, workspace_id, dataset_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1037, in _convert_fabric_to_sml\n    osi_model = TMSLToOSIConverter().to_osi(source_data)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 126, in to_osi\n    raise ConversionError(\nsemabridge.core.exceptions.ConversionError: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 284, in execute\n    sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 900, in _step6_convert_to_sml\n    raise ConversionError(f\"SML conversion failed: {e}\") from e\nsemabridge.core.execution_engine.ConversionError: SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n"
-            }
-          ]
+          "source_artifact_id": "f69e967d-ef96-43a3-a476-89ce40aada0e",
+          "sml_snapshot_id": "c963716c-1e90-4a88-98bf-48f599585ce4",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
         },
         "results": [
           {
-            "model": "Client Data",
-            "status": "failed",
+            "model": "Employee",
+            "status": "success",
             "summary": {
-              "project_id": "Client Data",
-              "run_id": "efab334e-1958-43fb-8910-c1f78a73fc48",
-              "status": "FAILED",
-              "started_at": "2026-03-19T07:06:41.160023",
-              "completed_at": "2026-03-19T07:07:18.574705",
-              "duration_ms": 37414,
+              "project_id": "Employee",
+              "run_id": "b638fe9f-d3a5-48ae-96eb-53d1fd9d98d7",
+              "status": "SUCCESS",
+              "started_at": "2026-03-19T08:12:28.421218",
+              "completed_at": "2026-03-19T08:13:08.598564",
+              "duration_ms": 40177,
               "source_type": "fabric",
               "target_type": "snowflake",
               "steps_completed": [
@@ -673,7 +380,7 @@
                   "step_name": "Load & Validate Configuration",
                   "status": "success",
                   "started_at": null,
-                  "completed_at": "2026-03-19T07:06:41.161044",
+                  "completed_at": "2026-03-19T08:12:28.422209",
                   "duration_ms": null,
                   "message": "Configuration validated",
                   "artifact_ids": []
@@ -683,7 +390,7 @@
                   "step_name": "Resolve Authentication",
                   "status": "success",
                   "started_at": null,
-                  "completed_at": "2026-03-19T07:06:41.362447",
+                  "completed_at": "2026-03-19T08:12:28.630241",
                   "duration_ms": null,
                   "message": "Authentication resolved from UI token",
                   "artifact_ids": []
@@ -693,7 +400,7 @@
                   "step_name": "Extract from Source",
                   "status": "success",
                   "started_at": null,
-                  "completed_at": "2026-03-19T07:07:18.506734",
+                  "completed_at": "2026-03-19T08:13:00.843306",
                   "duration_ms": null,
                   "message": "Extracted TMSL definition",
                   "artifact_ids": []
@@ -703,7 +410,7 @@
                   "step_name": "Validate & Parse Source Format",
                   "status": "success",
                   "started_at": null,
-                  "completed_at": "2026-03-19T07:07:18.509759",
+                  "completed_at": "2026-03-19T08:13:00.846836",
                   "duration_ms": null,
                   "message": "Source format valid",
                   "artifact_ids": []
@@ -711,11 +418,44 @@
                 {
                   "step_number": 6,
                   "step_name": "Convert to Canonical SML",
-                  "status": "failed",
+                  "status": "success",
                   "started_at": null,
-                  "completed_at": "2026-03-19T07:07:18.528687",
+                  "completed_at": "2026-03-19T08:13:00.855378",
                   "duration_ms": null,
-                  "message": "Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
+                  "message": "2 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:13:00.957648",
+                  "duration_ms": null,
+                  "message": "Snapshot c963716c... committed",
+                  "artifact_ids": [
+                    "c963716c-1e90-4a88-98bf-48f599585ce4",
+                    "f69e967d-ef96-43a3-a476-89ce40aada0e"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:13:00.979316",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:13:08.595557",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
                   "artifact_ids": []
                 },
                 {
@@ -723,410 +463,22 @@
                   "step_name": "Finalize Run",
                   "status": "success",
                   "started_at": null,
-                  "completed_at": "2026-03-19T07:07:18.574705",
+                  "completed_at": "2026-03-19T08:13:08.598564",
                   "duration_ms": null,
-                  "message": "Status: FAILED",
+                  "message": "Status: SUCCESS",
                   "artifact_ids": []
                 }
               ],
               "last_successful_step": 10,
               "total_steps": 10,
-              "source_artifact_id": null,
-              "sml_snapshot_id": null,
-              "target_artifact_path": null,
-              "errors": [
-                {
-                  "step_number": 6,
-                  "step_name": "Convert to Canonical SML",
-                  "error_type": "ConversionError",
-                  "message": "SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
-                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 87, in to_osi\n    dataset = self._parse_dataset(table)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 177, in _parse_dataset\n    columns.append(self._parse_column(col))\n                   ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 226, in _parse_column\n    # Fabric may emit calculated column expressions as a list of lines.\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\pydantic\\main.py\", line 250, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 892, in _step6_convert_to_sml\n    return self._convert_fabric_to_sml(context, workspace_id, dataset_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1037, in _convert_fabric_to_sml\n    osi_model = TMSLToOSIConverter().to_osi(source_data)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 126, in to_osi\n    raise ConversionError(\nsemabridge.core.exceptions.ConversionError: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 284, in execute\n    sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 900, in _step6_convert_to_sml\n    raise ConversionError(f\"SML conversion failed: {e}\") from e\nsemabridge.core.execution_engine.ConversionError: SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n"
-                }
-              ]
+              "source_artifact_id": "f69e967d-ef96-43a3-a476-89ce40aada0e",
+              "sml_snapshot_id": "c963716c-1e90-4a88-98bf-48f599585ce4",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
             }
           }
         ],
-        "models_synced": 0,
-        "total_models": 1
-      },
-      {
-        "run_id": "run-1773903696848",
-        "id": "run-1773903696848",
-        "project_id": "proj-1773903459681",
-        "project_name": "c",
-        "schedule": "Manual",
-        "status": "failed",
-        "duration_ms": 36766,
-        "started_at": "2026-03-19T07:01:36.848846",
-        "summary": {
-          "project_id": "Client Data",
-          "run_id": "53c0b84e-8c0c-4b72-aec1-1beb50b42b32",
-          "status": "FAILED",
-          "started_at": "2026-03-19T07:01:36.975889",
-          "completed_at": "2026-03-19T07:02:13.603893",
-          "duration_ms": 36628,
-          "source_type": "fabric",
-          "target_type": "snowflake",
-          "steps_completed": [
-            {
-              "step_number": 1,
-              "step_name": "Load & Validate Configuration",
-              "status": "success",
-              "started_at": null,
-              "completed_at": "2026-03-19T07:01:36.975889",
-              "duration_ms": null,
-              "message": "Configuration validated",
-              "artifact_ids": []
-            },
-            {
-              "step_number": 3,
-              "step_name": "Resolve Authentication",
-              "status": "success",
-              "started_at": null,
-              "completed_at": "2026-03-19T07:01:37.224758",
-              "duration_ms": null,
-              "message": "Authentication resolved from UI token",
-              "artifact_ids": []
-            },
-            {
-              "step_number": 4,
-              "step_name": "Extract from Source",
-              "status": "success",
-              "started_at": null,
-              "completed_at": "2026-03-19T07:02:13.556207",
-              "duration_ms": null,
-              "message": "Extracted TMSL definition",
-              "artifact_ids": []
-            },
-            {
-              "step_number": 5,
-              "step_name": "Validate & Parse Source Format",
-              "status": "success",
-              "started_at": null,
-              "completed_at": "2026-03-19T07:02:13.560760",
-              "duration_ms": null,
-              "message": "Source format valid",
-              "artifact_ids": []
-            },
-            {
-              "step_number": 6,
-              "step_name": "Convert to Canonical SML",
-              "status": "failed",
-              "started_at": null,
-              "completed_at": "2026-03-19T07:02:13.579405",
-              "duration_ms": null,
-              "message": "Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
-              "artifact_ids": []
-            },
-            {
-              "step_number": 10,
-              "step_name": "Finalize Run",
-              "status": "success",
-              "started_at": null,
-              "completed_at": "2026-03-19T07:02:13.603378",
-              "duration_ms": null,
-              "message": "Status: FAILED",
-              "artifact_ids": []
-            }
-          ],
-          "last_successful_step": 10,
-          "total_steps": 10,
-          "source_artifact_id": null,
-          "sml_snapshot_id": null,
-          "target_artifact_path": null,
-          "errors": [
-            {
-              "step_number": 6,
-              "step_name": "Convert to Canonical SML",
-              "error_type": "ConversionError",
-              "message": "SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
-              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 87, in to_osi\n    dataset = self._parse_dataset(table)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 177, in _parse_dataset\n    columns.append(self._parse_column(col))\n                   ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 226, in _parse_column\n    return OSIColumn(\n           ^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\pydantic\\main.py\", line 250, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 892, in _step6_convert_to_sml\n    return self._convert_fabric_to_sml(context, workspace_id, dataset_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1037, in _convert_fabric_to_sml\n    osi_model = TMSLToOSIConverter().to_osi(source_data)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 126, in to_osi\n    raise ConversionError(\nsemabridge.core.exceptions.ConversionError: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 284, in execute\n    sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 900, in _step6_convert_to_sml\n    raise ConversionError(f\"SML conversion failed: {e}\") from e\nsemabridge.core.execution_engine.ConversionError: SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n"
-            }
-          ]
-        },
-        "results": [
-          {
-            "model": "Client Data",
-            "status": "failed",
-            "summary": {
-              "project_id": "Client Data",
-              "run_id": "53c0b84e-8c0c-4b72-aec1-1beb50b42b32",
-              "status": "FAILED",
-              "started_at": "2026-03-19T07:01:36.975889",
-              "completed_at": "2026-03-19T07:02:13.603893",
-              "duration_ms": 36628,
-              "source_type": "fabric",
-              "target_type": "snowflake",
-              "steps_completed": [
-                {
-                  "step_number": 1,
-                  "step_name": "Load & Validate Configuration",
-                  "status": "success",
-                  "started_at": null,
-                  "completed_at": "2026-03-19T07:01:36.975889",
-                  "duration_ms": null,
-                  "message": "Configuration validated",
-                  "artifact_ids": []
-                },
-                {
-                  "step_number": 3,
-                  "step_name": "Resolve Authentication",
-                  "status": "success",
-                  "started_at": null,
-                  "completed_at": "2026-03-19T07:01:37.224758",
-                  "duration_ms": null,
-                  "message": "Authentication resolved from UI token",
-                  "artifact_ids": []
-                },
-                {
-                  "step_number": 4,
-                  "step_name": "Extract from Source",
-                  "status": "success",
-                  "started_at": null,
-                  "completed_at": "2026-03-19T07:02:13.556207",
-                  "duration_ms": null,
-                  "message": "Extracted TMSL definition",
-                  "artifact_ids": []
-                },
-                {
-                  "step_number": 5,
-                  "step_name": "Validate & Parse Source Format",
-                  "status": "success",
-                  "started_at": null,
-                  "completed_at": "2026-03-19T07:02:13.560760",
-                  "duration_ms": null,
-                  "message": "Source format valid",
-                  "artifact_ids": []
-                },
-                {
-                  "step_number": 6,
-                  "step_name": "Convert to Canonical SML",
-                  "status": "failed",
-                  "started_at": null,
-                  "completed_at": "2026-03-19T07:02:13.579405",
-                  "duration_ms": null,
-                  "message": "Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
-                  "artifact_ids": []
-                },
-                {
-                  "step_number": 10,
-                  "step_name": "Finalize Run",
-                  "status": "success",
-                  "started_at": null,
-                  "completed_at": "2026-03-19T07:02:13.603378",
-                  "duration_ms": null,
-                  "message": "Status: FAILED",
-                  "artifact_ids": []
-                }
-              ],
-              "last_successful_step": 10,
-              "total_steps": 10,
-              "source_artifact_id": null,
-              "sml_snapshot_id": null,
-              "target_artifact_path": null,
-              "errors": [
-                {
-                  "step_number": 6,
-                  "step_name": "Convert to Canonical SML",
-                  "error_type": "ConversionError",
-                  "message": "SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
-                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 87, in to_osi\n    dataset = self._parse_dataset(table)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 177, in _parse_dataset\n    columns.append(self._parse_column(col))\n                   ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 226, in _parse_column\n    return OSIColumn(\n           ^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\pydantic\\main.py\", line 250, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 892, in _step6_convert_to_sml\n    return self._convert_fabric_to_sml(context, workspace_id, dataset_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1037, in _convert_fabric_to_sml\n    osi_model = TMSLToOSIConverter().to_osi(source_data)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 126, in to_osi\n    raise ConversionError(\nsemabridge.core.exceptions.ConversionError: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 284, in execute\n    sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 900, in _step6_convert_to_sml\n    raise ConversionError(f\"SML conversion failed: {e}\") from e\nsemabridge.core.execution_engine.ConversionError: SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n"
-                }
-              ]
-            }
-          }
-        ],
-        "models_synced": 0,
-        "total_models": 1
-      },
-      {
-        "run_id": "run-1773903459725",
-        "id": "run-1773903459725",
-        "project_id": "proj-1773903459681",
-        "project_name": "c",
-        "schedule": "Manual",
-        "status": "failed",
-        "duration_ms": 38320,
-        "started_at": "2026-03-19T06:57:39.725286",
-        "summary": {
-          "project_id": "Client Data",
-          "run_id": "0cd8d4e9-2f71-4708-b7da-e39fe68321b2",
-          "status": "FAILED",
-          "started_at": "2026-03-19T06:57:39.862461",
-          "completed_at": "2026-03-19T06:58:17.849773",
-          "duration_ms": 37987,
-          "source_type": "fabric",
-          "target_type": "snowflake",
-          "steps_completed": [
-            {
-              "step_number": 1,
-              "step_name": "Load & Validate Configuration",
-              "status": "success",
-              "started_at": null,
-              "completed_at": "2026-03-19T06:57:39.863462",
-              "duration_ms": null,
-              "message": "Configuration validated",
-              "artifact_ids": []
-            },
-            {
-              "step_number": 3,
-              "step_name": "Resolve Authentication",
-              "status": "success",
-              "started_at": null,
-              "completed_at": "2026-03-19T06:57:40.099391",
-              "duration_ms": null,
-              "message": "Authentication resolved from UI token",
-              "artifact_ids": []
-            },
-            {
-              "step_number": 4,
-              "step_name": "Extract from Source",
-              "status": "success",
-              "started_at": null,
-              "completed_at": "2026-03-19T06:58:17.587575",
-              "duration_ms": null,
-              "message": "Extracted TMSL definition",
-              "artifact_ids": []
-            },
-            {
-              "step_number": 5,
-              "step_name": "Validate & Parse Source Format",
-              "status": "success",
-              "started_at": null,
-              "completed_at": "2026-03-19T06:58:17.590217",
-              "duration_ms": null,
-              "message": "Source format valid",
-              "artifact_ids": []
-            },
-            {
-              "step_number": 6,
-              "step_name": "Convert to Canonical SML",
-              "status": "failed",
-              "started_at": null,
-              "completed_at": "2026-03-19T06:58:17.690671",
-              "duration_ms": null,
-              "message": "Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
-              "artifact_ids": []
-            },
-            {
-              "step_number": 10,
-              "step_name": "Finalize Run",
-              "status": "success",
-              "started_at": null,
-              "completed_at": "2026-03-19T06:58:17.849773",
-              "duration_ms": null,
-              "message": "Status: FAILED",
-              "artifact_ids": []
-            }
-          ],
-          "last_successful_step": 10,
-          "total_steps": 10,
-          "source_artifact_id": null,
-          "sml_snapshot_id": null,
-          "target_artifact_path": null,
-          "errors": [
-            {
-              "step_number": 6,
-              "step_name": "Convert to Canonical SML",
-              "error_type": "ConversionError",
-              "message": "SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
-              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 87, in to_osi\n    dataset = self._parse_dataset(table)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 177, in _parse_dataset\n    columns.append(self._parse_column(col))\n                   ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 226, in _parse_column\n    return OSIColumn(\n           ^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\pydantic\\main.py\", line 250, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 892, in _step6_convert_to_sml\n    return self._convert_fabric_to_sml(context, workspace_id, dataset_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1037, in _convert_fabric_to_sml\n    osi_model = TMSLToOSIConverter().to_osi(source_data)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 126, in to_osi\n    raise ConversionError(\nsemabridge.core.exceptions.ConversionError: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 284, in execute\n    sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 900, in _step6_convert_to_sml\n    raise ConversionError(f\"SML conversion failed: {e}\") from e\nsemabridge.core.execution_engine.ConversionError: SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n"
-            }
-          ]
-        },
-        "results": [
-          {
-            "model": "Client Data",
-            "status": "failed",
-            "summary": {
-              "project_id": "Client Data",
-              "run_id": "0cd8d4e9-2f71-4708-b7da-e39fe68321b2",
-              "status": "FAILED",
-              "started_at": "2026-03-19T06:57:39.862461",
-              "completed_at": "2026-03-19T06:58:17.849773",
-              "duration_ms": 37987,
-              "source_type": "fabric",
-              "target_type": "snowflake",
-              "steps_completed": [
-                {
-                  "step_number": 1,
-                  "step_name": "Load & Validate Configuration",
-                  "status": "success",
-                  "started_at": null,
-                  "completed_at": "2026-03-19T06:57:39.863462",
-                  "duration_ms": null,
-                  "message": "Configuration validated",
-                  "artifact_ids": []
-                },
-                {
-                  "step_number": 3,
-                  "step_name": "Resolve Authentication",
-                  "status": "success",
-                  "started_at": null,
-                  "completed_at": "2026-03-19T06:57:40.099391",
-                  "duration_ms": null,
-                  "message": "Authentication resolved from UI token",
-                  "artifact_ids": []
-                },
-                {
-                  "step_number": 4,
-                  "step_name": "Extract from Source",
-                  "status": "success",
-                  "started_at": null,
-                  "completed_at": "2026-03-19T06:58:17.587575",
-                  "duration_ms": null,
-                  "message": "Extracted TMSL definition",
-                  "artifact_ids": []
-                },
-                {
-                  "step_number": 5,
-                  "step_name": "Validate & Parse Source Format",
-                  "status": "success",
-                  "started_at": null,
-                  "completed_at": "2026-03-19T06:58:17.590217",
-                  "duration_ms": null,
-                  "message": "Source format valid",
-                  "artifact_ids": []
-                },
-                {
-                  "step_number": 6,
-                  "step_name": "Convert to Canonical SML",
-                  "status": "failed",
-                  "started_at": null,
-                  "completed_at": "2026-03-19T06:58:17.690671",
-                  "duration_ms": null,
-                  "message": "Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
-                  "artifact_ids": []
-                },
-                {
-                  "step_number": 10,
-                  "step_name": "Finalize Run",
-                  "status": "success",
-                  "started_at": null,
-                  "completed_at": "2026-03-19T06:58:17.849773",
-                  "duration_ms": null,
-                  "message": "Status: FAILED",
-                  "artifact_ids": []
-                }
-              ],
-              "last_successful_step": 10,
-              "total_steps": 10,
-              "source_artifact_id": null,
-              "sml_snapshot_id": null,
-              "target_artifact_path": null,
-              "errors": [
-                {
-                  "step_number": 6,
-                  "step_name": "Convert to Canonical SML",
-                  "error_type": "ConversionError",
-                  "message": "SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)",
-                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 87, in to_osi\n    dataset = self._parse_dataset(table)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 177, in _parse_dataset\n    columns.append(self._parse_column(col))\n                   ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 226, in _parse_column\n    return OSIColumn(\n           ^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\pydantic\\main.py\", line 250, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 892, in _step6_convert_to_sml\n    return self._convert_fabric_to_sml(context, workspace_id, dataset_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1037, in _convert_fabric_to_sml\n    osi_model = TMSLToOSIConverter().to_osi(source_data)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\converter\\tmsl_to_osi.py\", line 126, in to_osi\n    raise ConversionError(\nsemabridge.core.exceptions.ConversionError: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 284, in execute\n    sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 900, in _step6_convert_to_sml\n    raise ConversionError(f\"SML conversion failed: {e}\") from e\nsemabridge.core.execution_engine.ConversionError: SML conversion failed: Failed to convert TMSL: 1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type (error=1 validation error for OSIColumn\nsource_expression\n  Input should be a valid string [type=string_type, input_value=['IF(', '    REP_SFDC_SBQ...', '    \"On-Time\"', ')'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type, source_format=tmsl, target_format=osi)\n"
-                }
-              ]
-            }
-          }
-        ],
-        "models_synced": 0,
+        "models_synced": 1,
         "total_models": 1
       }
     ],
@@ -1144,6 +496,246 @@
       }
     ],
     "proj-1773904076169": [
+      {
+        "run_id": "run-1773913143095",
+        "id": "run-1773913143095",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 71496,
+        "started_at": "2026-03-19T09:39:03.095829",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "a67b5797-f724-4832-acae-e8a5f65ed51f",
+          "status": "SUCCESS",
+          "started_at": "2026-03-19T09:39:03.277070",
+          "completed_at": "2026-03-19T09:40:14.507922",
+          "duration_ms": 71230,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:39:03.278064",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:39:03.425268",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:39:43.994386",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:39:43.998404",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:39:44.125485",
+              "duration_ms": null,
+              "message": "26 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:39:44.483364",
+              "duration_ms": null,
+              "message": "Snapshot b22b3c00... committed",
+              "artifact_ids": [
+                "b22b3c00-6a75-4613-b957-2e29264c3c87",
+                "b40bfde7-6974-4f19-846a-31a5acd01c23"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:39:44.909410",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:40:14.502366",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:40:14.506916",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "b40bfde7-6974-4f19-846a-31a5acd01c23",
+          "sml_snapshot_id": "b22b3c00-6a75-4613-b957-2e29264c3c87",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "success",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "a67b5797-f724-4832-acae-e8a5f65ed51f",
+              "status": "SUCCESS",
+              "started_at": "2026-03-19T09:39:03.277070",
+              "completed_at": "2026-03-19T09:40:14.507922",
+              "duration_ms": 71230,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:39:03.278064",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:39:03.425268",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:39:43.994386",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:39:43.998404",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:39:44.125485",
+                  "duration_ms": null,
+                  "message": "26 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:39:44.483364",
+                  "duration_ms": null,
+                  "message": "Snapshot b22b3c00... committed",
+                  "artifact_ids": [
+                    "b22b3c00-6a75-4613-b957-2e29264c3c87",
+                    "b40bfde7-6974-4f19-846a-31a5acd01c23"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:39:44.909410",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:40:14.502366",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:40:14.506916",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "b40bfde7-6974-4f19-846a-31a5acd01c23",
+              "sml_snapshot_id": "b22b3c00-6a75-4613-b957-2e29264c3c87",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      },
       {
         "run_id": "run-1773905995207",
         "id": "run-1773905995207",
@@ -2214,10 +1806,1539 @@
         "models_synced": 0,
         "total_models": 1
       }
+    ],
+    "proj-1773909316547": [
+      {
+        "run_id": "run-1773913472371",
+        "id": "run-1773913472371",
+        "project_id": "proj-1773909316547",
+        "project_name": "h",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 43179,
+        "started_at": "2026-03-19T09:44:32.371708",
+        "summary": {
+          "project_id": "Customer Profitability",
+          "run_id": "eb1ec31b-1133-4993-91e5-be80f47aba0f",
+          "status": "SUCCESS",
+          "started_at": "2026-03-19T09:44:32.460326",
+          "completed_at": "2026-03-19T09:45:15.517487",
+          "duration_ms": 43057,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:44:32.460326",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:44:32.575711",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:45:03.278779",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:45:03.281988",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:45:03.312346",
+              "duration_ms": null,
+              "message": "9 datasets, 59 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:45:03.392445",
+              "duration_ms": null,
+              "message": "Snapshot 7bab3cf5... committed",
+              "artifact_ids": [
+                "7bab3cf5-8324-41b3-8dbd-f82cd776a4cd",
+                "11ade63b-20a5-41a9-aa24-7833fb6b6eb8"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:45:03.530437",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:45:15.514474",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:45:15.517487",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "11ade63b-20a5-41a9-aa24-7833fb6b6eb8",
+          "sml_snapshot_id": "7bab3cf5-8324-41b3-8dbd-f82cd776a4cd",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Customer Profitability",
+            "status": "success",
+            "summary": {
+              "project_id": "Customer Profitability",
+              "run_id": "eb1ec31b-1133-4993-91e5-be80f47aba0f",
+              "status": "SUCCESS",
+              "started_at": "2026-03-19T09:44:32.460326",
+              "completed_at": "2026-03-19T09:45:15.517487",
+              "duration_ms": 43057,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:44:32.460326",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:44:32.575711",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:45:03.278779",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:45:03.281988",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:45:03.312346",
+                  "duration_ms": null,
+                  "message": "9 datasets, 59 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:45:03.392445",
+                  "duration_ms": null,
+                  "message": "Snapshot 7bab3cf5... committed",
+                  "artifact_ids": [
+                    "7bab3cf5-8324-41b3-8dbd-f82cd776a4cd",
+                    "11ade63b-20a5-41a9-aa24-7833fb6b6eb8"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:45:03.530437",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:45:15.514474",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:45:15.517487",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "11ade63b-20a5-41a9-aa24-7833fb6b6eb8",
+              "sml_snapshot_id": "7bab3cf5-8324-41b3-8dbd-f82cd776a4cd",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1773913304960",
+        "id": "run-1773913304960",
+        "project_id": "proj-1773909316547",
+        "project_name": "h",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 53189,
+        "started_at": "2026-03-19T09:41:44.960552",
+        "summary": {
+          "project_id": "Customer Profitability",
+          "run_id": "a53781d2-30ef-4299-ba1c-096391b37fac",
+          "status": "SUCCESS",
+          "started_at": "2026-03-19T09:41:45.045312",
+          "completed_at": "2026-03-19T09:42:38.112061",
+          "duration_ms": 53066,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:41:45.045312",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:41:45.160430",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:42:15.308447",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:42:15.311512",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:42:26.131803",
+              "duration_ms": null,
+              "message": "9 datasets, 59 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:42:26.207632",
+              "duration_ms": null,
+              "message": "Snapshot fc6dc992... committed",
+              "artifact_ids": [
+                "fc6dc992-b746-4a3d-a243-4660ab4e41b8",
+                "35e21474-e3c2-4226-83ff-a29599a0196d"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:42:26.375428",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:42:38.107506",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T09:42:38.112061",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "35e21474-e3c2-4226-83ff-a29599a0196d",
+          "sml_snapshot_id": "fc6dc992-b746-4a3d-a243-4660ab4e41b8",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Customer Profitability",
+            "status": "success",
+            "summary": {
+              "project_id": "Customer Profitability",
+              "run_id": "a53781d2-30ef-4299-ba1c-096391b37fac",
+              "status": "SUCCESS",
+              "started_at": "2026-03-19T09:41:45.045312",
+              "completed_at": "2026-03-19T09:42:38.112061",
+              "duration_ms": 53066,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:41:45.045312",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:41:45.160430",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:42:15.308447",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:42:15.311512",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:42:26.131803",
+                  "duration_ms": null,
+                  "message": "9 datasets, 59 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:42:26.207632",
+                  "duration_ms": null,
+                  "message": "Snapshot fc6dc992... committed",
+                  "artifact_ids": [
+                    "fc6dc992-b746-4a3d-a243-4660ab4e41b8",
+                    "35e21474-e3c2-4226-83ff-a29599a0196d"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:42:26.375428",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:42:38.107506",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T09:42:38.112061",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "35e21474-e3c2-4226-83ff-a29599a0196d",
+              "sml_snapshot_id": "fc6dc992-b746-4a3d-a243-4660ab4e41b8",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1773909373798",
+        "id": "run-1773909373798",
+        "project_id": "proj-1773909316547",
+        "project_name": "h",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 44172,
+        "started_at": "2026-03-19T08:36:13.798056",
+        "summary": {
+          "project_id": "Customer Profitability",
+          "run_id": "a48d6fe5-bf85-4ea8-97a6-f7416f069fb4",
+          "status": "SUCCESS",
+          "started_at": "2026-03-19T08:36:13.911918",
+          "completed_at": "2026-03-19T08:36:57.930755",
+          "duration_ms": 44018,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:36:13.911918",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:36:14.154826",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:36:45.987765",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:36:45.990770",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:36:46.032093",
+              "duration_ms": null,
+              "message": "9 datasets, 59 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:36:46.123710",
+              "duration_ms": null,
+              "message": "Snapshot 9646a945... committed",
+              "artifact_ids": [
+                "9646a945-854c-4694-9759-034c9e3c87b0",
+                "64054e72-2a83-4e9c-bc9a-05c2131c92e8"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:36:46.287686",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:36:57.923716",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:36:57.930755",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "64054e72-2a83-4e9c-bc9a-05c2131c92e8",
+          "sml_snapshot_id": "9646a945-854c-4694-9759-034c9e3c87b0",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Customer Profitability",
+            "status": "success",
+            "summary": {
+              "project_id": "Customer Profitability",
+              "run_id": "a48d6fe5-bf85-4ea8-97a6-f7416f069fb4",
+              "status": "SUCCESS",
+              "started_at": "2026-03-19T08:36:13.911918",
+              "completed_at": "2026-03-19T08:36:57.930755",
+              "duration_ms": 44018,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:36:13.911918",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:36:14.154826",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:36:45.987765",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:36:45.990770",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:36:46.032093",
+                  "duration_ms": null,
+                  "message": "9 datasets, 59 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:36:46.123710",
+                  "duration_ms": null,
+                  "message": "Snapshot 9646a945... committed",
+                  "artifact_ids": [
+                    "9646a945-854c-4694-9759-034c9e3c87b0",
+                    "64054e72-2a83-4e9c-bc9a-05c2131c92e8"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:36:46.287686",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:36:57.923716",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:36:57.930755",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "64054e72-2a83-4e9c-bc9a-05c2131c92e8",
+              "sml_snapshot_id": "9646a945-854c-4694-9759-034c9e3c87b0",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1773909316596",
+        "id": "run-1773909316596",
+        "project_id": "proj-1773909316547",
+        "project_name": "h",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 48002,
+        "started_at": "2026-03-19T08:35:16.596473",
+        "summary": {
+          "project_id": "Customer Profitability",
+          "run_id": "41b51ee9-e91f-474e-93d1-e0c15eb2abd6",
+          "status": "SUCCESS",
+          "started_at": "2026-03-19T08:35:16.702797",
+          "completed_at": "2026-03-19T08:36:04.567878",
+          "duration_ms": 47865,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:35:16.702797",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:35:16.920139",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:35:47.884467",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:35:47.887475",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:35:52.468485",
+              "duration_ms": null,
+              "message": "9 datasets, 59 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:35:52.549745",
+              "duration_ms": null,
+              "message": "Snapshot d35675a1... committed",
+              "artifact_ids": [
+                "d35675a1-a13a-47d1-b758-9a90275e54aa",
+                "49a07507-9c0f-489c-8fd7-bc19f5e69457"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:35:52.737449",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:36:04.564870",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T08:36:04.567878",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "49a07507-9c0f-489c-8fd7-bc19f5e69457",
+          "sml_snapshot_id": "d35675a1-a13a-47d1-b758-9a90275e54aa",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Customer Profitability",
+            "status": "success",
+            "summary": {
+              "project_id": "Customer Profitability",
+              "run_id": "41b51ee9-e91f-474e-93d1-e0c15eb2abd6",
+              "status": "SUCCESS",
+              "started_at": "2026-03-19T08:35:16.702797",
+              "completed_at": "2026-03-19T08:36:04.567878",
+              "duration_ms": 47865,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:35:16.702797",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:35:16.920139",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:35:47.884467",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:35:47.887475",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:35:52.468485",
+                  "duration_ms": null,
+                  "message": "9 datasets, 59 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:35:52.549745",
+                  "duration_ms": null,
+                  "message": "Snapshot d35675a1... committed",
+                  "artifact_ids": [
+                    "d35675a1-a13a-47d1-b758-9a90275e54aa",
+                    "49a07507-9c0f-489c-8fd7-bc19f5e69457"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:35:52.737449",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:36:04.564870",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T08:36:04.567878",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "49a07507-9c0f-489c-8fd7-bc19f5e69457",
+              "sml_snapshot_id": "d35675a1-a13a-47d1-b758-9a90275e54aa",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      }
+    ],
+    "proj-1773915308718": [
+      {
+        "run_id": "run-1773916080080",
+        "id": "run-1773916080080",
+        "project_id": "proj-1773915308718",
+        "project_name": "f",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 40142,
+        "started_at": "2026-03-19T10:28:00.080822",
+        "summary": {
+          "project_id": "Device",
+          "run_id": "5f511440-58ca-4c77-85ba-2cfe06a1237c",
+          "status": "SUCCESS",
+          "started_at": "2026-03-19T10:28:00.193107",
+          "completed_at": "2026-03-19T10:28:40.194222",
+          "duration_ms": 40001,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T10:28:00.193107",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T10:28:00.351959",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T10:28:31.371498",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T10:28:31.375510",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T10:28:31.380988",
+              "duration_ms": null,
+              "message": "2 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T10:28:31.470044",
+              "duration_ms": null,
+              "message": "Snapshot 315103fd... committed",
+              "artifact_ids": [
+                "315103fd-fdd9-4b6d-b0c1-0947829251fc",
+                "c379c1cf-f800-4dc7-8e81-0cae6ce6e682"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T10:28:31.491474",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T10:28:40.191200",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T10:28:40.194222",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "c379c1cf-f800-4dc7-8e81-0cae6ce6e682",
+          "sml_snapshot_id": "315103fd-fdd9-4b6d-b0c1-0947829251fc",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Device",
+            "status": "success",
+            "summary": {
+              "project_id": "Device",
+              "run_id": "5f511440-58ca-4c77-85ba-2cfe06a1237c",
+              "status": "SUCCESS",
+              "started_at": "2026-03-19T10:28:00.193107",
+              "completed_at": "2026-03-19T10:28:40.194222",
+              "duration_ms": 40001,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T10:28:00.193107",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T10:28:00.351959",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T10:28:31.371498",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T10:28:31.375510",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T10:28:31.380988",
+                  "duration_ms": null,
+                  "message": "2 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T10:28:31.470044",
+                  "duration_ms": null,
+                  "message": "Snapshot 315103fd... committed",
+                  "artifact_ids": [
+                    "315103fd-fdd9-4b6d-b0c1-0947829251fc",
+                    "c379c1cf-f800-4dc7-8e81-0cae6ce6e682"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T10:28:31.491474",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T10:28:40.191200",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T10:28:40.194222",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "c379c1cf-f800-4dc7-8e81-0cae6ce6e682",
+              "sml_snapshot_id": "315103fd-fdd9-4b6d-b0c1-0947829251fc",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1773915308761",
+        "id": "run-1773915308761",
+        "project_id": "proj-1773915308718",
+        "project_name": "f",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 40667,
+        "started_at": "2026-03-19T10:15:08.761130",
+        "summary": {
+          "project_id": "Device",
+          "run_id": "cfa30bdf-902a-4be3-a96a-84383de35994",
+          "status": "SUCCESS",
+          "started_at": "2026-03-19T10:15:08.859888",
+          "completed_at": "2026-03-19T10:15:49.322264",
+          "duration_ms": 40462,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T10:15:08.859888",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T10:15:08.978136",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T10:15:40.175190",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T10:15:40.178208",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T10:15:40.183715",
+              "duration_ms": null,
+              "message": "2 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T10:15:40.260766",
+              "duration_ms": null,
+              "message": "Snapshot c92d89e2... committed",
+              "artifact_ids": [
+                "c92d89e2-ca93-4f3d-8b10-6020b322ac62",
+                "2934e833-8a2c-475a-b5fa-816952bf8a12"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T10:15:40.277901",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T10:15:49.298424",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-19T10:15:49.322264",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "2934e833-8a2c-475a-b5fa-816952bf8a12",
+          "sml_snapshot_id": "c92d89e2-ca93-4f3d-8b10-6020b322ac62",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Device",
+            "status": "success",
+            "summary": {
+              "project_id": "Device",
+              "run_id": "cfa30bdf-902a-4be3-a96a-84383de35994",
+              "status": "SUCCESS",
+              "started_at": "2026-03-19T10:15:08.859888",
+              "completed_at": "2026-03-19T10:15:49.322264",
+              "duration_ms": 40462,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T10:15:08.859888",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T10:15:08.978136",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T10:15:40.175190",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T10:15:40.178208",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T10:15:40.183715",
+                  "duration_ms": null,
+                  "message": "2 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T10:15:40.260766",
+                  "duration_ms": null,
+                  "message": "Snapshot c92d89e2... committed",
+                  "artifact_ids": [
+                    "c92d89e2-ca93-4f3d-8b10-6020b322ac62",
+                    "2934e833-8a2c-475a-b5fa-816952bf8a12"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T10:15:40.277901",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T10:15:49.298424",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-19T10:15:49.322264",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "2934e833-8a2c-475a-b5fa-816952bf8a12",
+              "sml_snapshot_id": "c92d89e2-ca93-4f3d-8b10-6020b322ac62",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      }
     ]
   },
-  "folders": {},
-  "mappings": {},
+  "folders": {
+    "folder-1773909693465": {
+      "id": "folder-1773909693465",
+      "folder_id": "folder-1773909693465",
+      "name": "new_man",
+      "color": "#6366f1"
+    }
+  },
+  "mappings": {
+    "default-map-1": {
+      "id": "default-map-1",
+      "project_id": "default",
+      "source_field": "transaction_id",
+      "source_type": "uuid",
+      "target_field": "txn_id",
+      "target_type": "varchar",
+      "status": "auto",
+      "transform": "",
+      "validation": "None"
+    },
+    "default-map-2": {
+      "id": "default-map-2",
+      "project_id": "default",
+      "source_field": "amount",
+      "source_type": "decimal",
+      "target_field": "sale_amount",
+      "target_type": "float",
+      "status": "auto",
+      "transform": "",
+      "validation": "None"
+    },
+    "default-map-3": {
+      "id": "default-map-3",
+      "project_id": "default",
+      "source_field": "customer_ref",
+      "source_type": "string",
+      "target_field": "customer_key",
+      "target_type": "varchar",
+      "status": "auto",
+      "transform": "",
+      "validation": "None"
+    },
+    "default-map-4": {
+      "id": "default-map-4",
+      "project_id": "default",
+      "source_field": "created_at",
+      "source_type": "timestamp",
+      "target_field": "sale_date",
+      "target_type": "date",
+      "status": "auto",
+      "transform": "",
+      "validation": "None"
+    },
+    "default-map-5": {
+      "id": "default-map-5",
+      "project_id": "default",
+      "source_field": "status_code",
+      "source_type": "integer",
+      "target_field": "order_status",
+      "target_type": "integer",
+      "status": "auto",
+      "transform": "",
+      "validation": "None"
+    },
+    "default-map-6": {
+      "id": "default-map-6",
+      "project_id": "default",
+      "source_field": "contact_email",
+      "source_type": "string",
+      "target_field": "email_address",
+      "target_type": "varchar",
+      "status": "auto",
+      "transform": "",
+      "validation": "None"
+    },
+    "default-map-7": {
+      "id": "default-map-7",
+      "project_id": "default",
+      "source_field": "region_id",
+      "source_type": "integer",
+      "target_field": "region_key",
+      "target_type": "integer",
+      "status": "auto",
+      "transform": "",
+      "validation": "None"
+    }
+  },
   "job_config": {
     "schedule_type": "Manual Trigger Only",
     "cron": "0 0 * * *",

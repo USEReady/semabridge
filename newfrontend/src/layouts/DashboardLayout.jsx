@@ -6,7 +6,6 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import ThemeToggle from '../components/ThemeToggle';
-import WorkspaceSelector from '../components/WorkspaceSelector';
 import SearchInput from '../components/common/SearchInput';
 import ToastContainer from '../components/ToastContainer';
 import LogsPanel from '../components/LogsPanel';
@@ -236,7 +235,6 @@ export default function DashboardLayout() {
               onFocus={() => setShowCommandPalette(true)}
             />
             <div className="flex-1" />
-            <WorkspaceSelector />
             <ThemeToggle />
 
             {/* Version Control */}

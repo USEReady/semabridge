@@ -22,7 +22,6 @@ import {
 import { useState, useRef, useEffect } from 'react';
 import ThemeToggle from './ThemeToggle';
 import DropdownMenu from './DropdownMenu';
-import WorkspaceSelector from './WorkspaceSelector';
 import { useLogs } from '../context/LogsContext';
 import { useAuth } from '../context/AuthContext';
 
@@ -52,7 +51,7 @@ export default function Header({ onToggleLogs, onToggleVersionControl, onToggleR
                 zIndex: 50,
             }}
         >
-            {/* Left: App Name + Workspace */}
+            {/* Left: App Name */}
             <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2">
                     <Hexagon size={18} className="text-accent-blue" strokeWidth={2.5} />
@@ -60,8 +59,6 @@ export default function Header({ onToggleLogs, onToggleVersionControl, onToggleR
                         SemaBridge
                     </h1>
                 </div>
-                <div className="h-4 w-px bg-border-main opacity-30" />
-                <WorkspaceSelector />
             </div>
 
             {/* Center: Global Search (Command Palette) */}

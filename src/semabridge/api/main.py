@@ -2147,6 +2147,17 @@ async def list_projects_compat():
         pid = str(p.get("id") or p.get("project_id") or "").strip()
         if not pid:
             continue
+        
+        # Filter out auto-generated test projects
+        project_name = str(p.get("name") or "").strip().lower()
+        is_test = (
+            project_name in ("test", "teste", "test project") or
+            project_name == "fabricmodel"  # Auto-generated default
+        )
+        if is_test:
+            # Skip test/auto-generated projects
+            continue
+        
         current = deduped.get(pid)
         if not current:
             deduped[pid] = p
