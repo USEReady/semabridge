@@ -18,6 +18,7 @@ import {
     Eye,
     PanelBottom,
     LogOut,
+    Code2,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import ThemeToggle from './ThemeToggle';
@@ -25,7 +26,7 @@ import DropdownMenu from './DropdownMenu';
 import { useLogs } from '../context/LogsContext';
 import { useAuth } from '../context/AuthContext';
 
-export default function Header({ onToggleLogs, onToggleVersionControl, onToggleRepoMap, onToggleConnections, onToggleTerminal, onOpenCommandPalette, showRepoMap }) {
+export default function Header({ onToggleLogs, onToggleVersionControl, onToggleRepoMap, onToggleConnections, onToggleTerminal, onOpenCommandPalette, showRepoMap, onToggleYamlView, isYamlView }) {
     const { logs } = useLogs();
     const { user, logout } = useAuth();
     const [showUserMenu, setShowUserMenu] = useState(false);
@@ -145,6 +146,16 @@ export default function Header({ onToggleLogs, onToggleVersionControl, onToggleR
                     </button>
 
                     <ThemeToggle />
+                    {onToggleYamlView && (
+                        <button
+                            onClick={onToggleYamlView}
+                            className={`p-2 rounded-md hover:bg-surface-hover ${isYamlView ? 'text-accent-blue' : 'text-secondary'}`}
+                            title={isYamlView ? 'Switch to UI view' : 'Switch to YAML view'}
+                            style={isYamlView ? { background: 'rgba(99,102,241,.15)' } : {}}
+                        >
+                            <Code2 size={16} />
+                        </button>
+                    )}
                     <button onClick={onToggleConnections} className="p-2 rounded-md hover:bg-surface-hover text-secondary" title="Connections & Settings">
                         <Settings size={16} />
                     </button>

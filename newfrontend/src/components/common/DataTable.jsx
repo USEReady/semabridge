@@ -9,6 +9,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
  *   pageSize : number (default 10)
  *   loading  : boolean
  *   emptyText: string
+ *   getRowStyle: (row, index) => style object (optional)
  */
 export default function DataTable({
   columns = [],
@@ -16,6 +17,7 @@ export default function DataTable({
   pageSize = 10,
   loading = false,
   emptyText = 'No data found.',
+  getRowStyle = null,
 }) {
   const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(data.length / pageSize));
@@ -73,12 +75,17 @@ export default function DataTable({
                 </td>
               </tr>
             ) : (
-              slice.map((row, i) => (
+              slice.map((row, i) => {
+                const baseStyle = { background: i % 2 === 0 ? 'transparent' : 'var(--bg-surface-raised)' };
+                const customStyle = getRowStyle ? getRowStyle(row, i) : {};
+                const mergedStyle = { ...baseStyle, ...customStyle };
+                
+                return (
                 <tr
                   key={row.id ?? i}
-                  style={{ background: i % 2 === 0 ? 'transparent' : 'var(--bg-surface-raised)' }}
+                  style={mergedStyle}
                   onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-surface-hover)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = i % 2 === 0 ? 'transparent' : 'var(--bg-surface-raised)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = mergedStyle.background; }}
                 >
                   {columns.map((col) => (
                     <td
@@ -89,7 +96,8 @@ export default function DataTable({
                     </td>
                   ))}
                 </tr>
-              ))
+                );
+              })
             )}
           </tbody>
         </table>

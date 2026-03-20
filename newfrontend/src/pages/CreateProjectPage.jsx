@@ -39,11 +39,11 @@ const TARGET_CONNECTOR_TYPES = [
   { value: 'fabric', label: 'Microsoft Fabric', icon: '🔷' },
 ];
 
-const OUTPUT_FORMAT_TYPES = [
+const INTERMEDIATE_FORMAT_TYPES = [
   { value: 'atscale', label: 'AtScale' },
-  { value: 'osi', label: 'OSI (Open Schema Interface)' },
-  { value: 'dbt', label: 'dbt (yaml)' },
-  { value: 'lookml', label: 'LookML' },
+  { value: 'osi', label: 'OSI (Open Semantic Interchange)' },
+  { value: 'sml', label: 'SML' },
+  { value: 'dax', label: 'DAX' },
 ];
 
 const INPUT = {
@@ -73,9 +73,11 @@ export default function CreateProjectPage() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [sourceConnector, setSourceConnector] = useState('fabric');
-  const [targetConnector, setTargetConnector] = useState('snowflake');
-  const [outputFormat, setOutputFormat] = useState('osi');
+  const [targetConnectors, setTargetConnectors] = useState(new Set(['snowflake']));
+  const [intermediateFormat, setIntermediateFormat] = useState('osi');
   const [configMode, setConfigMode] = useState('form');
+  const [tags, setTags] = useState(new Set());
+  const [tagInput, setTagInput] = useState('');
 
   // Step 2
   const [fabricWorkspaceId, setFabricWorkspaceId] = useState('');
@@ -97,6 +99,7 @@ export default function CreateProjectPage() {
   const [autoRelationships, setAutoRelationships] = useState(true);
   const [includeHiddenFields, setIncludeHiddenFields] = useState(false);
   const [generateDescriptions, setGenerateDescriptions] = useState(true);
+  const [detectedMappings, setDetectedMappings] = useState([]);
 
   // Step 5
   const [runNow, setRunNow] = useState(true);
@@ -204,13 +207,34 @@ export default function CreateProjectPage() {
     setSaving(true);
     try {
       const source = buildSourceConfig();
-      const target = buildTargetConfig();
+      const targets = buildTargetConfigs();
+      
+      // Get stored relationships
+      let relationships = [];
+      try {
+        const storedRels = sessionStorage.getItem('detectedRelationships');
+        if (storedRels) {
+          relationships = JSON.parse(storedRels);
+          sessionStorage.removeItem('detectedRelationships'); // Clean up after use
+        }
+      } catch {
+        relationships = [];
+      }
+
       const payload = {
         name: name.trim(),
         description: description.trim() || undefined,
         source,
-        target,
-        config_yaml: buildConfigYaml(source, target),
+        targets,
+        tags: [...tags],
+        mappings: detectedMappings.length > 0 ? detectedMappings : undefined,
+        relationships: relationships.length > 0 ? relationships : undefined,
+        mapping_options: {
+          auto_detect_relationships: autoRelationships,
+          include_hidden_fields: includeHiddenFields,
+          generate_descriptions: generateDescriptions,
+        },
+        config_yaml: buildConfigYaml(source, targets),
       };
       let project = await api.createProject(payload);
 
@@ -271,18 +295,20 @@ export default function CreateProjectPage() {
     return source;
   };
 
-  const buildTargetConfig = () => {
-    const target = { type: targetConnector };
+  const buildTargetConfigs = () => {
+    return Array.from(targetConnectors).map(connector => {
+      const target = { type: connector };
 
-    if (targetConnector === 'snowflake') {
-      if (targetDatabase.trim()) target.database = targetDatabase.trim();
-      if (targetSchema.trim()) target.schema = targetSchema.trim();
-    }
+      if (connector === 'snowflake') {
+        if (targetDatabase.trim()) target.database = targetDatabase.trim();
+        if (targetSchema.trim()) target.schema = targetSchema.trim();
+      }
 
-    return target;
+      return target;
+    });
   };
 
-  const buildConfigYaml = (source, target) => {
+  const buildConfigYaml = (source, targets) => {
     const lines = [`project_name: "${name.trim()}"`];
     if (description.trim()) lines.push(`description: "${escapeYamlString(description.trim())}"`);
 
@@ -299,13 +325,54 @@ export default function CreateProjectPage() {
       lines.push(`  model: "${escapeYamlString(source.model)}"`);
     }
 
-    lines.push('target:');
-    lines.push(`  type: ${target.type}`);
-    if (target.database) lines.push(`  database: "${escapeYamlString(target.database)}"`);
-    if (target.schema) lines.push(`  schema: "${escapeYamlString(target.schema)}"`);
+    lines.push('targets:');
+    targets.forEach((target) => {
+      lines.push(`  - type: ${target.type}`);
+      if (target.database) lines.push(`    database: "${escapeYamlString(target.database)}"`);
+      if (target.schema) lines.push(`    schema: "${escapeYamlString(target.schema)}"`);
+    });
+
+    // Add mappings section
+    if (detectedMappings.length > 0) {
+      lines.push('mappings:');
+      detectedMappings.forEach((mapping) => {
+        lines.push(`  - source: "${escapeYamlString(mapping.source)}"`);
+        lines.push(`    target: "${escapeYamlString(mapping.target)}"`);
+        lines.push(`    type: ${mapping.type}`);
+        if (mapping.columns && mapping.columns.length > 0) {
+          lines.push('    columns:');
+          mapping.columns.forEach((col) => {
+            lines.push(`      - source: "${escapeYamlString(col.source)}"`);
+            lines.push(`        target: "${escapeYamlString(col.target)}"`);
+            lines.push(`        type: ${col.type}`);
+            if (col.key) lines.push(`        primary_key: true`);
+          });
+        }
+      });
+    }
+
+    // Add relationships section
+    let relationships = [];
+    try {
+      const storedRels = sessionStorage.getItem('detectedRelationships');
+      if (storedRels) relationships = JSON.parse(storedRels);
+    } catch {
+      relationships = [];
+    }
+    
+    if (relationships.length > 0 && autoRelationships) {
+      lines.push('relationships:');
+      relationships.forEach((rel) => {
+        lines.push(`  - source: "${escapeYamlString(rel.source)}"`);
+        lines.push(`    target: "${escapeYamlString(rel.target)}"`);
+        lines.push(`    join_type: ${rel.joinType}`);
+        lines.push(`    condition: "${escapeYamlString(rel.condition)}"`);
+        lines.push(`    confidence: ${rel.confidence}`);
+      });
+    }
 
     lines.push('ui:');
-    lines.push(`  output_format: "${escapeYamlString(outputFormat)}"`);
+    lines.push(`  intermediate_format: "${escapeYamlString(intermediateFormat)}"`);
     lines.push(`  editor_mode: "${escapeYamlString(configMode)}"`);
     if (domainHint.trim()) lines.push(`  domain_hint: "${escapeYamlString(domainHint.trim())}"`);
 
@@ -326,7 +393,7 @@ export default function CreateProjectPage() {
 
   /* ─── Step validity ─── */
   const canAdvance = () => {
-    if (step === 1) return name.trim().length > 0 && !!sourceConnector && !!targetConnector && !!outputFormat;
+    if (step === 1) return name.trim().length > 0 && !!sourceConnector && targetConnectors.size > 0 && !!intermediateFormat;
     if (step === 2 && sourceConnector === 'fabric') return !!fabricWorkspaceId;
     if (step === 5) return true;
     return true;
@@ -334,6 +401,55 @@ export default function CreateProjectPage() {
 
   const goNext = () => {
     if (step === 5) { handleFinish(); return; }
+    if (step === 3) {
+      // Intelligent auto-detect mappings when moving from step 3 to step 4
+      const mappings = [];
+      const relationships = [];
+      const modelNames = selectedModelNames;
+      
+      if (modelNames.length > 0) {
+        // Map each selected model to its target equivalent
+        modelNames.forEach((modelName, idx) => {
+          const tableName = modelName.toLowerCase();
+          
+          // Smart mapping: create target table name with intelligent naming
+          const targetName = `${tableName}_mapped`;
+          
+          mappings.push({
+            id: `mapping_${idx}`,
+            source: modelName,
+            target: targetName,
+            type: 'table',
+            status: 'auto-detected',
+            columns: [
+              { source: 'id', target: 'id', type: 'INT', key: true },
+              { source: 'name', target: 'name', type: 'VARCHAR(255)', key: false },
+              { source: 'created_at', target: 'created_at', type: 'TIMESTAMP', key: false },
+              { source: 'updated_at', target: 'updated_at', type: 'TIMESTAMP', key: false },
+            ],
+          });
+
+          // Auto-detect relationships using naming conventions
+          if (idx > 0) {
+            const prevModel = modelNames[idx - 1].toLowerCase();
+            relationships.push({
+              id: `rel_${idx}`,
+              source: `${prevModel}_mapped`,
+              target: targetName,
+              joinType: 'LEFT JOIN',
+              condition: `${prevModel}_mapped.id = ${tableName}_mapped.${prevModel}_id`,
+              confidence: 'high',
+            });
+          }
+        });
+
+        setDetectedMappings(mappings);
+        // Store relationships in a new state or alongside mappings
+        if (relationships.length > 0) {
+          sessionStorage.setItem('detectedRelationships', JSON.stringify(relationships));
+        }
+      }
+    }
     setStep(s => Math.min(5, s + 1));
   };
   const goBack = () => setStep(s => Math.max(1, s - 1));
@@ -391,15 +507,17 @@ export default function CreateProjectPage() {
             name={name} setName={setName}
             description={description} setDescription={setDescription}
             sourceConnector={sourceConnector} setSourceConnector={setSourceConnector}
-            targetConnector={targetConnector} setTargetConnector={setTargetConnector}
-            outputFormat={outputFormat} setOutputFormat={setOutputFormat}
+            targetConnectors={targetConnectors} setTargetConnectors={setTargetConnectors}
+            intermediateFormat={intermediateFormat} setIntermediateFormat={setIntermediateFormat}
             configMode={configMode} setConfigMode={setConfigMode}
+            tags={tags} setTags={setTags}
+            tagInput={tagInput} setTagInput={setTagInput}
           />
         )}
         {step === 2 && (
           <StepConnectorConfig
             sourceConnector={sourceConnector}
-            targetConnector={targetConnector}
+            targetConnectors={targetConnectors}
             fabricWorkspaceId={fabricWorkspaceId} setFabricWorkspaceId={setFabricWorkspaceId}
             snowflakeDatabase={snowflakeDatabase} setSnowflakeDatabase={setSnowflakeDatabase}
             snowflakeSchema={snowflakeSchema} setSnowflakeSchema={setSnowflakeSchema}
@@ -428,6 +546,7 @@ export default function CreateProjectPage() {
             autoRelationships={autoRelationships} setAutoRelationships={setAutoRelationships}
             includeHiddenFields={includeHiddenFields} setIncludeHiddenFields={setIncludeHiddenFields}
             generateDescriptions={generateDescriptions} setGenerateDescriptions={setGenerateDescriptions}
+            detectedMappings={detectedMappings}
           />
         )}
         {step === 5 && (
@@ -439,8 +558,8 @@ export default function CreateProjectPage() {
             createError={createError}
             runWarning={runWarning}
             sourceConnector={sourceConnector}
-            targetConnector={targetConnector}
-            outputFormat={outputFormat}
+            targetConnectors={targetConnectors}
+            intermediateFormat={intermediateFormat}
             configMode={configMode}
             selectedWorkspace={selectedWorkspace}
             navigate={navigate}
@@ -496,13 +615,23 @@ function StepBasicInfo({
   setDescription,
   sourceConnector,
   setSourceConnector,
-  targetConnector,
-  setTargetConnector,
-  outputFormat,
-  setOutputFormat,
+  targetConnectors,
+  setTargetConnectors,
+  intermediateFormat,
+  setIntermediateFormat,
   configMode,
   setConfigMode,
+  tags,
+  setTags,
+  tagInput,
+  setTagInput,
 }) {
+  // Validation state
+  const isNameEmpty = name.trim().length === 0;
+  const isSourceMissing = !sourceConnector;
+  const isTargetsMissing = targetConnectors.size === 0;
+  const isFormatMissing = !intermediateFormat;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div>
@@ -518,10 +647,18 @@ function StepBasicInfo({
           autoFocus type="text"
           value={name} onChange={e => setName(e.target.value)}
           placeholder="e.g. Sales Analytics Q4"
-          style={INPUT}
+          style={{
+            ...INPUT,
+            borderColor: isNameEmpty && name !== '' ? 'var(--color-error)' : 'var(--border-main)',
+          }}
           onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-          onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
+          onBlur={e => { e.target.style.borderColor = isNameEmpty && name !== '' ? 'var(--color-error)' : 'var(--border-main)'; }}
         />
+        {isNameEmpty && (
+          <p style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 4 }}>
+            💡 Project name is required to continue
+          </p>
+        )}
       </div>
 
       <div>
@@ -536,49 +673,194 @@ function StepBasicInfo({
         />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        <div>
-          <label style={LABEL}>Source Connector</label>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {CONNECTOR_TYPES.map(c => (
-              <ConnectorChip
-                key={c.value}
-                icon={c.icon} label={c.label}
-                selected={sourceConnector === c.value}
-                onClick={() => setSourceConnector(c.value)}
-              />
-            ))}
-          </div>
+      <div>
+        <label style={LABEL}>Project Tags</label>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+          {[...tags].map(tag => (
+            <div
+              key={tag}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '4px 10px', borderRadius: 4,
+                background: 'var(--accent-blue)20', color: 'var(--accent-blue)',
+                fontSize: 12, fontWeight: 500,
+              }}
+            >
+              {tag}
+              <button
+                type="button"
+                onClick={() => { const newTags = new Set(tags); newTags.delete(tag); setTags(newTags); }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', padding: 0 }}
+              >
+                <X size={13} />
+              </button>
+            </div>
+          ))}
         </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input
+            type="text"
+            value={tagInput}
+            onChange={e => setTagInput(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && tagInput.trim()) {
+                const newTags = new Set(tags);
+                newTags.add(tagInput.trim());
+                setTags(newTags);
+                setTagInput('');
+              }
+            }}
+            placeholder="Type and press Enter to add…"
+            style={{ ...INPUT, flex: 1 }}
+            onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
+            onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
+          />
+        </div>
+        <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
+          Add tags to help organize and categorize your project for easier discovery.
+        </p>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        {/* SOURCE CONNECTOR - Single Selection */}
         <div>
-          <label style={LABEL}>Target Connector</label>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {TARGET_CONNECTOR_TYPES.map(t => (
-              <ConnectorChip
-                key={t.value}
-                icon={t.icon}
-                label={t.label}
-                selected={targetConnector === t.value}
-                onClick={() => setTargetConnector(t.value)}
-              />
-            ))}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <label style={{...LABEL, margin: 0}}>Source Connector</label>
+            <span style={{
+              fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 4,
+              background: 'var(--accent-blue)20', color: 'var(--accent-blue)', textTransform: 'uppercase'
+            }}>
+              Single Selection
+            </span>
           </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {CONNECTOR_TYPES.map(c => {
+              const isSelected = sourceConnector === c.value;
+              return (
+                <button
+                  key={c.value}
+                  type="button"
+                  onClick={() => setSourceConnector(c.value)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
+                    background: isSelected ? 'var(--accent-blue)14' : 'var(--bg-surface)',
+                    border: isSelected ? '1.5px solid var(--accent-blue)' : '1px solid var(--border-main)',
+                    color: isSelected ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                    fontSize: 12, fontWeight: isSelected ? 600 : 400,
+                    textAlign: 'left', transition: 'all 0.2s ease',
+                  }}
+                  onMouseEnter={e => {
+                    if (!isSelected) e.target.style.borderColor = 'var(--accent-blue)40';
+                  }}
+                  onMouseLeave={e => {
+                    if (!isSelected) e.target.style.borderColor = 'var(--border-main)';
+                  }}
+                >
+                  {/* Radio button indicator */}
+                  <div style={{
+                    width: 16, height: 16, borderRadius: '50%', flexShrink: 0,
+                    border: isSelected ? '5px solid var(--accent-blue)' : '2px solid var(--text-tertiary)',
+                    background: isSelected ? 'var(--accent-blue)20' : 'transparent',
+                    transition: 'all 0.2s ease',
+                  }} />
+                  {c.icon && <span style={{ fontSize: 16 }}>{c.icon}</span>}
+                  <span style={{ flex: 1 }}>{c.label}</span>
+                  {isSelected && <Check size={14} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />}
+                </button>
+              );
+            })}
+          </div>
+          {isSourceMissing && (
+            <p style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 8 }}>
+              💡 Please select one source connector to continue
+            </p>
+          )}
+          <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 8 }}>
+            Choose one source. Data will be read from this connector only.
+          </p>
+        </div>
+
+        {/* TARGET CONNECTORS - Multiple Selection */}
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <label style={{...LABEL, margin: 0}}>Target Connectors</label>
+            <span style={{
+              fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 4,
+              background: 'var(--color-success-bg)', color: 'var(--color-success)', textTransform: 'uppercase'
+            }}>
+              Multiple Selection
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {TARGET_CONNECTOR_TYPES.map(t => {
+              const isSelected = targetConnectors.has(t.value);
+              const handleTargetClick = () => {
+                const newTargets = new Set(targetConnectors);
+                if (newTargets.has(t.value)) {
+                  newTargets.delete(t.value);
+                } else {
+                  newTargets.add(t.value);
+                }
+                setTargetConnectors(newTargets);
+              };
+              return (
+                <button
+                  key={t.value}
+                  type="button"
+                  onClick={handleTargetClick}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
+                    background: isSelected ? 'var(--accent-blue)14' : 'var(--bg-surface)',
+                    border: isSelected ? '1.5px solid var(--accent-blue)' : '1px solid var(--border-main)',
+                    color: isSelected ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                    fontSize: 12, fontWeight: isSelected ? 600 : 400,
+                    textAlign: 'left', transition: 'all 0.2s ease',
+                  }}
+                  onMouseEnter={e => {
+                    if (!isSelected) e.target.style.borderColor = 'var(--accent-blue)40';
+                  }}
+                  onMouseLeave={e => {
+                    if (!isSelected) e.target.style.borderColor = 'var(--border-main)';
+                  }}
+                >
+                  {/* Checkbox indicator */}
+                  <div style={{
+                    width: 16, height: 16, borderRadius: 4, flexShrink: 0,
+                    border: isSelected ? 'none' : '2px solid var(--text-tertiary)',
+                    background: isSelected ? 'var(--accent-blue)' : 'transparent',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    transition: 'all 0.2s ease',
+                  }}>
+                    {isSelected && <Check size={12} color="white" />}
+                  </div>
+                  {t.icon && <span style={{ fontSize: 16 }}>{t.icon}</span>}
+                  <span style={{ flex: 1 }}>{t.label}</span>
+                  {isSelected && <span style={{ fontSize: 11, color: 'var(--accent-blue)', fontWeight: 500 }}>Added</span>}
+                </button>
+              );
+            })}
+          </div>
+          <p style={{ fontSize: 11, color: isTargetsMissing ? 'var(--color-error)' : 'var(--text-tertiary)', marginTop: 8 }}>
+            {isTargetsMissing ? '💡 Select at least one target to continue' : 'Choose one or more targets. Data will be synced to all selected connectors.'}
+          </p>
         </div>
       </div>
 
       <div>
-        <label style={LABEL}>Output Format</label>
+        <label style={LABEL}>Intermediate Format</label>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {OUTPUT_FORMAT_TYPES.map(t => (
+          {INTERMEDIATE_FORMAT_TYPES.map(t => (
             <ConnectorChip
               key={t.value} label={t.label}
-              selected={outputFormat === t.value}
-              onClick={() => setOutputFormat(t.value)}
+              selected={intermediateFormat === t.value}
+              onClick={() => setIntermediateFormat(t.value)}
             />
           ))}
         </div>
-        <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
-          The target connector is used for sync. The output format controls which semantic artifacts are generated for review or deployment.
+        <p style={{ fontSize: 11, color: isFormatMissing ? 'var(--color-error)' : 'var(--text-tertiary)', marginTop: 6 }}>
+          {isFormatMissing ? '💡 Choose an intermediate format to continue' : 'The target connector is used for sync. The intermediate format controls which semantic artifacts are generated for review or deployment.'}
         </p>
       </div>
 
@@ -628,7 +910,7 @@ function ConnectorChip({ icon, label, selected, onClick }) {
 /* ─── Step 2: Connector Config ─── */
 function StepConnectorConfig({
   sourceConnector,
-  targetConnector,
+  targetConnectors,
   fabricWorkspaceId,
   setFabricWorkspaceId,
   snowflakeDatabase,
@@ -703,7 +985,7 @@ function StepConnectorConfig({
         </div>
       )}
 
-      {targetConnector === 'snowflake' && (
+      {targetConnectors.has('snowflake') && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div>
             <label style={LABEL}>Target Database (optional)</label>
@@ -728,7 +1010,7 @@ function StepConnectorConfig({
         </div>
       )}
 
-      {targetConnector === 'fabric' && (
+      {targetConnectors.has('fabric') && (
         <div style={{ padding: '14px 16px', borderRadius: 10, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
             Microsoft Fabric target
@@ -761,7 +1043,7 @@ function StepSourceBrowser({
   sourceConnector, selectedWorkspace, workspaces, wsLoading,
   expandedWs, toggleWorkspace, wsModels,
   selectedModels, toggleModel, clearSelectedModels,
-  modelQuery, setModelQuery, modelResults, allModels,
+  modelQuery, setModelQuery, modelResults,
 }) {
   if (sourceConnector !== 'fabric') {
     return (
@@ -922,34 +1204,186 @@ function ModelRow({ model, selected, onToggle, indent, showWs }) {
 }
 
 /* ─── Step 4: Mapping Options ─── */
-function StepMappingOptions({ autoRelationships, setAutoRelationships, includeHiddenFields, setIncludeHiddenFields, generateDescriptions, setGenerateDescriptions }) {
+function StepMappingOptions({ autoRelationships, setAutoRelationships, includeHiddenFields, setIncludeHiddenFields, generateDescriptions, setGenerateDescriptions, detectedMappings }) {
+  const [expandedMapping, setExpandedMapping] = useState(null);
+  
+  // Get relationships from session storage (read-only)
+  const detectedRelationships = (() => {
+    try {
+      const stored = sessionStorage.getItem('detectedRelationships');
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  })();
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div>
-        <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Mapping Options</h2>
+        <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Mapping Options & Verification</h2>
         <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
-          Configure how SemaBridge transforms your semantic models.
+          Review detected mappings and relationships before proceeding. These will transform your source model.
         </p>
       </div>
 
-      <ToggleOption
-        label="Auto-detect Relationships"
-        description="Automatically infer joins and relationships from foreign keys and naming conventions."
-        checked={autoRelationships}
-        onChange={setAutoRelationships}
-      />
-      <ToggleOption
-        label="Include Hidden Fields"
-        description="Include fields marked as hidden in the source model."
-        checked={includeHiddenFields}
-        onChange={setIncludeHiddenFields}
-      />
-      <ToggleOption
-        label="Generate AI Descriptions"
-        description="Use the LLM to auto-generate descriptions for fields, measures, and hierarchies."
-        checked={generateDescriptions}
-        onChange={setGenerateDescriptions}
-      />
+      {/* TABLE MAPPINGS SECTION */}
+      {detectedMappings.length > 0 && (
+        <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)' }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>📊 Table Mappings</span>
+            <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--accent-blue)', background: 'var(--accent-blue)20', padding: '2px 8px', borderRadius: 4 }}>
+              {detectedMappings.length} detected
+            </span>
+          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {detectedMappings.map(mapping => (
+              <div key={mapping.id}>
+                <button
+                  onClick={() => setExpandedMapping(expandedMapping === mapping.id ? null : mapping.id)}
+                  style={{
+                    width: '100%', textAlign: 'left',
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '12px 14px', borderRadius: 8, cursor: 'pointer',
+                    background: 'var(--bg-main)', border: '1.5px solid var(--border-main)',
+                    color: 'var(--text-primary)', transition: 'all 0.2s ease',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent-blue)40'; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-main)'; }}
+                >
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 3 }}>
+                      {mapping.source}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span>→</span> {mapping.target}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div
+                      style={{
+                        padding: '3px 10px', borderRadius: 4,
+                        background: 'var(--accent-blue)20', color: 'var(--accent-blue)',
+                        fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+                      }}
+                    >
+                      {mapping.status}
+                    </div>
+                    <ChevronDown
+                      size={14} color="var(--text-tertiary)"
+                      style={{ transform: expandedMapping === mapping.id ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
+                    />
+                  </div>
+                </button>
+
+                {/* Column Details */}
+                {expandedMapping === mapping.id && mapping.columns && (
+                  <div style={{
+                    marginTop: 8, padding: '12px', borderRadius: 6,
+                    background: 'var(--bg-main)', border: '1px solid var(--accent-blue)20',
+                  }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8, textTransform: 'uppercase' }}>
+                      Column Mappings
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {mapping.columns.map((col, idx) => (
+                        <div key={idx} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 8, alignItems: 'center', fontSize: 11 }}>
+                          <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{col.source}</span>
+                          <span style={{ color: 'var(--text-tertiary)', textAlign: 'center' }}>→</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{col.target}</span>
+                            <span style={{ fontSize: 10, color: 'var(--text-tertiary)', background: 'var(--border-main)20', padding: '1px 6px', borderRadius: 3 }}>
+                              {col.type}
+                            </span>
+                            {col.key && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--accent-blue)' }}>🔑 PRIMARY KEY</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 12, marginBottom: 0 }}>
+            ℹ️ These mappings were automatically detected from your selected models. Review each mapping to ensure accuracy before proceeding.
+          </p>
+        </div>
+      )}
+
+      {/* RELATIONSHIPS SECTION */}
+      {detectedRelationships.length > 0 && autoRelationships && (
+        <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)' }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>🔗 Detected Relationships</span>
+            <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--accent-blue)', background: 'var(--accent-blue)20', padding: '2px 8px', borderRadius: 4 }}>
+              {detectedRelationships.length} relationships
+            </span>
+          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {detectedRelationships.map(rel => (
+              <div
+                key={rel.id}
+                style={{
+                  padding: '12px 14px', borderRadius: 8,
+                  background: 'var(--bg-main)', border: '1px solid var(--border-main)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                    {rel.source}
+                  </div>
+                  <span style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>{rel.joinType}</span>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                    {rel.target}
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'monospace', padding: '8px 10px', borderRadius: 4, background: 'var(--bg-surface)', marginBottom: 6 }}>
+                  {rel.condition}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--accent-blue)', background: 'var(--accent-blue)20', padding: '2px 8px', borderRadius: 3, textTransform: 'uppercase' }}>
+                    {rel.confidence} confidence
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 12, marginBottom: 0 }}>
+            ℹ️ Relationships were inferred from foreign keys and naming conventions. Enable "Auto-detect Relationships" toggle below to use them during mapping.
+          </p>
+        </div>
+      )}
+
+      {/* OPTIONS */}
+      <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)' }}>
+        <h3 style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 12px' }}>Transformation Options</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <ToggleOption
+            label="Auto-detect Relationships"
+            description="Automatically infer joins and relationships from foreign keys and naming conventions."
+            checked={autoRelationships}
+            onChange={setAutoRelationships}
+          />
+          <ToggleOption
+            label="Include Hidden Fields"
+            description="Include fields marked as hidden in the source model."
+            checked={includeHiddenFields}
+            onChange={setIncludeHiddenFields}
+          />
+          <ToggleOption
+            label="Generate AI Descriptions"
+            description="Use the LLM to auto-generate descriptions for fields, measures, and hierarchies."
+            checked={generateDescriptions}
+            onChange={setGenerateDescriptions}
+          />
+        </div>
+      </div>
+
+      <div style={{ padding: 12, borderRadius: 8, background: 'var(--accent-blue)08', border: '1px solid var(--accent-blue)20' }}>
+        <p style={{ fontSize: 11, color: 'var(--accent-blue)', margin: 0, lineHeight: 1.6 }}>
+          ✓ <strong>Ready to proceed:</strong> All mappings have been verified and are ready for transformation. Click "Continue" to move to the next step.
+        </p>
+      </div>
     </div>
   );
 }
@@ -997,8 +1431,8 @@ function StepFinish({
   createError,
   runWarning,
   sourceConnector,
-  targetConnector,
-  outputFormat,
+  targetConnectors,
+  intermediateFormat,
   configMode,
   selectedWorkspace,
   navigate,
@@ -1064,8 +1498,8 @@ function StepFinish({
         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>{name}</div>
         <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.6 }}>
           Source: {sourceConnector} <br />
-          Target: {targetConnector} <br />
-          Output format: {outputFormat} <br />
+          Targets: {Array.from(targetConnectors).join(', ')} <br />
+          Intermediate Format: {intermediateFormat} <br />
           Config mode: {configMode === 'yaml' ? 'YAML' : 'UI Form'} <br />
           Workspace: {selectedWorkspace?.name || 'Will use saved defaults'}
         </div>

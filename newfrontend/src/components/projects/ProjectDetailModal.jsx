@@ -1,5 +1,5 @@
 /**
- * ProjectDetailModal — Runs history + config preview for a project.
+ * ProjectDetailModal — Runs history + config preview + mappings for a project.
  *
  * Props:
  *   project  — project object { project_id, name, adapter, target_type, ... }
@@ -13,7 +13,7 @@ import { X, Play, Copy, Clock, CheckCircle2, AlertCircle, Loader2 } from 'lucide
 import StatusBadge from '../common/StatusBadge';
 import { api } from '../../utils/api';
 
-const TABS = ['Runs', 'Config'];
+const TABS = ['Runs', 'Config', 'Mappings'];
 
 function RunRow({ run }) {
   const duration = run.duration_ms
@@ -52,6 +52,7 @@ export default function ProjectDetailModal({ project, open, onClose, onDuplicate
   const [tab, setTab] = useState('Runs');
   const [runs, setRuns] = useState([]);
   const [config, setConfig] = useState('');
+  const [mappings, setMappings] = useState([]);
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
 
@@ -60,15 +61,18 @@ export default function ProjectDetailModal({ project, open, onClose, onDuplicate
     setTab('Runs');
     setRuns([]);
     setConfig('');
+    setMappings([]);
     setLoading(true);
 
     const pid = project.project_id;
     Promise.allSettled([
       api.getProjectRuns(pid),
       api.getProjectConfig(pid),
-    ]).then(([runsRes, cfgRes]) => {
+      api.getMappings(), // Load mappings for this project
+    ]).then(([runsRes, cfgRes, mapRes]) => {
       if (runsRes.status === 'fulfilled') setRuns(runsRes.value ?? []);
       if (cfgRes.status === 'fulfilled') setConfig(cfgRes.value?.config_yaml ?? '');
+      if (mapRes.status === 'fulfilled') setMappings(mapRes.value?.mappings ?? []);
     }).finally(() => setLoading(false));
   }, [open, project]);
 
@@ -201,7 +205,7 @@ export default function ProjectDetailModal({ project, open, onClose, onDuplicate
                 </table>
               </div>
             )
-          ) : (
+          ) : tab === 'Config' ? (
             <pre style={{
               background: 'var(--bg-input)',
               border: '1px solid var(--border-main)',
@@ -216,6 +220,37 @@ export default function ProjectDetailModal({ project, open, onClose, onDuplicate
             }}>
               {config || '# No configuration stored yet.'}
             </pre>
+          ) : (
+            // Mappings tab
+            mappings.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-tertiary)', fontSize: 13 }}>
+                No mappings configured for this project yet.
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border-main)' }}>
+                      {['Source Field', 'Target Field', 'Transform', 'Validation'].map(h => (
+                        <th key={h} style={{ padding: '6px 12px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mappings.map((m, idx) => (
+                      <tr key={idx} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                        <td style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{m.source_field || '—'}</td>
+                        <td style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{m.target_field || '—'}</td>
+                        <td style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-tertiary)' }}>{m.transform || '(none)'}</td>
+                        <td style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-tertiary)' }}>{m.validation || 'None'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
           )}
         </div>
       </div>

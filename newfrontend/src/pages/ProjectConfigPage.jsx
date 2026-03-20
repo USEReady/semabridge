@@ -179,7 +179,7 @@ export default function ProjectConfigPage() {
       form: {
         source_type: String(source.type || fallbackSource),
         target_type: String(target.type || fallbackTarget),
-        output_format: String(ui.output_format || 'osi'),
+        output_format: String(ui.intermediate_format || ui.output_format || 'osi'),
         workspace_id: String(source.workspace_id || ''),
         database: String(source.database || ''),
         schema: String(source.schema || ''),
@@ -554,12 +554,12 @@ function FormEditor({ value, onChange }) {
       </div>
 
       <div>
-        <label style={LABEL}>Output Format</label>
+        <label style={LABEL}>Intermediate Format</label>
         <select value={value.output_format} onChange={e => patch('output_format', e.target.value)} style={{ ...INPUT, cursor: 'pointer' }}>
-          <option value="atscale">atscale</option>
-          <option value="osi">osi</option>
-          <option value="dbt">dbt</option>
-          <option value="lookml">lookml</option>
+          <option value="atscale">AtScale</option>
+          <option value="osi">OSI (Open Semantic Interchange)</option>
+          <option value="sml">SML</option>
+          <option value="dax">DAX</option>
         </select>
       </div>
 

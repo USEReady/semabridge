@@ -135,7 +135,7 @@ export default function ProjectJobsPage() {
   return (
     <div style={{ padding: '28px 32px', minHeight: '100%' }}>
       <PageHeader
-        title="Project Jobs"
+        title="Runs"
         description="Configure execution schedules and monitor run history."
         action={{
           label: running ? 'Running…' : 'Run Now',

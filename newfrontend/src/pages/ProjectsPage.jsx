@@ -22,7 +22,16 @@ const SOURCE_ICONS = {
   salesforce: '☁️', google_sheets: '📊',
 };
 
-const FOLDER_COLORS = ['#6366f1', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#0ea5e9', '#f97316'];
+/* Use CSS variables for folder colors - mapped to semantic status colors */
+const FOLDER_COLORS = [
+  'var(--accent-blue)',
+  'var(--color-warning)',
+  'var(--color-success)',
+  'var(--color-error)',
+  'var(--accent-purple)',
+  'var(--accent-cyan)',
+  'var(--accent-orange)',
+];
 
 /* ─── Main Page ─── */
 export default function ProjectsPage() {
@@ -33,7 +42,10 @@ export default function ProjectsPage() {
   const [menuOpen, setMenuOpen] = useState(null);
   const [selectedFolder, setSelectedFolder] = useState(null);
   const [sourceFilter, setSourceFilter] = useState('all');
+  const [targetFilter, setTargetFilter] = useState('all');
+  const [tagFilters, setTagFilters] = useState(new Set());
   const [detailProject, setDetailProject] = useState(null);
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [newFolderMode, setNewFolderMode] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
@@ -41,6 +53,7 @@ export default function ProjectsPage() {
   const [renameFolderName, setRenameFolderName] = useState('');
   const [dragOverFolder, setDragOverFolder] = useState(null);
   const [runningProjectIds, setRunningProjectIds] = useState(new Set());
+  const [viewMode, setViewMode] = useState('folder'); // 'folder' or 'adapter'
 
   const loadData = useCallback(async () => {
     try {
@@ -57,10 +70,27 @@ export default function ProjectsPage() {
   useEffect(() => { loadData(); }, [loadData]);
 
   const connectorTypes = [...new Set(projects.map(p => p.source || p.adapter).filter(Boolean))];
+  const allProjectTags = [...new Set(projects.flatMap(p => p.tags || []))];
 
   const folderFiltered = projects.filter(p => {
-    if (selectedFolder !== null && p.folder_id !== selectedFolder) return false;
+    // Handle both folder and source selection
+    if (selectedFolder !== null) {
+      if (selectedFolder.startsWith('source:')) {
+        const source = selectedFolder.substring(7);
+        if ((p.source || p.adapter) !== source) return false;
+      } else {
+        if (p.folder_id !== selectedFolder) return false;
+      }
+    }
     if (sourceFilter !== 'all' && (p.source || p.adapter) !== sourceFilter) return false;
+    if (targetFilter !== 'all' && p.target_type !== targetFilter) return false;
+    
+    // Tag filtering - if tags are selected, project must have ALL selected tags
+    if (tagFilters.size > 0) {
+      const projectTags = new Set(p.tags || []);
+      const hasAllTags = [...tagFilters].every(tag => projectTags.has(tag));
+      if (!hasAllTags) return false;
+    }
     
     // Filter out auto-generated test projects
     const projectName = (p.name || '').trim().toLowerCase();
@@ -186,7 +216,7 @@ export default function ProjectsPage() {
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
 
-      {/* ── Folder Sidebar ── */}
+      {/* ── Folder/Adapter Sidebar ── */}
       <aside style={{
         width: 220, flexShrink: 0,
         borderRight: '1px solid var(--border-main)',
@@ -196,15 +226,30 @@ export default function ProjectsPage() {
       }}>
         <div style={{ padding: '0 12px', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-            Folders
+            {viewMode === 'folder' ? 'Folders' : 'Sources'}
           </span>
-          <button
-            onClick={() => setNewFolderMode(true)}
-            title="New folder"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 2 }}
-          >
-            <FolderPlus size={13} />
-          </button>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button
+              onClick={() => setViewMode(viewMode === 'folder' ? 'adapter' : 'folder')}
+              title={viewMode === 'folder' ? 'View by source' : 'View by folder'}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--text-tertiary)', padding: 2,
+                display: 'flex', alignItems: 'center',
+              }}
+            >
+              <Layers size={13} />
+            </button>
+            {viewMode === 'folder' && (
+              <button
+                onClick={() => setNewFolderMode(true)}
+                title="New folder"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 2 }}
+              >
+                <FolderPlus size={13} />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* All Projects */}
@@ -215,8 +260,9 @@ export default function ProjectsPage() {
           onClick={() => setSelectedFolder(null)}
         />
 
-        {/* Folder list */}
-        {folders.map(f => (
+        {/* Folder list or Source list */}
+        {viewMode === 'folder' ? (
+          folders.map(f => (
           <SidebarFolder
             key={f.id}
             folder={f}
@@ -234,10 +280,28 @@ export default function ProjectsPage() {
             onDragLeave={() => setDragOverFolder(null)}
             onDrop={e => handleDropOnFolder(e, f.id)}
           />
-        ))}
+        ))
+        ) : (
+          // Adapter/Source view
+          [...new Set(projects.map(p => p.source || p.adapter).filter(Boolean))]
+            .sort()
+            .map(source => {
+              const sourceProjects = projects.filter(p => (p.source || p.adapter) === source);
+              const sourceIcon = SOURCE_ICONS[source] || '🔗';
+              return (
+                <SidebarItem
+                  key={source}
+                  color="var(--accent-blue)"
+                  label={`${sourceIcon} ${source} (${sourceProjects.length})`}
+                  active={selectedFolder === `source:${source}`}
+                  onClick={() => setSelectedFolder(`source:${source}`)}
+                />
+              );
+            })
+        )}
 
         {/* New folder input */}
-        {newFolderMode && (
+        {viewMode === 'folder' && newFolderMode && (
           <div style={{ padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 4 }}>
             <input
               autoFocus
@@ -296,6 +360,22 @@ export default function ProjectsPage() {
               </p>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button
+                onClick={() => setViewMode(viewMode === 'folder' ? 'adapter' : 'folder')}
+                title={viewMode === 'folder' ? 'View by source' : 'View by folder'}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '8px 14px', borderRadius: 6, cursor: 'pointer',
+                  background: 'var(--accent-blue)12', border: '1.5px solid var(--accent-blue)40',
+                  color: 'var(--accent-blue)', fontSize: 12, fontWeight: 500,
+                  transition: 'all 0.2s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-blue)20'; e.currentTarget.style.borderColor = 'var(--accent-blue)60'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'var(--accent-blue)12'; e.currentTarget.style.borderColor = 'var(--accent-blue)40'; }}
+              >
+                <Layers size={13} />
+                {viewMode === 'folder' ? 'By Source' : 'By Folder'}
+              </button>
               <button onClick={() => setImportOpen(true)} style={btnStyle('secondary')}>
                 <Upload size={13} /> Import
               </button>
@@ -340,12 +420,134 @@ export default function ProjectsPage() {
                 </button>
               )}
             </div>
-            <FilterBar
-              sourceFilter={sourceFilter}
-              onSourceChange={setSourceFilter}
-              connectorTypes={connectorTypes}
-            />
+            <button
+              onClick={() => setFilterPanelOpen(!filterPanelOpen)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '8px 14px', borderRadius: 6,
+                background: (sourceFilter !== 'all' || targetFilter !== 'all' || tagFilters.size > 0) ? 'var(--accent-blue)' : 'var(--bg-surface)',
+                border: (sourceFilter !== 'all' || targetFilter !== 'all' || tagFilters.size > 0) ? 'none' : '1px solid var(--border-main)',
+                color: (sourceFilter !== 'all' || targetFilter !== 'all' || tagFilters.size > 0) ? '#fff' : 'var(--text-secondary)',
+                cursor: 'pointer', fontSize: 12, fontWeight: 600, outline: 'none',
+                transition: 'all 0.2s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.02)'; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; }}
+            >
+              <Layers size={13} />
+              Filters
+              {(sourceFilter !== 'all' || targetFilter !== 'all' || tagFilters.size > 0) && (
+                <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#fff', animation: 'pulse 2s infinite' }} />
+              )}
+            </button>
+            {/* Hidden - using consolidated filter panel instead */}
+            {/* <FilterBar ... /> */}
           </div>
+
+          {/* Consolidated Filter Panel */}
+          {filterPanelOpen && (
+            <div style={{
+              marginBottom: 12, padding: '14px 16px', borderRadius: 8,
+              background: 'var(--bg-surface)', border: '1.5px solid var(--accent-blue)40',
+              boxShadow: 'var(--shadow-sm)',
+            }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14 }}>
+                {/* Source Filter */}
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Source</label>
+                  <select
+                    value={sourceFilter}
+                    onChange={e => setSourceFilter(e.target.value)}
+                    style={{
+                      width: '100%', padding: '8px 10px', fontSize: 12, fontWeight: 500,
+                      background: 'var(--bg-input)', border: '1px solid var(--border-main)',
+                      borderRadius: 6, color: 'var(--text-primary)', outline: 'none',
+                      cursor: 'pointer', transition: 'all 0.2s',
+                    }}
+                  >
+                    <option value="all">All Sources</option>
+                    {connectorTypes.map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Target Filter */}
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Target</label>
+                  <select
+                    value={targetFilter}
+                    onChange={e => setTargetFilter(e.target.value)}
+                    style={{
+                      width: '100%', padding: '8px 10px', fontSize: 12, fontWeight: 500,
+                      background: 'var(--bg-input)', border: '1px solid var(--border-main)',
+                      borderRadius: 6, color: 'var(--text-primary)', outline: 'none',
+                      cursor: 'pointer', transition: 'all 0.2s',
+                    }}
+                  >
+                    <option value="all">All Targets</option>
+                    <option value="snowflake">Snowflake</option>
+                    <option value="fabric">Microsoft Fabric</option>
+                  </select>
+                </div>
+
+                {/* Tag Filter */}
+                {allProjectTags.length > 0 && (
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Tags</label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {allProjectTags.map(tag => (
+                        <button
+                          key={tag}
+                          onClick={() => {
+                            const newTags = new Set(tagFilters);
+                            if (newTags.has(tag)) newTags.delete(tag);
+                            else newTags.add(tag);
+                            setTagFilters(newTags);
+                          }}
+                          style={{
+                            padding: '5px 10px', borderRadius: 5, fontSize: 11, fontWeight: 600,
+                            background: tagFilters.has(tag) ? 'var(--accent-blue)' : 'var(--bg-main)',
+                            border: tagFilters.has(tag) ? 'none' : '1.5px solid var(--border-main)',
+                            color: tagFilters.has(tag) ? '#fff' : 'var(--text-primary)',
+                            cursor: 'pointer', whiteSpace: 'nowrap',
+                            transition: 'all 0.2s',
+                          }}
+                          onMouseEnter={e => { if (!tagFilters.has(tag)) { e.currentTarget.style.borderColor = 'var(--accent-blue)40'; } }}
+                          onMouseLeave={e => { if (!tagFilters.has(tag)) { e.currentTarget.style.borderColor = 'var(--border-main)'; } }}
+                        >
+                          {tag}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Clear Filters */}
+                {(sourceFilter !== 'all' || targetFilter !== 'all' || tagFilters.size > 0) && (
+                  <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                    <button
+                      onClick={() => {
+                        setSourceFilter('all');
+                        setTargetFilter('all');
+                        setTagFilters(new Set());
+                      }}
+                      style={{
+                        width: '100%', padding: '8px 12px', fontSize: 11, fontWeight: 600,
+                        background: 'var(--color-error)20', border: '1.5px solid var(--color-error)40',
+                        borderRadius: 6, color: 'var(--color-error)', cursor: 'pointer',
+                        transition: 'all 0.2s',
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.background = 'var(--color-error)30'; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'var(--color-error)20'; }}
+                    >
+                      ✕ Clear All
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Cards grid */}
@@ -513,7 +715,7 @@ function ProjectCard({
       }}
       onMouseEnter={e => {
         e.currentTarget.style.borderColor = 'var(--accent-blue)';
-        e.currentTarget.style.boxShadow = '0 4px 14px rgba(99,102,241,0.1)';
+        e.currentTarget.style.boxShadow = 'var(--shadow-md)';
       }}
       onMouseLeave={e => {
         e.currentTarget.style.borderColor = 'var(--border-main)';
@@ -569,6 +771,25 @@ function ProjectCard({
         }}>
           {project.description}
         </p>
+      )}
+
+      {/* Tags */}
+      {project.tags && project.tags.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10 }}>
+          {project.tags.map((tag, idx) => (
+            <div
+              key={idx}
+              style={{
+                display: 'inline-block',
+                padding: '2px 8px', borderRadius: 3,
+                background: 'var(--accent-blue)15', color: 'var(--accent-blue)',
+                fontSize: 10, fontWeight: 500, whiteSpace: 'nowrap',
+              }}
+            >
+              {tag}
+            </div>
+          ))}
+        </div>
       )}
 
       {/* Footer */}

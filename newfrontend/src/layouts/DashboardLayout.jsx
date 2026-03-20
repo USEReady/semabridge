@@ -1,7 +1,7 @@
 import { createElement, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
-  Map, FolderOpen, PlayCircle, GitMerge, Settings,
+  Map, FolderOpen, PlayCircle, Settings, GitBranch,
   Hexagon, LogOut, ChevronLeft, ChevronRight, Bell,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -17,11 +17,11 @@ import { useLogs } from '../context/LogsContext';
 import { useNavigate } from 'react-router-dom';
 
 const NAV_ITEMS = [
-  { to: '/explore',       label: 'Explore',       icon: Map },
-  { to: '/projects',      label: 'Projects',       icon: FolderOpen },
-  { to: '/jobs',          label: 'Project Jobs',   icon: PlayCircle },
-  { to: '/model-mapping', label: 'Model Mapping',  icon: GitMerge },
-  { to: '/settings',      label: 'Settings',       icon: Settings },
+  { to: '/explore',       label: 'Explore',         icon: Map },
+  { to: '/projects',      label: 'Projects',        icon: FolderOpen },
+  { to: '/jobs',          label: 'Runs',            icon: PlayCircle },
+  { to: '/model-mapping', label: 'Model Mapping',   icon: GitBranch },
+  { to: '/settings',      label: 'Settings',        icon: Settings },
 ];
 
 export default function DashboardLayout() {

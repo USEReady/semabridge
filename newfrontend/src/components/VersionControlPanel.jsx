@@ -32,37 +32,37 @@ function DiffTable({ diffs, objectTypeFilter, changeTypeFilter }) {
     return (
         <div className="overflow-x-auto">
             <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-slate-900/80 border-b border-slate-800/70 backdrop-blur-md">
+                <thead className="sticky top-0 backdrop-blur-md" style={{ background: 'var(--bg-surface-raised)', borderBottom: '1px solid var(--border-main)' }}>
                     <tr>
-                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">Object Name</th>
-                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">Type</th>
-                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">Property</th>
-                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Object Name</th>
+                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Type</th>
+                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Property</th>
+                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>
                             Old Value {filtered[0]?.old_version_tag ? `(${filtered[0].old_version_tag})` : ''}
                         </th>
-                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>
                             New Value {filtered[0]?.new_version_tag ? `(${filtered[0].new_version_tag})` : ''}
                         </th>
-                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">Change</th>
+                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Change</th>
                     </tr>
                 </thead>
                 <tbody>
                     {filtered.map((d, idx) => (
-                        <tr key={idx} className="border-b border-slate-800/70 hover:bg-slate-800/40 transition-colors">
-                            <td className="px-3 py-2 font-medium text-slate-100">{d.object_name}</td>
-                            <td className="px-3 py-2 text-slate-300">{d.object_type}</td>
-                            <td className="px-3 py-2 text-slate-300 font-mono">{d.property}</td>
+                        <tr key={idx} className="transition-colors" style={{ borderBottom: '1px solid var(--border-light)', }} onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-surface-hover)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                            <td className="px-3 py-2 font-medium" style={{ color: 'var(--text-primary)' }}>{d.object_name}</td>
+                            <td className="px-3 py-2" style={{ color: 'var(--text-secondary)' }}>{d.object_type}</td>
+                            <td className="px-3 py-2 font-mono" style={{ color: 'var(--text-secondary)' }}>{d.property}</td>
                             <td className="px-3 py-2">
-                                {d.old_value && <span className="bg-red-500/10 text-red-400 px-1.5 py-0.5 rounded-full text-[10px] font-mono">{d.old_value}</span>}
+                                {d.old_value && <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono" style={{ background: 'var(--color-error-bg)', color: 'var(--color-error)' }}>{d.old_value}</span>}
                             </td>
                             <td className="px-3 py-2">
-                                {d.new_value && <span className="bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded-full text-[10px] font-mono">{d.new_value}</span>}
+                                {d.new_value && <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono" style={{ background: 'var(--color-success-bg)', color: 'var(--color-success)' }}>{d.new_value}</span>}
                             </td>
                             <td className="px-3 py-2">
-                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${d.change_type === 'Added' ? 'bg-emerald-500/15 text-emerald-400' :
-                                    d.change_type === 'Removed' ? 'bg-red-500/15 text-red-400' :
-                                        'bg-amber-500/15 text-amber-400'
-                                    }`}>{d.change_type}</span>
+                                <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase" style={{
+                                    background: d.change_type === 'Added' ? 'var(--color-success-bg)' : d.change_type === 'Removed' ? 'var(--color-error-bg)' : 'var(--color-warning-bg)',
+                                    color: d.change_type === 'Added' ? 'var(--color-success)' : d.change_type === 'Removed' ? 'var(--color-error)' : 'var(--color-warning)'
+                                }}>{d.change_type}</span>
                             </td>
                         </tr>
                     ))}
@@ -88,6 +88,8 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
     const [historyTilt, setHistoryTilt] = useState({ x: 0, y: 0 });
     const [viewMode, setViewMode] = useState('history');
     const switchTimerRef = useRef(null);
+    const contentScrollRef = useRef(null);
+    const diffSectionRef = useRef(null);
     const { addLog } = useLogs();
 
     const loadVersions = useCallback(async () => {
@@ -240,7 +242,7 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                             <GitCommit size={20} />
                         </div>
                         <div>
-                            <h2 className="text-lg font-bold text-slate-100">DataStore <span className="text-[#6467f2]">Snapshot</span></h2>
+                            <h2 className="text-lg font-bold text-slate-100">Version <span className="text-[#6467f2]">History</span></h2>
                             <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-widest">
                                 {activeModelId
                                     ? `${versions.length} version(s) for ${activeModelId}`
@@ -253,21 +255,28 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                         </div>
                     </div>
                     <div className="flex items-center gap-4">
-                        <div className="flex items-center bg-slate-900/50 border border-slate-800 p-1 rounded-full">
+                        <div className="flex items-center gap-2">
                             <button
                                 onClick={() => setViewMode('history')}
-                                className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all ${viewMode === 'history'
-                                        ? 'bg-[#6467f2] text-white shadow-lg shadow-[#6467f2]/25'
-                                        : 'text-slate-400 hover:text-[#6467f2]'
+                                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 border ${viewMode === 'history'
+                                        ? 'bg-[#6467f2]/20 text-[#6467f2] border-[#6467f2]/50 shadow-lg shadow-[#6467f2]/15'
+                                        : 'text-slate-400 border-slate-700/50 hover:border-[#6467f2]/50 hover:text-[#6467f2] hover:bg-slate-800/40'
                                     }`}
                             >
                                 History
                             </button>
                             <button
-                                onClick={() => setViewMode('diff')}
-                                className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all ${viewMode === 'diff'
-                                        ? 'bg-[#6467f2] text-white shadow-lg shadow-[#6467f2]/25'
-                                        : 'text-slate-400 hover:text-[#6467f2]'
+                                onClick={() => {
+                                    setViewMode('diff');
+                                    setTimeout(() => {
+                                        if (diffSectionRef.current && contentScrollRef.current) {
+                                            diffSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                        }
+                                    }, 0);
+                                }}
+                                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 border ${viewMode === 'diff'
+                                        ? 'bg-[#6467f2]/20 text-[#6467f2] border-[#6467f2]/50 shadow-lg shadow-[#6467f2]/15'
+                                        : 'text-slate-400 border-slate-700/50 hover:border-[#6467f2]/50 hover:text-[#6467f2] hover:bg-slate-800/40'
                                     }`}
                             >
                                 Diff Mode
@@ -280,7 +289,7 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                 </div>
 
                 {/* Content */}
-                <div className="flex-1 overflow-y-auto custom-scrollbar">
+                <div className="flex-1 overflow-y-auto custom-scrollbar" ref={contentScrollRef}>
                     {/* Snapshot workspace */}
                     <div className="p-6 pb-4">
                         <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-4 min-h-[420px]">
@@ -393,7 +402,7 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                         </div>
                     )}
 
-                    {viewMode === 'diff' && <div className="px-6 pb-6 space-y-6">
+                    {viewMode === 'diff' && <div ref={diffSectionRef} className="px-6 pb-6 space-y-6">
                     {/* Version History List */}
                     <div className="space-y-3">
                         <div className="flex items-center justify-between">

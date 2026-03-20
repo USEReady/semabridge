@@ -9,12 +9,12 @@ const CONFIG = {
   active:  { bg: 'var(--color-success-muted)',  text: 'var(--color-success)',  dot: 'var(--color-success)',  label: 'Active' },
   success: { bg: 'var(--color-success-muted)',  text: 'var(--color-success)',  dot: 'var(--color-success)',  label: 'Success' },
   warning: { bg: 'var(--color-warning-muted)',  text: 'var(--color-warning)',  dot: 'var(--color-warning)',  label: 'Warning' },
-  error:   { bg: 'var(--color-danger-muted)',   text: 'var(--color-danger)',   dot: 'var(--color-danger)',   label: 'Error' },
-  failed:  { bg: 'var(--color-danger-muted)',   text: 'var(--color-danger)',   dot: 'var(--color-danger)',   label: 'Failed' },
+  error:   { bg: 'var(--color-error-muted)',    text: 'var(--color-error)',    dot: 'var(--color-error)',    label: 'Error' },
+  failed:  { bg: 'var(--color-error-muted)',    text: 'var(--color-error)',    dot: 'var(--color-error)',    label: 'Failed' },
   draft:   { bg: 'var(--bg-surface-raised)',    text: 'var(--text-tertiary)',  dot: 'var(--text-tertiary)',  label: 'Draft' },
   running: { bg: 'var(--color-warning-muted)',  text: 'var(--color-warning)',  dot: 'var(--color-warning)',  label: 'Running' },
   connected: { bg: 'var(--color-success-muted)', text: 'var(--color-success)', dot: 'var(--color-success)', label: 'Connected' },
-  disconnected: { bg: 'var(--color-danger-muted)', text: 'var(--color-danger)', dot: 'var(--color-danger)', label: 'Disconnected' },
+  disconnected: { bg: 'var(--color-error-muted)', text: 'var(--color-error)', dot: 'var(--color-error)', label: 'Disconnected' },
 };
 
 export default function StatusBadge({ status = 'draft', label, size = 'md' }) {
