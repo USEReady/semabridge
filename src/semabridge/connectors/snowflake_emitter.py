@@ -2441,7 +2441,9 @@ class SnowflakeEmitter(BaseEmitter):
             if rel.is_active and rel.to_dataset and rel.to_columns:
                 if rel.to_dataset not in relationship_pk_map:
                     relationship_pk_map[rel.to_dataset] = []
-                # Add unique columns only
+                for col in rel.to_columns:
+                    if col not in relationship_pk_map[rel.to_dataset]:
+                        relationship_pk_map[rel.to_dataset].append(col)
         # Build sanitized physical-column lookup per dataset.
         # Used by TABLES (PK validation), RELATIONSHIPS, DIMENSIONS and METRICS
         # to ensure we don't reference non-existent physical columns.
@@ -2571,15 +2573,30 @@ class SnowflakeEmitter(BaseEmitter):
                         f"a physical column in '{rel.from_dataset}'"
                     )
                     continue
-                # Validate to_col exists in the to-dataset's physical columns
+                # Validate to_col is both a physical column AND the declared PK
+                # for that dataset. Snowflake requires REFERENCES to point to a
+                # primary or unique key — any mismatch causes a SQL compilation error.
                 if to_col:
                     to_phys = dataset_col_lookup.get(rel.to_dataset, set())
                     if to_phys and to_col not in to_phys:
-                        logger.debug(
-                            f"Relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
-                            f"referenced column '{to_col}' not found in '{rel.to_dataset}' "
-                            f"physical columns, emitting anyway"
+                        logger.warning(
+                            f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                            f"referenced column '{to_col}' is not a physical column in "
+                            f"'{rel.to_dataset}' — Snowflake requires REFERENCES to target a PK."
                         )
+                        continue
+                    # Also check: to_col must be the PK declared in the TABLES clause
+                    declared_pk_cols = [
+                        c.strip('"')
+                        for c in relationship_pk_map.get(rel.to_dataset, [])
+                    ]
+                    if declared_pk_cols and to_col not in declared_pk_cols:
+                        logger.warning(
+                            f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                            f"referenced column '{to_col}' is not the declared PK "
+                            f"{declared_pk_cols} for '{rel.to_dataset}' — Snowflake requires REFERENCES to target a PK."
+                        )
+                        continue
                 # Build REFERENCES clause with explicit target column
                 ref_clause = f'{to_alias} ("{to_col}")' if to_col else to_alias
                 rel_name = self._to_snowflake_relationship_name(getattr(rel, "unique_name", "") or "")
@@ -4473,15 +4490,30 @@ class SnowflakeEmitter(BaseEmitter):
                         f"a physical column in '{rel.from_dataset}'"
                     )
                     continue
-                # Validate to_col exists in the to-dataset's physical columns
+                # Validate to_col is both a physical column AND the declared PK
+                # for that dataset. Snowflake requires REFERENCES to point to a
+                # primary or unique key — any mismatch causes a SQL compilation error.
                 if to_col:
                     to_phys = dataset_col_lookup.get(rel.to_dataset, set())
                     if to_phys and to_col not in to_phys:
-                        logger.debug(
-                            f"Relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
-                            f"referenced column '{to_col}' not found in '{rel.to_dataset}' "
-                            f"physical columns, emitting anyway"
+                        logger.warning(
+                            f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                            f"referenced column '{to_col}' is not a physical column in "
+                            f"'{rel.to_dataset}' — Snowflake requires REFERENCES to target a PK."
                         )
+                        continue
+                    # Also check: to_col must be the declared PK for that dataset
+                    declared_pk_cols = [
+                        c.strip('"')
+                        for c in relationship_pk_map.get(rel.to_dataset, [])
+                    ]
+                    if declared_pk_cols and to_col not in declared_pk_cols:
+                        logger.warning(
+                            f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                            f"referenced column '{to_col}' is not the declared PK "
+                            f"{declared_pk_cols} for '{rel.to_dataset}' — Snowflake requires REFERENCES to target a PK."
+                        )
+                        continue
                 # Build REFERENCES clause with explicit target column
                 ref_clause = f'{to_alias} ("{to_col}")' if to_col else to_alias
                 rel_name = self._to_snowflake_relationship_name(getattr(rel, "unique_name", "") or "")
