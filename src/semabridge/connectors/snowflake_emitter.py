@@ -2578,19 +2578,23 @@ class SnowflakeEmitter(BaseEmitter):
                 # primary or unique key — any mismatch causes a SQL compilation error.
                 if to_col:
                     to_phys = dataset_col_lookup.get(rel.to_dataset, set())
-                    if to_phys and to_col not in to_phys:
+                    # Case-insensitive check: sanitize both sides to uppercase
+                    to_phys_upper = {c.upper() for c in to_phys}
+                    if to_phys and to_col.upper() not in to_phys_upper:
                         logger.warning(
                             f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
                             f"referenced column '{to_col}' is not a physical column in "
                             f"'{rel.to_dataset}' — Snowflake requires REFERENCES to target a PK."
                         )
                         continue
-                    # Also check: to_col must be the PK declared in the TABLES clause
+                    # Also check: to_col must be the PK declared in the TABLES clause.
+                    # Sanitize declared PKs the same way to_col is sanitized (handles Fabric
+                    # mixed-casing like 'Id' vs sanitized 'ID').
                     declared_pk_cols = [
-                        c.strip('"')
+                        self._sanitize_col_name(c)
                         for c in relationship_pk_map.get(rel.to_dataset, [])
                     ]
-                    if declared_pk_cols and to_col not in declared_pk_cols:
+                    if declared_pk_cols and to_col.upper() not in {c.upper() for c in declared_pk_cols}:
                         logger.warning(
                             f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
                             f"referenced column '{to_col}' is not the declared PK "
@@ -4495,19 +4499,23 @@ class SnowflakeEmitter(BaseEmitter):
                 # primary or unique key — any mismatch causes a SQL compilation error.
                 if to_col:
                     to_phys = dataset_col_lookup.get(rel.to_dataset, set())
-                    if to_phys and to_col not in to_phys:
+                    # Case-insensitive check: sanitize both sides to uppercase
+                    to_phys_upper = {c.upper() for c in to_phys}
+                    if to_phys and to_col.upper() not in to_phys_upper:
                         logger.warning(
                             f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
                             f"referenced column '{to_col}' is not a physical column in "
                             f"'{rel.to_dataset}' — Snowflake requires REFERENCES to target a PK."
                         )
                         continue
-                    # Also check: to_col must be the declared PK for that dataset
+                    # Also check: to_col must be the declared PK for that dataset.
+                    # Sanitize declared PKs the same way to_col is sanitized (handles Fabric
+                    # mixed-casing like 'Id' vs sanitized 'ID').
                     declared_pk_cols = [
-                        c.strip('"')
+                        self._sanitize_col_name(c)
                         for c in relationship_pk_map.get(rel.to_dataset, [])
                     ]
-                    if declared_pk_cols and to_col not in declared_pk_cols:
+                    if declared_pk_cols and to_col.upper() not in {c.upper() for c in declared_pk_cols}:
                         logger.warning(
                             f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
                             f"referenced column '{to_col}' is not the declared PK "
