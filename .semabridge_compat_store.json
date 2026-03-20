@@ -632,6 +632,3852 @@
     ],
     "proj-1773904076169": [
       {
+        "run_id": "run-1774031077684",
+        "id": "run-1774031077684",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 129067,
+        "started_at": "2026-03-20T18:24:37.684215",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "493722d0-1f29-4f68-bf8b-4e8dfcf21309",
+          "status": "SUCCESS",
+          "started_at": "2026-03-20T18:24:37.773960",
+          "completed_at": "2026-03-20T18:26:46.530336",
+          "duration_ms": 128756,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T18:24:37.773960",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T18:24:37.794020",
+              "duration_ms": null,
+              "message": "Authentication resolved from OFFLINE",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T18:24:37.822178",
+              "duration_ms": null,
+              "message": "OFFLINE extract loaded 114 tables",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T18:24:37.827425",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T18:24:37.927724",
+              "duration_ms": null,
+              "message": "26 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T18:24:38.264909",
+              "duration_ms": null,
+              "message": "Snapshot aeadefd2... committed",
+              "artifact_ids": [
+                "aeadefd2-3748-4c28-bf41-4561480527d9",
+                "5b30a9bd-0bf4-4b72-847e-8ddde4e3457e"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T18:24:38.954735",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T18:26:46.525938",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T18:26:46.528875",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "5b30a9bd-0bf4-4b72-847e-8ddde4e3457e",
+          "sml_snapshot_id": "aeadefd2-3748-4c28-bf41-4561480527d9",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "success",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "493722d0-1f29-4f68-bf8b-4e8dfcf21309",
+              "status": "SUCCESS",
+              "started_at": "2026-03-20T18:24:37.773960",
+              "completed_at": "2026-03-20T18:26:46.530336",
+              "duration_ms": 128756,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T18:24:37.773960",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T18:24:37.794020",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from OFFLINE",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T18:24:37.822178",
+                  "duration_ms": null,
+                  "message": "OFFLINE extract loaded 114 tables",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T18:24:37.827425",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T18:24:37.927724",
+                  "duration_ms": null,
+                  "message": "26 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T18:24:38.264909",
+                  "duration_ms": null,
+                  "message": "Snapshot aeadefd2... committed",
+                  "artifact_ids": [
+                    "aeadefd2-3748-4c28-bf41-4561480527d9",
+                    "5b30a9bd-0bf4-4b72-847e-8ddde4e3457e"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T18:24:38.954735",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T18:26:46.525938",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T18:26:46.528875",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "5b30a9bd-0bf4-4b72-847e-8ddde4e3457e",
+              "sml_snapshot_id": "aeadefd2-3748-4c28-bf41-4561480527d9",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774029670107",
+        "id": "run-1774029670107",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 152943,
+        "started_at": "2026-03-20T18:01:10.107019",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "f870c70f-5e72-4019-837d-b6759af057ad",
+          "status": "SUCCESS",
+          "started_at": "2026-03-20T18:01:10.204330",
+          "completed_at": "2026-03-20T18:03:42.961978",
+          "duration_ms": 152757,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T18:01:10.204330",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T18:01:10.219337",
+              "duration_ms": null,
+              "message": "Authentication resolved from OFFLINE",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T18:01:10.250966",
+              "duration_ms": null,
+              "message": "OFFLINE extract loaded 114 tables",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T18:01:10.254277",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T18:01:10.415987",
+              "duration_ms": null,
+              "message": "26 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T18:01:10.812623",
+              "duration_ms": null,
+              "message": "Snapshot 7545601c... committed",
+              "artifact_ids": [
+                "7545601c-7c61-4f6c-9045-9b762ce6c8dd",
+                "9f6357ad-0510-4175-9821-eaff7f7a9f83"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T18:01:11.258286",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T18:03:42.957991",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T18:03:42.961978",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "9f6357ad-0510-4175-9821-eaff7f7a9f83",
+          "sml_snapshot_id": "7545601c-7c61-4f6c-9045-9b762ce6c8dd",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "success",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "f870c70f-5e72-4019-837d-b6759af057ad",
+              "status": "SUCCESS",
+              "started_at": "2026-03-20T18:01:10.204330",
+              "completed_at": "2026-03-20T18:03:42.961978",
+              "duration_ms": 152757,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T18:01:10.204330",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T18:01:10.219337",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from OFFLINE",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T18:01:10.250966",
+                  "duration_ms": null,
+                  "message": "OFFLINE extract loaded 114 tables",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T18:01:10.254277",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T18:01:10.415987",
+                  "duration_ms": null,
+                  "message": "26 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T18:01:10.812623",
+                  "duration_ms": null,
+                  "message": "Snapshot 7545601c... committed",
+                  "artifact_ids": [
+                    "7545601c-7c61-4f6c-9045-9b762ce6c8dd",
+                    "9f6357ad-0510-4175-9821-eaff7f7a9f83"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T18:01:11.258286",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T18:03:42.957991",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T18:03:42.961978",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "9f6357ad-0510-4175-9821-eaff7f7a9f83",
+              "sml_snapshot_id": "7545601c-7c61-4f6c-9045-9b762ce6c8dd",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774029192085",
+        "id": "run-1774029192085",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 128646,
+        "started_at": "2026-03-20T17:53:12.085328",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "3ca5e462-108c-447c-857c-311a6a0991bd",
+          "status": "SUCCESS",
+          "started_at": "2026-03-20T17:53:12.194117",
+          "completed_at": "2026-03-20T17:55:20.608060",
+          "duration_ms": 128413,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:53:12.194117",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:53:12.216436",
+              "duration_ms": null,
+              "message": "Authentication resolved from OFFLINE",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:53:12.252392",
+              "duration_ms": null,
+              "message": "OFFLINE extract loaded 114 tables",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:53:12.257400",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:53:12.452375",
+              "duration_ms": null,
+              "message": "26 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:53:12.846536",
+              "duration_ms": null,
+              "message": "Snapshot 03104952... committed",
+              "artifact_ids": [
+                "03104952-8152-4255-8bf7-c93536d5f5fb",
+                "19fb0f93-9fe0-497a-bf72-11705933d8b1"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:53:13.318482",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:55:20.600489",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:55:20.608060",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "19fb0f93-9fe0-497a-bf72-11705933d8b1",
+          "sml_snapshot_id": "03104952-8152-4255-8bf7-c93536d5f5fb",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "success",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "3ca5e462-108c-447c-857c-311a6a0991bd",
+              "status": "SUCCESS",
+              "started_at": "2026-03-20T17:53:12.194117",
+              "completed_at": "2026-03-20T17:55:20.608060",
+              "duration_ms": 128413,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:53:12.194117",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:53:12.216436",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from OFFLINE",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:53:12.252392",
+                  "duration_ms": null,
+                  "message": "OFFLINE extract loaded 114 tables",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:53:12.257400",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:53:12.452375",
+                  "duration_ms": null,
+                  "message": "26 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:53:12.846536",
+                  "duration_ms": null,
+                  "message": "Snapshot 03104952... committed",
+                  "artifact_ids": [
+                    "03104952-8152-4255-8bf7-c93536d5f5fb",
+                    "19fb0f93-9fe0-497a-bf72-11705933d8b1"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:53:13.318482",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:55:20.600489",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:55:20.608060",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "19fb0f93-9fe0-497a-bf72-11705933d8b1",
+              "sml_snapshot_id": "03104952-8152-4255-8bf7-c93536d5f5fb",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774028635502",
+        "id": "run-1774028635502",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 135922,
+        "started_at": "2026-03-20T17:43:55.502559",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "fe25aa13-6c4e-49e5-ac53-7bb900b0dba5",
+          "status": "SUCCESS",
+          "started_at": "2026-03-20T17:43:55.657974",
+          "completed_at": "2026-03-20T17:46:11.341028",
+          "duration_ms": 135683,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:43:55.657974",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:43:55.676262",
+              "duration_ms": null,
+              "message": "Authentication resolved from OFFLINE",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:43:55.701985",
+              "duration_ms": null,
+              "message": "OFFLINE extract loaded 114 tables",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:43:55.709682",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:43:55.918492",
+              "duration_ms": null,
+              "message": "26 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:43:56.276926",
+              "duration_ms": null,
+              "message": "Snapshot fa36443c... committed",
+              "artifact_ids": [
+                "fa36443c-906b-41e5-a9d8-cbc198ead407",
+                "88bcb061-0bb7-4ac3-aca0-b9b34013b7ba"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:43:56.761352",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:46:11.336805",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:46:11.340026",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "88bcb061-0bb7-4ac3-aca0-b9b34013b7ba",
+          "sml_snapshot_id": "fa36443c-906b-41e5-a9d8-cbc198ead407",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "success",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "fe25aa13-6c4e-49e5-ac53-7bb900b0dba5",
+              "status": "SUCCESS",
+              "started_at": "2026-03-20T17:43:55.657974",
+              "completed_at": "2026-03-20T17:46:11.341028",
+              "duration_ms": 135683,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:43:55.657974",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:43:55.676262",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from OFFLINE",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:43:55.701985",
+                  "duration_ms": null,
+                  "message": "OFFLINE extract loaded 114 tables",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:43:55.709682",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:43:55.918492",
+                  "duration_ms": null,
+                  "message": "26 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:43:56.276926",
+                  "duration_ms": null,
+                  "message": "Snapshot fa36443c... committed",
+                  "artifact_ids": [
+                    "fa36443c-906b-41e5-a9d8-cbc198ead407",
+                    "88bcb061-0bb7-4ac3-aca0-b9b34013b7ba"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:43:56.761352",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:46:11.336805",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:46:11.340026",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "88bcb061-0bb7-4ac3-aca0-b9b34013b7ba",
+              "sml_snapshot_id": "fa36443c-906b-41e5-a9d8-cbc198ead407",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774027652727",
+        "id": "run-1774027652727",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 134017,
+        "started_at": "2026-03-20T17:27:32.727690",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "5c874853-f4cb-478c-840d-6a880bc5702c",
+          "status": "SUCCESS",
+          "started_at": "2026-03-20T17:27:32.849418",
+          "completed_at": "2026-03-20T17:29:46.663992",
+          "duration_ms": 133814,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:27:32.849418",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:27:32.865946",
+              "duration_ms": null,
+              "message": "Authentication resolved from OFFLINE",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:27:32.893540",
+              "duration_ms": null,
+              "message": "OFFLINE extract loaded 114 tables",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:27:32.895536",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:27:33.074268",
+              "duration_ms": null,
+              "message": "26 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:27:33.477025",
+              "duration_ms": null,
+              "message": "Snapshot 65d5bc46... committed",
+              "artifact_ids": [
+                "65d5bc46-9627-43e1-b4ec-82265d5cda93",
+                "32a0258c-22cc-4f31-8ba3-119760ed0840"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:27:34.011384",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:29:46.660556",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:29:46.663992",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "32a0258c-22cc-4f31-8ba3-119760ed0840",
+          "sml_snapshot_id": "65d5bc46-9627-43e1-b4ec-82265d5cda93",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "success",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "5c874853-f4cb-478c-840d-6a880bc5702c",
+              "status": "SUCCESS",
+              "started_at": "2026-03-20T17:27:32.849418",
+              "completed_at": "2026-03-20T17:29:46.663992",
+              "duration_ms": 133814,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:27:32.849418",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:27:32.865946",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from OFFLINE",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:27:32.893540",
+                  "duration_ms": null,
+                  "message": "OFFLINE extract loaded 114 tables",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:27:32.895536",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:27:33.074268",
+                  "duration_ms": null,
+                  "message": "26 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:27:33.477025",
+                  "duration_ms": null,
+                  "message": "Snapshot 65d5bc46... committed",
+                  "artifact_ids": [
+                    "65d5bc46-9627-43e1-b4ec-82265d5cda93",
+                    "32a0258c-22cc-4f31-8ba3-119760ed0840"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:27:34.011384",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:29:46.660556",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:29:46.663992",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "32a0258c-22cc-4f31-8ba3-119760ed0840",
+              "sml_snapshot_id": "65d5bc46-9627-43e1-b4ec-82265d5cda93",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774027359167",
+        "id": "run-1774027359167",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 21110,
+        "started_at": "2026-03-20T17:22:39.167391",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "4b1f0edc-53da-4cd7-a8a7-10052c5da1ce",
+          "status": "FAILED",
+          "started_at": "2026-03-20T17:22:39.262764",
+          "completed_at": "2026-03-20T17:23:00.249692",
+          "duration_ms": 20986,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:22:39.262764",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:22:39.278801",
+              "duration_ms": null,
+              "message": "Authentication resolved from OFFLINE",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:22:39.306345",
+              "duration_ms": null,
+              "message": "OFFLINE extract loaded 114 tables",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:22:39.309331",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:22:39.517675",
+              "duration_ms": null,
+              "message": "26 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:22:39.946341",
+              "duration_ms": null,
+              "message": "Snapshot 36225c21... committed",
+              "artifact_ids": [
+                "36225c21-31ea-44cd-a430-5d4bfa02d88e",
+                "cce6ee15-bcc7-4be9-b53c-8a32358de1e3"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:22:40.518897",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:23:00.240129",
+              "duration_ms": null,
+              "message": "001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types DATE and TIMESTAMP_NTZ(9)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:23:00.249692",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "cce6ee15-bcc7-4be9-b53c-8a32358de1e3",
+          "sml_snapshot_id": "36225c21-31ea-44cd-a430-5d4bfa02d88e",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": [
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "error_type": "DeploymentError",
+              "message": "Deployment failed: 001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types DATE and TIMESTAMP_NTZ(9)",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1385, in _step9_deploy\n    self._deploy_to_snowflake(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1440, in _deploy_to_snowflake\n    emitter.deploy(context.sml_model)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1388, in deploy\n    raise e\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1300, in deploy\n    self._apply_inferred_types_ctas_sml(cur, sml)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 2138, in _apply_inferred_types_ctas_sml\n    cursor.execute(ctas_sql)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\cursor.py\", line 1144, in execute\n    Error.errorhandler_wrapper(self.connection, self, error_class, errvalue)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 298, in errorhandler_wrapper\n    handed_over = Error.hand_to_other_handler(\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 354, in hand_to_other_handler\n    cursor.errorhandler(connection, cursor, error_class, error_value)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 229, in default_errorhandler\n    raise error_class(\nsnowflake.connector.errors.ProgrammingError: 001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types DATE and TIMESTAMP_NTZ(9)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 300, in execute\n    self._step9_deploy(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1403, in _step9_deploy\n    raise DeploymentError(f\"Deployment failed: {e}\") from e\nsemabridge.core.execution_engine.DeploymentError: Deployment failed: 001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types DATE and TIMESTAMP_NTZ(9)\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "4b1f0edc-53da-4cd7-a8a7-10052c5da1ce",
+              "status": "FAILED",
+              "started_at": "2026-03-20T17:22:39.262764",
+              "completed_at": "2026-03-20T17:23:00.249692",
+              "duration_ms": 20986,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:22:39.262764",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:22:39.278801",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from OFFLINE",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:22:39.306345",
+                  "duration_ms": null,
+                  "message": "OFFLINE extract loaded 114 tables",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:22:39.309331",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:22:39.517675",
+                  "duration_ms": null,
+                  "message": "26 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:22:39.946341",
+                  "duration_ms": null,
+                  "message": "Snapshot 36225c21... committed",
+                  "artifact_ids": [
+                    "36225c21-31ea-44cd-a430-5d4bfa02d88e",
+                    "cce6ee15-bcc7-4be9-b53c-8a32358de1e3"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:22:40.518897",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:23:00.240129",
+                  "duration_ms": null,
+                  "message": "001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types DATE and TIMESTAMP_NTZ(9)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:23:00.249692",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "cce6ee15-bcc7-4be9-b53c-8a32358de1e3",
+              "sml_snapshot_id": "36225c21-31ea-44cd-a430-5d4bfa02d88e",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": [
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "error_type": "DeploymentError",
+                  "message": "Deployment failed: 001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types DATE and TIMESTAMP_NTZ(9)",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1385, in _step9_deploy\n    self._deploy_to_snowflake(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1440, in _deploy_to_snowflake\n    emitter.deploy(context.sml_model)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1388, in deploy\n    raise e\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1300, in deploy\n    self._apply_inferred_types_ctas_sml(cur, sml)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 2138, in _apply_inferred_types_ctas_sml\n    cursor.execute(ctas_sql)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\cursor.py\", line 1144, in execute\n    Error.errorhandler_wrapper(self.connection, self, error_class, errvalue)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 298, in errorhandler_wrapper\n    handed_over = Error.hand_to_other_handler(\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 354, in hand_to_other_handler\n    cursor.errorhandler(connection, cursor, error_class, error_value)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 229, in default_errorhandler\n    raise error_class(\nsnowflake.connector.errors.ProgrammingError: 001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types DATE and TIMESTAMP_NTZ(9)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 300, in execute\n    self._step9_deploy(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1403, in _step9_deploy\n    raise DeploymentError(f\"Deployment failed: {e}\") from e\nsemabridge.core.execution_engine.DeploymentError: Deployment failed: 001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types DATE and TIMESTAMP_NTZ(9)\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774026824396",
+        "id": "run-1774026824396",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 132363,
+        "started_at": "2026-03-20T17:13:44.396961",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "ceaec210-9104-4bc6-a191-55ca92f9a88c",
+          "status": "SUCCESS",
+          "started_at": "2026-03-20T17:13:44.528571",
+          "completed_at": "2026-03-20T17:15:56.675851",
+          "duration_ms": 132147,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:13:44.528571",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:13:44.551912",
+              "duration_ms": null,
+              "message": "Authentication resolved from OFFLINE",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:13:44.581835",
+              "duration_ms": null,
+              "message": "OFFLINE extract loaded 114 tables",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:13:44.584963",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:13:44.756887",
+              "duration_ms": null,
+              "message": "26 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:13:45.256108",
+              "duration_ms": null,
+              "message": "Snapshot eb4042da... committed",
+              "artifact_ids": [
+                "eb4042da-0c18-4fee-a46e-3f3b2d2d16c8",
+                "87eaeadb-222c-483c-b1ec-f0085ece3c3f"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:13:45.727355",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:15:56.671230",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T17:15:56.675851",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "87eaeadb-222c-483c-b1ec-f0085ece3c3f",
+          "sml_snapshot_id": "eb4042da-0c18-4fee-a46e-3f3b2d2d16c8",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "success",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "ceaec210-9104-4bc6-a191-55ca92f9a88c",
+              "status": "SUCCESS",
+              "started_at": "2026-03-20T17:13:44.528571",
+              "completed_at": "2026-03-20T17:15:56.675851",
+              "duration_ms": 132147,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:13:44.528571",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:13:44.551912",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from OFFLINE",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:13:44.581835",
+                  "duration_ms": null,
+                  "message": "OFFLINE extract loaded 114 tables",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:13:44.584963",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:13:44.756887",
+                  "duration_ms": null,
+                  "message": "26 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:13:45.256108",
+                  "duration_ms": null,
+                  "message": "Snapshot eb4042da... committed",
+                  "artifact_ids": [
+                    "eb4042da-0c18-4fee-a46e-3f3b2d2d16c8",
+                    "87eaeadb-222c-483c-b1ec-f0085ece3c3f"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:13:45.727355",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:15:56.671230",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T17:15:56.675851",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "87eaeadb-222c-483c-b1ec-f0085ece3c3f",
+              "sml_snapshot_id": "eb4042da-0c18-4fee-a46e-3f3b2d2d16c8",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774024925035",
+        "id": "run-1774024925035",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 128921,
+        "started_at": "2026-03-20T16:42:05.035277",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "cf1c9420-2bb4-4557-b42d-346eef6ecb07",
+          "status": "SUCCESS",
+          "started_at": "2026-03-20T16:42:05.127458",
+          "completed_at": "2026-03-20T16:44:13.894711",
+          "duration_ms": 128767,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:42:05.127458",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:42:05.141749",
+              "duration_ms": null,
+              "message": "Authentication resolved from OFFLINE",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:42:05.170742",
+              "duration_ms": null,
+              "message": "OFFLINE extract loaded 114 tables",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:42:05.173736",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:42:05.317640",
+              "duration_ms": null,
+              "message": "26 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:42:05.660714",
+              "duration_ms": null,
+              "message": "Snapshot 578496cc... committed",
+              "artifact_ids": [
+                "578496cc-c3d7-41b6-831d-1c934caa818a",
+                "35eac12c-0324-4715-8c3b-9f78311b12f7"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:42:06.156008",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:44:13.891206",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:44:13.894711",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "35eac12c-0324-4715-8c3b-9f78311b12f7",
+          "sml_snapshot_id": "578496cc-c3d7-41b6-831d-1c934caa818a",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "success",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "cf1c9420-2bb4-4557-b42d-346eef6ecb07",
+              "status": "SUCCESS",
+              "started_at": "2026-03-20T16:42:05.127458",
+              "completed_at": "2026-03-20T16:44:13.894711",
+              "duration_ms": 128767,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:42:05.127458",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:42:05.141749",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from OFFLINE",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:42:05.170742",
+                  "duration_ms": null,
+                  "message": "OFFLINE extract loaded 114 tables",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:42:05.173736",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:42:05.317640",
+                  "duration_ms": null,
+                  "message": "26 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:42:05.660714",
+                  "duration_ms": null,
+                  "message": "Snapshot 578496cc... committed",
+                  "artifact_ids": [
+                    "578496cc-c3d7-41b6-831d-1c934caa818a",
+                    "35eac12c-0324-4715-8c3b-9f78311b12f7"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:42:06.156008",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:44:13.891206",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:44:13.894711",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "35eac12c-0324-4715-8c3b-9f78311b12f7",
+              "sml_snapshot_id": "578496cc-c3d7-41b6-831d-1c934caa818a",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774024651536",
+        "id": "run-1774024651536",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 38691,
+        "started_at": "2026-03-20T16:37:31.536106",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "38ce9d37-3e8f-4521-97c4-c07eba9df1dc",
+          "status": "FAILED",
+          "started_at": "2026-03-20T16:37:31.641644",
+          "completed_at": "2026-03-20T16:38:10.205931",
+          "duration_ms": 38564,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:37:31.641644",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:37:31.667213",
+              "duration_ms": null,
+              "message": "Authentication resolved from OFFLINE",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:37:31.702060",
+              "duration_ms": null,
+              "message": "OFFLINE extract loaded 114 tables",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:37:31.709902",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:37:31.959571",
+              "duration_ms": null,
+              "message": "26 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:37:32.353588",
+              "duration_ms": null,
+              "message": "Snapshot 46c4181e... committed",
+              "artifact_ids": [
+                "46c4181e-9df3-4212-9571-679b42cfbd11",
+                "0c164bc8-516c-4829-94f4-e13317e88299"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:37:32.924864",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:38:10.198922",
+              "duration_ms": null,
+              "message": "Type inference failed for REP_SFDC_INTAKE_FORM_C: all columns resolved to VARCHAR",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:38:10.205931",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "0c164bc8-516c-4829-94f4-e13317e88299",
+          "sml_snapshot_id": "46c4181e-9df3-4212-9571-679b42cfbd11",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": [
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "error_type": "DeploymentError",
+              "message": "Deployment failed: Type inference failed for REP_SFDC_INTAKE_FORM_C: all columns resolved to VARCHAR",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1385, in _step9_deploy\n    self._deploy_to_snowflake(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1440, in _deploy_to_snowflake\n    emitter.deploy(context.sml_model)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1388, in deploy\n    raise e\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1300, in deploy\n    self._apply_inferred_types_ctas_sml(cur, sml)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 2061, in _apply_inferred_types_ctas_sml\n    columns, _fallbacks = self._infer_columns_from_table_samples(\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1999, in _infer_columns_from_table_samples\n    raise ValueError(\nValueError: Type inference failed for REP_SFDC_INTAKE_FORM_C: all columns resolved to VARCHAR\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 300, in execute\n    self._step9_deploy(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1403, in _step9_deploy\n    raise DeploymentError(f\"Deployment failed: {e}\") from e\nsemabridge.core.execution_engine.DeploymentError: Deployment failed: Type inference failed for REP_SFDC_INTAKE_FORM_C: all columns resolved to VARCHAR\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "38ce9d37-3e8f-4521-97c4-c07eba9df1dc",
+              "status": "FAILED",
+              "started_at": "2026-03-20T16:37:31.641644",
+              "completed_at": "2026-03-20T16:38:10.205931",
+              "duration_ms": 38564,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:37:31.641644",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:37:31.667213",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from OFFLINE",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:37:31.702060",
+                  "duration_ms": null,
+                  "message": "OFFLINE extract loaded 114 tables",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:37:31.709902",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:37:31.959571",
+                  "duration_ms": null,
+                  "message": "26 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:37:32.353588",
+                  "duration_ms": null,
+                  "message": "Snapshot 46c4181e... committed",
+                  "artifact_ids": [
+                    "46c4181e-9df3-4212-9571-679b42cfbd11",
+                    "0c164bc8-516c-4829-94f4-e13317e88299"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:37:32.924864",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:38:10.198922",
+                  "duration_ms": null,
+                  "message": "Type inference failed for REP_SFDC_INTAKE_FORM_C: all columns resolved to VARCHAR",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:38:10.205931",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "0c164bc8-516c-4829-94f4-e13317e88299",
+              "sml_snapshot_id": "46c4181e-9df3-4212-9571-679b42cfbd11",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": [
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "error_type": "DeploymentError",
+                  "message": "Deployment failed: Type inference failed for REP_SFDC_INTAKE_FORM_C: all columns resolved to VARCHAR",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1385, in _step9_deploy\n    self._deploy_to_snowflake(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1440, in _deploy_to_snowflake\n    emitter.deploy(context.sml_model)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1388, in deploy\n    raise e\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1300, in deploy\n    self._apply_inferred_types_ctas_sml(cur, sml)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 2061, in _apply_inferred_types_ctas_sml\n    columns, _fallbacks = self._infer_columns_from_table_samples(\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1999, in _infer_columns_from_table_samples\n    raise ValueError(\nValueError: Type inference failed for REP_SFDC_INTAKE_FORM_C: all columns resolved to VARCHAR\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 300, in execute\n    self._step9_deploy(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1403, in _step9_deploy\n    raise DeploymentError(f\"Deployment failed: {e}\") from e\nsemabridge.core.execution_engine.DeploymentError: Deployment failed: Type inference failed for REP_SFDC_INTAKE_FORM_C: all columns resolved to VARCHAR\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774024349117",
+        "id": "run-1774024349117",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 25232,
+        "started_at": "2026-03-20T16:32:29.117607",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "5c04eff7-d8b5-4b4a-9ac7-d95bf54107c6",
+          "status": "FAILED",
+          "started_at": "2026-03-20T16:32:29.222874",
+          "completed_at": "2026-03-20T16:32:54.324423",
+          "duration_ms": 25101,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:32:29.222874",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:32:29.243042",
+              "duration_ms": null,
+              "message": "Authentication resolved from OFFLINE",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:32:29.276035",
+              "duration_ms": null,
+              "message": "OFFLINE extract loaded 114 tables",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:32:29.279078",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:32:29.449631",
+              "duration_ms": null,
+              "message": "26 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:32:29.881093",
+              "duration_ms": null,
+              "message": "Snapshot af58bc07... committed",
+              "artifact_ids": [
+                "af58bc07-3a3d-4503-9ea5-71eaf884d83a",
+                "fed6ebe4-6ec4-47e0-acd9-07eb3c8fdacd"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:32:30.471017",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:32:54.311627",
+              "duration_ms": null,
+              "message": "001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types NUMBER(38,0) and TIMESTAMP_NTZ(0)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:32:54.324423",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "fed6ebe4-6ec4-47e0-acd9-07eb3c8fdacd",
+          "sml_snapshot_id": "af58bc07-3a3d-4503-9ea5-71eaf884d83a",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": [
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "error_type": "DeploymentError",
+              "message": "Deployment failed: 001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types NUMBER(38,0) and TIMESTAMP_NTZ(0)",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1385, in _step9_deploy\n    self._deploy_to_snowflake(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1440, in _deploy_to_snowflake\n    emitter.deploy(context.sml_model)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1388, in deploy\n    raise e\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1300, in deploy\n    self._apply_inferred_types_ctas_sml(cur, sml)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 2042, in _apply_inferred_types_ctas_sml\n    cursor.execute(ctas_sql)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\cursor.py\", line 1144, in execute\n    Error.errorhandler_wrapper(self.connection, self, error_class, errvalue)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 298, in errorhandler_wrapper\n    handed_over = Error.hand_to_other_handler(\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 354, in hand_to_other_handler\n    cursor.errorhandler(connection, cursor, error_class, error_value)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 229, in default_errorhandler\n    raise error_class(\nsnowflake.connector.errors.ProgrammingError: 001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types NUMBER(38,0) and TIMESTAMP_NTZ(0)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 300, in execute\n    self._step9_deploy(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1403, in _step9_deploy\n    raise DeploymentError(f\"Deployment failed: {e}\") from e\nsemabridge.core.execution_engine.DeploymentError: Deployment failed: 001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types NUMBER(38,0) and TIMESTAMP_NTZ(0)\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "5c04eff7-d8b5-4b4a-9ac7-d95bf54107c6",
+              "status": "FAILED",
+              "started_at": "2026-03-20T16:32:29.222874",
+              "completed_at": "2026-03-20T16:32:54.324423",
+              "duration_ms": 25101,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:32:29.222874",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:32:29.243042",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from OFFLINE",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:32:29.276035",
+                  "duration_ms": null,
+                  "message": "OFFLINE extract loaded 114 tables",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:32:29.279078",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:32:29.449631",
+                  "duration_ms": null,
+                  "message": "26 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:32:29.881093",
+                  "duration_ms": null,
+                  "message": "Snapshot af58bc07... committed",
+                  "artifact_ids": [
+                    "af58bc07-3a3d-4503-9ea5-71eaf884d83a",
+                    "fed6ebe4-6ec4-47e0-acd9-07eb3c8fdacd"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:32:30.471017",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:32:54.311627",
+                  "duration_ms": null,
+                  "message": "001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types NUMBER(38,0) and TIMESTAMP_NTZ(0)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:32:54.324423",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "fed6ebe4-6ec4-47e0-acd9-07eb3c8fdacd",
+              "sml_snapshot_id": "af58bc07-3a3d-4503-9ea5-71eaf884d83a",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": [
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "error_type": "DeploymentError",
+                  "message": "Deployment failed: 001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types NUMBER(38,0) and TIMESTAMP_NTZ(0)",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1385, in _step9_deploy\n    self._deploy_to_snowflake(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1440, in _deploy_to_snowflake\n    emitter.deploy(context.sml_model)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1388, in deploy\n    raise e\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1300, in deploy\n    self._apply_inferred_types_ctas_sml(cur, sml)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 2042, in _apply_inferred_types_ctas_sml\n    cursor.execute(ctas_sql)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\cursor.py\", line 1144, in execute\n    Error.errorhandler_wrapper(self.connection, self, error_class, errvalue)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 298, in errorhandler_wrapper\n    handed_over = Error.hand_to_other_handler(\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 354, in hand_to_other_handler\n    cursor.errorhandler(connection, cursor, error_class, error_value)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 229, in default_errorhandler\n    raise error_class(\nsnowflake.connector.errors.ProgrammingError: 001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types NUMBER(38,0) and TIMESTAMP_NTZ(0)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 300, in execute\n    self._step9_deploy(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1403, in _step9_deploy\n    raise DeploymentError(f\"Deployment failed: {e}\") from e\nsemabridge.core.execution_engine.DeploymentError: Deployment failed: 001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types NUMBER(38,0) and TIMESTAMP_NTZ(0)\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774024120747",
+        "id": "run-1774024120747",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 18449,
+        "started_at": "2026-03-20T16:28:40.747436",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "0138dfaa-4223-46d8-9a9b-e1020829cfb4",
+          "status": "FAILED",
+          "started_at": "2026-03-20T16:28:40.880360",
+          "completed_at": "2026-03-20T16:28:59.174137",
+          "duration_ms": 18293,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:28:40.880360",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:28:40.897383",
+              "duration_ms": null,
+              "message": "Authentication resolved from OFFLINE",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:28:40.947622",
+              "duration_ms": null,
+              "message": "OFFLINE extract loaded 114 tables",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:28:40.950996",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:28:41.126656",
+              "duration_ms": null,
+              "message": "26 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:28:41.499975",
+              "duration_ms": null,
+              "message": "Snapshot b6db003c... committed",
+              "artifact_ids": [
+                "b6db003c-2671-4088-8829-fc3ab6d2d503",
+                "1f108482-57f5-448f-841d-c1beb1e5e6d3"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:28:41.979011",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:28:59.163683",
+              "duration_ms": null,
+              "message": "001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types TIMESTAMP_NTZ(9) and DATE",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:28:59.174137",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "1f108482-57f5-448f-841d-c1beb1e5e6d3",
+          "sml_snapshot_id": "b6db003c-2671-4088-8829-fc3ab6d2d503",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": [
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "error_type": "DeploymentError",
+              "message": "Deployment failed: 001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types TIMESTAMP_NTZ(9) and DATE",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1385, in _step9_deploy\n    self._deploy_to_snowflake(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1440, in _deploy_to_snowflake\n    emitter.deploy(context.sml_model)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1388, in deploy\n    raise e\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1300, in deploy\n    self._apply_inferred_types_ctas_sml(cur, sml)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 2000, in _apply_inferred_types_ctas_sml\n    cursor.execute(ctas_sql)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\cursor.py\", line 1144, in execute\n    Error.errorhandler_wrapper(self.connection, self, error_class, errvalue)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 298, in errorhandler_wrapper\n    handed_over = Error.hand_to_other_handler(\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 354, in hand_to_other_handler\n    cursor.errorhandler(connection, cursor, error_class, error_value)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 229, in default_errorhandler\n    raise error_class(\nsnowflake.connector.errors.ProgrammingError: 001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types TIMESTAMP_NTZ(9) and DATE\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 300, in execute\n    self._step9_deploy(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1403, in _step9_deploy\n    raise DeploymentError(f\"Deployment failed: {e}\") from e\nsemabridge.core.execution_engine.DeploymentError: Deployment failed: 001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types TIMESTAMP_NTZ(9) and DATE\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "0138dfaa-4223-46d8-9a9b-e1020829cfb4",
+              "status": "FAILED",
+              "started_at": "2026-03-20T16:28:40.880360",
+              "completed_at": "2026-03-20T16:28:59.174137",
+              "duration_ms": 18293,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:28:40.880360",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:28:40.897383",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from OFFLINE",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:28:40.947622",
+                  "duration_ms": null,
+                  "message": "OFFLINE extract loaded 114 tables",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:28:40.950996",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:28:41.126656",
+                  "duration_ms": null,
+                  "message": "26 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:28:41.499975",
+                  "duration_ms": null,
+                  "message": "Snapshot b6db003c... committed",
+                  "artifact_ids": [
+                    "b6db003c-2671-4088-8829-fc3ab6d2d503",
+                    "1f108482-57f5-448f-841d-c1beb1e5e6d3"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:28:41.979011",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:28:59.163683",
+                  "duration_ms": null,
+                  "message": "001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types TIMESTAMP_NTZ(9) and DATE",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:28:59.174137",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "1f108482-57f5-448f-841d-c1beb1e5e6d3",
+              "sml_snapshot_id": "b6db003c-2671-4088-8829-fc3ab6d2d503",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": [
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "error_type": "DeploymentError",
+                  "message": "Deployment failed: 001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types TIMESTAMP_NTZ(9) and DATE",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1385, in _step9_deploy\n    self._deploy_to_snowflake(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1440, in _deploy_to_snowflake\n    emitter.deploy(context.sml_model)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1388, in deploy\n    raise e\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1300, in deploy\n    self._apply_inferred_types_ctas_sml(cur, sml)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 2000, in _apply_inferred_types_ctas_sml\n    cursor.execute(ctas_sql)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\cursor.py\", line 1144, in execute\n    Error.errorhandler_wrapper(self.connection, self, error_class, errvalue)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 298, in errorhandler_wrapper\n    handed_over = Error.hand_to_other_handler(\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 354, in hand_to_other_handler\n    cursor.errorhandler(connection, cursor, error_class, error_value)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 229, in default_errorhandler\n    raise error_class(\nsnowflake.connector.errors.ProgrammingError: 001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types TIMESTAMP_NTZ(9) and DATE\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 300, in execute\n    self._step9_deploy(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1403, in _step9_deploy\n    raise DeploymentError(f\"Deployment failed: {e}\") from e\nsemabridge.core.execution_engine.DeploymentError: Deployment failed: 001065 (22023): SQL compilation error:\nFunction TRY_CAST cannot be used with arguments of types TIMESTAMP_NTZ(9) and DATE\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774023281831",
+        "id": "run-1774023281831",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 1807,
+        "started_at": "2026-03-20T16:14:41.831488",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "e89782a7-3e5a-4852-8e62-5ef1378da2be",
+          "status": "FAILED",
+          "started_at": "2026-03-20T16:14:41.930419",
+          "completed_at": "2026-03-20T16:14:43.454393",
+          "duration_ms": 1523,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:14:41.930419",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:14:42.077470",
+              "duration_ms": null,
+              "message": "Authentication resolved from ENV",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:14:43.362284",
+              "duration_ms": null,
+              "message": "Failed to list semantic models: 401 Client Error: Unauthorized for url: https://api.fabric.microsoft.com/v1/workspaces/d875c0c3-59e9-4d55-a7f0-99595b756718/semanticModels",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:14:43.454393",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "error_type": "ExtractionError",
+              "message": "Extraction failed: Failed to list semantic models: 401 Client Error: Unauthorized for url: https://api.fabric.microsoft.com/v1/workspaces/d875c0c3-59e9-4d55-a7f0-99595b756718/semanticModels",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 66, in list_semantic_models\n    response.raise_for_status()\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\requests\\models.py\", line 1026, in raise_for_status\n    raise HTTPError(http_error_msg, response=self)\nrequests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: https://api.fabric.microsoft.com/v1/workspaces/d875c0c3-59e9-4d55-a7f0-99595b756718/semanticModels\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 617, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 697, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 101, in resolve_model_id\n    models = self.list_semantic_models()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 81, in list_semantic_models\n    raise FabricExtractionError(f\"Failed to list semantic models: {e}\")\nsemabridge.connectors.fabric_extractor.FabricExtractionError: Failed to list semantic models: 401 Client Error: Unauthorized for url: https://api.fabric.microsoft.com/v1/workspaces/d875c0c3-59e9-4d55-a7f0-99595b756718/semanticModels\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 276, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 625, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: Failed to list semantic models: 401 Client Error: Unauthorized for url: https://api.fabric.microsoft.com/v1/workspaces/d875c0c3-59e9-4d55-a7f0-99595b756718/semanticModels\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "e89782a7-3e5a-4852-8e62-5ef1378da2be",
+              "status": "FAILED",
+              "started_at": "2026-03-20T16:14:41.930419",
+              "completed_at": "2026-03-20T16:14:43.454393",
+              "duration_ms": 1523,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:14:41.930419",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:14:42.077470",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from ENV",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:14:43.362284",
+                  "duration_ms": null,
+                  "message": "Failed to list semantic models: 401 Client Error: Unauthorized for url: https://api.fabric.microsoft.com/v1/workspaces/d875c0c3-59e9-4d55-a7f0-99595b756718/semanticModels",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:14:43.454393",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "error_type": "ExtractionError",
+                  "message": "Extraction failed: Failed to list semantic models: 401 Client Error: Unauthorized for url: https://api.fabric.microsoft.com/v1/workspaces/d875c0c3-59e9-4d55-a7f0-99595b756718/semanticModels",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 66, in list_semantic_models\n    response.raise_for_status()\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\requests\\models.py\", line 1026, in raise_for_status\n    raise HTTPError(http_error_msg, response=self)\nrequests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: https://api.fabric.microsoft.com/v1/workspaces/d875c0c3-59e9-4d55-a7f0-99595b756718/semanticModels\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 617, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 697, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 101, in resolve_model_id\n    models = self.list_semantic_models()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 81, in list_semantic_models\n    raise FabricExtractionError(f\"Failed to list semantic models: {e}\")\nsemabridge.connectors.fabric_extractor.FabricExtractionError: Failed to list semantic models: 401 Client Error: Unauthorized for url: https://api.fabric.microsoft.com/v1/workspaces/d875c0c3-59e9-4d55-a7f0-99595b756718/semanticModels\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 276, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 625, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: Failed to list semantic models: 401 Client Error: Unauthorized for url: https://api.fabric.microsoft.com/v1/workspaces/d875c0c3-59e9-4d55-a7f0-99595b756718/semanticModels\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774022949495",
+        "id": "run-1774022949495",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 67774,
+        "started_at": "2026-03-20T16:09:09.495217",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "3be409a3-98ff-442d-8268-1f7ce09229a1",
+          "status": "FAILED",
+          "started_at": "2026-03-20T16:09:09.617892",
+          "completed_at": "2026-03-20T16:10:17.246695",
+          "duration_ms": 67628,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:09:09.617892",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:09:09.857740",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:09:49.474932",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:09:49.487053",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:09:49.737454",
+              "duration_ms": null,
+              "message": "26 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:09:49.976385",
+              "duration_ms": null,
+              "message": "Snapshot 6c68c735... committed",
+              "artifact_ids": [
+                "6c68c735-03a8-4261-a6ce-3dcb1d3dd33f",
+                "26a363ab-0dad-4827-b968-34e2b389b6b7"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:09:50.316688",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:10:17.238132",
+              "duration_ms": null,
+              "message": "Type inference failed - all VARCHAR",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:10:17.246695",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "26a363ab-0dad-4827-b968-34e2b389b6b7",
+          "sml_snapshot_id": "6c68c735-03a8-4261-a6ce-3dcb1d3dd33f",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": [
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "error_type": "DeploymentError",
+              "message": "Deployment failed: Type inference failed - all VARCHAR",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1345, in _step9_deploy\n    self._deploy_to_snowflake(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1400, in _deploy_to_snowflake\n    emitter.deploy(context.sml_model)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1386, in deploy\n    raise e\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1298, in deploy\n    self._apply_inferred_types_ctas_sml(cur, sml)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1824, in _apply_inferred_types_ctas_sml\n    ctas_sql = self.generate_ctas_sql(safe_table_name, columns, self.config.schema_name)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1751, in generate_ctas_sql\n    raise ValueError(\"Type inference failed - all VARCHAR\")\nValueError: Type inference failed - all VARCHAR\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 299, in execute\n    self._step9_deploy(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1363, in _step9_deploy\n    raise DeploymentError(f\"Deployment failed: {e}\") from e\nsemabridge.core.execution_engine.DeploymentError: Deployment failed: Type inference failed - all VARCHAR\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "3be409a3-98ff-442d-8268-1f7ce09229a1",
+              "status": "FAILED",
+              "started_at": "2026-03-20T16:09:09.617892",
+              "completed_at": "2026-03-20T16:10:17.246695",
+              "duration_ms": 67628,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:09:09.617892",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:09:09.857740",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:09:49.474932",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:09:49.487053",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:09:49.737454",
+                  "duration_ms": null,
+                  "message": "26 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:09:49.976385",
+                  "duration_ms": null,
+                  "message": "Snapshot 6c68c735... committed",
+                  "artifact_ids": [
+                    "6c68c735-03a8-4261-a6ce-3dcb1d3dd33f",
+                    "26a363ab-0dad-4827-b968-34e2b389b6b7"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:09:50.316688",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:10:17.238132",
+                  "duration_ms": null,
+                  "message": "Type inference failed - all VARCHAR",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:10:17.246695",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "26a363ab-0dad-4827-b968-34e2b389b6b7",
+              "sml_snapshot_id": "6c68c735-03a8-4261-a6ce-3dcb1d3dd33f",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": [
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "error_type": "DeploymentError",
+                  "message": "Deployment failed: Type inference failed - all VARCHAR",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1345, in _step9_deploy\n    self._deploy_to_snowflake(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1400, in _deploy_to_snowflake\n    emitter.deploy(context.sml_model)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1386, in deploy\n    raise e\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1298, in deploy\n    self._apply_inferred_types_ctas_sml(cur, sml)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1824, in _apply_inferred_types_ctas_sml\n    ctas_sql = self.generate_ctas_sql(safe_table_name, columns, self.config.schema_name)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1751, in generate_ctas_sql\n    raise ValueError(\"Type inference failed - all VARCHAR\")\nValueError: Type inference failed - all VARCHAR\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 299, in execute\n    self._step9_deploy(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1363, in _step9_deploy\n    raise DeploymentError(f\"Deployment failed: {e}\") from e\nsemabridge.core.execution_engine.DeploymentError: Deployment failed: Type inference failed - all VARCHAR\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774022554925",
+        "id": "run-1774022554925",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 56174,
+        "started_at": "2026-03-20T16:02:34.925242",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "fb2a5f1d-9ae2-45ce-ad3f-53c0eedebcfb",
+          "status": "FAILED",
+          "started_at": "2026-03-20T16:02:35.032142",
+          "completed_at": "2026-03-20T16:03:31.071426",
+          "duration_ms": 56039,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:02:35.032142",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:02:35.168385",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:03:12.550593",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:03:12.553591",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:03:12.671266",
+              "duration_ms": null,
+              "message": "26 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:03:12.931290",
+              "duration_ms": null,
+              "message": "Snapshot 9bb3f037... committed",
+              "artifact_ids": [
+                "9bb3f037-c967-4472-ac22-2f2999c6c67e",
+                "24d70d1b-2cbb-4030-b5f9-97f58e43ed4d"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:03:13.313071",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:03:31.060574",
+              "duration_ms": null,
+              "message": "001003 (42000): SQL compilation error:\nsyntax error line 1 at position 68 unexpected 'AS'.",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T16:03:31.070098",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "24d70d1b-2cbb-4030-b5f9-97f58e43ed4d",
+          "sml_snapshot_id": "9bb3f037-c967-4472-ac22-2f2999c6c67e",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": [
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "error_type": "DeploymentError",
+              "message": "Deployment failed: 001003 (42000): SQL compilation error:\nsyntax error line 1 at position 68 unexpected 'AS'.",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1345, in _step9_deploy\n    self._deploy_to_snowflake(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1400, in _deploy_to_snowflake\n    emitter.deploy(context.sml_model)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1386, in deploy\n    raise e\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1298, in deploy\n    self._apply_inferred_types_ctas_sml(cur, sml)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1817, in _apply_inferred_types_ctas_sml\n    cursor.execute(ctas_sql)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\cursor.py\", line 1144, in execute\n    Error.errorhandler_wrapper(self.connection, self, error_class, errvalue)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 298, in errorhandler_wrapper\n    handed_over = Error.hand_to_other_handler(\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 354, in hand_to_other_handler\n    cursor.errorhandler(connection, cursor, error_class, error_value)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 229, in default_errorhandler\n    raise error_class(\nsnowflake.connector.errors.ProgrammingError: 001003 (42000): SQL compilation error:\nsyntax error line 1 at position 68 unexpected 'AS'.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 299, in execute\n    self._step9_deploy(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1363, in _step9_deploy\n    raise DeploymentError(f\"Deployment failed: {e}\") from e\nsemabridge.core.execution_engine.DeploymentError: Deployment failed: 001003 (42000): SQL compilation error:\nsyntax error line 1 at position 68 unexpected 'AS'.\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "fb2a5f1d-9ae2-45ce-ad3f-53c0eedebcfb",
+              "status": "FAILED",
+              "started_at": "2026-03-20T16:02:35.032142",
+              "completed_at": "2026-03-20T16:03:31.071426",
+              "duration_ms": 56039,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:02:35.032142",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:02:35.168385",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:03:12.550593",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:03:12.553591",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:03:12.671266",
+                  "duration_ms": null,
+                  "message": "26 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:03:12.931290",
+                  "duration_ms": null,
+                  "message": "Snapshot 9bb3f037... committed",
+                  "artifact_ids": [
+                    "9bb3f037-c967-4472-ac22-2f2999c6c67e",
+                    "24d70d1b-2cbb-4030-b5f9-97f58e43ed4d"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:03:13.313071",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:03:31.060574",
+                  "duration_ms": null,
+                  "message": "001003 (42000): SQL compilation error:\nsyntax error line 1 at position 68 unexpected 'AS'.",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T16:03:31.070098",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "24d70d1b-2cbb-4030-b5f9-97f58e43ed4d",
+              "sml_snapshot_id": "9bb3f037-c967-4472-ac22-2f2999c6c67e",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": [
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "error_type": "DeploymentError",
+                  "message": "Deployment failed: 001003 (42000): SQL compilation error:\nsyntax error line 1 at position 68 unexpected 'AS'.",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1345, in _step9_deploy\n    self._deploy_to_snowflake(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1400, in _deploy_to_snowflake\n    emitter.deploy(context.sml_model)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1386, in deploy\n    raise e\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1298, in deploy\n    self._apply_inferred_types_ctas_sml(cur, sml)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\connectors\\snowflake_emitter.py\", line 1817, in _apply_inferred_types_ctas_sml\n    cursor.execute(ctas_sql)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\cursor.py\", line 1144, in execute\n    Error.errorhandler_wrapper(self.connection, self, error_class, errvalue)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 298, in errorhandler_wrapper\n    handed_over = Error.hand_to_other_handler(\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 354, in hand_to_other_handler\n    cursor.errorhandler(connection, cursor, error_class, error_value)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\.venv\\Lib\\site-packages\\snowflake\\connector\\errors.py\", line 229, in default_errorhandler\n    raise error_class(\nsnowflake.connector.errors.ProgrammingError: 001003 (42000): SQL compilation error:\nsyntax error line 1 at position 68 unexpected 'AS'.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 299, in execute\n    self._step9_deploy(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\merged\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1363, in _step9_deploy\n    raise DeploymentError(f\"Deployment failed: {e}\") from e\nsemabridge.core.execution_engine.DeploymentError: Deployment failed: 001003 (42000): SQL compilation error:\nsyntax error line 1 at position 68 unexpected 'AS'.\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774021425486",
+        "id": "run-1774021425486",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 59337,
+        "started_at": "2026-03-20T15:43:45.486380",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "f51cbff5-c7aa-4f9d-939f-ec76abcf0d22",
+          "status": "SUCCESS",
+          "started_at": "2026-03-20T15:43:45.621326",
+          "completed_at": "2026-03-20T15:44:44.765267",
+          "duration_ms": 59143,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T15:43:45.621326",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T15:43:45.864143",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T15:44:23.168632",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T15:44:23.170638",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T15:44:23.257083",
+              "duration_ms": null,
+              "message": "26 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T15:44:23.565128",
+              "duration_ms": null,
+              "message": "Snapshot d5671d5e... committed",
+              "artifact_ids": [
+                "d5671d5e-663e-49a0-b7b7-9071282b0644",
+                "baf0db1a-bf34-469c-b051-c81eb9552b48"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T15:44:23.992313",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T15:44:44.761208",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T15:44:44.765267",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "baf0db1a-bf34-469c-b051-c81eb9552b48",
+          "sml_snapshot_id": "d5671d5e-663e-49a0-b7b7-9071282b0644",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "success",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "f51cbff5-c7aa-4f9d-939f-ec76abcf0d22",
+              "status": "SUCCESS",
+              "started_at": "2026-03-20T15:43:45.621326",
+              "completed_at": "2026-03-20T15:44:44.765267",
+              "duration_ms": 59143,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T15:43:45.621326",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T15:43:45.864143",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T15:44:23.168632",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T15:44:23.170638",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T15:44:23.257083",
+                  "duration_ms": null,
+                  "message": "26 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T15:44:23.565128",
+                  "duration_ms": null,
+                  "message": "Snapshot d5671d5e... committed",
+                  "artifact_ids": [
+                    "d5671d5e-663e-49a0-b7b7-9071282b0644",
+                    "baf0db1a-bf34-469c-b051-c81eb9552b48"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T15:44:23.992313",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T15:44:44.761208",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T15:44:44.765267",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "baf0db1a-bf34-469c-b051-c81eb9552b48",
+              "sml_snapshot_id": "d5671d5e-663e-49a0-b7b7-9071282b0644",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774020444600",
+        "id": "run-1774020444600",
+        "project_id": "proj-1773904076169",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 60997,
+        "started_at": "2026-03-20T15:27:24.600479",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "5afe7eef-78f5-4420-a0ee-3dad658df15d",
+          "status": "SUCCESS",
+          "started_at": "2026-03-20T15:27:24.685731",
+          "completed_at": "2026-03-20T15:28:25.548683",
+          "duration_ms": 60862,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T15:27:24.685731",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T15:27:24.847775",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T15:28:03.800537",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T15:28:03.804027",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T15:28:03.939665",
+              "duration_ms": null,
+              "message": "26 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T15:28:04.263944",
+              "duration_ms": null,
+              "message": "Snapshot 7de4cc88... committed",
+              "artifact_ids": [
+                "7de4cc88-9df7-4704-b9a1-21faf08f6b70",
+                "c3c4c932-ec7c-46a1-adbf-5fc929c4be5a"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T15:28:04.817376",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T15:28:25.545135",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T15:28:25.548683",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "c3c4c932-ec7c-46a1-adbf-5fc929c4be5a",
+          "sml_snapshot_id": "7de4cc88-9df7-4704-b9a1-21faf08f6b70",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "success",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "5afe7eef-78f5-4420-a0ee-3dad658df15d",
+              "status": "SUCCESS",
+              "started_at": "2026-03-20T15:27:24.685731",
+              "completed_at": "2026-03-20T15:28:25.548683",
+              "duration_ms": 60862,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T15:27:24.685731",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T15:27:24.847775",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T15:28:03.800537",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T15:28:03.804027",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T15:28:03.939665",
+                  "duration_ms": null,
+                  "message": "26 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T15:28:04.263944",
+                  "duration_ms": null,
+                  "message": "Snapshot 7de4cc88... committed",
+                  "artifact_ids": [
+                    "7de4cc88-9df7-4704-b9a1-21faf08f6b70",
+                    "c3c4c932-ec7c-46a1-adbf-5fc929c4be5a"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T15:28:04.817376",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T15:28:25.545135",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T15:28:25.548683",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "c3c4c932-ec7c-46a1-adbf-5fc929c4be5a",
+              "sml_snapshot_id": "7de4cc88-9df7-4704-b9a1-21faf08f6b70",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      },
+      {
         "run_id": "run-1774012358142",
         "id": "run-1774012358142",
         "project_id": "proj-1773904076169",

@@ -175,7 +175,7 @@ class TMSLToOSIConverter(BaseConverter):
         columns = []
         if "columns" in table_def:
             for col in table_def["columns"]:
-                columns.append(self._parse_column(col))
+                columns.append(self._parse_column(col, name))
         
         # Source table logic
         source_table = name
@@ -191,10 +191,13 @@ class TMSLToOSIConverter(BaseConverter):
             source_table=source_table
         )
 
-    def _parse_column(self, col_def: Dict[str, Any]) -> OSIColumn:
+    def _parse_column(self, col_def: Dict[str, Any], table_name: str) -> OSIColumn:
         """Parse a TMSL column into OSIColumn with Cortex AI metadata."""
         tmsl_type = col_def.get("dataType", "string")
         col_name = col_def.get("name", "")
+        format_string = col_def.get("formatString")
+
+        business_type = self._business_rule_type(table_name, col_name)
 
         type_map = {
             "int64": OSIDataType.INTEGER,
@@ -206,7 +209,17 @@ class TMSLToOSIConverter(BaseConverter):
             "binary": OSIDataType.BINARY
         }
 
-        mapped_type = type_map.get(tmsl_type, OSIDataType.STRING)
+        # Layer 1: hard business rules.
+        if business_type is not None:
+            mapped_type = business_type
+        else:
+            # Layer 2: Fabric metadata.
+            mapped_type = type_map.get(tmsl_type, OSIDataType.STRING)
+            if tmsl_type == "dateTime":
+                mapped_type = self._infer_datetime_column_type(col_name, format_string)
+            # Layer 3: fallback inference for string/unclear fields.
+            if mapped_type == OSIDataType.STRING:
+                mapped_type = self._infer_string_column_type(col_name, format_string)
 
         # Determine if key (heuristic on name pattern)
         is_key = False
@@ -240,12 +253,97 @@ class TMSLToOSIConverter(BaseConverter):
             data_type=mapped_type,
             description=col_def.get("description"),
             is_hidden=col_def.get("isHidden", False),
-            format_string=col_def.get("formatString"),
+            format_string=format_string,
             is_key=is_key,
             source_expression=source_expr,
             synonyms=synonyms,
             is_enum=is_enum,
         )
+
+    @staticmethod
+    def _business_rule_type(
+        table_name: str,
+        col_name: str,
+    ) -> Optional[OSIDataType]:
+        """Business-rule layer for known Salesforce semantic fields."""
+        t = (table_name or "").upper()
+        c = (col_name or "").strip().upper()
+        c_norm = re.sub(r"[^A-Z0-9]", "", c)
+
+        if c_norm == "FIRMNESSOFFIRSTDELIVERYDATE":
+            return OSIDataType.STRING
+        if c == "DELETED":
+            return OSIDataType.BOOLEAN
+        if "MODSTAMP" in c_norm:
+            return OSIDataType.DATETIME
+        if "VOLUME" in c_norm or "AMOUNT" in c_norm:
+            return OSIDataType.FLOAT
+        if "DATE" in c_norm and not t.endswith("FIELDHISTORY"):
+            return OSIDataType.DATE
+
+        return None
+
+    @staticmethod
+    def _infer_string_column_type(
+        col_name: str,
+        format_string: Optional[str],
+    ) -> OSIDataType:
+        """Infer stronger type hints for Fabric string columns."""
+        n = (col_name or "").lower()
+        tokens = {t for t in re.split(r"[^a-z0-9]+", n.replace("_", " ")) if t}
+        fmt = (format_string or "").strip().upper()
+
+        # Keep identifier-like business keys as strings even when they contain "number".
+        if "id" in tokens or n.endswith("_id"):
+            return OSIDataType.STRING
+        if "number" in tokens and any(t in tokens for t in ("job", "model", "ticket", "project", "opportunity", "record")):
+            return OSIDataType.STRING
+
+        # Format-driven inference is strongest for Fabric text columns.
+        if "%" in fmt:
+            return OSIDataType.FLOAT
+        if any(ch in fmt for ch in ("#", "0")):
+            return OSIDataType.FLOAT
+
+        # Name-based numeric hints for common forecasting fields.
+        if "%" in col_name or "percent" in n:
+            return OSIDataType.FLOAT
+        if any(k in tokens for k in ("amount", "price", "cost", "revenue", "rate", "score", "size", "qty", "quantity", "mw", "mwdc", "forecast", "target", "actual", "variance", "lead", "time")):
+            return OSIDataType.FLOAT
+
+        # Date and timestamp hints for string-typed columns.
+        if "date" in tokens:
+            return OSIDataType.DATE
+        if any(k in tokens for k in ("timestamp", "datetime", "ts")):
+            return OSIDataType.DATETIME
+
+        # Integer-like counters, but avoid generic "number" ambiguity.
+        if any(k in tokens for k in ("count", "num", "year", "month", "day")):
+            return OSIDataType.INTEGER
+
+        return OSIDataType.STRING
+
+    @staticmethod
+    def _infer_datetime_column_type(
+        col_name: str,
+        format_string: Optional[str],
+    ) -> OSIDataType:
+        """Disambiguate Fabric dateTime between DATE and DATETIME."""
+        n = (col_name or "").lower()
+        fmt = (format_string or "").lower()
+
+        # Explicit time markers mean true datetime.
+        if any(token in fmt for token in ("hh", "h:", "am/pm", "ss", "mm:ss")):
+            return OSIDataType.DATETIME
+        if any(token in n for token in ("timestamp", "datetime", "created at", "updated at")):
+            return OSIDataType.DATETIME
+
+        # Date-oriented naming/format should remain DATE in Snowflake.
+        if "short date" in fmt or "long date" in fmt or "date" in n:
+            return OSIDataType.DATE
+
+        # Default for Fabric dateTime is datetime.
+        return OSIDataType.DATETIME
 
     @staticmethod
     def _auto_synonyms(name: str) -> List[str]:

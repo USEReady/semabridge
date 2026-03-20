@@ -1,4 +1,11 @@
 
+snowflake:
+  apply_inferred_types: true
+
+features:
+  offline_mode: true
+  offline_fabric_model_path: output/debug/raw_fabric_model.json
+
 semantic_model:
   # Maps short SQL prefixes used in metric_overrides to the logical dataset
   # name in the semantic model.  The sanitizer uses this to rewrite e.g.

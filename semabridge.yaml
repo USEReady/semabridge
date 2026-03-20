@@ -1,10 +1,10 @@
-project_name: h
+project_name: tb
 source:
   type: fabric
   workspace_id: semabridge-local
   workspace: SemaBridge Workspace
   models:
-    - Customer Profitability
+    - Client Data
 target:
   type: snowflake
 ui:
@@ -12,7 +12,7 @@ ui:
   editor_mode: yaml
 selection:
   model_ids:
-    - 83686c9b-2320-466a-a7a8-c3975d6998e7
+    - 0794fdcc-d85f-4d93-a42c-8bacaad04819
 options:
   auto_relationships: true
   include_hidden_fields: false
