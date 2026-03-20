@@ -1374,6 +1374,37 @@ class SnowflakeEmitter(BaseEmitter):
                     logger.info(f"Cortex Analyst YAML saved to {yaml_path}")
                 except Exception as ex:
                     logger.warning(f"Failed to save Cortex YAML: {ex}")
+
+                # Step 3b: Save semantic view DDL as YAML for auditing
+                try:
+                    from datetime import datetime, timezone
+                    ddl_output = {
+                        "metadata": {
+                            "model_name": sml.unique_name or sml.label or "model",
+                            "generated_at": datetime.now(timezone.utc).isoformat(),
+                            "ddl_count": len(ddls),
+                            "path": "SML",
+                        },
+                        "relationships": [
+                            {
+                                "name": rel.unique_name,
+                                "from_dataset": rel.from_dataset,
+                                "from_columns": rel.from_columns,
+                                "to_dataset": rel.to_dataset,
+                                "to_columns": rel.to_columns,
+                                "cardinality": str(rel.cardinality) if rel.cardinality else None,
+                                "is_active": rel.is_active,
+                            }
+                            for rel in (sml.relationships or [])
+                        ],
+                        "ddl_statements": ddls,
+                    }
+                    ddl_yaml_path = output_dir / "semantic_view_ddl.yaml"
+                    with open(ddl_yaml_path, "w") as f:
+                        yaml.dump(ddl_output, f, default_flow_style=False, sort_keys=False, allow_unicode=True, width=200)
+                    logger.info(f"Semantic View DDL YAML saved to {ddl_yaml_path}")
+                except Exception as ex:
+                    logger.warning(f"Failed to save DDL YAML: {ex}")
                 
                 logger.info("Semantic View deployed successfully")
                 
@@ -2356,7 +2387,7 @@ class SnowflakeEmitter(BaseEmitter):
             ...
         )
         RELATIONSHIPS (
-            <alias_from> (<fk_cols>) REFERENCES <alias_to>,
+            <alias_from> (<fk_cols>) REFERENCES <alias_to> (<ref_cols>),
             ...
         )
         DIMENSIONS (
@@ -2529,6 +2560,8 @@ class SnowflakeEmitter(BaseEmitter):
             if from_alias and to_alias and rel.from_columns:
                 # Sanitize FK column back to underscores to match physical table
                 from_col = self._sanitize_col_name(rel.from_columns[0])
+                # Sanitize referenced (PK) column on the target side
+                to_col = self._sanitize_col_name(rel.to_columns[0]) if rel.to_columns else ""
                 # Validate FK column exists in the from-dataset's physical columns
                 from_phys = dataset_col_lookup.get(rel.from_dataset, set())
                 if from_phys and from_col not in from_phys:
@@ -2538,13 +2571,24 @@ class SnowflakeEmitter(BaseEmitter):
                         f"a physical column in '{rel.from_dataset}'"
                     )
                     continue
+                # Validate to_col exists in the to-dataset's physical columns
+                if to_col:
+                    to_phys = dataset_col_lookup.get(rel.to_dataset, set())
+                    if to_phys and to_col not in to_phys:
+                        logger.debug(
+                            f"Relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                            f"referenced column '{to_col}' not found in '{rel.to_dataset}' "
+                            f"physical columns, emitting anyway"
+                        )
+                # Build REFERENCES clause with explicit target column
+                ref_clause = f'{to_alias} ("{to_col}")' if to_col else to_alias
                 rel_name = self._to_snowflake_relationship_name(getattr(rel, "unique_name", "") or "")
                 if rel_name:
                     rel_lines.append(
-                        f'  {rel_name} AS {from_alias} ("{from_col}") REFERENCES {to_alias}'
+                        f'  {rel_name} AS {from_alias} ("{from_col}") REFERENCES {ref_clause}'
                     )
                 else:
-                    rel_lines.append(f'  {from_alias} ("{from_col}") REFERENCES {to_alias}')
+                    rel_lines.append(f'  {from_alias} ("{from_col}") REFERENCES {ref_clause}')
         
         if rel_lines:
             definitions.append("RELATIONSHIPS (\n" + ",\n".join(rel_lines) + "\n)")
@@ -4168,6 +4212,37 @@ class SnowflakeEmitter(BaseEmitter):
                 except Exception as ex:
                     logger.warning(f"Failed to save Cortex YAML: {ex}")
 
+                # Step 4b: Save semantic view DDL as YAML for auditing
+                try:
+                    from datetime import datetime, timezone
+                    ddl_output = {
+                        "metadata": {
+                            "model_name": model_name,
+                            "generated_at": datetime.now(timezone.utc).isoformat(),
+                            "ddl_count": len(ddls),
+                            "path": "OSI",
+                        },
+                        "relationships": [
+                            {
+                                "name": rel.unique_name,
+                                "from_dataset": rel.from_dataset,
+                                "from_columns": list(rel.from_columns) if rel.from_columns else [],
+                                "to_dataset": rel.to_dataset,
+                                "to_columns": list(rel.to_columns) if rel.to_columns else [],
+                                "cardinality": str(rel.cardinality) if rel.cardinality else None,
+                                "is_active": rel.is_active,
+                            }
+                            for rel in (getattr(osi, 'relationships', None) or [])
+                        ],
+                        "ddl_statements": ddls,
+                    }
+                    ddl_yaml_path = output_dir / "semantic_view_ddl.yaml"
+                    with open(ddl_yaml_path, "w") as f:
+                        yaml.dump(ddl_output, f, default_flow_style=False, sort_keys=False, allow_unicode=True, width=200)
+                    logger.info(f"Semantic View DDL YAML saved to {ddl_yaml_path}")
+                except Exception as ex:
+                    logger.warning(f"Failed to save DDL YAML: {ex}")
+
                 logger.info(f"Semantic View deployed successfully for '{model_name}' (OSI path)")
 
             finally:
@@ -4387,6 +4462,8 @@ class SnowflakeEmitter(BaseEmitter):
             to_alias = dataset_aliases.get(rel.to_dataset)
             if from_alias and to_alias and rel.from_columns:
                 from_col = self._sanitize_col_name(rel.from_columns[0])
+                # Sanitize referenced (PK) column on the target side
+                to_col = self._sanitize_col_name(rel.to_columns[0]) if rel.to_columns else ""
                 # Validate FK column exists in the from-dataset's physical columns
                 from_phys = dataset_col_lookup.get(rel.from_dataset, set())
                 if from_phys and from_col not in from_phys:
@@ -4396,14 +4473,25 @@ class SnowflakeEmitter(BaseEmitter):
                         f"a physical column in '{rel.from_dataset}'"
                     )
                     continue
+                # Validate to_col exists in the to-dataset's physical columns
+                if to_col:
+                    to_phys = dataset_col_lookup.get(rel.to_dataset, set())
+                    if to_phys and to_col not in to_phys:
+                        logger.debug(
+                            f"Relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                            f"referenced column '{to_col}' not found in '{rel.to_dataset}' "
+                            f"physical columns, emitting anyway"
+                        )
+                # Build REFERENCES clause with explicit target column
+                ref_clause = f'{to_alias} ("{to_col}")' if to_col else to_alias
                 rel_name = self._to_snowflake_relationship_name(getattr(rel, "unique_name", "") or "")
                 if rel_name:
                     rel_lines.append(
-                        f'  {rel_name} AS {from_alias} ("{from_col}") REFERENCES {to_alias}'
+                        f'  {rel_name} AS {from_alias} ("{from_col}") REFERENCES {ref_clause}'
                     )
                 else:
                     rel_lines.append(
-                        f'  {from_alias} ("{from_col}") REFERENCES {to_alias}'
+                        f'  {from_alias} ("{from_col}") REFERENCES {ref_clause}'
                     )
 
         if rel_lines:

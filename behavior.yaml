@@ -3,7 +3,7 @@ snowflake:
   apply_inferred_types: true
 
 features:
-  offline_mode: true
+  offline_mode: false
   offline_fabric_model_path: output/debug/raw_fabric_model.json
 
 semantic_model:

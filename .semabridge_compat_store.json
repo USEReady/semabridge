@@ -335,6 +335,20 @@
       "status": "draft",
       "created_at": "2026-03-20T10:06:57.114294",
       "updated_at": "2026-03-20T10:47:40.518006"
+    },
+    "proj-1774038862884": {
+      "id": "proj-1774038862884",
+      "project_id": "proj-1774038862884",
+      "name": "sample",
+      "description": "syncs client dataset fabric to sf",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "semabridge-local",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-20T20:34:22.885014",
+      "updated_at": "2026-03-20T20:34:22.885025"
     }
   },
   "project_configs": {
@@ -361,7 +375,8 @@
     "proj-1773977124707": "project_name: mmmm\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Core_Finance_v1\ntargets:\n  - type: snowflake\nui:\n  intermediate_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - bbe97d8c-bf99-457f-b322-6c5e7a948171\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
     "proj-1773982993730": "project_name: mmnnmbj\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Corporate Spend\ntargets:\n  - type: snowflake\nmappings:\n  - source: Corporate Spend\n    target: corporate spend_mapped\n    type: table\n    columns:\n      - source: id\n        target: id\n        type: INT\n        primary_key: true\n      - source: name\n        target: name\n        type: VARCHAR(255)\n      - source: created_at\n        target: created_at\n        type: TIMESTAMP\n      - source: updated_at\n        target: updated_at\n        type: TIMESTAMP\nui:\n  intermediate_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - cfbd1669-4cbe-4dbb-a291-ff3bcd6b1053\noptions:\n  auto_relationships: true\n  include_hidden_fields: true\n  generate_descriptions: true",
     "proj-1773984101106": "project_name: h\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Customer Profitability\ntarget:\n  type: snowflake\nui:\n  output_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - 83686c9b-2320-466a-a7a8-c3975d6998e7\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true",
-    "proj-1774001217114": "project_name: cs\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Customer Profitability\ntargets:\n  - type: snowflake\nmappings:\n  - source: Customer Profitability\n    target: customer profitability_mapped\n    type: table\n    columns:\n      - source: id\n        target: id\n        type: INT\n        primary_key: true\n      - source: name\n        target: name\n        type: VARCHAR(255)\n      - source: created_at\n        target: created_at\n        type: TIMESTAMP\n      - source: updated_at\n        target: updated_at\n        type: TIMESTAMP\nui:\n  intermediate_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - 83686c9b-2320-466a-a7a8-c3975d6998e7\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: false"
+    "proj-1774001217114": "project_name: cs\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - Customer Profitability\ntargets:\n  - type: snowflake\nmappings:\n  - source: Customer Profitability\n    target: customer profitability_mapped\n    type: table\n    columns:\n      - source: id\n        target: id\n        type: INT\n        primary_key: true\n      - source: name\n        target: name\n        type: VARCHAR(255)\n      - source: created_at\n        target: created_at\n        type: TIMESTAMP\n      - source: updated_at\n        target: updated_at\n        type: TIMESTAMP\nui:\n  intermediate_format: osi\n  editor_mode: yaml\nselection:\n  model_ids:\n    - 83686c9b-2320-466a-a7a8-c3975d6998e7\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: false",
+    "proj-1774038862884": "project_name: \"sample\"\ndescription: \"syncs client dataset fabric to sf\"\nsource:\n  type: fabric\n  workspace_id: \"semabridge-local\"\n  workspace: \"SemaBridge Workspace\"\n  models:\n    - \"Client Data\"\ntargets:\n  - type: snowflake\n    database: \"SEMABRIDGE_DB\"\n    schema: \"PUBLIC\"\nmappings:\n  - source: \"Client Data\"\n    target: \"client data_mapped\"\n    type: table\n    columns:\n      - source: \"id\"\n        target: \"id\"\n        type: INT\n        primary_key: true\n      - source: \"name\"\n        target: \"name\"\n        type: VARCHAR(255)\n      - source: \"created_at\"\n        target: \"created_at\"\n        type: TIMESTAMP\n      - source: \"updated_at\"\n        target: \"updated_at\"\n        type: TIMESTAMP\nui:\n  intermediate_format: \"osi\"\n  editor_mode: \"form\"\nselection:\n  model_ids:\n    - \"0794fdcc-d85f-4d93-a42c-8bacaad04819\"\noptions:\n  auto_relationships: true\n  include_hidden_fields: false\n  generate_descriptions: true"
   },
   "project_runs": {
     "e1f19d58-85c3-4c90-a6a0-57c9db6f348b": [],
@@ -13548,6 +13563,156 @@
     ],
     "proj-1774001217114": [
       {
+        "run_id": "run-1774038194989",
+        "id": "run-1774038194989",
+        "project_id": "proj-1774001217114",
+        "project_name": "cs",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 435,
+        "started_at": "2026-03-20T20:23:14.989744",
+        "summary": {
+          "project_id": "Customer Profitability",
+          "run_id": "57658dbb-9a9d-48d3-85cc-8aa30bc915f5",
+          "status": "FAILED",
+          "started_at": "2026-03-20T20:23:15.093986",
+          "completed_at": "2026-03-20T20:23:15.117420",
+          "duration_ms": 23,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:23:15.094401",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:23:15.105469",
+              "duration_ms": null,
+              "message": "Authentication resolved from OFFLINE",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:23:15.107781",
+              "duration_ms": null,
+              "message": "offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:23:15.117400",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "error_type": "ExtractionError",
+              "message": "Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+              "traceback": "Traceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 622, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 678, in _extract_fabric\n    raise ExtractionError(\nsemabridge.core.execution_engine.ExtractionError: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 277, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 630, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Customer Profitability",
+            "status": "failed",
+            "summary": {
+              "project_id": "Customer Profitability",
+              "run_id": "57658dbb-9a9d-48d3-85cc-8aa30bc915f5",
+              "status": "FAILED",
+              "started_at": "2026-03-20T20:23:15.093986",
+              "completed_at": "2026-03-20T20:23:15.117420",
+              "duration_ms": 23,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:23:15.094401",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:23:15.105469",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from OFFLINE",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:23:15.107781",
+                  "duration_ms": null,
+                  "message": "offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:23:15.117400",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "error_type": "ExtractionError",
+                  "message": "Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+                  "traceback": "Traceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 622, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 678, in _extract_fabric\n    raise ExtractionError(\nsemabridge.core.execution_engine.ExtractionError: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 277, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 630, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
         "run_id": "run-1774012560755",
         "id": "run-1774012560755",
         "project_id": "proj-1774001217114",
@@ -16305,6 +16470,998 @@
           }
         ],
         "models_synced": 1,
+        "total_models": 1
+      }
+    ],
+    "proj-1774038862884": [
+      {
+        "run_id": "run-1774039977049",
+        "id": "run-1774039977049",
+        "project_id": "proj-1774038862884",
+        "project_name": "sample",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 148606,
+        "started_at": "2026-03-20T20:52:57.049561",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "e3cd0d7e-9e58-4161-94ab-6086edcfd56d",
+          "status": "SUCCESS",
+          "started_at": "2026-03-20T20:52:57.200096",
+          "completed_at": "2026-03-20T20:55:25.568870",
+          "duration_ms": 148368,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:52:57.200150",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:52:57.236885",
+              "duration_ms": null,
+              "message": "Authentication resolved from ENV",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:53:32.614173",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:53:32.629692",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:53:32.961788",
+              "duration_ms": null,
+              "message": "26 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:53:33.245435",
+              "duration_ms": null,
+              "message": "Snapshot c39dd3a0... committed",
+              "artifact_ids": [
+                "c39dd3a0-7753-4dd6-a6b8-19c283463312",
+                "4d34e4c2-9e77-4c41-8e56-dbcc9a154d97"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:53:33.603853",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:55:25.568158",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:55:25.568856",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "4d34e4c2-9e77-4c41-8e56-dbcc9a154d97",
+          "sml_snapshot_id": "c39dd3a0-7753-4dd6-a6b8-19c283463312",
+          "target_artifact_path": "output/reverse/semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "success",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "e3cd0d7e-9e58-4161-94ab-6086edcfd56d",
+              "status": "SUCCESS",
+              "started_at": "2026-03-20T20:52:57.200096",
+              "completed_at": "2026-03-20T20:55:25.568870",
+              "duration_ms": 148368,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:52:57.200150",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:52:57.236885",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from ENV",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:53:32.614173",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:53:32.629692",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:53:32.961788",
+                  "duration_ms": null,
+                  "message": "26 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:53:33.245435",
+                  "duration_ms": null,
+                  "message": "Snapshot c39dd3a0... committed",
+                  "artifact_ids": [
+                    "c39dd3a0-7753-4dd6-a6b8-19c283463312",
+                    "4d34e4c2-9e77-4c41-8e56-dbcc9a154d97"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:53:33.603853",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:55:25.568158",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:55:25.568856",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "4d34e4c2-9e77-4c41-8e56-dbcc9a154d97",
+              "sml_snapshot_id": "c39dd3a0-7753-4dd6-a6b8-19c283463312",
+              "target_artifact_path": "output/reverse/semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774039464930",
+        "id": "run-1774039464930",
+        "project_id": "proj-1774038862884",
+        "project_name": "sample",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 43,
+        "started_at": "2026-03-20T20:44:24.930138",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "762cb031-4bd2-48f5-849b-c66fb00ef618",
+          "status": "FAILED",
+          "started_at": "2026-03-20T20:44:24.966437",
+          "completed_at": "2026-03-20T20:44:24.972596",
+          "duration_ms": 6,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:44:24.966472",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:44:24.970276",
+              "duration_ms": null,
+              "message": "Authentication resolved from OFFLINE",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:44:24.970885",
+              "duration_ms": null,
+              "message": "offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:44:24.972584",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "error_type": "ExtractionError",
+              "message": "Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+              "traceback": "Traceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 622, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 678, in _extract_fabric\n    raise ExtractionError(\nsemabridge.core.execution_engine.ExtractionError: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 277, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 630, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "762cb031-4bd2-48f5-849b-c66fb00ef618",
+              "status": "FAILED",
+              "started_at": "2026-03-20T20:44:24.966437",
+              "completed_at": "2026-03-20T20:44:24.972596",
+              "duration_ms": 6,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:44:24.966472",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:44:24.970276",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from OFFLINE",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:44:24.970885",
+                  "duration_ms": null,
+                  "message": "offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:44:24.972584",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "error_type": "ExtractionError",
+                  "message": "Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+                  "traceback": "Traceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 622, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 678, in _extract_fabric\n    raise ExtractionError(\nsemabridge.core.execution_engine.ExtractionError: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 277, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 630, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774039463089",
+        "id": "run-1774039463089",
+        "project_id": "proj-1774038862884",
+        "project_name": "sample",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 44,
+        "started_at": "2026-03-20T20:44:23.089244",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "5baa9fb7-7b22-440c-a291-3098f0dda64b",
+          "status": "FAILED",
+          "started_at": "2026-03-20T20:44:23.127181",
+          "completed_at": "2026-03-20T20:44:23.133033",
+          "duration_ms": 5,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:44:23.127206",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:44:23.130827",
+              "duration_ms": null,
+              "message": "Authentication resolved from OFFLINE",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:44:23.131425",
+              "duration_ms": null,
+              "message": "offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:44:23.133023",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "error_type": "ExtractionError",
+              "message": "Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+              "traceback": "Traceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 622, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 678, in _extract_fabric\n    raise ExtractionError(\nsemabridge.core.execution_engine.ExtractionError: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 277, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 630, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "5baa9fb7-7b22-440c-a291-3098f0dda64b",
+              "status": "FAILED",
+              "started_at": "2026-03-20T20:44:23.127181",
+              "completed_at": "2026-03-20T20:44:23.133033",
+              "duration_ms": 5,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:44:23.127206",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:44:23.130827",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from OFFLINE",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:44:23.131425",
+                  "duration_ms": null,
+                  "message": "offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:44:23.133023",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "error_type": "ExtractionError",
+                  "message": "Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+                  "traceback": "Traceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 622, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 678, in _extract_fabric\n    raise ExtractionError(\nsemabridge.core.execution_engine.ExtractionError: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 277, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 630, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774039457877",
+        "id": "run-1774039457877",
+        "project_id": "proj-1774038862884",
+        "project_name": "sample",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 161,
+        "started_at": "2026-03-20T20:44:17.877350",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "02ec6056-e77c-4559-8edc-8e831d28592b",
+          "status": "FAILED",
+          "started_at": "2026-03-20T20:44:17.993535",
+          "completed_at": "2026-03-20T20:44:18.000782",
+          "duration_ms": 7,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:44:17.993584",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:44:17.997068",
+              "duration_ms": null,
+              "message": "Authentication resolved from OFFLINE",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:44:17.997837",
+              "duration_ms": null,
+              "message": "offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:44:18.000770",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "error_type": "ExtractionError",
+              "message": "Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+              "traceback": "Traceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 622, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 678, in _extract_fabric\n    raise ExtractionError(\nsemabridge.core.execution_engine.ExtractionError: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 277, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 630, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "02ec6056-e77c-4559-8edc-8e831d28592b",
+              "status": "FAILED",
+              "started_at": "2026-03-20T20:44:17.993535",
+              "completed_at": "2026-03-20T20:44:18.000782",
+              "duration_ms": 7,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:44:17.993584",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:44:17.997068",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from OFFLINE",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:44:17.997837",
+                  "duration_ms": null,
+                  "message": "offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:44:18.000770",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "error_type": "ExtractionError",
+                  "message": "Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+                  "traceback": "Traceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 622, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 678, in _extract_fabric\n    raise ExtractionError(\nsemabridge.core.execution_engine.ExtractionError: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 277, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 630, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774039289161",
+        "id": "run-1774039289161",
+        "project_id": "proj-1774038862884",
+        "project_name": "sample",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 159,
+        "started_at": "2026-03-20T20:41:29.161039",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "539aed5a-ce31-43e1-acc5-c82bf3cf554f",
+          "status": "FAILED",
+          "started_at": "2026-03-20T20:41:29.310431",
+          "completed_at": "2026-03-20T20:41:29.318541",
+          "duration_ms": 8,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:41:29.310741",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:41:29.314477",
+              "duration_ms": null,
+              "message": "Authentication resolved from OFFLINE",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:41:29.316207",
+              "duration_ms": null,
+              "message": "offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:41:29.318531",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "error_type": "ExtractionError",
+              "message": "Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+              "traceback": "Traceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 622, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 678, in _extract_fabric\n    raise ExtractionError(\nsemabridge.core.execution_engine.ExtractionError: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 277, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 630, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "539aed5a-ce31-43e1-acc5-c82bf3cf554f",
+              "status": "FAILED",
+              "started_at": "2026-03-20T20:41:29.310431",
+              "completed_at": "2026-03-20T20:41:29.318541",
+              "duration_ms": 8,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:41:29.310741",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:41:29.314477",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from OFFLINE",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:41:29.316207",
+                  "duration_ms": null,
+                  "message": "offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:41:29.318531",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "error_type": "ExtractionError",
+                  "message": "Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+                  "traceback": "Traceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 622, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 678, in _extract_fabric\n    raise ExtractionError(\nsemabridge.core.execution_engine.ExtractionError: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 277, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 630, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774038862926",
+        "id": "run-1774038862926",
+        "project_id": "proj-1774038862884",
+        "project_name": "sample",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 84,
+        "started_at": "2026-03-20T20:34:22.926856",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "ac6f3281-b574-4b42-b3f0-6e4188a72135",
+          "status": "FAILED",
+          "started_at": "2026-03-20T20:34:22.992146",
+          "completed_at": "2026-03-20T20:34:23.008280",
+          "duration_ms": 16,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:34:22.992397",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:34:22.997132",
+              "duration_ms": null,
+              "message": "Authentication resolved from OFFLINE",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:34:22.998635",
+              "duration_ms": null,
+              "message": "offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-20T20:34:23.008264",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "error_type": "ExtractionError",
+              "message": "Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+              "traceback": "Traceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 622, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 678, in _extract_fabric\n    raise ExtractionError(\nsemabridge.core.execution_engine.ExtractionError: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 277, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 630, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "ac6f3281-b574-4b42-b3f0-6e4188a72135",
+              "status": "FAILED",
+              "started_at": "2026-03-20T20:34:22.992146",
+              "completed_at": "2026-03-20T20:34:23.008280",
+              "duration_ms": 16,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:34:22.992397",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:34:22.997132",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from OFFLINE",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:34:22.998635",
+                  "duration_ms": null,
+                  "message": "offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-20T20:34:23.008264",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "error_type": "ExtractionError",
+                  "message": "Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json",
+                  "traceback": "Traceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 622, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 678, in _extract_fabric\n    raise ExtractionError(\nsemabridge.core.execution_engine.ExtractionError: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 277, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/sharada/Documents/semabridge-react/semabridge/src/semabridge/core/execution_engine.py\", line 630, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: offline_mode enabled but file not found: output/debug/raw_fabric_model.json\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
         "total_models": 1
       }
     ]
