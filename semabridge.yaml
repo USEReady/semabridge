@@ -1,19 +1,19 @@
-project_name: showw
+project_name: h
 source:
   type: fabric
   workspace_id: semabridge-local
   workspace: SemaBridge Workspace
   models:
-    - continent
+    - Customer Profitability
 target:
   type: snowflake
 ui:
   output_format: osi
-  editor_mode: form
+  editor_mode: yaml
 selection:
   model_ids:
-    - d32e8900-31cc-4647-872d-08a7e62bf03b
+    - 83686c9b-2320-466a-a7a8-c3975d6998e7
 options:
   auto_relationships: true
-  include_hidden_fields: true
+  include_hidden_fields: false
   generate_descriptions: true
