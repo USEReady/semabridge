@@ -926,102 +926,182 @@ function StepConnectorConfig({
   workspaces,
   workspacesLoading,
 }) {
+  const selectedTargets = [...targetConnectors];
+  const sourceLabel = CONNECTOR_TYPES.find(c => c.value === sourceConnector)?.label || sourceConnector;
+
+  const SECTION_CARD = {
+    border: '1px solid var(--border-main)',
+    borderRadius: 12,
+    background: 'var(--bg-surface)',
+    padding: 16,
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div>
         <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Connector Configuration</h2>
         <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
-          Choose the source workspace and any defaults needed for the first sync. Global credentials are set in Settings.
+          Configure source first, then review one or more target connectors. Credentials are managed globally in Settings and are not entered here.
         </p>
       </div>
 
-      {sourceConnector === 'fabric' && (
-        <div>
-          <label style={LABEL}>Fabric Workspace</label>
-          <SearchableSelect
-            items={workspaces}
-            displayKey="name"
-            valueKey="id"
-            searchFields={['name', 'id', 'workspace_id']}
-            placeholder="Choose a workspace"
-            value={fabricWorkspaceId}
-            onChange={item => setFabricWorkspaceId(item?.id || '')}
-            loading={workspacesLoading}
-            clearable={false}
-          />
-          <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
-            Pick the workspace once here. The next step will show models from this workspace only.
-          </p>
-          {!workspacesLoading && workspaces.length === 0 && (
-            <p style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 8 }}>
-              No Fabric workspaces were found. Check the connector credentials in Settings before creating the project.
+      <div style={SECTION_CARD}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>1. Source Configuration</div>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 3 }}>
+              Select source location and defaults used for discovery.
+            </div>
+          </div>
+          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent-blue)', background: 'var(--accent-blue)14', border: '1px solid var(--accent-blue)30', padding: '3px 8px', borderRadius: 999 }}>
+            {sourceLabel}
+          </span>
+        </div>
+
+        {sourceConnector === 'fabric' && (
+          <div>
+            <label style={LABEL}>Fabric Workspace</label>
+            <SearchableSelect
+              items={workspaces}
+              displayKey="name"
+              valueKey="id"
+              searchFields={['name', 'id', 'workspace_id']}
+              placeholder="Choose a workspace"
+              value={fabricWorkspaceId}
+              onChange={item => setFabricWorkspaceId(item?.id || '')}
+              loading={workspacesLoading}
+              clearable={false}
+            />
+            <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
+              Pick one workspace here. Step 3 will show models from this workspace only.
             </p>
-          )}
-        </div>
-      )}
+            {!workspacesLoading && workspaces.length === 0 && (
+              <p style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 8 }}>
+                No Fabric workspaces were found. Check connector setup in Settings.
+              </p>
+            )}
+          </div>
+        )}
 
-      {sourceConnector === 'snowflake' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <div>
-            <label style={LABEL}>Source Database</label>
-            <input
-              type="text" value={snowflakeDatabase} onChange={e => setSnowflakeDatabase(e.target.value)}
-              placeholder="e.g. ANALYTICS_DB"
-              style={INPUT}
-              onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-              onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-            />
+        {sourceConnector === 'snowflake' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={LABEL}>Source Database</label>
+              <input
+                type="text" value={snowflakeDatabase} onChange={e => setSnowflakeDatabase(e.target.value)}
+                placeholder="e.g. ANALYTICS_DB"
+                style={INPUT}
+                onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
+                onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
+              />
+            </div>
+            <div>
+              <label style={LABEL}>Source Schema</label>
+              <input
+                type="text" value={snowflakeSchema} onChange={e => setSnowflakeSchema(e.target.value)}
+                placeholder="e.g. PUBLIC"
+                style={INPUT}
+                onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
+                onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
+              />
+            </div>
           </div>
-          <div>
-            <label style={LABEL}>Source Schema</label>
-            <input
-              type="text" value={snowflakeSchema} onChange={e => setSnowflakeSchema(e.target.value)}
-              placeholder="e.g. PUBLIC"
-              style={INPUT}
-              onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-              onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-            />
-          </div>
-        </div>
-      )}
+        )}
 
-      {targetConnectors.has('snowflake') && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <div>
-            <label style={LABEL}>Target Database (optional)</label>
-            <input
-              type="text" value={targetDatabase} onChange={e => setTargetDatabase(e.target.value)}
-              placeholder="Use global target defaults"
-              style={INPUT}
-              onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-              onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-            />
-          </div>
-          <div>
-            <label style={LABEL}>Target Schema (optional)</label>
-            <input
-              type="text" value={targetSchema} onChange={e => setTargetSchema(e.target.value)}
-              placeholder="Use global target defaults"
-              style={INPUT}
-              onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-              onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-            />
-          </div>
-        </div>
-      )}
-
-      {targetConnectors.has('fabric') && (
-        <div style={{ padding: '14px 16px', borderRadius: 10, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
-            Microsoft Fabric target
-          </div>
+        {sourceConnector !== 'fabric' && sourceConnector !== 'snowflake' && (
           <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
-            Fabric target sync will use the saved global connector settings. You can fine-tune destination details later in Configure if needed.
+            Source connector defaults will be resolved from the saved global connection.
+          </div>
+        )}
+      </div>
+
+      <div style={SECTION_CARD}>
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>2. Target Configuration</div>
+          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 3 }}>
+            Configure each selected target separately. Leave fields empty to use global defaults.
           </div>
         </div>
-      )}
 
-      <div>
+        {selectedTargets.length === 0 && (
+          <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+            No target connector selected. Go back to Basic Info and choose at least one target.
+          </div>
+        )}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {selectedTargets.map(target => {
+            const targetMeta = TARGET_CONNECTOR_TYPES.find(t => t.value === target) || { label: target, icon: '🔗' };
+            return (
+              <details key={target} open style={{ border: '1px solid var(--border-main)', borderRadius: 10, overflow: 'hidden' }}>
+                <summary
+                  style={{
+                    listStyle: 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    padding: '10px 12px',
+                    background: 'var(--bg-surface-raised)',
+                    color: 'var(--text-primary)',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    <span>{targetMeta.icon}</span>
+                    {targetMeta.label} Target Configuration
+                  </span>
+                  <ChevronDown size={14} />
+                </summary>
+
+                <div style={{ padding: 12, background: 'var(--bg-surface)' }}>
+                  {target === 'snowflake' && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <div>
+                        <label style={LABEL}>Snowflake Database (optional)</label>
+                        <input
+                          type="text" value={targetDatabase} onChange={e => setTargetDatabase(e.target.value)}
+                          placeholder="Use global Snowflake database"
+                          style={INPUT}
+                          onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
+                          onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
+                        />
+                      </div>
+                      <div>
+                        <label style={LABEL}>Snowflake Schema (optional)</label>
+                        <input
+                          type="text" value={targetSchema} onChange={e => setTargetSchema(e.target.value)}
+                          placeholder="Use global Snowflake schema"
+                          style={INPUT}
+                          onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
+                          onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {target === 'fabric' && (
+                    <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+                      Fabric target uses the existing global connector. Destination details can be refined later in project configuration.
+                    </div>
+                  )}
+
+                  {target !== 'snowflake' && target !== 'fabric' && (
+                    <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+                      This target will use global connection defaults from Settings.
+                    </div>
+                  )}
+                </div>
+              </details>
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={SECTION_CARD}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>Optional Metadata</div>
         <label style={LABEL}>Domain Hint (optional)</label>
         <input
           type="text" value={domainHint} onChange={e => setDomainHint(e.target.value)}
@@ -1031,7 +1111,7 @@ function StepConnectorConfig({
           onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
         />
         <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
-          A domain hint helps the AI produce more accurate semantic descriptions.
+          A domain hint improves generated labels and descriptions. It does not change connector behavior.
         </p>
       </div>
     </div>
