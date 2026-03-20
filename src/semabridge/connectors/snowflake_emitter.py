@@ -1324,6 +1324,16 @@ class SnowflakeEmitter(BaseEmitter):
                 # Step 2: Generate and execute DDLs
                 ddls = self.generate_ddls(sml)
                 logger.info("Generated Snowflake DDLs")
+
+                if ddls:
+                    self._guard_relationship_clause(
+                        getattr(sml, "unique_name", None)
+                        or getattr(sml, "label", None)
+                        or "<unnamed_sml_model>",
+                        getattr(sml, "relationships", []),
+                        ddls[0],
+                        fail_on_missing=True,
+                    )
                 
                 for i, ddl in enumerate(ddls):
                     logger.info(f"Executing DDL statement {i+1}/{len(ddls)}...")
@@ -1771,6 +1781,46 @@ class SnowflakeEmitter(BaseEmitter):
         semantic_ddl = self._generate_semantic_view(sml)
         
         return [semantic_ddl]
+
+    def _guard_relationship_clause(
+        self,
+        model_name: str,
+        relationships: list[Any],
+        semantic_ddl: str,
+        *,
+        fail_on_missing: bool,
+    ) -> None:
+        """Detect and block relationship loss between model and emitted DDL."""
+        active_relationships = 0
+        for rel in relationships or []:
+            if not getattr(rel, "is_active", True):
+                continue
+            if (
+                getattr(rel, "from_dataset", None)
+                and getattr(rel, "to_dataset", None)
+                and (getattr(rel, "from_columns", None) or [])
+                and (getattr(rel, "to_columns", None) or [])
+            ):
+                active_relationships += 1
+
+        if active_relationships == 0:
+            return
+
+        has_relationship_clause = bool(
+            re.search(r"\bRELATIONSHIPS\s*\(", semantic_ddl or "", re.IGNORECASE)
+        )
+        if has_relationship_clause:
+            return
+
+        msg = (
+            f"Model '{model_name}' has {active_relationships} active relationship(s), "
+            "but generated semantic-view DDL has no RELATIONSHIPS clause. "
+            "Aborting deploy to prevent relationship loss in Snowflake."
+        )
+        if fail_on_missing:
+            logger.error(msg)
+            raise ValueError(msg)
+        logger.warning(msg)
     
     def _generate_semantic_view(self, sml: SMLModel) -> str:
         """
@@ -1965,7 +2015,13 @@ class SnowflakeEmitter(BaseEmitter):
                         f"a physical column in '{rel.from_dataset}'"
                     )
                     continue
-                rel_lines.append(f'  {from_alias} ("{from_col}") REFERENCES {to_alias}')
+                rel_name = self._to_snowflake_relationship_name(getattr(rel, "unique_name", "") or "")
+                if rel_name:
+                    rel_lines.append(
+                        f'  {rel_name} AS {from_alias} ("{from_col}") REFERENCES {to_alias}'
+                    )
+                else:
+                    rel_lines.append(f'  {from_alias} ("{from_col}") REFERENCES {to_alias}')
         
         if rel_lines:
             definitions.append("RELATIONSHIPS (\n" + ",\n".join(rel_lines) + "\n)")
@@ -2500,8 +2556,19 @@ class SnowflakeEmitter(BaseEmitter):
         """Sanitize semantic name and ensure it does not start with a digit."""
         sanitized = self._id.sanitize_column(name)
         if sanitized and sanitized[0].isdigit():
-            sanitized = f"N_{sanitized}"
+            sanitized = f"_{sanitized}"
         return sanitized
+
+    def _to_snowflake_relationship_name(self, name: str) -> str:
+        """Convert canonical relationship name to Snowflake-layer identifier.
+
+        Canonical model names retain the REL_ prefix. Snowflake output removes
+        only that leading REL_ for cleaner relationship identifiers.
+        """
+        rel_name = self._sanitize_semantic_name(name)
+        if rel_name.startswith("REL_"):
+            return rel_name[4:]
+        return rel_name
 
     def _get_safe_object_name(self, name: str) -> str:
         """Sanitize object name for Snowflake."""
@@ -2514,7 +2581,7 @@ class SnowflakeEmitter(BaseEmitter):
         """Sanitize alias names and ensure they do not start with a digit."""
         sanitized = self._id.sanitize_alias(name)
         if sanitized and sanitized[0].isdigit():
-            sanitized = f"L_{sanitized}"
+            sanitized = f"_{sanitized}"
         return sanitized
 
     def _resolve_unique_metric_alias(
@@ -3543,6 +3610,13 @@ class SnowflakeEmitter(BaseEmitter):
                         f"model may have no deployable datasets."
                     )
                     return True
+
+                self._guard_relationship_clause(
+                    model_name,
+                    getattr(osi, "relationships", []),
+                    ddls[0],
+                    fail_on_missing=True,
+                )
                 logger.info(f"Generated {len(ddls)} Snowflake DDL(s) (OSI path)")
 
                 for i, ddl in enumerate(ddls):
@@ -3793,9 +3867,15 @@ class SnowflakeEmitter(BaseEmitter):
                         f"a physical column in '{rel.from_dataset}'"
                     )
                     continue
-                rel_lines.append(
-                    f'  {from_alias} ("{from_col}") REFERENCES {to_alias}'
-                )
+                rel_name = self._to_snowflake_relationship_name(getattr(rel, "unique_name", "") or "")
+                if rel_name:
+                    rel_lines.append(
+                        f'  {rel_name} AS {from_alias} ("{from_col}") REFERENCES {to_alias}'
+                    )
+                else:
+                    rel_lines.append(
+                        f'  {from_alias} ("{from_col}") REFERENCES {to_alias}'
+                    )
 
         if rel_lines:
             definitions.append(

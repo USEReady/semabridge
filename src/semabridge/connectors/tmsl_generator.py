@@ -24,6 +24,7 @@ from semabridge.sml.models import (
     CrossFilterDirection,
 )
 from semabridge.utils.logger import get_logger
+from semabridge.utils.relationship_naming import RelationshipNameTracker
 
 logger = get_logger(__name__)
 
@@ -256,30 +257,43 @@ in
     def _build_relationships(self) -> list[dict[str, Any]]:
         """Build relationship definitions."""
         relationships = []
-        seen_paths = set()  # Track (FromTable, ToTable) for active relationships
+        seen_endpoints = set()  # Track exact endpoints for strict deduplication
+        name_tracker = RelationshipNameTracker()
         
-        for rel in self.model.relationships:
+        sorted_relationships = sorted(
+            self.model.relationships,
+            key=lambda r: (
+                r.from_dataset.upper(),
+                r.from_column.upper(),
+                r.to_dataset.upper(),
+                r.to_column.upper(),
+            ),
+        )
+
+        for rel in sorted_relationships:
             # Filter relationships to auto-generated date tables
             if (rel.from_dataset.startswith("LocalDateTable_") or 
                 rel.to_dataset.startswith("LocalDateTable_") or
                 rel.from_dataset.startswith("DateTableTemplate_") or
                 rel.to_dataset.startswith("DateTableTemplate_")):
                 continue
-                
-            # Prevent duplicate active relationships (ambiguous paths)
-            if rel.is_active:
-                # Normalize direction for path checking
-                path_key = tuple(sorted((rel.from_dataset, rel.to_dataset)))
-                if path_key in seen_paths:
-                    logger.warning(
-                        f"Skipping duplicate active relationship '{rel.unique_name}' "
-                        f"between {rel.from_dataset} and {rel.to_dataset}"
-                    )
-                    continue
-                seen_paths.add(path_key)
+
+            endpoint_key = (
+                rel.from_dataset.upper(),
+                rel.from_column.upper(),
+                rel.to_dataset.upper(),
+                rel.to_column.upper(),
+            )
+            if endpoint_key in seen_endpoints:
+                logger.warning(
+                    f"Skipping duplicate relationship endpoint "
+                    f"{rel.from_dataset}.{rel.from_column} -> {rel.to_dataset}.{rel.to_column}"
+                )
+                continue
+            seen_endpoints.add(endpoint_key)
                 
             rel_def = {
-                "name": rel.unique_name,
+                "name": name_tracker.next_name(rel.from_dataset, rel.from_column, rel.to_dataset, rel.to_column),
                 "fromTable": rel.from_dataset,
                 "fromColumn": rel.from_column,
                 "toTable": rel.to_dataset,

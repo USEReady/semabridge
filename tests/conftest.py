@@ -176,7 +176,7 @@ def sample_metric():
 def sample_relationship():
     """Create a sample SML relationship."""
     return SMLRelationship(
-        unique_name="Sales_to_Customer",
+        unique_name="REL_FACT_SALES_CUSTOMER_ID__DIM_CUSTOMER_ID",
         from_dataset="FACT_SALES",
         from_columns=["CUSTOMER_ID"],
         to_dataset="DIM_CUSTOMER",
@@ -236,7 +236,7 @@ def sample_tmsl_json():
             ],
             "relationships": [
                 {
-                    "name": "Sales_Customer",
+                    "name": "REL_SALES_CUSTOMERID__CUSTOMER_ID",
                     "fromTable": "Sales",
                     "fromColumn": "CustomerID",
                     "toTable": "Customer",

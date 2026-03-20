@@ -28,6 +28,7 @@ from semabridge.intermediate.models import (
     OSICrossFilterDirection,
 )
 from semabridge.utils.logger import get_logger
+from semabridge.utils.relationship_naming import generate_relationship_name
 
 logger = get_logger(__name__)
 
@@ -322,7 +323,14 @@ class TMSLToOSIConverter(BaseConverter):
     def _parse_relationship(self, rel_def: Dict[str, Any]) -> Optional[OSIRelationship]:
         """Parse TMSL relationship."""
         try:
-             name = rel_def.get("name", f"Rel_{rel_def['fromTable']}_{rel_def['toTable']}")
+             # Always derive canonical names from endpoints because Fabric can
+             # emit GUID/system relationship names that violate OSI naming rules.
+             name = generate_relationship_name(
+                 rel_def["fromTable"],
+                 rel_def["fromColumn"],
+                 rel_def["toTable"],
+                 rel_def["toColumn"],
+             )
              
              card_map = {
                  "manytoone": OSICardinality.MANY_TO_ONE,

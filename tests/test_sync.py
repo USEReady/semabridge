@@ -912,3 +912,63 @@ class TestSyncOrchestrator:
         assert SyncOrchestrator._map_snowflake_type("TIMESTAMP_NTZ") == OSIDataType.DATETIME
         assert SyncOrchestrator._map_snowflake_type("BOOLEAN") == OSIDataType.BOOLEAN
         assert SyncOrchestrator._map_snowflake_type("UNKNOWN_TYPE") == OSIDataType.UNKNOWN
+
+    def test_normalize_snowflake_relationships_preserves_non_duplicates_and_renames(self):
+        from semabridge.sync.orchestrator import SyncOrchestrator
+
+        raw_relationships = [
+            {
+                "name": "SYS_RELATIONSHIP_123",
+                "from_table": "FACT",
+                "from_column": "PRODUCT_ID",
+                "to_table": "PRODUCT",
+                "to_column": "ID",
+            },
+            {
+                "name": "A4CF2E2E-9A2A-4A0A-BE0D-123456789ABC",
+                "from_table": "FACT",
+                "from_column": "CALENDAR_ID",
+                "to_table": "CALENDAR",
+                "to_column": "ID",
+            },
+        ]
+
+        normalized = SyncOrchestrator._normalize_snowflake_relationships(raw_relationships)
+
+        assert len(normalized) == 2
+        assert normalized[0]["name"] == "REL_FACT_PRODUCT_ID__PRODUCT_ID"
+        assert normalized[1]["name"] == "REL_FACT_CALENDAR_ID__CALENDAR_ID"
+        assert all(not r["name"].startswith("SYS_RELATIONSHIP") for r in normalized)
+
+    def test_normalize_snowflake_relationships_removes_exact_duplicates_only(self):
+        from semabridge.sync.orchestrator import SyncOrchestrator
+
+        raw_relationships = [
+            {
+                "name": "SYS_RELATIONSHIP_1",
+                "from_table": "FACT",
+                "from_column": "CUSTOMER_ID",
+                "to_table": "CUSTOMER",
+                "to_column": "ID",
+            },
+            {
+                "name": "SYS_RELATIONSHIP_2",
+                "from_table": "FACT",
+                "from_column": "CUSTOMER_ID",
+                "to_table": "CUSTOMER",
+                "to_column": "ID",
+            },
+            {
+                "name": "SYS_RELATIONSHIP_3",
+                "from_table": "FACT",
+                "from_column": "BILL_TO_CUSTOMER_ID",
+                "to_table": "CUSTOMER",
+                "to_column": "ID",
+            },
+        ]
+
+        normalized = SyncOrchestrator._normalize_snowflake_relationships(raw_relationships)
+
+        assert len(normalized) == 2
+        assert normalized[0]["name"] == "REL_FACT_CUSTOMER_ID__CUSTOMER_ID"
+        assert normalized[1]["name"] == "REL_FACT_BILL_TO_CUSTOMER_ID__CUSTOMER_ID"

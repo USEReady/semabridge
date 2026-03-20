@@ -46,6 +46,7 @@ from semabridge.intermediate.models import OSIModel
 from semabridge.sml.models import SMLModel
 from semabridge.repository.model_repository import ModelRepository
 from semabridge.utils.logger import get_logger
+from semabridge.utils.relationship_naming import generate_relationship_name
 
 logger = get_logger(__name__)
 
@@ -887,17 +888,84 @@ class ExecutionEngine:
         
         try:
             if context.source_type == "snowflake":
-                return self._convert_snowflake_to_sml(context)
+                sml_model = self._convert_snowflake_to_sml(context)
             elif context.source_type == "fabric":
-                return self._convert_fabric_to_sml(context, workspace_id, dataset_id)
+                sml_model = self._convert_fabric_to_sml(context, workspace_id, dataset_id)
             elif context.source_type == "pbix":
-                return self._convert_pbix_to_sml(context)
+                sml_model = self._convert_pbix_to_sml(context)
             else:
                 raise ConversionError(f"Unknown source type: {context.source_type}")
+
+            # Normalize relationship names/deduplication here so all downstream
+            # target conversions and deployments operate on the same final model.
+            self._normalize_relationships_for_target(sml_model)
+            return sml_model
                 
         except Exception as e:
             self._record_step(6, StepStatus.FAILED, str(e))
             raise ConversionError(f"SML conversion failed: {e}") from e
+
+    def _normalize_relationships_for_target(self, model: SMLModel) -> None:
+        """Canonicalize and deduplicate relationships on the final SML model.
+
+        Stage placement is intentional: after canonical SML creation and before
+        target-format conversion/deployment.
+        """
+        if not getattr(model, "relationships", None):
+            return
+
+        normalized: list[SMLRelationship] = []
+        seen_endpoints: set[tuple[str, str, str, str]] = set()
+        renamed_count = 0
+        deduped_count = 0
+
+        for rel in model.relationships:
+            from_col = rel.from_columns[0] if rel.from_columns else ""
+            to_col = rel.to_columns[0] if rel.to_columns else ""
+            endpoint_key = (
+                rel.from_dataset.upper(),
+                from_col.upper(),
+                rel.to_dataset.upper(),
+                to_col.upper(),
+            )
+
+            # Deduplicate only exact endpoint duplicates.
+            if endpoint_key in seen_endpoints:
+                deduped_count += 1
+                continue
+            seen_endpoints.add(endpoint_key)
+
+            canonical_name = generate_relationship_name(
+                rel.from_dataset,
+                from_col,
+                rel.to_dataset,
+                to_col,
+            )
+            if rel.unique_name != canonical_name:
+                renamed_count += 1
+                rel.unique_name = canonical_name
+
+            normalized.append(rel)
+
+        model.relationships = normalized
+
+        if renamed_count or deduped_count:
+            logger.info(
+                "Normalized final relationships: kept=%s renamed=%s removed_duplicates=%s",
+                len(model.relationships),
+                renamed_count,
+                deduped_count,
+            )
+
+        for rel in model.relationships:
+            logger.info(
+                "FINAL REL: %s (%s.%s -> %s.%s)",
+                rel.unique_name,
+                rel.from_dataset,
+                rel.from_column,
+                rel.to_dataset,
+                rel.to_column,
+            )
     
     def _convert_snowflake_to_sml(self, context: RunContext) -> SMLModel:
         """Convert Snowflake source to SML."""

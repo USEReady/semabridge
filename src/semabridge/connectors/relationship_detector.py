@@ -13,6 +13,7 @@ import re
 from typing import Any, Optional
 
 from semabridge.utils.logger import get_logger
+from semabridge.utils.relationship_naming import RelationshipNameTracker
 
 logger = get_logger(__name__)
 
@@ -84,6 +85,7 @@ class RelationshipDetector:
         """
         relationships = []
         seen = set()  # Track (from_table, from_col, to_table, to_col)
+        name_tracker = RelationshipNameTracker()
         
         # 1. Add explicit foreign keys first (highest confidence)
         for fk in self.explicit_fks:
@@ -95,7 +97,7 @@ class RelationshipDetector:
             )
             if key not in seen:
                 relationships.append({
-                    "name": fk.get("name", f"FK_{fk['from_table']}_{fk['from_column']}"),
+                    "name": name_tracker.next_name(fk["from_table"], fk["from_column"], fk["to_table"], fk["to_column"]),
                     "from_table": fk["from_table"],
                     "from_column": fk["from_column"],
                     "to_table": fk["to_table"],
@@ -126,7 +128,7 @@ class RelationshipDetector:
                     )
                     if key not in seen:
                         relationships.append({
-                            "name": f"REL_{from_table}_{col_name}",
+                            "name": name_tracker.next_name(from_table, col_name, to_table, to_column),
                             "from_table": from_table,
                             "from_column": col_name,
                             "to_table": to_table,

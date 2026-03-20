@@ -77,6 +77,7 @@ class TestRelationshipDetector:
         assert len(explicit_rel) == 1
         assert explicit_rel[0]["from_table"] == "orders"
         assert explicit_rel[0]["to_table"] == "customers"
+        assert explicit_rel[0]["name"] == "REL_ORDERS_CUSTOMER_ID__CUSTOMERS_ID"
     
     def test_detect_by_naming_convention(self, sample_tables, sample_columns, sample_pks):
         detector = RelationshipDetector(
@@ -96,6 +97,12 @@ class TestRelationshipDetector:
         item_order = [r for r in relationships 
                       if r["from_table"] == "order_items" and r["from_column"] == "order_id"]
         assert len(item_order) >= 1
+
+        for rel in relationships:
+            assert rel["name"].startswith("REL_")
+            assert "__" in rel["name"]
+            assert "*" not in rel["name"]
+            assert not rel["name"].upper().startswith("SYS_RELATIONSHIP")
     
     def test_no_duplicate_relationships(self, sample_tables, sample_columns, sample_pks):
         explicit_fks = [
