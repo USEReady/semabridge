@@ -1,14 +1,17 @@
 import {
     X, Box, Database, BarChart3,
     FileCode, Clock, HardDrive,
+    ChevronDown, Info, Code2, Link2,
 } from 'lucide-react';
+import { useState } from 'react';
 
 /**
  * DetailPanel — right sidebar showing:
  *   • File preview (syntax-highlighted raw content) when a file is selected.
- *   • Node detail card when a graph node is clicked.
+ *   • Structured node detail (HLD & LLD) when a graph node is clicked.
  */
 export default function DetailPanel({ filePreview, selectedNode, onClose }) {
+    const [expandedSections, setExpandedSections] = useState({});
 
     // ── File preview ────────────────────────────
     if (filePreview) {

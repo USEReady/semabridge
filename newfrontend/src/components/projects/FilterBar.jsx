@@ -60,7 +60,8 @@ export default function FilterBar({
   onTargetChange,
   connectorTypes = [],
 }) {
-  const types = [...new Set(['fabric', 'snowflake', ...connectorTypes])];
+  // Always show all connector types, regardless of data
+  const types = ['fabric', 'snowflake', 'databricks', 'postgresql', 'salesforce'];
 
   return (
     <div

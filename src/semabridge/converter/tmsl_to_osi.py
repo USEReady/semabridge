@@ -193,19 +193,60 @@ class TMSLToOSIConverter(BaseConverter):
     def _parse_column(self, col_def: Dict[str, Any]) -> OSIColumn:
         """Parse a TMSL column into OSIColumn with Cortex AI metadata."""
         tmsl_type = col_def.get("dataType", "string")
+        normalized_type = str(tmsl_type or "string").strip().lower()
         col_name = col_def.get("name", "")
 
         type_map = {
-            "int64": OSIDataType.INTEGER,
-            "double": OSIDataType.FLOAT,
-            "decimal": OSIDataType.DECIMAL,
-            "boolean": OSIDataType.BOOLEAN,
-            "dateTime": OSIDataType.DATETIME,
+            # String-like
             "string": OSIDataType.STRING,
-            "binary": OSIDataType.BINARY
+            "text": OSIDataType.STRING,
+            "varchar": OSIDataType.STRING,
+            "char": OSIDataType.STRING,
+            "character": OSIDataType.STRING,
+
+            # Integer-like
+            "int64": OSIDataType.INTEGER,
+            "int32": OSIDataType.INTEGER,
+            "int16": OSIDataType.INTEGER,
+            "int8": OSIDataType.INTEGER,
+            "int": OSIDataType.INTEGER,
+            "integer": OSIDataType.INTEGER,
+            "whole number": OSIDataType.INTEGER,
+
+            # Floating / decimal
+            "double": OSIDataType.FLOAT,
+            "float": OSIDataType.FLOAT,
+            "single": OSIDataType.FLOAT,
+            "real": OSIDataType.FLOAT,
+            "decimal": OSIDataType.DECIMAL,
+            "numeric": OSIDataType.DECIMAL,
+            "number": OSIDataType.DECIMAL,
+            "currency": OSIDataType.DECIMAL,
+            "fixeddecimal": OSIDataType.DECIMAL,
+            "fixed decimal": OSIDataType.DECIMAL,
+
+            # Boolean
+            "boolean": OSIDataType.BOOLEAN,
+            "bool": OSIDataType.BOOLEAN,
+            "logical": OSIDataType.BOOLEAN,
+
+            # Date/time
+            "datetime": OSIDataType.DATETIME,
+            "datetime2": OSIDataType.DATETIME,
+            "datetimezone": OSIDataType.DATETIME,
+            "datetimeoffset": OSIDataType.DATETIME,
+            "date": OSIDataType.DATE,
+            "time": OSIDataType.TIME,
+
+            # Binary / semi-structured
+            "binary": OSIDataType.BINARY,
+            "variant": OSIDataType.VARIANT,
+            "object": OSIDataType.VARIANT,
+            "array": OSIDataType.VARIANT,
+            "json": OSIDataType.VARIANT,
         }
 
-        mapped_type = type_map.get(tmsl_type, OSIDataType.STRING)
+        mapped_type = type_map.get(normalized_type, OSIDataType.STRING)
 
         # Determine if key (heuristic on name pattern)
         is_key = False

@@ -9,11 +9,25 @@ import TimeMachine from '../components/RepositoryMap/TimeMachine';
  */
 export default function ExplorePage() {
   const [selectedSnapshotId, setSelectedSnapshotId] = useState(null);
+  const [compareSnapshotId, setCompareSnapshotId] = useState(null);
+  const [diffMode, setDiffMode] = useState(false);
   
   return (
     <div style={{ height: 'calc(100vh - 64px)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-      <RepositoryMap snapshotId={selectedSnapshotId} />
-      <TimeMachine modelName="__all__" onSnapshotSelect={setSelectedSnapshotId} />
+      <RepositoryMap
+        snapshotId={selectedSnapshotId}
+        compareSnapshotId={compareSnapshotId}
+        diffMode={diffMode}
+      />
+      <TimeMachine
+        modelName="__all__"
+        onSnapshotSelect={setSelectedSnapshotId}
+        onCompareSnapshotSelect={setCompareSnapshotId}
+        onDiffModeChange={setDiffMode}
+        selectedSnapshotId={selectedSnapshotId}
+        compareSnapshotId={compareSnapshotId}
+        diffMode={diffMode}
+      />
     </div>
   );
 }

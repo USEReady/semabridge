@@ -5,7 +5,12 @@ import { BarChart3 } from 'lucide-react';
  * MeasureNode — yellow metric/measure node for the dependency graph.
  */
 export default function MeasureNode({ data, selected }) {
-    const borderColor = selected ? '#FDE047' : '#EAB308';
+    const diffStatus = data.diffStatus;
+    const borderColor =
+        diffStatus === 'added' ? '#22C55E'
+            : diffStatus === 'removed' ? '#EF4444'
+                : diffStatus === 'modified' ? '#EAB308'
+                    : selected ? '#FDE047' : '#EAB308';
 
     return (
         <div style={{
@@ -18,6 +23,7 @@ export default function MeasureNode({ data, selected }) {
                 ? '0 0 20px rgba(234,179,8,.3)'
                 : '0 4px 16px rgba(0,0,0,.25)',
             transition: 'box-shadow .2s, border-color .2s',
+            opacity: diffStatus === 'removed' ? 0.78 : 1,
         }}>
             {/* Header */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>

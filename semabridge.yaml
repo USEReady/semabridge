@@ -1,19 +1,37 @@
-project_name: h
+project_name: manoj
 source:
   type: fabric
   workspace_id: semabridge-local
   workspace: SemaBridge Workspace
   models:
-    - Customer Profitability
-target:
-  type: snowflake
+    - continent
+targets:
+  - type: snowflake
+mappings:
+  - source: continent
+    target: continent_mapped
+    type: table
+    columns:
+      - source: id
+        target: id
+        type: INT
+        primary_key: true
+      - source: name
+        target: name
+        type: VARCHAR(255)
+      - source: created_at
+        target: created_at
+        type: TIMESTAMP
+      - source: updated_at
+        target: updated_at
+        type: TIMESTAMP
 ui:
-  output_format: osi
+  intermediate_format: osi
   editor_mode: yaml
 selection:
   model_ids:
-    - 83686c9b-2320-466a-a7a8-c3975d6998e7
+    - d32e8900-31cc-4647-872d-08a7e62bf03b
 options:
   auto_relationships: true
-  include_hidden_fields: false
+  include_hidden_fields: true
   generate_descriptions: true

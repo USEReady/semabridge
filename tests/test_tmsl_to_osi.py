@@ -82,3 +82,32 @@ class TestTMSLToOSI:
         # Ensure it is wrapped in ConversionError
         with pytest.raises(ConversionError):
             converter.to_osi(source)
+
+    def test_extended_fabric_datatypes_map_to_osi(self, converter):
+        """Ensure common Fabric type variants map to non-string OSI datatypes."""
+        source = {
+            "tmsl": {
+                "model": {
+                    "name": "TypedModel",
+                    "tables": [{
+                        "name": "TypedTable",
+                        "columns": [
+                            {"name": "OrderDate", "dataType": "Date"},
+                            {"name": "EventTime", "dataType": "Time"},
+                            {"name": "IsActive", "dataType": "Bool"},
+                            {"name": "Amount", "dataType": "Currency"},
+                        ],
+                    }],
+                }
+            },
+            "workspace_id": "ws-123",
+            "dataset_id": "ds-typed",
+        }
+
+        osi = converter.to_osi(source)
+        ds = next(d for d in osi.datasets if d.unique_name == "TypedTable")
+
+        assert next(c for c in ds.columns if c.unique_name == "OrderDate").data_type == OSIDataType.DATE
+        assert next(c for c in ds.columns if c.unique_name == "EventTime").data_type == OSIDataType.TIME
+        assert next(c for c in ds.columns if c.unique_name == "IsActive").data_type == OSIDataType.BOOLEAN
+        assert next(c for c in ds.columns if c.unique_name == "Amount").data_type == OSIDataType.DECIMAL

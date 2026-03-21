@@ -69,7 +69,6 @@ export default function ProjectsPage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const connectorTypes = [...new Set(projects.map(p => p.source || p.adapter).filter(Boolean))];
   const allProjectTags = [...new Set(projects.flatMap(p => p.tags || []))];
 
   const folderFiltered = projects.filter(p => {
@@ -466,9 +465,11 @@ export default function ProjectsPage() {
                     }}
                   >
                     <option value="all">All Sources</option>
-                    {connectorTypes.map(t => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
+                     <option value="fabric">MS Fabric</option>
+                     <option value="snowflake">Snowflake</option>
+                     <option value="databricks">Databricks</option>
+                     <option value="postgresql">PostgreSQL</option>
+                     <option value="salesforce">Salesforce</option>
                   </select>
                 </div>
 
@@ -486,8 +487,11 @@ export default function ProjectsPage() {
                     }}
                   >
                     <option value="all">All Targets</option>
-                    <option value="snowflake">Snowflake</option>
-                    <option value="fabric">Microsoft Fabric</option>
+                     <option value="fabric">MS Fabric</option>
+                     <option value="snowflake">Snowflake</option>
+                     <option value="databricks">Databricks</option>
+                     <option value="postgresql">PostgreSQL</option>
+                     <option value="salesforce">Salesforce</option>
                   </select>
                 </div>
 

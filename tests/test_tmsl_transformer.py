@@ -172,6 +172,33 @@ class TestColumnParsing:
         assert col.format_string == "$#,##0.00"
         assert col.folder == "Financials"
 
+    def test_column_type_mapping_extended_fabric_types(self, transformer):
+        """Ensure Fabric variants are mapped without falling back to string."""
+        tmsl = {
+            "model": {
+                "name": "Test",
+                "tables": [{
+                    "name": "TypedTable",
+                    "columns": [
+                        {"name": "OrderDate", "dataType": "Date"},
+                        {"name": "EventTime", "dataType": "Time"},
+                        {"name": "IsActive", "dataType": "Bool"},
+                        {"name": "Amount", "dataType": "Currency"},
+                        {"name": "Payload", "dataType": "Variant"},
+                    ]
+                }]
+            }
+        }
+
+        sml = transformer.transform(tmsl, "ws-1", "ds-1")
+        ds = sml.get_dataset("TypedTable")
+
+        assert ds.get_column("OrderDate").data_type == DataType.DATE
+        assert ds.get_column("EventTime").data_type == DataType.TIME
+        assert ds.get_column("IsActive").data_type == DataType.BOOLEAN
+        assert ds.get_column("Amount").data_type == DataType.DECIMAL
+        assert ds.get_column("Payload").data_type == DataType.VARIANT
+
 
 class TestMeasureParsing:
     """Tests for measure parsing and DAX translation."""

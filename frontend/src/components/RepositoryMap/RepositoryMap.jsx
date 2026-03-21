@@ -28,7 +28,6 @@ export default function RepositoryMap({ onClose }) {
     const [graphData, setGraphData] = useState({ nodes: [], edges: [] });
 
     // ── UI state ──
-    const [treeSource, setTreeSource] = useState('snapshots');      // 'filesystem' | 'snapshots'
     const [selectedFile, setSelectedFile] = useState(null);
     const [selectedNode, setSelectedNode] = useState(null);
     const [filePreview, setFilePreview] = useState(null);
@@ -292,35 +291,14 @@ export default function RepositoryMap({ onClose }) {
                     background: 'var(--bg-surface)',
                     display: 'flex', flexDirection: 'column',
                 }}>
-                    {/* Source Toggle Tabs */}
+                    {/* Snapshots Header */}
                     <div style={{
                         display: 'flex', borderBottom: '1px solid var(--border-color)',
                         background: 'var(--bg-app)', flexShrink: 0,
+                        padding: '6px 8px', alignItems: 'center', gap: 4,
                     }}>
-                        <button
-                            onClick={() => setTreeSource('snapshots')}
-                            style={{
-                                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
-                                padding: '6px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
-                                border: 'none', borderBottom: treeSource === 'snapshots' ? '2px solid #818CF8' : '2px solid transparent',
-                                background: 'transparent',
-                                color: treeSource === 'snapshots' ? 'var(--text-primary)' : 'var(--text-tertiary)',
-                            }}
-                        >
-                            <Database size={12} /> Snapshots
-                        </button>
-                        <button
-                            onClick={() => setTreeSource('filesystem')}
-                            style={{
-                                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
-                                padding: '6px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
-                                border: 'none', borderBottom: treeSource === 'filesystem' ? '2px solid #818CF8' : '2px solid transparent',
-                                background: 'transparent',
-                                color: treeSource === 'filesystem' ? 'var(--text-primary)' : 'var(--text-tertiary)',
-                            }}
-                        >
-                            <FolderOpen size={12} /> Files
-                        </button>
+                        <Database size={12} />
+                        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)' }}>Snapshots</span>
                     </div>
                     <div style={{ flex: 1, overflow: 'auto' }}>
                     {loading ? (
@@ -329,7 +307,7 @@ export default function RepositoryMap({ onClose }) {
                         </div>
                     ) : (
                         <FileTreePanel
-                            tree={treeSource === 'snapshots' ? snapshotTreeData : treeData}
+                            tree={snapshotTreeData}
                             onFileClick={handleFileClick}
                             selectedPath={selectedFile}
                         />

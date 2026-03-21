@@ -247,6 +247,24 @@ export const api = {
         return handleResponse(res);
     },
 
+    async getGraphSnapshots(modelId = '__all__') {
+        const res = await authFetch(`${API_BASE_URL}/graph/${encodeURIComponent(modelId)}/snapshots`);
+        return handleResponse(res);
+    },
+
+    async compareGraphSnapshots(modelId = '__all__', fromSnapshotId, toSnapshotId, includeSystemTables = false) {
+        if (!fromSnapshotId || !toSnapshotId) {
+            throw new Error('fromSnapshotId and toSnapshotId are required');
+        }
+        const params = new URLSearchParams({
+            from_snapshot_id: String(fromSnapshotId),
+            to_snapshot_id: String(toSnapshotId),
+            include_system_tables: includeSystemTables ? 'true' : 'false',
+        });
+        const res = await authFetch(`${API_BASE_URL}/graph/${encodeURIComponent(modelId)}/compare?${params}`);
+        return handleResponse(res);
+    },
+
     async getRepoFile(path) {
         const res = await authFetch(`${API_BASE_URL}/repo/file?path=${encodeURIComponent(path)}`);
         return handleResponse(res);

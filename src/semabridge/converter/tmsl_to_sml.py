@@ -453,21 +453,64 @@ class TMSLTransformer:
         import re
         
         tmsl_type = col_def.get("dataType", "string")
+        normalized_type = str(tmsl_type or "string").strip().lower()
         col_name = col_def.get("name", "")
         name_upper = col_name.upper()
         
-        # Simple mapping
+        # Robust, case-insensitive Fabric/TMSL -> SML type mapping
         type_map = {
-            "int64": DataType.INTEGER,
-            "double": DataType.FLOAT,
-            "decimal": DataType.DECIMAL,
-            "boolean": DataType.BOOLEAN,
-            "dateTime": DataType.DATETIME,
+            # String-like
             "string": DataType.STRING,
-            "binary": DataType.BINARY
+            "text": DataType.STRING,
+            "varchar": DataType.STRING,
+            "char": DataType.STRING,
+            "character": DataType.STRING,
+
+            # Integer-like
+            "int64": DataType.INTEGER,
+            "int32": DataType.INTEGER,
+            "int16": DataType.INTEGER,
+            "int8": DataType.INTEGER,
+            "int": DataType.INTEGER,
+            "integer": DataType.INTEGER,
+            "whole number": DataType.INTEGER,
+
+            # Decimal / numeric
+            "decimal": DataType.DECIMAL,
+            "numeric": DataType.DECIMAL,
+            "number": DataType.DECIMAL,
+            "currency": DataType.DECIMAL,
+            "fixeddecimal": DataType.DECIMAL,
+            "fixed decimal": DataType.DECIMAL,
+
+            # Floating
+            "double": DataType.FLOAT,
+            "float": DataType.FLOAT,
+            "single": DataType.FLOAT,
+            "real": DataType.FLOAT,
+
+            # Boolean
+            "boolean": DataType.BOOLEAN,
+            "bool": DataType.BOOLEAN,
+            "logical": DataType.BOOLEAN,
+
+            # Date/time
+            "datetime": DataType.DATETIME,
+            "datetime2": DataType.DATETIME,
+            "datetimezone": DataType.DATETIME,
+            "datetimeoffset": DataType.DATETIME,
+            "date": DataType.DATE,
+            "time": DataType.TIME,
+
+            # Binary/semi-structured
+            "binary": DataType.BINARY,
+            "variant": DataType.VARIANT,
+            "object": DataType.VARIANT,
+            "array": DataType.VARIANT,
+            "json": DataType.VARIANT,
         }
         
-        mapped_type = type_map.get(tmsl_type, DataType.STRING)
+        mapped_type = type_map.get(normalized_type, DataType.STRING)
         
         # =====================================================================
         # Enhanced Semantic Type Inference (FR-02)
@@ -543,13 +586,14 @@ class TMSLTransformer:
                 mapped_type = DataType.INTEGER
                 
         # DEBUG: Log if we see unexpected types or fallback to string
-        if mapped_type == DataType.STRING and tmsl_type != "string":
+        if mapped_type == DataType.STRING and normalized_type != "string":
             logger.debug(f"Column '{col_name}' has type '{tmsl_type}', falling back to STRING")
             
         return SMLColumn(
             unique_name=col_name,
             label=col_name,
             data_type=mapped_type,
+            source_type=str(tmsl_type or ""),
             description=col_def.get("description", ""),
             is_hidden=col_def.get("isHidden", False),
             is_measure_candidate=is_measure_candidate,

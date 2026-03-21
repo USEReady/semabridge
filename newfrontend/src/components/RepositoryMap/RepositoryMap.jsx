@@ -4,13 +4,26 @@ import {
     LayoutGrid, Waypoints,
     Search, X, Filter,
     Eye, EyeOff,
-    Database, FolderOpen, PanelRight, Files,
+    Database, FolderOpen, PanelRight, Files, ArrowLeft,
 } from 'lucide-react';
 import { api } from '../../utils/api';
 import FileTreePanel from './FileTreePanel';
 import DependencyGraph from './DependencyGraph';
 import DetailPanel from './DetailPanel';
 import ModelDataPanel from './ModelDataPanel';
+
+const EXPLORE_UI_PREFS_KEY = 'semabridge:explore-ui-prefs';
+
+function readExploreUiPrefs() {
+    try {
+        const raw = localStorage.getItem(EXPLORE_UI_PREFS_KEY);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+        return {};
+    }
+}
 
 function normalizeGraphPayload(rawGraph) {
     const rawNodes = Array.isArray(rawGraph?.nodes) ? rawGraph.nodes : [];
@@ -82,38 +95,39 @@ function isSystemTableName(name) {
  * Right:  detail / file preview panel (slides in on selection).
  */
 export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId = null, diffMode = false }) {
+    const uiPrefs = readExploreUiPrefs();
+
     // ── data ──
-    const [treeData, setTreeData] = useState(null);
     const [snapshotTreeData, setSnapshotTreeData] = useState(null);
     const [graphData, setGraphData] = useState({ nodes: [], edges: [], meta: {} });
 
     // ── UI state ──
-    const [treeSource, setTreeSource] = useState('snapshots');      // 'filesystem' | 'snapshots'
     const [selectedFile, setSelectedFile] = useState(null);
     const [selectedNode, setSelectedNode] = useState(null);
     const [filePreview, setFilePreview] = useState(null);
-    const [workbenchOpen, setWorkbenchOpen] = useState(false);
-    const [showExplorer, setShowExplorer] = useState(true);
+    const [workbenchOpen, setWorkbenchOpen] = useState(Boolean(uiPrefs?.workbenchOpen));
+    const [showExplorer, setShowExplorer] = useState(uiPrefs?.showExplorer !== false);
 
     const [layout, setLayout] = useState('hierarchical');           // hierarchical | force
-    const [erMode, setErMode] = useState(true);                     // Power BI-like relationship view
-    const [selectedModelId, setSelectedModelId] = useState('__all__');
+    const [erMode, setErMode] = useState(uiPrefs?.erMode ?? true);                     // Power BI-like relationship view
+    const [selectedModelId, setSelectedModelId] = useState(uiPrefs?.selectedModelId || '__all__');
     const [searchQuery, setSearchQuery] = useState('');
     const [filterType, setFilterType] = useState('all');            // all | models | tables | broken
-    const [selectedTableId, setSelectedTableId] = useState('__all__');
+    const [selectedTableId, setSelectedTableId] = useState(uiPrefs?.selectedTableId || '__all__');
     const [showVersionBadges, setShowVersionBadges] = useState(false);
-    const [includeSystemTables, setIncludeSystemTables] = useState(false);
+    const [includeSystemTables, setIncludeSystemTables] = useState(Boolean(uiPrefs?.includeSystemTables));
 
     const [syncing, setSyncing] = useState(false);
     const [loading, setLoading] = useState(true);
     const [diffLoading, setDiffLoading] = useState(false);
     const [diffReport, setDiffReport] = useState(null);
+    const [inspectorResetToken, setInspectorResetToken] = useState(0);
 
     // ── initial load ────────────────────────────────
     const loadData = useCallback(async () => {
         setLoading(true);
         try {
-            const [treeResp, snapshotResp, snapshotsResp] = await Promise.all([
+            const [, snapshotResp, snapshotsResp] = await Promise.all([
                 api.getRepoTree(),
                 api.getSnapshotTree().catch(() => ({ root: null })),
                 api.getGraphSnapshots('__all__').catch(() => []),
@@ -142,7 +156,6 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                 graphResp = await api.getModelGraph(modelScope);
             }
 
-            setTreeData(treeResp.root);
             setSnapshotTreeData(snapshotResp.root);
             setGraphData(normalizeGraphPayload(graphResp));
         } catch (err) {
@@ -153,6 +166,21 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     }, [snapshotId, includeSystemTables]);
 
     useEffect(() => { loadData(); }, [loadData]);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(EXPLORE_UI_PREFS_KEY, JSON.stringify({
+                workbenchOpen,
+                showExplorer,
+                erMode,
+                selectedModelId,
+                selectedTableId,
+                includeSystemTables,
+            }));
+        } catch {
+            // ignore persistence failures
+        }
+    }, [workbenchOpen, showExplorer, erMode, selectedModelId, selectedTableId, includeSystemTables]);
 
     useEffect(() => {
         let active = true;
@@ -669,35 +697,14 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     background: 'var(--bg-surface)',
                     display: 'flex', flexDirection: 'column',
                 }}>
-                    {/* Source Toggle Tabs */}
+                    {/* Snapshots Header */}
                     <div style={{
                         display: 'flex', borderBottom: '1px solid var(--border-color)',
                         background: 'var(--bg-app)', flexShrink: 0,
+                        padding: '6px 8px', alignItems: 'center', gap: 4,
                     }}>
-                        <button
-                            onClick={() => setTreeSource('snapshots')}
-                            style={{
-                                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
-                                padding: '6px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
-                                border: 'none', borderBottom: treeSource === 'snapshots' ? '2px solid #818CF8' : '2px solid transparent',
-                                background: 'transparent',
-                                color: treeSource === 'snapshots' ? 'var(--text-primary)' : 'var(--text-tertiary)',
-                            }}
-                        >
-                            <Database size={12} /> Snapshots
-                        </button>
-                        <button
-                            onClick={() => setTreeSource('filesystem')}
-                            style={{
-                                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
-                                padding: '6px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
-                                border: 'none', borderBottom: treeSource === 'filesystem' ? '2px solid #818CF8' : '2px solid transparent',
-                                background: 'transparent',
-                                color: treeSource === 'filesystem' ? 'var(--text-primary)' : 'var(--text-tertiary)',
-                            }}
-                        >
-                            <FolderOpen size={12} /> Files
-                        </button>
+                        <Database size={12} />
+                        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)' }}>Snapshots</span>
                     </div>
                     <div style={{ flex: 1, overflow: 'auto' }}>
                     {loading ? (
@@ -706,7 +713,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                         </div>
                     ) : (
                         <FileTreePanel
-                            tree={treeSource === 'snapshots' ? snapshotTreeData : treeData}
+                            tree={snapshotTreeData}
                             onFileClick={handleFileClick}
                             selectedPath={selectedFile}
                         />
@@ -803,14 +810,34 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                                 borderBottom: '1px solid var(--border-color)',
                                 background: 'var(--bg-app)',
                             }}>
-                                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)' }}>Schema Inspector</span>
-                                <button onClick={() => setWorkbenchOpen(false)} style={iconBtnStyle}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                                    <button
+                                        onClick={() => setInspectorResetToken(v => v + 1)}
+                                        style={{
+                                            ...iconBtnStyle,
+                                            border: '1px solid var(--border-color)',
+                                            borderRadius: 6,
+                                            padding: '4px 8px',
+                                            gap: 6,
+                                        }}
+                                        title="Back one step inside inspector"
+                                    >
+                                        <ArrowLeft size={14} />
+                                        <span style={{ fontSize: 11, fontWeight: 700 }}>Back</span>
+                                    </button>
+                                    <div style={{ minWidth: 0 }}>
+                                        <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-secondary)' }}>Schema Inspector</div>
+                                        <div style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>Explore tables, relationships, and measures in plain view</div>
+                                    </div>
+                                </div>
+                                <button onClick={() => setWorkbenchOpen(false)} style={iconBtnStyle} title="Close">
                                     <X size={16} />
                                 </button>
                             </div>
 
                             <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
                                 <ModelDataPanel
+                                    key={`inspector-${inspectorResetToken}`}
                                     graphData={renderedGraphData}
                                     selectedModelId={selectedModelId}
                                     erMode={erMode}
@@ -946,3 +973,4 @@ const tdStyle = {
     padding: '6px 8px',
     color: 'var(--text-secondary)',
 };
+

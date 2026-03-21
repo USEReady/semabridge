@@ -1431,12 +1431,7 @@ class SnowflakeEmitter(BaseEmitter):
                         # Find col from dataset to get type
                         orig_col = next((c for c in dataset.columns if self._sanitize_col_name(c.unique_name) == col_name), None)
                         if orig_col:
-                            type_map = {
-                                "STRING": "VARCHAR(500)", "INTEGER": "INTEGER", "FLOAT": "FLOAT",
-                                "DECIMAL": "DECIMAL(18,2)", "BOOLEAN": "BOOLEAN", "DATETIME": "TIMESTAMP",
-                                "DATE": "DATE", "BINARY": "BINARY",
-                            }
-                            sf_type = type_map.get(orig_col.data_type.value, "VARCHAR(500)")
+                            sf_type = self._snowflake_sql_type(orig_col.data_type.value)
                             try:
                                 cursor.execute(f'ALTER TABLE {self.config.schema_name}.{quoted_table} ADD COLUMN "{col_name}" {sf_type}')
                             except Exception as e:
@@ -1474,12 +1469,7 @@ class SnowflakeEmitter(BaseEmitter):
                                 # Find col type as before
                                 orig_col = next((c for c in dataset.columns if self._sanitize_col_name(c.unique_name) == col_name), None)
                                 if orig_col:
-                                    type_map = {
-                                        "STRING": "VARCHAR(500)", "INTEGER": "INTEGER", "FLOAT": "FLOAT",
-                                        "DECIMAL": "DECIMAL(18,2)", "BOOLEAN": "BOOLEAN", "DATETIME": "TIMESTAMP",
-                                        "DATE": "DATE", "BINARY": "BINARY",
-                                    }
-                                    sf_type = type_map.get(orig_col.data_type.value, "VARCHAR(500)")
+                                    sf_type = self._snowflake_sql_type(orig_col.data_type.value)
                                     cursor.execute(f'ALTER TABLE {self.config.schema_name}.{quoted_table} ADD COLUMN "{col_name}" {sf_type}')
 
                     
@@ -1608,17 +1598,6 @@ class SnowflakeEmitter(BaseEmitter):
         This bypasses Snowflake's restrictive metadata rules regarding
         single-column drops by atomically replacing the entire table definition.
         """
-        type_map = {
-            "STRING": "VARCHAR(500)",
-            "INTEGER": "INTEGER",
-            "FLOAT": "FLOAT",
-            "DECIMAL": "DECIMAL(18,2)",
-            "BOOLEAN": "BOOLEAN",
-            "DATETIME": "TIMESTAMP",
-            "DATE": "DATE",
-            "BINARY": "BINARY",
-        }
-
         safe_table = self._safe_table_name(table_name)
         schema = self.config.schema_name
 
@@ -1630,7 +1609,7 @@ class SnowflakeEmitter(BaseEmitter):
             if source_expr and not self._is_physical_source_column(source_expr):
                 continue
             col_name = self._sanitize_col_name(col.unique_name)
-            sf_type = type_map.get(col.data_type.value, "VARCHAR(500)")
+            sf_type = self._snowflake_sql_type(col.data_type.value)
             col_defs.append(f'    "{col_name}" {sf_type}')
 
         if not col_defs:
@@ -1662,18 +1641,6 @@ class SnowflakeEmitter(BaseEmitter):
 
     def _generate_create_table_ddl(self, dataset: SMLDataset, table_name: str) -> str:
         """Generate CREATE TABLE DDL from SML dataset definition."""
-        # Data type mapping from SML/TMSL to Snowflake
-        type_map = {
-            "STRING": "VARCHAR(500)",
-            "INTEGER": "INTEGER",
-            "FLOAT": "FLOAT",
-            "DECIMAL": "DECIMAL(18,2)",
-            "BOOLEAN": "BOOLEAN",
-            "DATETIME": "TIMESTAMP",
-            "DATE": "DATE",
-            "BINARY": "BINARY"
-        }
-        
         col_defs = []
         for col in dataset.columns:
             col_name = col.unique_name
@@ -1696,7 +1663,7 @@ class SnowflakeEmitter(BaseEmitter):
                 continue
             
             # Get Snowflake type
-            sf_type = type_map.get(col.data_type.value, "VARCHAR(500)")
+            sf_type = self._snowflake_sql_type(col.data_type.value)
             
             # Consistent quoted uppercase naming
             safe_name = self._sanitize_col_name(col_name)
@@ -2490,6 +2457,24 @@ class SnowflakeEmitter(BaseEmitter):
     def _sanitize_col_name(self, name: str) -> str:
         """Sanitize column name via unified IdentifierSanitizer (Mandate 1)."""
         return self._id.sanitize_column(name)
+
+    def _snowflake_sql_type(self, sml_data_type: Any) -> str:
+        """Map normalized SML datatype to Snowflake SQL datatype."""
+        t = str(sml_data_type or "").strip().upper()
+        type_map = {
+            "STRING": "VARCHAR(16777216)",
+            "INTEGER": "NUMBER(38,0)",
+            "FLOAT": "FLOAT",
+            "DECIMAL": "NUMBER(38,10)",
+            "BOOLEAN": "BOOLEAN",
+            "DATETIME": "TIMESTAMP_NTZ",
+            "DATE": "DATE",
+            "TIME": "TIME",
+            "BINARY": "BINARY",
+            "VARIANT": "VARIANT",
+            "UNKNOWN": "VARCHAR(16777216)",
+        }
+        return type_map.get(t, "VARCHAR(16777216)")
 
     @staticmethod
     def _is_physical_source_column(source_expression: str) -> bool:

@@ -166,31 +166,83 @@ def _parse_semantic_model_from_dict(
     if not any(k in data for k in ("datasets", "metrics", "measures", "model_name")):
         return None
 
-    model_name = data.get("model_name", model_id)
+    model_name = (
+        data.get("model_name")
+        or data.get("label")
+        or data.get("unique_name")
+        or model_id
+    )
     workspace_id = data.get("workspace_id", workspace_id)
 
     # Extract datasets / source tables
     datasets = data.get("datasets", [])
+    if isinstance(datasets, dict):
+        datasets = list(datasets.values())
+    if not isinstance(datasets, list):
+        datasets = []
+
     source_tables: List[Dict[str, Any]] = []
-    for ds in datasets:
-        table_name = ds.get("table", ds.get("name", "unknown"))
-        columns = [
-            {"name": c.get("name"), "data_type": c.get("data_type")}
-            for c in ds.get("columns", [])
-        ]
+    seen_tables: set[tuple[str, str]] = set()
+    used_table_names: set[str] = set()
+    for idx, ds in enumerate(datasets):
+        if not isinstance(ds, dict):
+            continue
+
+        table_name = (
+            ds.get("source_table")
+            or ds.get("table")
+            or ds.get("name")
+            or ds.get("unique_name")
+            or ds.get("label")
+            or ""
+        )
+        table_name = str(table_name).strip()
+        if not table_name:
+            table_name = f"unknown_{idx + 1}"
+        if table_name in used_table_names:
+            table_name = f"{table_name}_{idx + 1}"
+        used_table_names.add(table_name)
+
+        display_name = (
+            ds.get("label")
+            or ds.get("name")
+            or ds.get("unique_name")
+            or table_name
+        )
+
+        raw_columns = ds.get("columns", [])
+        if not isinstance(raw_columns, list):
+            raw_columns = []
+        columns = []
+        for c in raw_columns:
+            if isinstance(c, dict):
+                col_name = c.get("name") or c.get("unique_name") or c.get("column") or ""
+                columns.append({
+                    "name": col_name,
+                    "data_type": c.get("data_type") or c.get("type") or c.get("source_type"),
+                })
+
+        schema_name = str(ds.get("source_schema") or ds.get("schema") or ds.get("database_schema") or "PUBLIC")
+        dedupe_key = (schema_name, table_name)
+        if dedupe_key in seen_tables:
+            continue
+        seen_tables.add(dedupe_key)
+
         source_tables.append({
-            "name": ds.get("name", table_name),
+            "name": display_name,
             "table": table_name,
-            "schema": ds.get("schema", "PUBLIC"),
-            "source_type": ds.get("source_type", "snowflake"),
+            "schema": schema_name,
+            "source_type": ds.get("source_type", data.get("source_type", "snowflake")),
             "columns": columns,
         })
 
     # Extract measures / metrics
     measures: List[Dict[str, Any]] = []
     for m in data.get("metrics", data.get("measures", [])):
+        if not isinstance(m, dict):
+            continue
         measures.append({
-            "name": m.get("name", "unnamed"),
+            "name": m.get("name") or m.get("unique_name") or m.get("label") or "unnamed",
             "expression": m.get("expression", ""),
             "data_type": m.get("data_type", m.get("format_string", "")),
         })
@@ -198,10 +250,23 @@ def _parse_semantic_model_from_dict(
     # Extract relationships
     relationships: List[Dict[str, Any]] = []
     for r in data.get("relationships", []):
+        if not isinstance(r, dict):
+            continue
+        cardinality = str(
+            r.get("cardinality")
+            or r.get("relationship_type")
+            or r.get("type")
+            or "many-to-one"
+        )
+        from_cols = r.get("from_columns") if isinstance(r.get("from_columns"), list) else []
+        to_cols = r.get("to_columns") if isinstance(r.get("to_columns"), list) else []
         relationships.append({
-            "from_model": r.get("from_table", ""),
-            "to_model": r.get("to_table", ""),
-            "join_key": r.get("from_column", ""),
+            "from_model": r.get("from_table") or r.get("from_dataset") or r.get("from") or "",
+            "to_model": r.get("to_table") or r.get("to_dataset") or r.get("to") or "",
+            "from_column": r.get("from_column") or (from_cols[0] if from_cols else ""),
+            "to_column": r.get("to_column") or (to_cols[0] if to_cols else ""),
+            "join_key": r.get("from_column") or (from_cols[0] if from_cols else ""),
+            "cardinality": cardinality,
         })
 
     # Check for broken references (tables that aren't in datasets)
@@ -274,13 +339,15 @@ def _build_graph(
     nodes: List[Dict[str, Any]] = []
     edges: List[Dict[str, Any]] = []
 
-    # Collect all known tables across all models
-    global_tables: Dict[str, Dict[str, Any]] = {}
-    for m in models:
-        for t in m.get("source_tables", []):
-            key = t["table"]
-            if key not in global_tables:
-                global_tables[key] = t
+    def _card_symbol(card: str) -> str:
+        c = str(card or "").strip().lower().replace("_", "-")
+        mapping = {
+            "one-to-one": "1:1",
+            "one-to-many": "1:*",
+            "many-to-one": "*:1",
+            "many-to-many": "*:*",
+        }
+        return mapping.get(c, c or "?:?")
 
     filtered = models
     if model_filter:
@@ -310,9 +377,12 @@ def _build_graph(
         })
 
         # Table nodes (top row)
+        table_names = set()
+        table_node_ids = set()
         for tidx, table in enumerate(model.get("source_tables", [])):
             table_node_id = f"table-{mid}-{table['table']}"
-            table_exists = table["table"] in global_tables
+            table_names.add(table["table"])
+            table_node_ids.add(table_node_id)
             nodes.append({
                 "id": table_node_id,
                 "type": "tableNode",
@@ -324,7 +394,7 @@ def _build_graph(
                     "source_type": table["source_type"],
                     "columns": table["columns"],
                     "nodeType": "table",
-                    "status": "valid" if table_exists else "broken",
+                    "status": "valid",
                 },
             })
             # Edge: table → model
@@ -333,7 +403,7 @@ def _build_graph(
                 "source": table_node_id,
                 "target": model_node_id,
                 "animated": True,
-                "style": {"stroke": "#22C55E" if table_exists else "#EF4444"},
+                "style": {"stroke": "#22C55E"},
             })
 
         # Measure nodes (bottom row)
@@ -362,15 +432,48 @@ def _build_graph(
 
         # Inter-table relationship edges
         for rel in model.get("relationships", []):
+            from_table = rel['from_model']
+            to_table = rel['to_model']
+
+            # Create placeholder broken nodes for missing relationship endpoints
+            for missing in [from_table, to_table]:
+                if missing and missing not in table_names:
+                    missing_node_id = f"table-{mid}-{missing}"
+                    if missing_node_id not in table_node_ids:
+                        table_node_ids.add(missing_node_id)
+                        nodes.append({
+                            "id": missing_node_id,
+                            "type": "tableNode",
+                            "position": {"x": 150 + len(table_node_ids) * 220, "y": y_offset + 20},
+                            "data": {
+                                "label": missing,
+                                "table_name": missing,
+                                "schema": "UNKNOWN",
+                                "source_type": "unknown",
+                                "columns": [],
+                                "nodeType": "table",
+                                "status": "broken",
+                            },
+                        })
+
             from_id = f"table-{mid}-{rel['from_model']}"
             to_id = f"table-{mid}-{rel['to_model']}"
+            card = rel.get("cardinality") or "many-to-one"
+            from_col = str(rel.get("from_column") or rel.get("join_key") or "")
+            to_col = str(rel.get("to_column") or "")
+            join_label = f"{from_col} → {to_col}" if from_col and to_col else from_col
             edges.append({
                 "id": f"rel-{from_id}-{to_id}",
                 "source": from_id,
                 "target": to_id,
-                "label": rel.get("join_key", ""),
+                "label": f"{_card_symbol(card)}{f' • {join_label}' if join_label else ''}",
                 "type": "smoothstep",
                 "style": {"stroke": "#818CF8", "strokeDasharray": "6 3"},
+                "data": {
+                    "cardinality": card,
+                    "from_column": from_col,
+                    "to_column": to_col,
+                },
             })
 
         y_offset += 500
@@ -407,11 +510,17 @@ def _git_info(repo_root: Path) -> Dict[str, Optional[str]]:
 @router.get("/tree")
 async def get_repo_tree():
     """REQ-MAP-001: Return full directory + file tree of the repository."""
-    repo_root = _get_repo_root()
-    if not repo_root.exists():
+    # Client-facing tree should be scoped to semantic models path so
+    # internal repository artifacts (frontend, docs, test files, etc.)
+    # are not exposed in Explore UI.
+    tree_root = _resolve_models_path()
+    if not tree_root.exists():
+        tree_root = _get_repo_root()
+
+    if not tree_root.exists():
         raise HTTPException(status_code=404, detail="Repository root not found")
 
-    tree = _build_tree_node(repo_root, repo_root)
+    tree = _build_tree_node(tree_root, tree_root)
     if tree is None:
         raise HTTPException(status_code=500, detail="Failed to build tree")
 
@@ -463,11 +572,14 @@ async def get_model_graph(
 @router.get("/file")
 async def get_file_content(path: str = Query(..., description="Relative file path")):
     """REQ-MAP-001: Return raw file content for preview."""
-    repo_root = _get_repo_root()
-    target = (repo_root / path).resolve()
+    file_root = _resolve_models_path()
+    if not file_root.exists():
+        file_root = _get_repo_root()
+
+    target = (file_root / path).resolve()
 
     # Security: ensure path stays within repo
-    if not str(target).startswith(str(repo_root)):
+    if not str(target).startswith(str(file_root)):
         raise HTTPException(status_code=403, detail="Access denied: path outside repository")
 
     if not target.exists() or not target.is_file():
