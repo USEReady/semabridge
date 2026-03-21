@@ -9,14 +9,6 @@ export default function ModelNode({ data, selected }) {
     const diffStatus = data.diffStatus;
     const compact = !!data.compactModelView;
     const dense = !!data.denseModelView;
-    const rawLabel = String(data.label || 'Model').trim();
-    const rawLower = rawLabel.toLowerCase();
-    const modelName = String(data.model_label || data.model_name || '').trim();
-    const modelId = String(data.model_id || '').trim();
-    const isGenericLabel = rawLower === 'fabricmodel' || rawLower === 'model' || rawLower === 'semanticmodel';
-    const displayLabel = modelName
-        ? modelName
-        : (isGenericLabel && modelId ? `${rawLabel} • ${modelId.slice(0, 10)}` : rawLabel);
     const borderColor =
         diffStatus === 'added' ? '#22C55E'
             : diffStatus === 'removed' ? '#EF4444'
@@ -62,7 +54,7 @@ export default function ModelNode({ data, selected }) {
                     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                     maxWidth: compact ? (dense ? 94 : 118) : 'none',
                 }}>
-                    {displayLabel}
+                    {data.label}
                 </span>
             </div>
 

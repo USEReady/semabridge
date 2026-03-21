@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Copy, Search, ArrowLeft, Info } from 'lucide-react';
+import { Copy, Search } from 'lucide-react';
 
   export default function ModelDataPanel({
       graphData,
@@ -20,7 +20,6 @@ import { Copy, Search, ArrowLeft, Info } from 'lucide-react';
       const [selectedKeys, setSelectedKeys] = useState(new Set());
       const [selectedSchema, setSelectedSchema] = useState('all');
       const [selectedEntityKey, setSelectedEntityKey] = useState('');
-      const [inspectorModelId, setInspectorModelId] = useState(selectedModelId || '__all__');
 
       const activeTab = controlledTab ?? internalTab;
       const setActiveTab = (tab) => {
@@ -35,66 +34,25 @@ import { Copy, Search, ArrowLeft, Info } from 'lucide-react';
       const measures = useMemo(() => nodes.filter(n => n?.data?.nodeType === 'measure'), [nodes]);
       const relationships = useMemo(() => edges.filter(e => String(e?.id || '').startsWith('rel-')), [edges]);
 
-      const nodeLabelById = useMemo(() => {
-          const map = new Map();
-          nodes.forEach((n) => {
-              map.set(String(n?.id || ''), String(n?.data?.label || n?.id || ''));
-          });
-          return map;
-      }, [nodes]);
-
-      const tableModelById = useMemo(() => {
-          const map = new Map();
-          tables.forEach((t) => {
-              map.set(String(t?.id || ''), String(t?.data?.model_id || '').trim());
-          });
-          return map;
-      }, [tables]);
-
       const modelRows = useMemo(() => {
           const rows = [];
-          const erScope = erMode && selectedModelId !== '__all__' ? selectedModelId : null;
-          const inspectorScope = inspectorModelId !== '__all__' ? inspectorModelId : null;
-
-          const norm = (v) => String(v || '').trim().toLowerCase();
-          const matchesScope = (rowModelId, scope) => {
-              if (!scope) return true;
-              const r = norm(rowModelId);
-              const s = norm(scope);
-              if (!r) return true; // Keep rows without model id visible instead of empty screen.
-              return r === s || r.includes(s) || s.includes(r);
-          };
-
+          const modelScope = erMode && selectedModelId !== '__all__' ? selectedModelId : null;
           tables.forEach((t) => {
-              const tableModelId = String(t?.data?.model_id || '').trim();
-              if (!matchesScope(tableModelId, erScope)) return;
-              if (!matchesScope(tableModelId, inspectorScope)) return;
+              if (modelScope && String(t?.data?.model_id) !== modelScope) return;
               rows.push({
               key: `table:${t.id}`,
               type: 'table',
               name: t?.data?.label || t.id,
               schema: String(t?.data?.schema || 'PUBLIC'),
               details: `${(t?.data?.columns || []).length} columns`,
-              modelId: tableModelId || '__unknown__',
               raw: t,
           });
           });
            measures.forEach((m) => {
-              const measureModelId = String(m?.data?.model_id || '').trim();
-                  if (!matchesScope(measureModelId, erScope)) return;
-                  if (!matchesScope(measureModelId, inspectorScope)) return;
-              rows.push({ key: `measure:${m.id}`, type: 'measure', name: m?.data?.label || m.id, details: m?.data?.data_type || 'metric', modelId: measureModelId || '__unknown__' });
+              if (modelScope && String(m?.data?.model_id) !== modelScope) return;
+              rows.push({ key: `measure:${m.id}`, type: 'measure', name: m?.data?.label || m.id, details: m?.data?.data_type || 'metric' });
           });
           relationships.forEach((r) => {
-              const sourceId = String(r?.source || '');
-              const targetId = String(r?.target || '');
-              const sourceModelId = tableModelById.get(sourceId) || '';
-              const targetModelId = tableModelById.get(targetId) || '';
-              const relationshipModelId = sourceModelId || targetModelId || '__unknown__';
-
-              if (erScope && !matchesScope(sourceModelId, erScope) && !matchesScope(targetModelId, erScope)) return;
-              if (inspectorScope && !matchesScope(sourceModelId, inspectorScope) && !matchesScope(targetModelId, inspectorScope)) return;
-
               const card = r?.data?.cardinality ? ` [${String(r.data.cardinality)}]` : '';
               const fromCol = r?.data?.from_column || '';
               const toCol = r?.data?.to_column || '';
@@ -103,9 +61,8 @@ import { Copy, Search, ArrowLeft, Info } from 'lucide-react';
               rows.push({
                   key: `relationship:${r.id}`,
                   type: 'relationship',
-                  name: `${nodeLabelById.get(sourceId) || sourceId} -> ${nodeLabelById.get(targetId) || targetId}`,
+                  name: `${r.source} -> ${r.target}`,
                   details: detail,
-                  modelId: relationshipModelId,
               });
           });
           const q = search.trim().toLowerCase();
@@ -115,38 +72,7 @@ import { Copy, Search, ArrowLeft, Info } from 'lucide-react';
               if (!q) return true;
               return r.name.toLowerCase().includes(q) || String(r.details).toLowerCase().includes(q);
           });
-    }, [tables, measures, relationships, search, filter, selectedSchema, selectedModelId, erMode, inspectorModelId, tableModelById, nodeLabelById]);
-
-      const hasActiveFilters = search.trim() || filter !== 'all' || selectedSchema !== 'all' || inspectorModelId !== '__all__';
-
-      const resetFilters = () => {
-          setSearch('');
-          setFilter('all');
-          setSelectedSchema('all');
-          setInspectorModelId('__all__');
-      };
-
-      const inspectorModelOptions = useMemo(() => {
-          const byId = new Map();
-          nodes
-              .filter(n => n?.data?.nodeType === 'model')
-              .forEach((n) => {
-                  const id = String(n?.data?.model_id || n?.id || '').trim();
-                  if (!id) return;
-                  const label = String(n?.data?.label || n?.data?.model_name || id);
-                  if (!byId.has(id)) byId.set(id, { id, label });
-              });
-
-          nodes
-              .filter(n => n?.data?.nodeType === 'table' || n?.data?.nodeType === 'measure')
-              .forEach((n) => {
-                  const id = String(n?.data?.model_id || '').trim();
-                  if (!id || byId.has(id)) return;
-                  byId.set(id, { id, label: id });
-              });
-
-          return [{ id: '__all__', label: 'All Models' }, ...Array.from(byId.values())];
-      }, [nodes]);
+      }, [tables, measures, relationships, search, filter, selectedSchema, selectedModelId, erMode]);
 
       const schemaStats = useMemo(() => {
           const map = new Map();
@@ -174,19 +100,6 @@ import { Copy, Search, ArrowLeft, Info } from 'lucide-react';
           const raw = activeEntity.raw;
           return Array.isArray(raw?.data?.columns) ? raw.data.columns : [];
       }, [activeEntity]);
-
-      const activePreviewRows = useMemo(() => {
-          if (!activeEntity || activeEntity.type !== 'table') return [];
-          const rows = activeEntity?.raw?.data?.preview_rows;
-          return Array.isArray(rows) ? rows.slice(0, 25) : [];
-      }, [activeEntity]);
-
-      const activePreviewColumns = useMemo(() => {
-          if (!activePreviewRows.length) return [];
-          const first = activePreviewRows[0];
-          if (!first || typeof first !== 'object') return [];
-          return Object.keys(first);
-      }, [activePreviewRows]);
 
       const selectedRows = useMemo(() => modelRows.filter(r => selectedKeys.has(r.key)), [modelRows, selectedKeys]);
 
@@ -234,24 +147,7 @@ import { Copy, Search, ArrowLeft, Info } from 'lucide-react';
                                   <option key={schema} value={schema}>{schema} ({count})</option>
                               ))}
                           </select>
-                          <select value={inspectorModelId} onChange={(e) => setInspectorModelId(e.target.value)} style={{ border: '1px solid var(--border-color)', borderRadius: 6, padding: '4px 6px', fontSize: 11, background: 'var(--bg-app)', color: 'var(--text-secondary)', minWidth: 170 }}>
-                              {inspectorModelOptions.map((m) => (
-                                  <option key={m.id} value={m.id}>{m.label}</option>
-                              ))}
-                          </select>
-                          <button onClick={resetFilters} style={btnMini} title="Reset all inspector filters">Reset</button>
                           <button onClick={copySelected} style={btnMini}><Copy size={12} /> Copy Selected</button>
-                      </div>
-
-                      <div style={{
-                          display: 'grid',
-                          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-                          gap: 8,
-                          flexShrink: 0,
-                      }}>
-                          <InfoPill label="Visible" value={String(modelRows.length)} />
-                          <InfoPill label="Checked" value={String(selectedRows.length)} />
-                          <InfoPill label="Active" value={activeEntity ? activeEntity.type : 'none'} />
                       </div>
 
                       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 340px) minmax(0, 1fr)', gap: 10, flex: 1, minHeight: 0 }}>
@@ -274,8 +170,7 @@ import { Copy, Search, ArrowLeft, Info } from 'lucide-react';
                                               padding: '8px 10px',
                                               borderBottom: '1px solid var(--border-color)',
                                               cursor: 'pointer',
-                                              background: active ? 'rgba(129,140,248,.18)' : 'transparent',
-                                              borderLeft: active ? '3px solid #818CF8' : '3px solid transparent',
+                                              background: active ? 'rgba(129,140,248,.12)' : 'transparent',
                                           }}
                                       >
                                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
@@ -289,32 +184,14 @@ import { Copy, Search, ArrowLeft, Info } from 'lucide-react';
                                       </div>
                                   );
                               })}
-                              {!modelRows.length && (
-                                  <div style={{ padding: 14, fontSize: 11, color: 'var(--text-tertiary)' }}>
-                                      No rows found for current filters.
-                                      {hasActiveFilters ? (
-                                          <button onClick={resetFilters} style={{ ...btnMini, marginLeft: 8, padding: '3px 7px' }}>Reset Filters</button>
-                                      ) : null}
-                                  </div>
-                              )}
+                              {!modelRows.length && <div style={{ padding: 14, fontSize: 11, color: 'var(--text-tertiary)' }}>No rows found.</div>}
                           </div>
 
                           <div style={{ border: '1px solid var(--border-color)', borderRadius: 8, overflow: 'auto', background: 'var(--bg-app)', minWidth: 0 }}>
-                              <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                                      {!!activeEntity && (
-                                          <button
-                                              onClick={() => setSelectedEntityKey('')}
-                                              style={{ ...btnMini, padding: '3px 7px' }}
-                                              title="Back to list"
-                                          >
-                                              <ArrowLeft size={12} /> Back
-                                          </button>
-                                      )}
-                                      <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                          {activeEntity ? activeEntity.name : 'Select an item from left panel'}
-                                      </span>
-                                  </div>
+                              <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
+                                      {activeEntity ? activeEntity.name : 'Select entity'}
+                                  </span>
                                   {activeEntity?.schema && <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>{activeEntity.schema}</span>}
                               </div>
 
@@ -339,7 +216,7 @@ import { Copy, Search, ArrowLeft, Info } from 'lucide-react';
                                               )}
                                           </div>
                                       )}
-                                      <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 8, background: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: 6, padding: '8px 10px' }}>
+                                      <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 8 }}>
                                           {activeEntity.details}
                                       </div>
                                       {activeEntity.type === 'table' && (
@@ -365,43 +242,9 @@ import { Copy, Search, ArrowLeft, Info } from 'lucide-react';
                                               </table>
                                           </div>
                                       )}
-
-                                      {activeEntity.type === 'table' && (
-                                          <div style={{ marginTop: 10, border: '1px solid var(--border-color)', borderRadius: 6, overflow: 'hidden' }}>
-                                              <div style={{ ...th, borderBottom: '1px solid var(--border-color)', background: 'var(--bg-surface)' }}>
-                                                  Table Content Preview (Top 25 Rows)
-                                              </div>
-                                              {activePreviewRows.length > 0 ? (
-                                                  <div style={{ overflow: 'auto' }}>
-                                                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                                                          <thead>
-                                                              <tr>
-                                                                  {activePreviewColumns.map((col) => (
-                                                                      <th key={`pv-h-${col}`} style={th}>{col}</th>
-                                                                  ))}
-                                                              </tr>
-                                                          </thead>
-                                                          <tbody>
-                                                              {activePreviewRows.map((row, idx) => (
-                                                                  <tr key={`pv-r-${idx}`}>
-                                                                      {activePreviewColumns.map((col) => (
-                                                                          <td key={`pv-c-${idx}-${col}`} style={td}>{String(row?.[col] ?? '')}</td>
-                                                                      ))}
-                                                                  </tr>
-                                                              ))}
-                                                          </tbody>
-                                                      </table>
-                                                  </div>
-                                              ) : (
-                                                  <div style={{ padding: 10, fontSize: 11, color: 'var(--text-tertiary)' }}>
-                                                      No table content available in this snapshot for the selected table.
-                                                  </div>
-                                              )}
-                                          </div>
-                                      )}
                                   </div>
                               ) : (
-                                  <div style={{ padding: 14, fontSize: 11, color: 'var(--text-tertiary)' }}>Select any table, measure, or relationship from the left panel to see details.</div>
+                                  <div style={{ padding: 14, fontSize: 11, color: 'var(--text-tertiary)' }}>Select any entity from left list.</div>
                               )}
                           </div>
                       </div>
@@ -440,17 +283,3 @@ import { Copy, Search, ArrowLeft, Info } from 'lucide-react';
       borderBottom: '1px solid var(--border-color)',
       color: 'var(--text-secondary)',
   };
-
-function InfoPill({ label, value }) {
-    return (
-        <div style={{
-            border: '1px solid var(--border-color)',
-            borderRadius: 8,
-            background: 'var(--bg-app)',
-            padding: '7px 9px',
-        }}>
-            <div style={{ fontSize: 9, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.06em', fontWeight: 700 }}>{label}</div>
-            <div style={{ fontSize: 12, fontWeight: 800, color: '#A5B4FC', marginTop: 3 }}>{value}</div>
-        </div>
-    );
-}
