@@ -100,6 +100,7 @@ const TreeNode = memo(function TreeNode({
                     borderRadius: isSelected ? 4 : 0,
                     transition: 'background .12s, color .12s',
                     userSelect: 'none',
+                    overflow: 'hidden',
                     whiteSpace: 'nowrap',
                 }}
                 onMouseEnter={e => {
@@ -126,6 +127,8 @@ const TreeNode = memo(function TreeNode({
                 <span style={{
                     overflow: 'hidden', textOverflow: 'ellipsis',
                     fontWeight: isDir ? 600 : 400,
+                    minWidth: 0,
+                    flex: 1,
                 }}>
                     {node.name}
                 </span>
@@ -133,9 +136,9 @@ const TreeNode = memo(function TreeNode({
                 {/* File size badge */}
                 {!isDir && node.size != null && (
                     <span style={{
-                        marginLeft: 'auto',
                         fontSize: 9, opacity: .45,
                         flexShrink: 0,
+                        marginLeft: 4,
                     }}>
                         {formatSize(node.size)}
                     </span>
