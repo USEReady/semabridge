@@ -1,4 +1,4 @@
-﻿"""
+"""
 Credential Manager for SemaBridge.
 
 Stores connection configurations in the SQLAlchemy ORM layer and injects
@@ -44,11 +44,23 @@ _ENV_MAP: Dict[str, Dict[str, str]] = {
         "account": "SNOWFLAKE_ACCOUNT",
         "user": "SNOWFLAKE_USER",
         "password": "SNOWFLAKE_PASSWORD",
+        "auth_type": "SNOWFLAKE_AUTH_TYPE",
+        "private_key": "SNOWFLAKE_PRIVATE_KEY",
+        "private_key_passphrase": "SNOWFLAKE_PRIVATE_KEY_PASSPHRASE",
+        "authenticator": "SNOWFLAKE_AUTHENTICATOR",
         "warehouse": "SNOWFLAKE_WAREHOUSE",
         "database": "SNOWFLAKE_DATABASE",
         "schema_name": "SNOWFLAKE_SCHEMA",
         "role": "SNOWFLAKE_ROLE",
     },
+}
+
+# Keys that are exclusive to each auth mode — used to purge stale
+# credentials when the user switches authentication methods.
+_AUTH_EXCLUSIVE_KEYS: Dict[str, list[str]] = {
+    "password": ["private_key", "private_key_passphrase", "authenticator"],
+    "keypair": ["password", "authenticator"],
+    "externalbrowser": ["password", "private_key", "private_key_passphrase"],
 }
 
 
@@ -130,6 +142,21 @@ class CredentialManager:
 
         try:
             with self._session() as session:
+                # Purge stale auth-mode-specific keys when auth_type changes
+                new_auth_type = credentials.get("auth_type")
+                if service == "snowflake" and new_auth_type:
+                    keys_to_purge = _AUTH_EXCLUSIVE_KEYS.get(new_auth_type, [])
+                    for stale_key in keys_to_purge:
+                        existing_stale = session.get(
+                            Credential, (service, stale_key)
+                        )
+                        if existing_stale:
+                            session.delete(existing_stale)
+                            logger.debug(
+                                "Purged stale key '%s' for '%s' (switched to %s)",
+                                stale_key, service, new_auth_type,
+                            )
+
                 for key, value in credentials.items():
                     if not value and value != 0:
                         continue
@@ -211,20 +238,43 @@ class CredentialManager:
             return {}
 
     def get_connection_status(self) -> Dict[str, Any]:
-        """Get the configuration status for all supported services."""
+        """Get the configuration status for all supported services.
+
+        Returns a dict per service with ``configured``, ``missing_fields``,
+        and service-specific flags (``auth_method`` / ``has_auth`` for Fabric,
+        ``auth_type`` for Snowflake) so the UI can show accurate status.
+        """
         status: Dict[str, Any] = {}
-        for service, expected_keys in _ENV_MAP.items():
+        for service in _ENV_MAP:
             stored = self.get_credentials(service, mask_secrets=True)
-            required = self._get_required_keys(service)
+            # Use raw (unmasked) credentials for auth-type detection
+            raw = self.get_credentials(service, mask_secrets=False)
+            required = self._get_required_keys(service, raw)
             missing = [k for k in required if k not in stored]
 
-            status[service] = {
+            svc_status: Dict[str, Any] = {
                 "configured": len(missing) == 0 and len(stored) > 0,
                 "fields_stored": len(stored),
                 "fields_required": len(required),
                 "missing_fields": missing,
                 "credentials": stored,
             }
+
+            # Fabric-specific: check auth method availability
+            if service == "fabric":
+                auth_method = self.get_fabric_auth_method()
+                svc_status["auth_method"] = auth_method
+                svc_status["has_auth"] = auth_method != "none"
+                # Only truly configured if workspace + auth both exist
+                svc_status["configured"] = (
+                    svc_status["configured"] and auth_method != "none"
+                )
+
+            # Snowflake-specific: include auth_type in response
+            if service == "snowflake":
+                svc_status["auth_type"] = stored.get("auth_type", "password")
+
+            status[service] = svc_status
         return status
 
     # ------------------------------------------------------------------
@@ -293,19 +343,37 @@ class CredentialManager:
         """Keys that contain secrets and should be masked."""
         secret_map = {
             "fabric": {"client_secret", "access_token", "refresh_token"},
-            "snowflake": {"password"},
+            "snowflake": {"password", "private_key", "private_key_passphrase"},
             "fabric_token": {"access_token", "refresh_token"},
         }
         return secret_map.get(service, set())
 
     @staticmethod
-    def _get_required_keys(service: str) -> List[str]:
-        """Keys that must be configured for a service to work."""
-        required_map = {
-            "fabric": ["workspace_id"],
-            "snowflake": ["account", "user", "password", "warehouse", "database"],
-        }
-        return required_map.get(service, [])
+    def _get_required_keys(
+        service: str,
+        credentials: Optional[Dict[str, str]] = None,
+    ) -> List[str]:
+        """Keys that must be configured for a service to work.
+
+        For Snowflake the list is auth-mode-aware:
+        - password mode  → base + password
+        - keypair mode   → base + private_key
+        - SSO mode       → base only (no extra stored cred)
+        """
+        if service == "fabric":
+            return ["workspace_id"]
+
+        if service == "snowflake":
+            base = ["account", "user", "warehouse", "database"]
+            auth_type = (credentials or {}).get("auth_type", "password")
+            if auth_type == "keypair":
+                return base + ["private_key"]
+            elif auth_type == "externalbrowser":
+                return base  # SSO needs no extra stored credential
+            else:
+                return base + ["password"]
+
+        return []
 
     # ------------------------------------------------------------------
     # MSAL Token Management
@@ -406,27 +474,4 @@ class CredentialManager:
         return "none"
 
 
-
-# Mapping: (service, key) -> environment variable name
-_ENV_MAP: Dict[str, Dict[str, str]] = {
-    "fabric": {
-        "tenant_id": "FABRIC_TENANT_ID",
-        "client_id": "FABRIC_CLIENT_ID",
-        "client_secret": "FABRIC_CLIENT_SECRET",
-        "workspace_id": "FABRIC_WORKSPACE_ID",
-        "workspace_ids": "FABRIC_WORKSPACE_IDS",
-        "api_base_url": "FABRIC_API_BASE_URL",
-        "access_token": "FABRIC_ACCESS_TOKEN",
-        "refresh_token": "FABRIC_REFRESH_TOKEN",
-    },
-    "snowflake": {
-        "account": "SNOWFLAKE_ACCOUNT",
-        "user": "SNOWFLAKE_USER",
-        "password": "SNOWFLAKE_PASSWORD",
-        "warehouse": "SNOWFLAKE_WAREHOUSE",
-        "database": "SNOWFLAKE_DATABASE",
-        "schema_name": "SNOWFLAKE_SCHEMA",
-        "role": "SNOWFLAKE_ROLE",
-    },
-}
 
