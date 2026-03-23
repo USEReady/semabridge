@@ -14,6 +14,7 @@ const CONFIG = {
   draft:   { bg: 'var(--bg-surface-raised)',    text: 'var(--text-tertiary)',  dot: 'var(--text-tertiary)',  label: 'Draft' },
   running: { bg: 'var(--color-warning-muted)',  text: 'var(--color-warning)',  dot: 'var(--color-warning)',  label: 'Running' },
   connected: { bg: 'var(--color-success-muted)', text: 'var(--color-success)', dot: 'var(--color-success)', label: 'Connected' },
+  configured: { bg: 'var(--color-warning-muted)', text: 'var(--color-warning)', dot: 'var(--color-warning)', label: 'Configured' },
   disconnected: { bg: 'var(--color-error-muted)', text: 'var(--color-error)', dot: 'var(--color-error)', label: 'Disconnected' },
 };
 

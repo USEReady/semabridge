@@ -21,6 +21,7 @@ import {
     Save,
     FileCode2,
     RotateCcw,
+    Key,
 } from 'lucide-react';
 import { api } from '../utils/api';
 import { useLogs } from '../context/LogsContext';
@@ -433,6 +434,7 @@ const SNOWFLAKE_FIELDS = [
     { key: 'account', label: 'Account', placeholder: 'abc123.us-east-1', secret: false, required: true },
     { key: 'user', label: 'Username', placeholder: 'your_username', secret: false, required: true },
     { key: 'password', label: 'Password', placeholder: 'Enter your Snowflake password', secret: true, passwordOnly: true },
+    { key: 'private_key', label: 'Private Key (PEM)', placeholder: 'Paste your private key content', secret: true, keypairOnly: true },
     { key: 'warehouse', label: 'Warehouse', placeholder: 'COMPUTE_WH', secret: false },
     { key: 'database', label: 'Database', placeholder: 'MY_DATABASE', secret: false },
     { key: 'schema_name', label: 'Schema', placeholder: 'PUBLIC', secret: false },
@@ -445,7 +447,7 @@ function SnowflakeCard({ status }) {
     const [saving, setSaving] = useState(false);
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState(null);
-    const [authMode, setAuthMode] = useState('password'); // 'password' | 'sso'
+    const [authMode, setAuthMode] = useState('password'); // 'password' | 'sso' | 'keypair'
     const [ssoLoading, setSsoLoading] = useState(false);
     const [ssoResult, setSsoResult] = useState(null);
     const { addLog } = useLogs();
@@ -455,13 +457,19 @@ function SnowflakeCard({ status }) {
             const initial = {};
             for (const field of SNOWFLAKE_FIELDS) {
                 const stored = status.credentials[field.key];
-                initial[field.key] = stored === '••••••••' ? '' : (stored || '');
+                // Secret fields come back masked from the backend — never pre-fill them
+                initial[field.key] = (field.secret || !stored) ? '' : stored;
             }
             setFormData(initial);
 
-            // Detect if SSO was previously configured
-            if (status.credentials.authenticator === 'externalbrowser') {
+            // Detect previously configured auth mode
+            const storedAuthType = status.credentials.auth_type;
+            if (storedAuthType === 'keypair') {
+                setAuthMode('keypair');
+            } else if (storedAuthType === 'externalbrowser' || status.credentials.authenticator === 'externalbrowser') {
                 setAuthMode('sso');
+            } else {
+                setAuthMode('password');
             }
         }
     }, [status]);
@@ -472,12 +480,25 @@ function SnowflakeCard({ status }) {
         try {
             const filtered = {};
             for (const [k, v] of Object.entries(formData)) { if (v) filtered[k] = v; }
-            if (authMode === 'sso') {
+
+            // Explicitly set auth_type and clean stale fields per mode
+            if (authMode === 'password') {
+                filtered.auth_type = 'password';
+                delete filtered.private_key;
+                delete filtered.authenticator;
+            } else if (authMode === 'sso') {
+                filtered.auth_type = 'externalbrowser';
                 filtered.authenticator = 'externalbrowser';
                 delete filtered.password;
+                delete filtered.private_key;
+            } else if (authMode === 'keypair') {
+                filtered.auth_type = 'keypair';
+                delete filtered.password;
+                delete filtered.authenticator;
             }
+
             await api.saveConnection('snowflake', filtered);
-            addLog('info', 'Connections', 'Snowflake credentials saved');
+            addLog('info', 'Connections', `Snowflake credentials saved (${authMode})`);
         } catch (err) {
             addLog('error', 'Connections', err.message);
         } finally { setSaving(false); }
@@ -543,7 +564,12 @@ function SnowflakeCard({ status }) {
     const isConfigured = status?.configured;
 
     // Filter fields based on auth mode
-    const visibleFields = SNOWFLAKE_FIELDS.filter(f => !(authMode === 'sso' && f.passwordOnly));
+    const visibleFields = SNOWFLAKE_FIELDS.filter(f => {
+        if (authMode === 'sso' && (f.passwordOnly || f.keypairOnly)) return false;
+        if (authMode === 'password' && f.keypairOnly) return false;
+        if (authMode === 'keypair' && f.passwordOnly) return false;
+        return true;
+    });
 
     return (
         <div className="rounded-xl border overflow-hidden"
@@ -596,6 +622,15 @@ function SnowflakeCard({ status }) {
                     }}>
                     <LogIn size={11} /> SSO (Browser)
                 </button>
+                <button
+                    onClick={() => { setAuthMode('keypair'); setTestResult(null); setSsoResult(null); }}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2 text-[11px] font-bold transition-all"
+                    style={{
+                        background: authMode === 'keypair' ? 'var(--color-accent)' : 'transparent',
+                        color: authMode === 'keypair' ? '#fff' : 'var(--text-tertiary)',
+                    }}>
+                    <Key size={11} /> Key Pair
+                </button>
             </div>
 
             <div className="px-4 py-3 space-y-3">
@@ -604,15 +639,26 @@ function SnowflakeCard({ status }) {
                         <label className="block text-[11px] font-medium mb-1"
                             style={{ color: 'var(--text-secondary)' }}>{field.label}</label>
                         <div className="relative">
-                            <input
-                                type={field.secret && !showSecrets[field.key] ? 'password' : 'text'}
-                                value={formData[field.key] || ''}
-                                onChange={e => { setFormData(p => ({ ...p, [field.key]: e.target.value })); setTestResult(null); }}
-                                placeholder={field.placeholder}
-                                className="w-full px-3 py-2 rounded-lg text-xs border outline-none focus:ring-1 transition-colors"
-                                style={{ background: 'var(--bg-input, var(--bg-primary))', borderColor: 'var(--border-main)', color: 'var(--text-primary)' }}
-                            />
-                            {field.secret && (
+                            {field.multiline ? (
+                                <textarea
+                                    value={formData[field.key] || ''}
+                                    onChange={e => { setFormData(p => ({ ...p, [field.key]: e.target.value })); setTestResult(null); }}
+                                    placeholder={field.placeholder}
+                                    rows={4}
+                                    className="w-full px-3 py-2 rounded-lg text-xs border outline-none focus:ring-1 transition-colors resize-none font-mono"
+                                    style={{ background: 'var(--bg-input, var(--bg-primary))', borderColor: 'var(--border-main)', color: 'var(--text-primary)' }}
+                                />
+                            ) : (
+                                <input
+                                    type={field.secret && !showSecrets[field.key] ? 'password' : 'text'}
+                                    value={formData[field.key] || ''}
+                                    onChange={e => { setFormData(p => ({ ...p, [field.key]: e.target.value })); setTestResult(null); }}
+                                    placeholder={field.placeholder}
+                                    className="w-full px-3 py-2 rounded-lg text-xs border outline-none focus:ring-1 transition-colors"
+                                    style={{ background: 'var(--bg-input, var(--bg-primary))', borderColor: 'var(--border-main)', color: 'var(--text-primary)' }}
+                                />
+                            )}
+                            {field.secret && !field.multiline && (
                                 <button onClick={() => setShowSecrets(p => ({ ...p, [field.key]: !p[field.key] }))}
                                     className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded opacity-40 hover:opacity-100" type="button">
                                     {showSecrets[field.key]

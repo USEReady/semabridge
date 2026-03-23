@@ -50,28 +50,58 @@ export default function SettingsPage() {
         const rows = [];
 
         // Fabric connector
+        // Backend returns { configured, has_auth, auth_method, credentials, missing_fields }
         const fabricConn = status?.fabric;
+        const fabricConfigured = fabricConn?.configured === true;
+        const fabricHasAuth = fabricConn?.has_auth === true;
+        const fabricHasWorkspace = !!fabricConn?.credentials?.workspace_id;
+        // 3-state: connected (workspace + auth), configured (workspace only), disconnected
+        const fabricStatus = fabricConfigured
+          ? 'connected'
+          : fabricHasWorkspace
+            ? 'configured'
+            : 'disconnected';
         rows.push({
           id: 'fabric',
           name: 'Microsoft Fabric',
           type: 'Analytics Platform',
           icon: '🔷',
-          status: fabricConn?.logged_in || fabricConn?.has_credentials ? 'connected' : 'disconnected',
-          last_sync: fabricConn?.last_sync ?? null,
-          detail: fabricConn?.workspace_name ? `Workspace: ${fabricConn.workspace_name}` : 'Not configured',
+          status: fabricStatus,
+          last_sync: null,
+          detail: fabricStatus === 'connected'
+            ? `Workspace: ${fabricConn.credentials.workspace_id}`
+            : fabricStatus === 'configured'
+              ? `Workspace set · ${fabricHasAuth ? '' : 'Auth required'}`
+              : 'Not configured',
           tags: ['production', 'analytics'],
         });
 
         // Snowflake connector
+        // Backend returns { configured, auth_type, credentials, missing_fields }
         const snowConn = status?.snowflake;
+        const snowConfigured = snowConn?.configured === true;
+        const snowHasFields = (snowConn?.fields_stored ?? 0) > 0;
+        const snowAuthType = snowConn?.credentials?.auth_type ?? '';
+        const snowAccount  = snowConn?.credentials?.account ?? '';
+        const snowMissing  = snowConn?.missing_fields ?? [];
+        // 3-state: connected (all required), configured (partial), disconnected
+        const snowStatus = snowConfigured
+          ? 'connected'
+          : snowHasFields
+            ? 'configured'
+            : 'disconnected';
         rows.push({
           id: 'snowflake',
           name: 'Snowflake',
           type: 'Data Warehouse',
           icon: '❄️',
-          status: snowConn?.connected ? 'connected' : 'disconnected',
-          last_sync: snowConn?.last_sync ?? null,
-          detail: snowConn?.account ? `Account: ${snowConn.account}` : 'Not configured',
+          status: snowStatus,
+          last_sync: null,
+          detail: snowStatus === 'connected'
+            ? `${snowAccount}${snowAuthType ? ` · ${snowAuthType}` : ''}`
+            : snowStatus === 'configured'
+              ? `Missing: ${snowMissing.join(', ')}`
+              : 'Not configured',
           tags: ['warehouse', 'target'],
         });
 
@@ -207,19 +237,19 @@ export default function SettingsPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <StatusBadge status={fabricConn.status === 'connected' ? 'connected' : 'disconnected'} label={fabricConn.status === 'connected' ? 'Connected' : 'Disconnected'} />
+                      <StatusBadge status={fabricConn.status} label={fabricConn.status === 'connected' ? 'Connected' : fabricConn.status === 'configured' ? 'Configured' : 'Disconnected'} />
                       <button
                         onClick={() => setManageOpen(true)}
                         className="flex items-center gap-1.5 rounded-lg text-xs font-semibold px-3 py-1.5 theme-transition"
                         style={{
                           background: fabricConn.status === 'disconnected' ? 'var(--accent-blue)' : 'transparent',
                           color: fabricConn.status === 'disconnected' ? '#fff' : 'var(--accent-blue)',
-                          border: fabricConn.status === 'connected' ? '1px solid var(--accent-blue)' : 'none',
+                          border: fabricConn.status !== 'disconnected' ? '1px solid var(--accent-blue)' : 'none',
                           cursor: 'pointer',
                         }}
                       >
-                        {fabricConn.status === 'connected' ? <Settings2 size={12} /> : <PlugZap size={12} />}
-                        {fabricConn.status === 'connected' ? 'Configure' : 'Connect'}
+                        {fabricConn.status === 'disconnected' ? <PlugZap size={12} /> : <Settings2 size={12} />}
+                        {fabricConn.status === 'disconnected' ? 'Connect' : 'Configure'}
                       </button>
                     </div>
                   </div>
@@ -286,19 +316,19 @@ export default function SettingsPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <StatusBadge status={snowConn.status === 'connected' ? 'connected' : 'disconnected'} label={snowConn.status === 'connected' ? 'Connected' : 'Disconnected'} />
+                        <StatusBadge status={snowConn.status} label={snowConn.status === 'connected' ? 'Connected' : snowConn.status === 'configured' ? 'Configured' : 'Disconnected'} />
                         <button
                           onClick={() => setManageOpen(true)}
                           className="flex items-center gap-1.5 rounded-lg text-xs font-semibold px-3 py-1.5 theme-transition"
                           style={{
                             background: snowConn.status === 'disconnected' ? 'var(--accent-blue)' : 'transparent',
                             color: snowConn.status === 'disconnected' ? '#fff' : 'var(--accent-blue)',
-                            border: snowConn.status === 'connected' ? '1px solid var(--accent-blue)' : 'none',
+                            border: snowConn.status !== 'disconnected' ? '1px solid var(--accent-blue)' : 'none',
                             cursor: 'pointer',
                           }}
                         >
-                          {snowConn.status === 'connected' ? <Settings2 size={12} /> : <PlugZap size={12} />}
-                          {snowConn.status === 'connected' ? 'Configure' : 'Connect'}
+                          {snowConn.status === 'disconnected' ? <PlugZap size={12} /> : <Settings2 size={12} />}
+                          {snowConn.status === 'disconnected' ? 'Connect' : 'Configure'}
                         </button>
                       </div>
                     </div>
