@@ -32,15 +32,9 @@ class SnowflakeInspector:
             return
 
         try:
-            self._connection = snowflake.connector.connect(
-                user=self.config.user,
-                password=self.config.password.get_secret_value(),
-                account=self.config.account,
-                warehouse=self.config.warehouse,
-                database=self.config.database,
-                schema=self.config.schema_name,
-                role=self.config.role,
-            )
+            from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+            kwargs = get_snowflake_connect_kwargs(self.config)
+            self._connection = snowflake.connector.connect(**kwargs)
             logger.info(f"Connected to Snowflake inspector: {self.config.account}")
         except Exception as e:
             logger.error(f"Failed to connect to Snowflake: {e}")

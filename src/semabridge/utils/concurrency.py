@@ -213,18 +213,12 @@ class SnowflakeConnectionPool:
                         f"Reduce MAX_WORKERS or increase pool capacity."
                     )
 
-            conn = snowflake.connector.connect(
-                user=self._config.user,
-                password=self._config.password.get_secret_value(),
-                account=self._config.account,
-                warehouse=self._config.warehouse,
-                database=self._config.database,
-                schema=self._config.schema_name,
-                role=self._config.role,
-                session_parameters={
-                    "QUERY_TAG": "Semabridge_Parallel_Worker",
-                },
-            )
+            from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+            kwargs = get_snowflake_connect_kwargs(self._config)
+            kwargs["session_parameters"] = {
+                "QUERY_TAG": "Semabridge_Parallel_Worker",
+            }
+            conn = snowflake.connector.connect(**kwargs)
             self._local.connection = conn
             with self._lock:
                 self._connections.append(conn)

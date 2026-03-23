@@ -1337,18 +1337,12 @@ class ExecutionEngine:
                 import snowflake.connector
 
                 yaml_content = emitter.generate_cortex_yaml(context.sml_model)
-                conn = snowflake.connector.connect(
-                    user=sf_cfg.user,
-                    password=sf_cfg.password.get_secret_value(),
-                    account=sf_cfg.account,
-                    warehouse=sf_cfg.warehouse,
-                    database=sf_cfg.database,
-                    schema=sf_cfg.schema_name,
-                    role=sf_cfg.role,
-                    session_parameters={
-                        "QUERY_TAG": "SemaBridge_CortexYamlDeploy"
-                    },
-                )
+                from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+                kwargs = get_snowflake_connect_kwargs(sf_cfg)
+                kwargs["session_parameters"] = {
+                    "QUERY_TAG": "SemaBridge_CortexYamlDeploy"
+                }
+                conn = snowflake.connector.connect(**kwargs)
                 try:
                     cur = conn.cursor()
                     emitter.deploy_cortex_yaml(cur, context.sml_model, yaml_content)

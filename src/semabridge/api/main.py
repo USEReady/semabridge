@@ -3655,22 +3655,9 @@ async def test_connection(service: str):
             from semabridge.core.settings import reload_settings
             cfg = reload_settings()
             import snowflake.connector
+            from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
 
-            # Check if SSO (externalbrowser) is configured
-            authenticator = os.environ.get("SNOWFLAKE_AUTHENTICATOR", "")
-
-            connect_kwargs: Dict[str, Any] = {
-                "account": cfg.snowflake.account,
-                "user": cfg.snowflake.user,
-                "warehouse": cfg.snowflake.warehouse,
-                "database": cfg.snowflake.database,
-            }
-
-            if authenticator == "externalbrowser":
-                connect_kwargs["authenticator"] = "externalbrowser"
-            else:
-                connect_kwargs["password"] = cfg.snowflake.password.get_secret_value()
-
+            connect_kwargs = get_snowflake_connect_kwargs(cfg.snowflake)
             conn = snowflake.connector.connect(**connect_kwargs)
             conn.cursor().execute("SELECT CURRENT_VERSION()")
             conn.close()

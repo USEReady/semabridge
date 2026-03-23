@@ -34,7 +34,11 @@ class SnowflakeConfig(BaseSettings):
     
     account: str = Field(..., description="Snowflake account identifier (e.g., abc123.us-east-1)")
     user: str = Field(..., description="Snowflake username")
-    password: SecretStr = Field(..., description="Snowflake password")
+    password: Optional[SecretStr] = Field(default=None, description="Snowflake password (required for password auth)")
+    auth_type: str = Field(default="password", description="Auth method: password | keypair | externalbrowser")
+    private_key: Optional[str] = Field(default=None, description="PEM-encoded private key for Key Pair auth")
+    private_key_passphrase: Optional[SecretStr] = Field(default=None, description="Passphrase for encrypted private key")
+    authenticator: Optional[str] = Field(default=None, description="Snowflake authenticator (externalbrowser for SSO)")
     warehouse: str = Field(..., description="Snowflake warehouse name")
     database: str = Field(..., description="Snowflake database name")
     schema_name: str = Field(default="PUBLIC", validation_alias="SNOWFLAKE_SCHEMA", description="Snowflake schema name")

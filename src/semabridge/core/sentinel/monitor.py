@@ -72,15 +72,9 @@ class QueryMonitor:
         """Context manager for database connections."""
         conn = None
         try:
-            conn = snowflake.connector.connect(
-                user=self.config.user,
-                password=self.config.password.get_secret_value(),
-                account=self.config.account,
-                warehouse=self.config.warehouse,
-                database=self.config.database,
-                schema=self.config.schema_name,
-                role=self.config.role,
-            )
+            from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+            kwargs = get_snowflake_connect_kwargs(self.config)
+            conn = snowflake.connector.connect(**kwargs)
             yield conn
         except Exception as e:
             logger.error(f"Snowflake connection failed: {e}")

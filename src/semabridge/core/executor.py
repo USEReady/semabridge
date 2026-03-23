@@ -383,15 +383,9 @@ class CLIExecutor:
         logger.info("  Pre-flight: Checking Snowflake connectivity...")
         
         try:
-            conn = snowflake.connector.connect(
-                user=sf.user,
-                password=sf.password.get_secret_value(),
-                account=sf.account,
-                warehouse=sf.warehouse,
-                database=sf.database,
-                schema=sf.schema_name,
-                role=sf.role,
-            )
+            from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+            kwargs = get_snowflake_connect_kwargs(sf)
+            conn = snowflake.connector.connect(**kwargs)
             
             try:
                 cur = conn.cursor()

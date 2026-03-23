@@ -105,17 +105,11 @@ class ObservabilityTable:
     def _connect(self):
         """Open a fresh Snowflake connection (caller must close)."""
         import snowflake.connector  # deferred — optional dependency
+        from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
 
-        return snowflake.connector.connect(
-            user=self._cfg.user,
-            password=self._cfg.password.get_secret_value(),
-            account=self._cfg.account,
-            warehouse=self._cfg.warehouse,
-            database=self._cfg.database,
-            schema=self._cfg.schema_name,
-            role=self._cfg.role,
-            session_parameters={"QUERY_TAG": "SemaBridge_Observability"},
-        )
+        kwargs = get_snowflake_connect_kwargs(self._cfg)
+        kwargs["session_parameters"] = {"QUERY_TAG": "SemaBridge_Observability"}
+        return snowflake.connector.connect(**kwargs)
 
     # -------------------------------------------------------------------------
     def ensure_table(self) -> None:

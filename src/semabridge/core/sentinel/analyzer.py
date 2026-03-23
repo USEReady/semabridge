@@ -1,4 +1,4 @@
-﻿"""
+"""
 Sentinel Error Analyzer.
 
 Parses error messages and inspects Snowflake metadata to determine
@@ -65,15 +65,9 @@ class IdentifierAnalyzer:
 
     @contextmanager
     def connection(self) -> SnowflakeConnection:
-        conn = snowflake.connector.connect(
-            user=self.config.user,
-            password=self.config.password.get_secret_value(),
-            account=self.config.account,
-            warehouse=self.config.warehouse,
-            database=self.config.database,
-            schema=self.config.schema_name,
-            role=self.config.role,
-        )
+        from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+        kwargs = get_snowflake_connect_kwargs(self.config)
+        conn = snowflake.connector.connect(**kwargs)
         try:
             yield conn
         finally:
@@ -159,15 +153,9 @@ class AccessAnalyzer:
 
     @contextmanager
     def connection(self) -> SnowflakeConnection:
-        conn = snowflake.connector.connect(
-            user=self.config.user,
-            password=self.config.password.get_secret_value(),
-            account=self.config.account,
-            warehouse=self.config.warehouse,
-            database=self.config.database,
-            schema=self.config.schema_name,
-            role=self.config.role,
-        )
+        from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+        kwargs = get_snowflake_connect_kwargs(self.config)
+        conn = snowflake.connector.connect(**kwargs)
         try:
             yield conn
         finally:
