@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -46,6 +47,7 @@ from semabridge.intermediate.models import OSIModel
 from semabridge.sml.models import SMLModel
 from semabridge.repository.model_repository import ModelRepository
 from semabridge.utils.logger import get_logger
+from semabridge.utils.relationship_naming import generate_relationship_name
 
 logger = get_logger(__name__)
 
@@ -540,14 +542,18 @@ class ExecutionEngine:
             if not config.validate_snowflake():
                 missing.append("Snowflake credentials (SNOWFLAKE_*)")
         elif context.source_type == "fabric":
-            fabric_env_ok = config.validate_fabric()
-            fabric_ui_ok = self._has_fabric_interactive_auth()
-            if not (fabric_env_ok or fabric_ui_ok):
-                missing.append("Fabric credentials (FABRIC_*)")
-            elif fabric_ui_ok:
-                auth_sources.append("UI token")
+            if context.behavior.features.offline_mode:
+                logger.info("Step 3: OFFLINE mode enabled - skipping Fabric auth validation")
+                auth_sources.append("OFFLINE")
             else:
-                auth_sources.append("ENV")
+                fabric_env_ok = config.validate_fabric()
+                fabric_ui_ok = self._has_fabric_interactive_auth()
+                if not (fabric_env_ok or fabric_ui_ok):
+                    missing.append("Fabric credentials (FABRIC_*)")
+                elif fabric_ui_ok:
+                    auth_sources.append("UI token")
+                else:
+                    auth_sources.append("ENV")
         # PBIX source needs no external auth — local file
         elif context.source_type == "pbix":
             pass
@@ -665,6 +671,41 @@ class ExecutionEngine:
         config = context.config
         ws_id = workspace_id or config.fabric.workspace_id
         interactive_token: Optional[str] = None
+
+        if context.behavior.features.offline_mode:
+            offline_path = Path(context.behavior.features.offline_fabric_model_path)
+            if not offline_path.exists():
+                raise ExtractionError(
+                    f"offline_mode enabled but file not found: {offline_path}"
+                )
+
+            logger.info(
+                "Step 4: Running in OFFLINE mode (skipping Fabric API) using %s",
+                offline_path,
+            )
+
+            with open(offline_path, "r", encoding="utf-8") as f:
+                tmsl = json.load(f)
+
+            # Accept both full TMSL and flattened model payloads.
+            if isinstance(tmsl, dict) and "model" not in tmsl and "tables" in tmsl:
+                tmsl = {"model": tmsl}
+
+            resolved_dataset_id = dataset_id or context.project_id
+            row_counts: dict[str, int] = {}
+
+            source_format = from_fabric_tmsl(
+                project_id=context.project_id,
+                run_id=context.run_id,
+                tmsl=tmsl,
+                workspace_id=ws_id,
+                dataset_id=resolved_dataset_id,
+                row_counts=row_counts,
+            )
+
+            table_count = len(tmsl.get("model", {}).get("tables", []))
+            self._record_step(4, StepStatus.SUCCESS, f"OFFLINE extract loaded {table_count} tables")
+            return source_format
 
         try:
             from semabridge.repository.credential_manager import CredentialManager
@@ -887,17 +928,84 @@ class ExecutionEngine:
         
         try:
             if context.source_type == "snowflake":
-                return self._convert_snowflake_to_sml(context)
+                sml_model = self._convert_snowflake_to_sml(context)
             elif context.source_type == "fabric":
-                return self._convert_fabric_to_sml(context, workspace_id, dataset_id)
+                sml_model = self._convert_fabric_to_sml(context, workspace_id, dataset_id)
             elif context.source_type == "pbix":
-                return self._convert_pbix_to_sml(context)
+                sml_model = self._convert_pbix_to_sml(context)
             else:
                 raise ConversionError(f"Unknown source type: {context.source_type}")
+
+            # Normalize relationship names/deduplication here so all downstream
+            # target conversions and deployments operate on the same final model.
+            self._normalize_relationships_for_target(sml_model)
+            return sml_model
                 
         except Exception as e:
             self._record_step(6, StepStatus.FAILED, str(e))
             raise ConversionError(f"SML conversion failed: {e}") from e
+
+    def _normalize_relationships_for_target(self, model: SMLModel) -> None:
+        """Canonicalize and deduplicate relationships on the final SML model.
+
+        Stage placement is intentional: after canonical SML creation and before
+        target-format conversion/deployment.
+        """
+        if not getattr(model, "relationships", None):
+            return
+
+        normalized: list[SMLRelationship] = []
+        seen_endpoints: set[tuple[str, str, str, str]] = set()
+        renamed_count = 0
+        deduped_count = 0
+
+        for rel in model.relationships:
+            from_col = rel.from_columns[0] if rel.from_columns else ""
+            to_col = rel.to_columns[0] if rel.to_columns else ""
+            endpoint_key = (
+                rel.from_dataset.upper(),
+                from_col.upper(),
+                rel.to_dataset.upper(),
+                to_col.upper(),
+            )
+
+            # Deduplicate only exact endpoint duplicates.
+            if endpoint_key in seen_endpoints:
+                deduped_count += 1
+                continue
+            seen_endpoints.add(endpoint_key)
+
+            canonical_name = generate_relationship_name(
+                rel.from_dataset,
+                from_col,
+                rel.to_dataset,
+                to_col,
+            )
+            if rel.unique_name != canonical_name:
+                renamed_count += 1
+                rel.unique_name = canonical_name
+
+            normalized.append(rel)
+
+        model.relationships = normalized
+
+        if renamed_count or deduped_count:
+            logger.info(
+                "Normalized final relationships: kept=%s renamed=%s removed_duplicates=%s",
+                len(model.relationships),
+                renamed_count,
+                deduped_count,
+            )
+
+        for rel in model.relationships:
+            logger.info(
+                "FINAL REL: %s (%s.%s -> %s.%s)",
+                rel.unique_name,
+                rel.from_dataset,
+                rel.from_column,
+                rel.to_dataset,
+                rel.to_column,
+            )
     
     def _convert_snowflake_to_sml(self, context: RunContext) -> SMLModel:
         """Convert Snowflake source to SML."""
@@ -1330,6 +1438,7 @@ class ExecutionEngine:
         # ── DDL path ─────────────────────────────────────────────────────────
         if deployment_method in ("ddl", "both"):
             emitter.deploy(context.sml_model)
+            self._export_inferred_osi_artifacts(context)
 
         # ── Stored-procedure / Cortex YAML path ──────────────────────────────
         if deployment_method in ("yaml_stored_procedure", "both"):
@@ -1357,6 +1466,35 @@ class ExecutionEngine:
         # ── Optional: Sync materialized DAX measures to MEASURES_* tables ────
         if context.source_type == "fabric" and self._should_sync_measures(context):
             self._sync_fabric_measures(context, emitter)
+
+    def _export_inferred_osi_artifacts(self, context: RunContext) -> None:
+        """Write OSI JSON/YAML with the latest inferred column datatypes."""
+        try:
+            import json
+            import yaml
+            from semabridge.converter.sml_to_osi import SMLToOSIConverter
+
+            if not context.sml_model:
+                return
+
+            osi_model = SMLToOSIConverter().to_osi(context.sml_model)
+            context.osi_model = osi_model
+
+            out_dir = Path("output")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            json_path = out_dir / "osi_inferred.json"
+            yaml_path = out_dir / "osi_inferred.yaml"
+
+            osi_dict = osi_model.model_dump(mode="json")
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(osi_dict, f, indent=2)
+            with open(yaml_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(osi_dict, f, sort_keys=False)
+
+            logger.info(f"Generated OSI JSON with inferred types: {json_path}")
+            logger.info(f"Generated OSI YAML with inferred types: {yaml_path}")
+        except Exception as ex:
+            logger.warning(f"Failed to export inferred OSI artifacts (non-fatal): {ex}")
     
     # =========================================================================
     # Step 10: Finalize Run

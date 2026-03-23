@@ -19,6 +19,7 @@ from semabridge.core.settings import FabricConfig
 from semabridge.connectors.tmsl_generator import TMSLGenerator
 from semabridge.sml.models import SMLModel
 from semabridge.utils.logger import get_logger
+from semabridge.utils.relationship_naming import generate_relationship_name
 
 logger = get_logger(__name__)
 
@@ -34,7 +35,7 @@ class FabricPublisher:
     
     Uses the Fabric REST API:
     - POST /workspaces/{workspaceId}/semanticModels (create)
-    - PATCH /workspaces/{workspaceId}/semanticModels/{modelId} (update)
+    - POST /workspaces/{workspaceId}/semanticModels/{modelId}/updateDefinition (update)
     
     Handles long-running operations with polling.
     """
@@ -248,12 +249,21 @@ class FabricPublisher:
                 ]
             }
         }
+
+        validation_stats = self._validate_full_definition_payload(payload)
+        logger.info(
+            "Fabric publish preflight: model=%s relationships=%s",
+            display_name,
+            validation_stats,
+        )
         
         if existing_model:
             # Update existing model
+            logger.info("Deploy mode: full overwrite via updateDefinition (in-place)")
             result = self._update_model(existing_model["id"], payload)
         else:
             # Create new model
+            logger.info("Deploy mode: create new semantic model with full definition")
             result = self._create_model(payload)
             
         # Trigger refresh to ensure changes are visible
@@ -312,6 +322,88 @@ class FabricPublisher:
                 error_text = response.text
                 logger.error(f"Update failed: {response.status_code} - {error_text}")
                 raise PublishError(f"Failed to update model: {response.status_code} - {error_text}")
+
+    def _validate_full_definition_payload(self, payload: dict[str, Any]) -> dict[str, int]:
+        """Validate model.bim relationships before sending an overwrite payload.
+
+        This enforces idempotent, clean deployments by blocking payloads that
+        contain system-generated relationship names or duplicate endpoints.
+        """
+        model_bim = self._extract_model_bim_payload(payload)
+        relationships = model_bim.get("model", {}).get("relationships", [])
+        if not isinstance(relationships, list):
+            raise PublishError("Invalid payload: model.relationships must be a list")
+
+        seen_endpoints: set[tuple[str, str, str, str]] = set()
+        duplicate_count = 0
+
+        for rel in relationships:
+            if not isinstance(rel, dict):
+                raise PublishError("Invalid payload: relationship entries must be objects")
+
+            name = str(rel.get("name") or "")
+            if name.upper().startswith("SYS_RELATIONSHIP"):
+                raise PublishError(
+                    f"Invalid payload: system relationship name detected ({name})"
+                )
+
+            endpoint = (
+                str(rel.get("fromTable") or "").upper(),
+                str(rel.get("fromColumn") or "").upper(),
+                str(rel.get("toTable") or "").upper(),
+                str(rel.get("toColumn") or "").upper(),
+            )
+            if not all(endpoint):
+                raise PublishError(
+                    f"Invalid payload: incomplete relationship endpoint for '{name or 'unnamed'}'"
+                )
+
+            expected_name = generate_relationship_name(
+                str(rel.get("fromTable") or ""),
+                str(rel.get("fromColumn") or ""),
+                str(rel.get("toTable") or ""),
+                str(rel.get("toColumn") or ""),
+            )
+            if name != expected_name:
+                raise PublishError(
+                    "Invalid payload: non-deterministic relationship name "
+                    f"'{name}' (expected '{expected_name}')"
+                )
+
+            if endpoint in seen_endpoints:
+                duplicate_count += 1
+            seen_endpoints.add(endpoint)
+
+        if duplicate_count > 0:
+            raise PublishError(
+                f"Invalid payload: duplicate relationship endpoints detected ({duplicate_count})"
+            )
+
+        return {
+            "total": len(relationships),
+            "unique_endpoints": len(seen_endpoints),
+            "duplicates": duplicate_count,
+        }
+
+    @staticmethod
+    def _extract_model_bim_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        """Decode and return model.bim JSON from a Fabric definition payload."""
+        parts = payload.get("definition", {}).get("parts", [])
+        if not isinstance(parts, list):
+            raise PublishError("Invalid payload: definition.parts must be a list")
+
+        model_bim_part = next((p for p in parts if p.get("path") == "model.bim"), None)
+        if not model_bim_part:
+            raise PublishError("Invalid payload: model.bim part not found")
+
+        encoded = model_bim_part.get("payload")
+        if not isinstance(encoded, str) or not encoded:
+            raise PublishError("Invalid payload: model.bim payload missing")
+
+        try:
+            return json.loads(base64.b64decode(encoded).decode("utf-8"))
+        except Exception as exc:
+            raise PublishError(f"Invalid payload: failed to decode model.bim ({exc})") from exc
 
     def refresh_model(self, model_id: str) -> bool:
         """Trigger a refresh of the semantic model."""

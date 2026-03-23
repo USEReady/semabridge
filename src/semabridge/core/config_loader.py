@@ -380,6 +380,13 @@ def validate_config_schema(config: Dict[str, Any]) -> List[str]:
                         f"Must be one of: {valid_formats}"
                     )
     
+    # Handle 'targets' list from UI (convert first item to 'target')
+    if "targets" in config and isinstance(config.get("targets"), list) and len(config["targets"]) > 0:
+        config["target"] = config["targets"][0]
+        # Auto-enable deploy so Snowflake DDL is executed
+        if "deploy" not in config["target"]:
+            config["target"]["deploy"] = True
+
     # Validate target if present
     if "target" in config and config["target"] is not None:
         target = config["target"]

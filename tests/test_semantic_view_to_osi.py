@@ -83,6 +83,17 @@ MEASURES (
 )
 """
 
+NAMED_RELATIONSHIP_NO_REL_PREFIX_DDL = """
+CREATE OR REPLACE SEMANTIC VIEW DB.SCH.NAMED_REL_VIEW
+TABLES (
+    f AS DB.SCH."FACT_SALES" PRIMARY KEY ("SALE_ID"),
+    p AS DB.SCH."DIM_PRODUCT" PRIMARY KEY ("PRODUCT_KEY")
+)
+RELATIONSHIPS (
+    FACT_SALES_PRODUCT_KEY__DIM_PRODUCT_PRODUCT_KEY AS f ("PRODUCT_KEY") REFERENCES p
+)
+"""
+
 WITH_COLUMN_METADATA_DDL = """
 CREATE OR REPLACE SEMANTIC VIEW DB.SCH.TYPED_VIEW
 TABLES (
@@ -195,6 +206,11 @@ class TestRelationships:
     def test_no_relationships_minimal(self, converter):
         osi = converter.to_osi({"ddl": MINIMAL_DDL})
         assert osi.relationships == []
+
+    def test_named_relationship_without_rel_prefix_restored_to_canonical(self, converter):
+        osi = converter.to_osi({"ddl": NAMED_RELATIONSHIP_NO_REL_PREFIX_DDL})
+        assert len(osi.relationships) == 1
+        assert osi.relationships[0].unique_name == "REL_FACT_SALES_PRODUCT_KEY__DIM_PRODUCT_PRODUCT_KEY"
 
 
 # ---------------------------------------------------------------------------

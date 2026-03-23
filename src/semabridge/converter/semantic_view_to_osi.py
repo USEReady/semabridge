@@ -52,6 +52,7 @@ from semabridge.intermediate.models import (
     OSIRelationship,
 )
 from semabridge.utils.logger import get_logger
+from semabridge.utils.relationship_naming import generate_relationship_name
 
 logger = get_logger(__name__)
 
@@ -354,9 +355,9 @@ class SemanticViewToOSIConverter(BaseConverter):
             if not entry:
                 continue
 
-            # Pattern: alias ("col") REFERENCES alias2
+            # Pattern: [relationship_name AS] alias ("col") REFERENCES alias2
             m = re.match(
-                r'(\w+)\s*\(\s*"?(\w+)"?\s*\)\s*REFERENCES\s+(\w+)',
+                r'(?:(\w+)\s+AS\s+)?(\w+)\s*\(\s*"?(\w+)"?\s*\)\s*REFERENCES\s+(\w+)',
                 entry,
                 re.IGNORECASE,
             )
@@ -364,15 +365,29 @@ class SemanticViewToOSIConverter(BaseConverter):
                 logger.debug(f"Could not parse RELATIONSHIPS entry: {entry!r}")
                 continue
 
-            from_alias, fk_col, to_alias = m.group(1), m.group(2), m.group(3)
+            rel_identifier, from_alias, fk_col, to_alias = m.group(1), m.group(2), m.group(3), m.group(4)
             from_table = table_map.get(from_alias, {}).get("table_name", from_alias)
             to_table = table_map.get(to_alias, {}).get("table_name", to_alias)
             to_pk_cols = table_map.get(to_alias, {}).get("pk_columns", [])
             to_col = to_pk_cols[0] if to_pk_cols else fk_col
 
+            if rel_identifier:
+                rel_name = rel_identifier.upper()
+                # Snowflake layer may intentionally omit REL_. Keep canonical
+                # REL_ prefix inside OSI/SML models.
+                if not rel_name.startswith("REL_"):
+                    rel_name = f"REL_{rel_name}"
+            else:
+                rel_name = generate_relationship_name(
+                    from_table,
+                    fk_col,
+                    to_table,
+                    to_col,
+                )
+
             rels.append(
                 OSIRelationship(
-                    unique_name=f"{from_table}_{fk_col}_{to_table}",
+                    unique_name=rel_name,
                     from_dataset=from_table,
                     from_columns=[fk_col],
                     to_dataset=to_table,

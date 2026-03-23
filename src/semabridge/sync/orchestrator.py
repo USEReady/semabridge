@@ -38,6 +38,7 @@ from semabridge.sync.models import (
 from semabridge.sync.repository import SyncRepository
 from semabridge.sync.schema_evolution import SchemaEvolutionTracker
 from semabridge.utils.logger import get_logger
+from semabridge.utils.relationship_naming import RelationshipNameTracker
 
 logger = get_logger(__name__)
 
@@ -846,10 +847,12 @@ class SyncOrchestrator:
             )
 
         relationships: list = []
-        for rel_info in metadata.get("relationships", []):
+        for rel_info in self._normalize_snowflake_relationships(
+            metadata.get("relationships", [])
+        ):
             relationships.append(
                 OSIRelationship(
-                    unique_name=rel_info.get("name", f"{rel_info['from_table']}_{rel_info['to_table']}"),
+                    unique_name=rel_info["name"],
                     from_dataset=rel_info["from_table"],
                     from_columns=[rel_info["from_column"]],
                     to_dataset=rel_info["to_table"],
@@ -986,6 +989,77 @@ class SyncOrchestrator:
         elif config.direction == SyncDirection.FABRIC_SNOWFLAKE_BIDIRECTIONAL:
             return "snowflake_semantic_view"
         return "snowflake"  # bidirectional defaults to Snowflake as primary target
+
+    @staticmethod
+    def _normalize_snowflake_relationships(
+        raw_relationships: list[dict[str, Any]],
+    ) -> list[dict[str, str]]:
+        """Normalize Snowflake relationship rows for deterministic API behavior.
+
+        Rules:
+        - Preserve all valid relationships regardless of existing name.
+        - Deduplicate by relationship endpoint tuple.
+        - Force canonical name ``REL_<FROM>_<FROM_COL>__<TO>_<TO_COL>``.
+        """
+        tracker = RelationshipNameTracker()
+        seen_endpoints: set[tuple[str, str, str, str]] = set()
+        normalized: list[dict[str, str]] = []
+
+        removed_duplicates = 0
+        renamed_count = 0
+
+        for rel in raw_relationships or []:
+            if not isinstance(rel, dict):
+                continue
+
+            from_table = str(rel.get("from_table") or rel.get("fromTable") or "").strip()
+            from_column = str(rel.get("from_column") or rel.get("fromColumn") or "").strip()
+            to_table = str(rel.get("to_table") or rel.get("toTable") or "").strip()
+            to_column = str(rel.get("to_column") or rel.get("toColumn") or "").strip()
+
+            if not (from_table and from_column and to_table and to_column):
+                continue
+
+            endpoint_key = (
+                from_table.upper(),
+                from_column.upper(),
+                to_table.upper(),
+                to_column.upper(),
+            )
+            if endpoint_key in seen_endpoints:
+                removed_duplicates += 1
+                continue
+            seen_endpoints.add(endpoint_key)
+
+            canonical_name = tracker.next_name(
+                from_table,
+                from_column,
+                to_table,
+                to_column,
+            )
+            original_name = str(rel.get("name") or rel.get("relationship_name") or "").strip()
+            if original_name != canonical_name:
+                renamed_count += 1
+
+            normalized.append(
+                {
+                    "name": canonical_name,
+                    "from_table": from_table,
+                    "from_column": from_column,
+                    "to_table": to_table,
+                    "to_column": to_column,
+                }
+            )
+
+        if renamed_count or removed_duplicates:
+            logger.info(
+                "Normalized Snowflake relationships: kept=%s renamed=%s removed_duplicates=%s",
+                len(normalized),
+                renamed_count,
+                removed_duplicates,
+            )
+
+        return normalized
 
     @staticmethod
     def _map_snowflake_type(sf_type: str) -> "OSIDataType":

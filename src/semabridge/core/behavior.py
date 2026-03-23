@@ -11,7 +11,7 @@ from typing import Dict, List, Optional
 from pathlib import Path
 import yaml
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 class SnowflakeBehavior(BaseModel):
     """Snowflake-specific behavior controls."""
@@ -34,6 +34,13 @@ class SnowflakeBehavior(BaseModel):
     use_transient_tables: bool = Field(
         default=False,
         description="Create transient tables (no fail-safe) for staging"
+    )
+    apply_inferred_types: bool = Field(
+        default=True,
+        description=(
+            "Apply inferred datatypes to physical source tables via CTAS+SWAP "
+            "during deploy"
+        )
     )
 
 class FabricBehavior(BaseModel):
@@ -104,6 +111,14 @@ class FeatureFlags(BaseModel):
         default=True,
         description="Skip deep validation during dry runs"
     )
+    offline_mode: bool = Field(
+        default=False,
+        description="Run fabric source flows without Fabric API calls using local raw model JSON"
+    )
+    offline_fabric_model_path: str = Field(
+        default="output/debug/raw_fabric_model.json",
+        description="Path to local Fabric model JSON used when offline_mode is enabled"
+    )
 
 class LegacyCleanup(BaseModel):
     """Cleanup options for old features."""
@@ -123,6 +138,34 @@ class ConnectorBehavior(BaseModel):
     compatibility: CompatibilityBehavior = Field(default_factory=CompatibilityBehavior)
     features: FeatureFlags = Field(default_factory=FeatureFlags)
     legacy: LegacyCleanup = Field(default_factory=LegacyCleanup)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_offline_fields(cls, data):
+        """Allow top-level offline_* keys by mapping them into features."""
+        if not isinstance(data, dict):
+            return data
+
+        has_offline_alias = (
+            "offline_mode" in data or "offline_fabric_model_path" in data
+        )
+        if not has_offline_alias:
+            return data
+
+        features = data.get("features")
+        if not isinstance(features, dict):
+            features = {}
+
+        if "offline_mode" in data and "offline_mode" not in features:
+            features["offline_mode"] = data["offline_mode"]
+        if (
+            "offline_fabric_model_path" in data
+            and "offline_fabric_model_path" not in features
+        ):
+            features["offline_fabric_model_path"] = data["offline_fabric_model_path"]
+
+        data["features"] = features
+        return data
 
     @classmethod
     def from_yaml(cls, path: Path) -> "ConnectorBehavior":

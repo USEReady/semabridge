@@ -18,6 +18,7 @@ Note:
 
 import logging
 import os
+import re
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
@@ -356,6 +357,22 @@ class OSIRelationship(OSIBaseModel):
         default=OSICrossFilterDirection.SINGLE, description="Cross-filter direction"
     )
     is_active: bool = Field(default=True, description="Active relationship indicator")
+
+    @field_validator("unique_name")
+    @classmethod
+    def validate_unique_name(cls, v: str) -> str:
+        """Enforce strict relationship naming and reject system or GUID generated names."""
+        upper_v = v.upper()
+        if upper_v.startswith("SYS_"):
+            raise ValueError(f"System generated relationship names starting with SYS_ are rejected: {v}")
+        if "GUID" in upper_v or re.search(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}', v):
+            raise ValueError(f"GUIDs are not allowed in relationship names: {v}")
+        if not re.match(r"^REL_[A-Z0-9_]+_[A-Z0-9_]+__[A-Z0-9_]+_[A-Z0-9_]+(?:_[0-9]+)?$", upper_v):
+            raise ValueError(
+                f"Relationship name '{v}' does not match required format "
+                "REL_<FROM_TABLE>_<FROM_COLUMN>__<TO_TABLE>_<TO_COLUMN>"
+            )
+        return v
 
     @model_validator(mode="after")
     def validate_column_count_match(self) -> "OSIRelationship":

@@ -1,37 +1,40 @@
-project_name: manoj
+project_name: "sample"
+description: "syncs client dataset fabric to sf"
 source:
   type: fabric
-  workspace_id: semabridge-local
-  workspace: SemaBridge Workspace
+  workspace_id: "semabridge-local"
+  workspace: "SemaBridge Workspace"
   models:
-    - continent
+    - "Client Data"
 targets:
   - type: snowflake
+    database: "SEMABRIDGE_DB"
+    schema: "PUBLIC"
 mappings:
-  - source: continent
-    target: continent_mapped
+  - source: "Client Data"
+    target: "client data_mapped"
     type: table
     columns:
-      - source: id
-        target: id
+      - source: "id"
+        target: "id"
         type: INT
         primary_key: true
-      - source: name
-        target: name
+      - source: "name"
+        target: "name"
         type: VARCHAR(255)
-      - source: created_at
-        target: created_at
+      - source: "created_at"
+        target: "created_at"
         type: TIMESTAMP
-      - source: updated_at
-        target: updated_at
+      - source: "updated_at"
+        target: "updated_at"
         type: TIMESTAMP
 ui:
-  intermediate_format: osi
-  editor_mode: yaml
+  intermediate_format: "osi"
+  editor_mode: "form"
 selection:
   model_ids:
-    - d32e8900-31cc-4647-872d-08a7e62bf03b
+    - "0794fdcc-d85f-4d93-a42c-8bacaad04819"
 options:
   auto_relationships: true
-  include_hidden_fields: true
+  include_hidden_fields: false
   generate_descriptions: true

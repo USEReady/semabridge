@@ -41,6 +41,10 @@ def _make_model_with_sql_expression():
         is_fact=True,
         columns=[
             SMLColumn(
+                unique_name="ProductID",
+                data_type=DataType.INTEGER,
+            ),
+            SMLColumn(
                 unique_name="OrderID",
                 data_type=DataType.INTEGER,
                 is_key=True,
@@ -138,3 +142,16 @@ class TestEmitterModelBug:
 
         # The metric should end up in METRICS, not be silently dropped
         assert "METRICS" in ddl or "PROFIT" in ddl.upper()
+
+    def test_guard_relationship_clause_raises_when_missing(self):
+        """Deploy guard should fail if active relationships vanish from DDL."""
+        emitter = _make_emitter()
+        sml = _make_model_with_sql_expression()
+
+        with pytest.raises(ValueError, match="no RELATIONSHIPS clause"):
+            emitter._guard_relationship_clause(
+                model_name=sml.unique_name,
+                relationships=sml.relationships,
+                semantic_ddl="CREATE OR REPLACE SEMANTIC VIEW X TABLES (A AS B)",
+                fail_on_missing=True,
+            )

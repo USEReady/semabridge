@@ -10,6 +10,8 @@ from __future__ import annotations
 import time
 import yaml
 import re
+from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -44,14 +46,14 @@ IndentDumper.add_representer(str, str_presenter)
 
 from semabridge.core.settings import SnowflakeConfig
 from semabridge.core.behavior import ConnectorBehavior, SnowflakeBehavior
-from semabridge.formats.sml.models import SMLModel, SMLDataset, SMLMetric, SMLDimension, SMLRelationship, AggregationType
+from semabridge.formats.sml.models import SMLModel, SMLDataset, SMLMetric, SMLDimension, SMLRelationship, AggregationType, DataType
 from semabridge.utils.identifiers import IdentifierSanitizer, SQL_FUNCTION_NAMES
 try:
     from semabridge.intermediate.models import (
-        OSIModel, OSIDataset, OSIMetric, OSIDimension, OSIAttribute, OSIColumn,
+        OSIModel, OSIDataset, OSIMetric, OSIDimension, OSIAttribute, OSIColumn, OSIDataType,
     )
 except ImportError:
-    OSIModel = OSIDataset = OSIMetric = OSIDimension = OSIAttribute = OSIColumn = None
+    OSIModel = OSIDataset = OSIMetric = OSIDimension = OSIAttribute = OSIColumn = OSIDataType = None
 from semabridge.utils.logger import get_logger
 from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
 
@@ -950,9 +952,15 @@ class SnowflakeEmitter(BaseEmitter):
     def authenticate(self) -> None:
         """Establish connection to Snowflake."""
         import snowflake.connector
-        from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
-        kwargs = get_snowflake_connect_kwargs(self.config)
-        self._connection = snowflake.connector.connect(**kwargs)
+        self._connection = snowflake.connector.connect(
+            user=self.config.user,
+            password=self.config.password.get_secret_value(),
+            account=self.config.account,
+            warehouse=self.config.warehouse,
+            database=self.config.database,
+            schema=self.config.schema_name,
+            role=self.config.role,
+        )
 
     def discover(self) -> Dict[str, Any]:
         """List tables and views in the schema."""
@@ -1121,15 +1129,20 @@ class SnowflakeEmitter(BaseEmitter):
         if self._session_conn is not None:
             return  # already open
         import snowflake.connector
-        from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
 
         logger.info(f"Opening Snowflake session for batch deployment: {self.config.account}")
-        kwargs = get_snowflake_connect_kwargs(self.config)
-        kwargs["warehouse"] = self._resolve_warehouse(operation)
-        kwargs["session_parameters"] = {
-            "QUERY_TAG": self.sf_behavior.query_tag or "Semabridge_Connector"
-        }
-        self._session_conn = snowflake.connector.connect(**kwargs)
+        self._session_conn = snowflake.connector.connect(
+            user=self.config.user,
+            password=self.config.password.get_secret_value(),
+            account=self.config.account,
+            warehouse=self._resolve_warehouse(operation),
+            database=self.config.database,
+            schema=self.config.schema_name,
+            role=self.config.role,
+            session_parameters={
+                "QUERY_TAG": self.sf_behavior.query_tag or "Semabridge_Connector"
+            },
+        )
 
     def close_session(self) -> None:
         """Close the shared Snowflake session and reset caches."""
@@ -1252,13 +1265,19 @@ class SnowflakeEmitter(BaseEmitter):
                 logger.debug("Reusing shared Snowflake session connection")
             else:
                 import snowflake.connector
-                from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
                 logger.info(f"Connecting to Snowflake: {self.config.account}")
-                kwargs = get_snowflake_connect_kwargs(self.config)
-                kwargs["session_parameters"] = {
-                    "QUERY_TAG": self.sf_behavior.query_tag or "Semabridge_Connector"
-                }
-                conn = snowflake.connector.connect(**kwargs)
+                conn = snowflake.connector.connect(
+                    user=self.config.user,
+                    password=self.config.password.get_secret_value(),
+                    account=self.config.account,
+                    warehouse=self.config.warehouse,
+                    database=self.config.database,
+                    schema=self.config.schema_name,
+                    role=self.config.role,
+                    session_parameters={
+                        "QUERY_TAG": self.sf_behavior.query_tag or "Semabridge_Connector"
+                    }
+                )
                 owns_conn = True
             
             logger.info("Starting deployment with STRICT sanitization rules")
@@ -1275,6 +1294,12 @@ class SnowflakeEmitter(BaseEmitter):
                     self._ensure_source_tables_exist(cur, sml)
                 else:
                     logger.info("Skipping table creation (create_missing_tables=False)")
+
+                # Step 1.25: Optional physical type-fix via CTAS + SWAP.
+                if self.sf_behavior.apply_inferred_types:
+                    self._apply_inferred_types_ctas_sml(cur, sml)
+                else:
+                    logger.info("Skipping inferred datatype CTAS fix (apply_inferred_types=False)")
                 
                 # Step 1.5: Pre-deployment validation gate
                 # Catches PK, identifier, and relationship issues BEFORE SQL.
@@ -1307,6 +1332,16 @@ class SnowflakeEmitter(BaseEmitter):
                 # Step 2: Generate and execute DDLs
                 ddls = self.generate_ddls(sml)
                 logger.info("Generated Snowflake DDLs")
+
+                if ddls:
+                    self._guard_relationship_clause(
+                        getattr(sml, "unique_name", None)
+                        or getattr(sml, "label", None)
+                        or "<unnamed_sml_model>",
+                        getattr(sml, "relationships", []),
+                        ddls[0],
+                        fail_on_missing=True,
+                    )
                 
                 for i, ddl in enumerate(ddls):
                     logger.info(f"Executing DDL statement {i+1}/{len(ddls)}...")
@@ -1339,6 +1374,37 @@ class SnowflakeEmitter(BaseEmitter):
                     logger.info(f"Cortex Analyst YAML saved to {yaml_path}")
                 except Exception as ex:
                     logger.warning(f"Failed to save Cortex YAML: {ex}")
+
+                # Step 3b: Save semantic view DDL as YAML for auditing
+                try:
+                    from datetime import datetime, timezone
+                    ddl_output = {
+                        "metadata": {
+                            "model_name": sml.unique_name or sml.label or "model",
+                            "generated_at": datetime.now(timezone.utc).isoformat(),
+                            "ddl_count": len(ddls),
+                            "path": "SML",
+                        },
+                        "relationships": [
+                            {
+                                "name": rel.unique_name,
+                                "from_dataset": rel.from_dataset,
+                                "from_columns": rel.from_columns,
+                                "to_dataset": rel.to_dataset,
+                                "to_columns": rel.to_columns,
+                                "cardinality": str(rel.cardinality) if rel.cardinality else None,
+                                "is_active": rel.is_active,
+                            }
+                            for rel in (sml.relationships or [])
+                        ],
+                        "ddl_statements": ddls,
+                    }
+                    ddl_yaml_path = output_dir / "semantic_view_ddl.yaml"
+                    with open(ddl_yaml_path, "w") as f:
+                        yaml.dump(ddl_output, f, default_flow_style=False, sort_keys=False, allow_unicode=True, width=200)
+                    logger.info(f"Semantic View DDL YAML saved to {ddl_yaml_path}")
+                except Exception as ex:
+                    logger.warning(f"Failed to save DDL YAML: {ex}")
                 
                 logger.info("Semantic View deployed successfully")
                 
@@ -1414,7 +1480,12 @@ class SnowflakeEmitter(BaseEmitter):
                         # Find col from dataset to get type
                         orig_col = next((c for c in dataset.columns if self._sanitize_col_name(c.unique_name) == col_name), None)
                         if orig_col:
-                            sf_type = self._snowflake_sql_type(orig_col.data_type.value)
+                            type_map = {
+                                "STRING": "VARCHAR(500)", "INTEGER": "INTEGER", "FLOAT": "FLOAT",
+                                "DECIMAL": "DECIMAL(18,2)", "BOOLEAN": "BOOLEAN", "DATETIME": "TIMESTAMP_NTZ",
+                                "DATE": "DATE", "BINARY": "BINARY",
+                            }
+                            sf_type = type_map.get(orig_col.data_type.value, "VARCHAR(500)")
                             try:
                                 cursor.execute(f'ALTER TABLE {self.config.schema_name}.{quoted_table} ADD COLUMN "{col_name}" {sf_type}')
                             except Exception as e:
@@ -1452,7 +1523,12 @@ class SnowflakeEmitter(BaseEmitter):
                                 # Find col type as before
                                 orig_col = next((c for c in dataset.columns if self._sanitize_col_name(c.unique_name) == col_name), None)
                                 if orig_col:
-                                    sf_type = self._snowflake_sql_type(orig_col.data_type.value)
+                                    type_map = {
+                                        "STRING": "VARCHAR(500)", "INTEGER": "INTEGER", "FLOAT": "FLOAT",
+                                        "DECIMAL": "DECIMAL(18,2)", "BOOLEAN": "BOOLEAN", "DATETIME": "TIMESTAMP_NTZ",
+                                        "DATE": "DATE", "BINARY": "BINARY",
+                                    }
+                                    sf_type = type_map.get(orig_col.data_type.value, "VARCHAR(500)")
                                     cursor.execute(f'ALTER TABLE {self.config.schema_name}.{quoted_table} ADD COLUMN "{col_name}" {sf_type}')
 
                     
@@ -1581,6 +1657,17 @@ class SnowflakeEmitter(BaseEmitter):
         This bypasses Snowflake's restrictive metadata rules regarding
         single-column drops by atomically replacing the entire table definition.
         """
+        type_map = {
+            "STRING": "VARCHAR(500)",
+            "INTEGER": "INTEGER",
+            "FLOAT": "FLOAT",
+            "DECIMAL": "DECIMAL(18,2)",
+            "BOOLEAN": "BOOLEAN",
+            "DATETIME": "TIMESTAMP_NTZ",
+            "DATE": "DATE",
+            "BINARY": "BINARY",
+        }
+
         safe_table = self._safe_table_name(table_name)
         schema = self.config.schema_name
 
@@ -1592,7 +1679,7 @@ class SnowflakeEmitter(BaseEmitter):
             if source_expr and not self._is_physical_source_column(source_expr):
                 continue
             col_name = self._sanitize_col_name(col.unique_name)
-            sf_type = self._snowflake_sql_type(col.data_type.value)
+            sf_type = type_map.get(col.data_type.value, "VARCHAR(500)")
             col_defs.append(f'    "{col_name}" {sf_type}')
 
         if not col_defs:
@@ -1624,6 +1711,18 @@ class SnowflakeEmitter(BaseEmitter):
 
     def _generate_create_table_ddl(self, dataset: SMLDataset, table_name: str) -> str:
         """Generate CREATE TABLE DDL from SML dataset definition."""
+        # Data type mapping from SML/TMSL to Snowflake
+        type_map = {
+            "STRING": "VARCHAR(500)",
+            "INTEGER": "INTEGER",
+            "FLOAT": "FLOAT",
+            "DECIMAL": "DECIMAL(18,2)",
+            "BOOLEAN": "BOOLEAN",
+            "DATETIME": "TIMESTAMP_NTZ",
+            "DATE": "DATE",
+            "BINARY": "BINARY"
+        }
+        
         col_defs = []
         for col in dataset.columns:
             col_name = col.unique_name
@@ -1646,7 +1745,7 @@ class SnowflakeEmitter(BaseEmitter):
                 continue
             
             # Get Snowflake type
-            sf_type = self._snowflake_sql_type(col.data_type.value)
+            sf_type = type_map.get(col.data_type.value, "VARCHAR(500)")
             
             # Consistent quoted uppercase naming
             safe_name = self._sanitize_col_name(col_name)
@@ -1663,6 +1762,521 @@ class SnowflakeEmitter(BaseEmitter):
         ddl += "\n);"
         
         return ddl
+
+    def generate_ctas_sql(
+        self,
+        table_name: str,
+        columns: list[dict[str, str]],
+        schema_name: Optional[str] = None,
+        source_types: Optional[dict[str, str]] = None,
+    ) -> str:
+        """Generate CTAS SQL that applies safe datatype conversions.
+
+        Args:
+            table_name: Physical table name (unqualified).
+            columns: List of {"name": <col_name>, "type": <normalized_type>}.
+            schema_name: Optional schema override.
+            source_types: Optional mapping of column name -> Snowflake source DATA_TYPE.
+        """
+        if not columns:
+            raise ValueError("No columns inferred")
+
+        varchar_types = {"VARCHAR", "STRING", "TEXT", "UNKNOWN", "VARIANT"}
+        if all((c.get("type", "").upper() in varchar_types) for c in columns):
+            logger.warning(
+                "All columns are VARCHAR for %s. Generating pass-through CTAS.",
+                table_name,
+            )
+
+        select_parts: list[str] = []
+        source_types = source_types or {}
+        for col in columns:
+            name = col["name"]
+            dtype = col["type"].upper()
+            quoted_name = f'"{name}"'
+            source_type = (source_types.get(name) or source_types.get(name.upper()) or "").upper()
+
+            cast_expr = self._build_cast_expression(
+                quoted_name=quoted_name,
+                target_type=dtype,
+                source_type=source_type,
+                col_name=name,
+            )
+            select_parts.append(f"{cast_expr} AS {quoted_name}")
+
+        select_sql = ",\n    ".join(select_parts)
+
+        schema = schema_name or self.config.schema_name
+        quoted_source = f'{schema}."{table_name}"'
+        quoted_fixed = f'{schema}."{table_name}__FIXED"'
+        return (
+            f"CREATE OR REPLACE TABLE {quoted_fixed} AS\n"
+            f"SELECT\n    {select_sql}\n"
+            f"FROM {quoted_source};"
+        )
+
+    def _dataset_columns_for_ctas_sml(self, dataset: SMLDataset) -> list[dict[str, str]]:
+        columns: list[dict[str, str]] = []
+        for col in dataset.columns:
+            col_name = col.unique_name
+            if col_name.startswith("RowNumber") or col_name.startswith("_"):
+                continue
+            source_expr = getattr(col, "source_expression", None)
+            if source_expr and not self._is_physical_source_column(source_expr):
+                continue
+            columns.append(
+                {
+                    "name": self._sanitize_col_name(col_name),
+                    "type": col.data_type.value.upper(),
+                }
+            )
+        return columns
+
+    @staticmethod
+    def _infer_type_from_values(values: list[Any]) -> str:
+        """Infer normalized type from sampled Python/Snowflake values."""
+        if not values:
+            return "VARCHAR"
+
+        def _kind(v: Any) -> str:
+            if isinstance(v, bool):
+                return "BOOLEAN"
+            if isinstance(v, int) and not isinstance(v, bool):
+                return "INTEGER"
+            if isinstance(v, (float, Decimal)):
+                return "FLOAT"
+            if isinstance(v, datetime):
+                return "TIMESTAMP"
+            if isinstance(v, date):
+                return "DATE"
+
+            s = str(v).strip()
+            if not s:
+                return "NULL"
+
+            sl = s.lower()
+            if sl in {"true", "false", "yes", "no", "y", "n", "t", "f"}:
+                return "BOOLEAN"
+            if re.fullmatch(r"[+-]?\d+", s):
+                return "INTEGER"
+            if re.fullmatch(r"[+-]?(?:\d+\.\d+|\d+\.\d*|\.\d+)", s):
+                return "FLOAT"
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+                return "DATE"
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?", s):
+                return "TIMESTAMP"
+            return "VARCHAR"
+
+        kinds = {_kind(v) for v in values if v is not None}
+        kinds.discard("NULL")
+        if not kinds:
+            return "VARCHAR"
+        if kinds == {"BOOLEAN"}:
+            return "BOOLEAN"
+        if kinds == {"INTEGER"}:
+            return "INTEGER"
+        if kinds.issubset({"INTEGER", "FLOAT"}):
+            return "FLOAT"
+        if kinds == {"DATE"}:
+            return "DATE"
+        if kinds.issubset({"DATE", "TIMESTAMP"}):
+            return "TIMESTAMP"
+        return "VARCHAR"
+
+    @staticmethod
+    def _fallback_type_from_name(col_name: str) -> str:
+        """Fallback inference for all-VARCHAR scenarios."""
+        n = col_name.lower()
+        tokens = [t for t in re.split(r"[^a-z0-9$]+", n.replace("_", " ")) if t]
+        token_set = set(tokens)
+
+        if any(k in n for k in ("timestamp", "datetime", "_ts")) or "ts" in token_set:
+            return "TIMESTAMP"
+        if "date" in n:
+            return "DATE"
+        # Duration-like columns (lead_time, processing_time, time_spent) should
+        # default to numeric in fallback, not timestamp.
+        if "time" in token_set:
+            return "FLOAT"
+        if any(k in n for k in ("amount", "price", "cost", "rate", "pct", "percent", "score", "revenue", "total", "qty", "quantity")):
+            return "FLOAT"
+        if any(k in n for k in ("is_", "has_", "flag", "active", "enabled", "deleted", "valid", "bool", "boolean")):
+            return "BOOLEAN"
+        # Use token-based numeric hints so words like ACCOUNT/COUNTRY do not
+        # accidentally match "count".
+        if any(k in token_set for k in ("count", "num", "year", "month", "day")):
+            return "INTEGER"
+        if any(k in token_set for k in ("id", "key")) or n.endswith("_id"):
+            return "VARCHAR"
+        return "VARCHAR"
+
+    def _build_cast_expression(
+        self,
+        quoted_name: str,
+        target_type: str,
+        source_type: str,
+        col_name: str,
+    ) -> str:
+        """Build a safe cast expression for CTAS based on source and target types."""
+        t = (target_type or "").upper()
+        s = (source_type or "").upper()
+
+        numeric_targets = {"INTEGER", "FLOAT", "DECIMAL", "NUMBER"}
+        timestamp_targets = {"TIMESTAMP", "DATETIME", "TIME", "TIMESTAMP_NTZ", "TIMESTAMP_LTZ", "TIMESTAMP_TZ"}
+        boolean_targets = {"BOOLEAN", "BOOL"}
+
+        is_source_number = any(k in s for k in ("NUMBER", "DECIMAL", "NUMERIC", "INT", "FLOAT", "DOUBLE", "REAL"))
+        is_source_timestamp = "TIMESTAMP" in s
+        is_source_date = s.startswith("DATE")
+        is_source_varchar = any(k in s for k in ("VARCHAR", "TEXT", "STRING", "CHAR"))
+        is_source_boolean = "BOOLEAN" in s or s == "BOOL"
+
+        # Same type -> no cast.
+        if s == t:
+            return quoted_name
+
+        # Guard unsafe conversions that error in Snowflake.
+        if is_source_number and (t == "DATE" or t in timestamp_targets):
+            logger.warning("Skipping unsafe cast for %s: %s -> %s", col_name, source_type or "UNKNOWN", t)
+            return quoted_name
+        if is_source_timestamp and t in numeric_targets:
+            logger.warning("Skipping unsafe cast for %s: %s -> %s", col_name, source_type or "UNKNOWN", t)
+            return quoted_name
+        if is_source_date and t in numeric_targets:
+            logger.warning("Skipping unsafe cast for %s: %s -> %s", col_name, source_type or "UNKNOWN", t)
+            return quoted_name
+
+        if t in boolean_targets:
+            if is_source_boolean:
+                return quoted_name
+            if is_source_number:
+                return f"IFF({quoted_name} IS NULL, NULL, IFF({quoted_name} = 0, FALSE, TRUE))"
+            if is_source_varchar:
+                return (
+                    f"IFF({quoted_name} IS NULL, NULL, "
+                    f"IFF(LOWER(TRIM({quoted_name})) IN ('true','1','t','yes','y'), TRUE, "
+                    f"IFF(LOWER(TRIM({quoted_name})) IN ('false','0','f','no','n'), FALSE, NULL)))"
+                )
+            logger.warning("Skipping unsafe cast for %s: %s -> %s", col_name, source_type or "UNKNOWN", t)
+            return quoted_name
+
+        # Safe conversions.
+        if is_source_timestamp and t == "DATE":
+            return f"CAST({quoted_name} AS DATE)"
+        if is_source_date and t in timestamp_targets:
+            return f"TO_TIMESTAMP({quoted_name})"
+        if is_source_varchar and t == "DATE":
+            return f"TRY_TO_DATE({quoted_name})"
+        if is_source_varchar and t in timestamp_targets:
+            return f"TRY_TO_TIMESTAMP({quoted_name})"
+
+        if t in numeric_targets:
+            if is_source_number:
+                return quoted_name
+            return f"TRY_TO_NUMBER({quoted_name})"
+        if t == "DATE":
+            if is_source_timestamp:
+                return f"CAST({quoted_name} AS DATE)"
+            if is_source_date:
+                return quoted_name
+            return f"TRY_TO_DATE({quoted_name})"
+        if t in timestamp_targets:
+            if is_source_timestamp:
+                return quoted_name
+            if is_source_date:
+                return f"TO_TIMESTAMP({quoted_name})"
+            return f"TRY_TO_TIMESTAMP({quoted_name})"
+
+        return quoted_name
+
+    def _get_source_column_types(self, cursor, safe_table_name: str) -> dict[str, str]:
+        """Return Snowflake DATA_TYPE by column for the given physical table."""
+        query = (
+            "SELECT COLUMN_NAME, DATA_TYPE "
+            "FROM INFORMATION_SCHEMA.COLUMNS "
+            "WHERE TABLE_CATALOG = %s AND TABLE_SCHEMA = %s AND TABLE_NAME = %s"
+        )
+        cursor.execute(
+            query,
+            (
+                self.config.database.upper(),
+                self.config.schema_name.upper(),
+                safe_table_name.upper(),
+            ),
+        )
+        rows = cursor.fetchall() or []
+        col_types = {str(name).upper(): str(dtype).upper() for name, dtype in rows}
+        logger.debug("Source column types for %s: %s", safe_table_name, col_types)
+        return col_types
+
+    def _infer_columns_from_table_samples(
+        self,
+        cursor,
+        safe_table_name: str,
+        columns: list[dict[str, str]],
+        sample_limit: int = 200,
+    ) -> tuple[list[dict[str, str]], list[str]]:
+        """Resolve per-column types using model metadata first, sampling second."""
+        if not columns:
+            raise ValueError("No columns inferred")
+
+        col_refs = ", ".join([f'"{c["name"]}"' for c in columns])
+        sample_sql = (
+            f'SELECT {col_refs} FROM {self.config.schema_name}."{safe_table_name}" '
+            f'LIMIT {sample_limit}'
+        )
+        cursor.execute(sample_sql)
+        rows = cursor.fetchall() or []
+        logger.info("Sample rows fetched for %s: %s", safe_table_name, len(rows))
+
+        inferred: list[dict[str, str]] = []
+        fallback_logs: list[str] = []
+        varchar_types = {"VARCHAR", "STRING", "TEXT", "UNKNOWN", "VARIANT"}
+
+        for idx, col in enumerate(columns):
+            declared_type = self._normalize_declared_type(col.get("type", ""))
+            values = [r[idx] for r in rows if len(r) > idx and r[idx] is not None]
+            logger.debug("%s.%s sample values: %s", safe_table_name, col["name"], values[:5])
+            sampled_type = self._infer_type_from_values(values)
+            business_type = self._business_rule_type(safe_table_name, col["name"])
+
+            if business_type is not None:
+                resolved_type = business_type
+            elif declared_type not in varchar_types:
+                resolved_type = declared_type
+                if sampled_type != "VARCHAR" and sampled_type != declared_type:
+                    logger.warning(
+                        "Type mismatch for %s.%s (model=%s sample=%s); using model type",
+                        safe_table_name,
+                        col["name"],
+                        declared_type,
+                        sampled_type,
+                    )
+            else:
+                resolved_type = sampled_type
+
+            inferred.append({"name": col["name"], "type": resolved_type})
+            logger.info(
+                "Resolved datatype: %s.%s -> %s (model=%s sample=%s sampled_rows=%s non_null=%s)",
+                safe_table_name,
+                col["name"],
+                resolved_type,
+                declared_type,
+                sampled_type,
+                len(rows),
+                len(values),
+            )
+
+        logger.info("Inferred types for %s:", safe_table_name)
+        for col in inferred:
+            logger.info("- %s -> %s", col["name"], col["type"])
+
+        if all(c["type"] == "VARCHAR" for c in inferred):
+            logger.warning(
+                "All sampled columns resolved to VARCHAR for %s. Applying fallback name-pattern inference.",
+                safe_table_name,
+            )
+            for c in inferred:
+                fb = self._fallback_type_from_name(c["name"])
+                if fb != "VARCHAR":
+                    fallback_logs.append(f"{c['name']}: VARCHAR -> {fb} (name-pattern fallback)")
+                    c["type"] = fb
+
+        for entry in fallback_logs:
+            logger.info("Fallback decision: %s", entry)
+
+        if all(c["type"] == "VARCHAR" for c in inferred):
+            logger.warning(
+                "%s: only text-like columns detected after sampling/fallback; keeping VARCHAR types",
+                safe_table_name,
+            )
+
+        return inferred, fallback_logs
+
+    @staticmethod
+    def _business_rule_type(
+        table_name: str,
+        col_name: str,
+    ) -> Optional[str]:
+        """Business-rule layer for known Salesforce semantic fields."""
+        t = (table_name or "").upper()
+        c = (col_name or "").strip().upper()
+        c_norm = re.sub(r"[^A-Z0-9]", "", c)
+
+        if c_norm == "FIRMNESSOFFIRSTDELIVERYDATE":
+            return "VARCHAR"
+        if c == "DELETED":
+            return "BOOLEAN"
+        if "MODSTAMP" in c_norm:
+            return "TIMESTAMP"
+        if "VOLUME" in c_norm or "AMOUNT" in c_norm:
+            return "FLOAT"
+        if "DATE" in c_norm and not t.endswith("FIELDHISTORY"):
+            return "DATE"
+
+        return None
+
+    @staticmethod
+    def _normalize_declared_type(raw_type: str) -> str:
+        """Normalize model-declared types to CTAS inference type family."""
+        t = (raw_type or "").upper()
+        mapping = {
+            "INT64": "INTEGER",
+            "INT": "INTEGER",
+            "INTEGER": "INTEGER",
+            "DOUBLE": "FLOAT",
+            "FLOAT": "FLOAT",
+            "DECIMAL": "DECIMAL",
+            "NUMBER": "NUMBER",
+            "BOOLEAN": "BOOLEAN",
+            "BOOL": "BOOLEAN",
+            "DATE": "DATE",
+            "DATETIME": "TIMESTAMP",
+            "TIMESTAMP": "TIMESTAMP",
+            "TIMESTAMP_NTZ": "TIMESTAMP",
+            "TIMESTAMP_LTZ": "TIMESTAMP",
+            "TIMESTAMP_TZ": "TIMESTAMP",
+            "STRING": "VARCHAR",
+            "TEXT": "VARCHAR",
+            "VARCHAR": "VARCHAR",
+            "VARIANT": "VARCHAR",
+        }
+        return mapping.get(t, "VARCHAR")
+
+    @staticmethod
+    def _to_sml_datatype(inferred_type: str) -> DataType:
+        mapping = {
+            "INTEGER": DataType.INTEGER,
+            "FLOAT": DataType.FLOAT,
+            "DECIMAL": DataType.DECIMAL,
+            "DATE": DataType.DATE,
+            "TIMESTAMP": DataType.DATETIME,
+            "BOOLEAN": DataType.BOOLEAN,
+            "VARCHAR": DataType.STRING,
+        }
+        return mapping.get(inferred_type, DataType.STRING)
+
+    @staticmethod
+    def _to_osi_datatype(inferred_type: str):
+        if OSIDataType is None:
+            return None
+        mapping = {
+            "INTEGER": OSIDataType.INTEGER,
+            "FLOAT": OSIDataType.FLOAT,
+            "DECIMAL": OSIDataType.DECIMAL,
+            "DATE": OSIDataType.DATE,
+            "TIMESTAMP": OSIDataType.DATETIME,
+            "BOOLEAN": OSIDataType.BOOLEAN,
+            "VARCHAR": OSIDataType.STRING,
+        }
+        return mapping.get(inferred_type, OSIDataType.STRING)
+
+    def _dataset_columns_for_ctas_osi(self, dataset: "OSIDataset") -> list[dict[str, str]]:
+        columns: list[dict[str, str]] = []
+        for col in dataset.columns:
+            col_name = col.unique_name
+            if col_name.startswith("RowNumber") or col_name.startswith("_"):
+                continue
+            source_expr = getattr(col, "source_expression", None)
+            if source_expr and not self._is_physical_source_column(source_expr):
+                continue
+            columns.append(
+                {
+                    "name": self._sanitize_col_name(col_name),
+                    "type": col.data_type.value.upper(),
+                }
+            )
+        return columns
+
+    def _apply_inferred_types_ctas_sml(self, cursor, sml: SMLModel) -> None:
+        """Apply inferred datatypes to physical SML source tables via CTAS + SWAP."""
+        for dataset in sml.datasets:
+            source_table = dataset.source_table or dataset.unique_name
+            safe_table_name = self._safe_table_name(source_table)
+            full_table = f'{self.config.schema_name}."{safe_table_name}"'
+            fixed_table = f'{self.config.schema_name}."{safe_table_name}__FIXED"'
+            base_columns = self._dataset_columns_for_ctas_sml(dataset)
+            if not base_columns:
+                raise ValueError(f"No columns inferred for dataset '{dataset.unique_name}'")
+
+            columns, _fallbacks = self._infer_columns_from_table_samples(
+                cursor,
+                safe_table_name,
+                base_columns,
+            )
+
+            by_name = {c["name"]: c["type"] for c in columns}
+            for col in dataset.columns:
+                sanitized = self._sanitize_col_name(col.unique_name)
+                if sanitized in by_name:
+                    col.data_type = self._to_sml_datatype(by_name[sanitized])
+
+            if all(c["type"] == "VARCHAR" for c in columns):
+                logger.warning(
+                    "Skipping CTAS for %s: all inferred types are VARCHAR (valid text table)",
+                    safe_table_name,
+                )
+                continue
+
+            source_types = self._get_source_column_types(cursor, safe_table_name)
+            ctas_sql = self.generate_ctas_sql(
+                safe_table_name,
+                columns,
+                self.config.schema_name,
+                source_types=source_types,
+            )
+            logger.info(f"Applying inferred datatypes via CTAS for table: {safe_table_name}")
+            logger.debug(f"Generated CTAS SQL:\n{ctas_sql}")
+            cursor.execute(ctas_sql)
+            cursor.execute(f"ALTER TABLE {full_table} SWAP WITH {fixed_table}")
+            logger.info("Table swapped successfully: %s", safe_table_name)
+            cursor.execute(f"DROP TABLE IF EXISTS {fixed_table}")
+
+    def _apply_inferred_types_ctas_osi(self, cursor, osi: "OSIModel") -> None:
+        """Apply inferred datatypes to physical OSI source tables via CTAS + SWAP."""
+        for dataset in osi.datasets:
+            source_table = dataset.source_table or dataset.unique_name
+            safe_table_name = self._safe_table_name(source_table)
+            full_table = f'{self.config.schema_name}."{safe_table_name}"'
+            fixed_table = f'{self.config.schema_name}."{safe_table_name}__FIXED"'
+            base_columns = self._dataset_columns_for_ctas_osi(dataset)
+            if not base_columns:
+                raise ValueError(f"No columns inferred for dataset '{dataset.unique_name}'")
+
+            columns, _fallbacks = self._infer_columns_from_table_samples(
+                cursor,
+                safe_table_name,
+                base_columns,
+            )
+
+            by_name = {c["name"]: c["type"] for c in columns}
+            for col in dataset.columns:
+                sanitized = self._sanitize_col_name(col.unique_name)
+                if sanitized in by_name:
+                    mapped = self._to_osi_datatype(by_name[sanitized])
+                    if mapped is not None:
+                        col.data_type = mapped
+
+            if all(c["type"] == "VARCHAR" for c in columns):
+                logger.warning(
+                    "Skipping CTAS for %s: all inferred types are VARCHAR (valid text table)",
+                    safe_table_name,
+                )
+                continue
+
+            source_types = self._get_source_column_types(cursor, safe_table_name)
+            ctas_sql = self.generate_ctas_sql(
+                safe_table_name,
+                columns,
+                self.config.schema_name,
+                source_types=source_types,
+            )
+            logger.info(f"Applying inferred datatypes via CTAS for table: {safe_table_name}")
+            logger.debug(f"Generated CTAS SQL:\n{ctas_sql}")
+            cursor.execute(ctas_sql)
+            cursor.execute(f"ALTER TABLE {full_table} SWAP WITH {fixed_table}")
+            logger.info("Table swapped successfully: %s", safe_table_name)
+            cursor.execute(f"DROP TABLE IF EXISTS {fixed_table}")
     
     def _generate_sample_insert(self, dataset: SMLDataset, table_name: str) -> Optional[str]:
         """Generate INSERT statement with sample data for testing."""
@@ -1721,6 +2335,46 @@ class SnowflakeEmitter(BaseEmitter):
         semantic_ddl = self._generate_semantic_view(sml)
         
         return [semantic_ddl]
+
+    def _guard_relationship_clause(
+        self,
+        model_name: str,
+        relationships: list[Any],
+        semantic_ddl: str,
+        *,
+        fail_on_missing: bool,
+    ) -> None:
+        """Detect and block relationship loss between model and emitted DDL."""
+        active_relationships = 0
+        for rel in relationships or []:
+            if not getattr(rel, "is_active", True):
+                continue
+            if (
+                getattr(rel, "from_dataset", None)
+                and getattr(rel, "to_dataset", None)
+                and (getattr(rel, "from_columns", None) or [])
+                and (getattr(rel, "to_columns", None) or [])
+            ):
+                active_relationships += 1
+
+        if active_relationships == 0:
+            return
+
+        has_relationship_clause = bool(
+            re.search(r"\bRELATIONSHIPS\s*\(", semantic_ddl or "", re.IGNORECASE)
+        )
+        if has_relationship_clause:
+            return
+
+        msg = (
+            f"Model '{model_name}' has {active_relationships} active relationship(s), "
+            "but generated semantic-view DDL has no RELATIONSHIPS clause. "
+            "Aborting deploy to prevent relationship loss in Snowflake."
+        )
+        if fail_on_missing:
+            logger.error(msg)
+            raise ValueError(msg)
+        logger.warning(msg)
     
     def _generate_semantic_view(self, sml: SMLModel) -> str:
         """
@@ -1733,7 +2387,7 @@ class SnowflakeEmitter(BaseEmitter):
             ...
         )
         RELATIONSHIPS (
-            <alias_from> (<fk_cols>) REFERENCES <alias_to>,
+            <alias_from> (<fk_cols>) REFERENCES <alias_to> (<ref_cols>),
             ...
         )
         DIMENSIONS (
@@ -1787,7 +2441,9 @@ class SnowflakeEmitter(BaseEmitter):
             if rel.is_active and rel.to_dataset and rel.to_columns:
                 if rel.to_dataset not in relationship_pk_map:
                     relationship_pk_map[rel.to_dataset] = []
-                # Add unique columns only
+                for col in rel.to_columns:
+                    if col not in relationship_pk_map[rel.to_dataset]:
+                        relationship_pk_map[rel.to_dataset].append(col)
         # Build sanitized physical-column lookup per dataset.
         # Used by TABLES (PK validation), RELATIONSHIPS, DIMENSIONS and METRICS
         # to ensure we don't reference non-existent physical columns.
@@ -1906,6 +2562,8 @@ class SnowflakeEmitter(BaseEmitter):
             if from_alias and to_alias and rel.from_columns:
                 # Sanitize FK column back to underscores to match physical table
                 from_col = self._sanitize_col_name(rel.from_columns[0])
+                # Sanitize referenced (PK) column on the target side
+                to_col = self._sanitize_col_name(rel.to_columns[0]) if rel.to_columns else ""
                 # Validate FK column exists in the from-dataset's physical columns
                 from_phys = dataset_col_lookup.get(rel.from_dataset, set())
                 if from_phys and from_col not in from_phys:
@@ -1915,7 +2573,43 @@ class SnowflakeEmitter(BaseEmitter):
                         f"a physical column in '{rel.from_dataset}'"
                     )
                     continue
-                rel_lines.append(f'  {from_alias} ("{from_col}") REFERENCES {to_alias}')
+                # Validate to_col is both a physical column AND the declared PK
+                # for that dataset. Snowflake requires REFERENCES to point to a
+                # primary or unique key — any mismatch causes a SQL compilation error.
+                if to_col:
+                    to_phys = dataset_col_lookup.get(rel.to_dataset, set())
+                    # Case-insensitive check: sanitize both sides to uppercase
+                    to_phys_upper = {c.upper() for c in to_phys}
+                    if to_phys and to_col.upper() not in to_phys_upper:
+                        logger.warning(
+                            f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                            f"referenced column '{to_col}' is not a physical column in "
+                            f"'{rel.to_dataset}' — Snowflake requires REFERENCES to target a PK."
+                        )
+                        continue
+                    # Also check: to_col must be the PK declared in the TABLES clause.
+                    # Sanitize declared PKs the same way to_col is sanitized (handles Fabric
+                    # mixed-casing like 'Id' vs sanitized 'ID').
+                    declared_pk_cols = [
+                        self._sanitize_col_name(c)
+                        for c in relationship_pk_map.get(rel.to_dataset, [])
+                    ]
+                    if declared_pk_cols and to_col.upper() not in {c.upper() for c in declared_pk_cols}:
+                        logger.warning(
+                            f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                            f"referenced column '{to_col}' is not the declared PK "
+                            f"{declared_pk_cols} for '{rel.to_dataset}' — Snowflake requires REFERENCES to target a PK."
+                        )
+                        continue
+                # Build REFERENCES clause with explicit target column
+                ref_clause = f'{to_alias} ("{to_col}")' if to_col else to_alias
+                rel_name = self._to_snowflake_relationship_name(getattr(rel, "unique_name", "") or "")
+                if rel_name:
+                    rel_lines.append(
+                        f'  {rel_name} AS {from_alias} ("{from_col}") REFERENCES {ref_clause}'
+                    )
+                else:
+                    rel_lines.append(f'  {from_alias} ("{from_col}") REFERENCES {ref_clause}')
         
         if rel_lines:
             definitions.append("RELATIONSHIPS (\n" + ",\n".join(rel_lines) + "\n)")
@@ -2441,24 +3135,6 @@ class SnowflakeEmitter(BaseEmitter):
         """Sanitize column name via unified IdentifierSanitizer (Mandate 1)."""
         return self._id.sanitize_column(name)
 
-    def _snowflake_sql_type(self, sml_data_type: Any) -> str:
-        """Map normalized SML datatype to Snowflake SQL datatype."""
-        t = str(sml_data_type or "").strip().upper()
-        type_map = {
-            "STRING": "VARCHAR(16777216)",
-            "INTEGER": "NUMBER(38,0)",
-            "FLOAT": "FLOAT",
-            "DECIMAL": "NUMBER(38,10)",
-            "BOOLEAN": "BOOLEAN",
-            "DATETIME": "TIMESTAMP_NTZ",
-            "DATE": "DATE",
-            "TIME": "TIME",
-            "BINARY": "BINARY",
-            "VARIANT": "VARIANT",
-            "UNKNOWN": "VARCHAR(16777216)",
-        }
-        return type_map.get(t, "VARCHAR(16777216)")
-
     @staticmethod
     def _is_physical_source_column(source_expression: str) -> bool:
         """Determine if a source_expression represents a plain physical column."""
@@ -2468,8 +3144,19 @@ class SnowflakeEmitter(BaseEmitter):
         """Sanitize semantic name and ensure it does not start with a digit."""
         sanitized = self._id.sanitize_column(name)
         if sanitized and sanitized[0].isdigit():
-            sanitized = f"N_{sanitized}"
+            sanitized = f"_{sanitized}"
         return sanitized
+
+    def _to_snowflake_relationship_name(self, name: str) -> str:
+        """Convert canonical relationship name to Snowflake-layer identifier.
+
+        Canonical model names retain the REL_ prefix. Snowflake output removes
+        only that leading REL_ for cleaner relationship identifiers.
+        """
+        rel_name = self._sanitize_semantic_name(name)
+        if rel_name.startswith("REL_"):
+            return rel_name[4:]
+        return rel_name
 
     def _get_safe_object_name(self, name: str) -> str:
         """Sanitize object name for Snowflake."""
@@ -2482,7 +3169,7 @@ class SnowflakeEmitter(BaseEmitter):
         """Sanitize alias names and ensure they do not start with a digit."""
         sanitized = self._id.sanitize_alias(name)
         if sanitized and sanitized[0].isdigit():
-            sanitized = f"L_{sanitized}"
+            sanitized = f"_{sanitized}"
         return sanitized
 
     def _resolve_unique_metric_alias(
@@ -2882,12 +3569,18 @@ class SnowflakeEmitter(BaseEmitter):
                     type_map.append((col, "VARCHAR(500)"))
         
         try:
-            from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
-            kwargs = get_snowflake_connect_kwargs(self.config)
-            kwargs["session_parameters"] = {
-                "QUERY_TAG": self.sf_behavior.query_tag or "Semabridge_MeasureSync"
-            }
-            conn = snowflake.connector.connect(**kwargs)
+            conn = snowflake.connector.connect(
+                user=self.config.user,
+                password=self.config.password.get_secret_value(),
+                account=self.config.account,
+                warehouse=self.config.warehouse,
+                database=self.config.database,
+                schema=self.config.schema_name,
+                role=self.config.role,
+                session_parameters={
+                    "QUERY_TAG": self.sf_behavior.query_tag or "Semabridge_MeasureSync"
+                }
+            )
             cur = conn.cursor()
             
             try:
@@ -3055,9 +3748,15 @@ class SnowflakeEmitter(BaseEmitter):
                         ]
                         try:
                             import snowflake.connector
-                            from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
-                            kwargs = get_snowflake_connect_kwargs(self.config)
-                            conn = snowflake.connector.connect(**kwargs)
+                            conn = snowflake.connector.connect(
+                                user=self.config.user,
+                                password=self.config.password.get_secret_value(),
+                                account=self.config.account,
+                                warehouse=self.config.warehouse,
+                                database=self.config.database,
+                                schema=self.config.schema_name,
+                                role=self.config.role,
+                            )
                             cur = conn.cursor()
                             try:
                                 self.evolve_schema(cur, shadow_table, new_cols)
@@ -3231,9 +3930,15 @@ class SnowflakeEmitter(BaseEmitter):
                         ]
                         try:
                             import snowflake.connector
-                            from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
-                            kwargs = get_snowflake_connect_kwargs(self.config)
-                            conn = snowflake.connector.connect(**kwargs)
+                            conn = snowflake.connector.connect(
+                                user=self.config.user,
+                                password=self.config.password.get_secret_value(),
+                                account=self.config.account,
+                                warehouse=self.config.warehouse,
+                                database=self.config.database,
+                                schema=self.config.schema_name,
+                                role=self.config.role,
+                            )
                             cur = conn.cursor()
                             try:
                                 self.evolve_schema(cur, shadow_table, new_cols)
@@ -3383,13 +4088,19 @@ class SnowflakeEmitter(BaseEmitter):
                 owns_conn = False
                 logger.debug("Reusing shared Snowflake session connection (OSI path)")
             else:
-                from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
                 logger.info(f"Connecting to Snowflake: {self.config.account}")
-                kwargs = get_snowflake_connect_kwargs(self.config)
-                kwargs["session_parameters"] = {
-                    "QUERY_TAG": self.sf_behavior.query_tag or "Semabridge_Connector"
-                }
-                conn = snowflake.connector.connect(**kwargs)
+                conn = snowflake.connector.connect(
+                    user=self.config.user,
+                    password=self.config.password.get_secret_value(),
+                    account=self.config.account,
+                    warehouse=self.config.warehouse,
+                    database=self.config.database,
+                    schema=self.config.schema_name,
+                    role=self.config.role,
+                    session_parameters={
+                        "QUERY_TAG": self.sf_behavior.query_tag or "Semabridge_Connector"
+                    },
+                )
                 owns_conn = True
 
             logger.info("Starting OSI deployment with STRICT sanitization rules")
@@ -3419,6 +4130,12 @@ class SnowflakeEmitter(BaseEmitter):
                     logger.info(
                         "Skipping table creation (create_missing_tables=False)"
                     )
+
+                # Step 1.25: Optional physical type-fix via CTAS + SWAP.
+                if self.sf_behavior.apply_inferred_types:
+                    self._apply_inferred_types_ctas_osi(cur, osi)
+                else:
+                    logger.info("Skipping inferred datatype CTAS fix (apply_inferred_types=False)")
 
                 # Step 1.5: Pre-deployment validation gate (OSI path)
                 # In STRICT mode, validation errors abort deployment.
@@ -3487,6 +4204,13 @@ class SnowflakeEmitter(BaseEmitter):
                         f"model may have no deployable datasets."
                     )
                     return True
+
+                self._guard_relationship_clause(
+                    model_name,
+                    getattr(osi, "relationships", []),
+                    ddls[0],
+                    fail_on_missing=True,
+                )
                 logger.info(f"Generated {len(ddls)} Snowflake DDL(s) (OSI path)")
 
                 for i, ddl in enumerate(ddls):
@@ -3508,6 +4232,37 @@ class SnowflakeEmitter(BaseEmitter):
                     logger.info(f"Cortex Analyst YAML saved to {yaml_path}")
                 except Exception as ex:
                     logger.warning(f"Failed to save Cortex YAML: {ex}")
+
+                # Step 4b: Save semantic view DDL as YAML for auditing
+                try:
+                    from datetime import datetime, timezone
+                    ddl_output = {
+                        "metadata": {
+                            "model_name": model_name,
+                            "generated_at": datetime.now(timezone.utc).isoformat(),
+                            "ddl_count": len(ddls),
+                            "path": "OSI",
+                        },
+                        "relationships": [
+                            {
+                                "name": rel.unique_name,
+                                "from_dataset": rel.from_dataset,
+                                "from_columns": list(rel.from_columns) if rel.from_columns else [],
+                                "to_dataset": rel.to_dataset,
+                                "to_columns": list(rel.to_columns) if rel.to_columns else [],
+                                "cardinality": str(rel.cardinality) if rel.cardinality else None,
+                                "is_active": rel.is_active,
+                            }
+                            for rel in (getattr(osi, 'relationships', None) or [])
+                        ],
+                        "ddl_statements": ddls,
+                    }
+                    ddl_yaml_path = output_dir / "semantic_view_ddl.yaml"
+                    with open(ddl_yaml_path, "w") as f:
+                        yaml.dump(ddl_output, f, default_flow_style=False, sort_keys=False, allow_unicode=True, width=200)
+                    logger.info(f"Semantic View DDL YAML saved to {ddl_yaml_path}")
+                except Exception as ex:
+                    logger.warning(f"Failed to save DDL YAML: {ex}")
 
                 logger.info(f"Semantic View deployed successfully for '{model_name}' (OSI path)")
 
@@ -3728,6 +4483,8 @@ class SnowflakeEmitter(BaseEmitter):
             to_alias = dataset_aliases.get(rel.to_dataset)
             if from_alias and to_alias and rel.from_columns:
                 from_col = self._sanitize_col_name(rel.from_columns[0])
+                # Sanitize referenced (PK) column on the target side
+                to_col = self._sanitize_col_name(rel.to_columns[0]) if rel.to_columns else ""
                 # Validate FK column exists in the from-dataset's physical columns
                 from_phys = dataset_col_lookup.get(rel.from_dataset, set())
                 if from_phys and from_col not in from_phys:
@@ -3737,9 +4494,45 @@ class SnowflakeEmitter(BaseEmitter):
                         f"a physical column in '{rel.from_dataset}'"
                     )
                     continue
-                rel_lines.append(
-                    f'  {from_alias} ("{from_col}") REFERENCES {to_alias}'
-                )
+                # Validate to_col is both a physical column AND the declared PK
+                # for that dataset. Snowflake requires REFERENCES to point to a
+                # primary or unique key — any mismatch causes a SQL compilation error.
+                if to_col:
+                    to_phys = dataset_col_lookup.get(rel.to_dataset, set())
+                    # Case-insensitive check: sanitize both sides to uppercase
+                    to_phys_upper = {c.upper() for c in to_phys}
+                    if to_phys and to_col.upper() not in to_phys_upper:
+                        logger.warning(
+                            f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                            f"referenced column '{to_col}' is not a physical column in "
+                            f"'{rel.to_dataset}' — Snowflake requires REFERENCES to target a PK."
+                        )
+                        continue
+                    # Also check: to_col must be the declared PK for that dataset.
+                    # Sanitize declared PKs the same way to_col is sanitized (handles Fabric
+                    # mixed-casing like 'Id' vs sanitized 'ID').
+                    declared_pk_cols = [
+                        self._sanitize_col_name(c)
+                        for c in relationship_pk_map.get(rel.to_dataset, [])
+                    ]
+                    if declared_pk_cols and to_col.upper() not in {c.upper() for c in declared_pk_cols}:
+                        logger.warning(
+                            f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                            f"referenced column '{to_col}' is not the declared PK "
+                            f"{declared_pk_cols} for '{rel.to_dataset}' — Snowflake requires REFERENCES to target a PK."
+                        )
+                        continue
+                # Build REFERENCES clause with explicit target column
+                ref_clause = f'{to_alias} ("{to_col}")' if to_col else to_alias
+                rel_name = self._to_snowflake_relationship_name(getattr(rel, "unique_name", "") or "")
+                if rel_name:
+                    rel_lines.append(
+                        f'  {rel_name} AS {from_alias} ("{from_col}") REFERENCES {ref_clause}'
+                    )
+                else:
+                    rel_lines.append(
+                        f'  {from_alias} ("{from_col}") REFERENCES {ref_clause}'
+                    )
 
         if rel_lines:
             definitions.append(

@@ -24,6 +24,7 @@ from semabridge.utils.naming import (
     infer_override_alias_map,
     sanitize_sql_expression,
 )
+from semabridge.utils.relationship_naming import generate_relationship_name
 
 logger = get_logger(__name__)
 
@@ -712,7 +713,14 @@ class TMSLTransformer:
         # TMSL: fromTable, fromColumn, toTable, toColumn
         
         try:
-             name = rel_def.get("name", f"Rel_{rel_def['fromTable']}_{rel_def['toTable']}")
+             # Normalize all relationship names to a deterministic canonical
+             # format so GUID/system names cannot leak into downstream models.
+             name = generate_relationship_name(
+                 rel_def["fromTable"],
+                 rel_def["fromColumn"],
+                 rel_def["toTable"],
+                 rel_def["toColumn"],
+             )
              
              card_map = {
                  "manytoone": Cardinality.MANY_TO_ONE,

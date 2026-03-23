@@ -48,7 +48,7 @@ uv sync
 # (Fallback: pip install -e ".[dev]")
 
 # Install Frontend dependencies
-cd frontend
+cd newfrontend
 npm install
 cd ..
 ```
@@ -93,11 +93,17 @@ model_name: "Customer Profitability"
 
 ### Usage
 
-**1. Launch the Web UI (Recommended)**
+**1. Launch the Backend API and Web UI**
+
+First, start the backend API (this runs on port 8001 by default, matching the frontend proxy):
 ```bash
-semabridge --ui
+uv run python src/semabridge/api/main.py
 ```
-*Alternatively, run the frontend directly via `cd frontend && npm run dev`.*
+
+Then, start the frontend UI:
+```bash
+cd newfrontend && npm run dev
+```
 
 **2. CLI Initialization & Syncing**
 ```bash

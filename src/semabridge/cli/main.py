@@ -1662,6 +1662,15 @@ def _run_snowflake_to_fabric(settings, name, dry_run, output_dir, parallel=False
 
 def _run_fabric_to_snowflake(settings, dataset_id, workspace_id, tag, sync, parallel=False):
     ws_id = workspace_id or settings.fabric.workspace_id
+    from semabridge.core.behavior import ConnectorBehavior
+
+    behavior = ConnectorBehavior()
+    behavior_path = Path("behavior.yaml")
+    if behavior_path.exists():
+        try:
+            behavior = ConnectorBehavior.from_yaml(behavior_path)
+        except Exception as be:
+            logger.warning(f"Failed to parse behavior.yaml, using defaults: {be}")
     
     console.print(Panel.fit(
         f"[bold]Deploy: Fabric -> Snowflake[/bold]\n"
@@ -1691,13 +1700,28 @@ def _run_fabric_to_snowflake(settings, dataset_id, workspace_id, tag, sync, para
         from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
         
         # Step 1: Extract
-        console.print("\n[bold cyan]Step 1/4: Extracting from Fabric...[/bold cyan]")
-        extractor = FabricExtractor(settings.fabric)
-        tmsl = extractor.get_model_definition(dataset_id)
-        
-        console.print("[dim]Fetching table statistics...[/dim]", end="") 
-        row_counts = extractor.get_table_row_counts(dataset_id)
-        console.print(f" [green][OK] ({len(row_counts)} tables)[/green]")
+        if behavior.features.offline_mode:
+            offline_path = Path(behavior.features.offline_fabric_model_path)
+            console.print("\n[bold cyan]Step 1/4: Loading local Fabric model (OFFLINE mode)...[/bold cyan]")
+            if not offline_path.exists():
+                raise FileNotFoundError(
+                    f"offline_mode enabled but file not found: {offline_path}"
+                )
+            with open(offline_path, "r", encoding="utf-8") as f:
+                tmsl = json.load(f)
+            if isinstance(tmsl, dict) and "model" not in tmsl and "tables" in tmsl:
+                tmsl = {"model": tmsl}
+            row_counts = {}
+            table_count = len(tmsl.get("model", {}).get("tables", []))
+            console.print(f"  [green][OK][/green] Loaded {table_count} tables from {offline_path}")
+        else:
+            console.print("\n[bold cyan]Step 1/4: Extracting from Fabric...[/bold cyan]")
+            extractor = FabricExtractor(settings.fabric)
+            tmsl = extractor.get_model_definition(dataset_id)
+
+            console.print("[dim]Fetching table statistics...[/dim]", end="")
+            row_counts = extractor.get_table_row_counts(dataset_id)
+            console.print(f" [green][OK] ({len(row_counts)} tables)[/green]")
         
         # Step 2: Transform
         console.print("\n[bold cyan]Step 2/4: Transforming to SML (via OSI)...[/bold cyan]")
@@ -1740,7 +1764,7 @@ def _run_fabric_to_snowflake(settings, dataset_id, workspace_id, tag, sync, para
         concurrency_cfg = settings.concurrency
         use_parallel = parallel or concurrency_cfg.enable_parallel
         max_workers = concurrency_cfg.max_workers
-        emitter = SnowflakeEmitter(settings.snowflake)
+        emitter = SnowflakeEmitter(settings.snowflake, behavior=behavior)
         output_dir = Path("output/reverse")
         output_dir.mkdir(parents=True, exist_ok=True)
         
@@ -1760,6 +1784,20 @@ def _run_fabric_to_snowflake(settings, dataset_id, workspace_id, tag, sync, para
                 parallel=use_parallel,
                 max_workers=max_workers
                 )
+                try:
+                    from semabridge.converter.sml_to_osi import SMLToOSIConverter
+                    import yaml
+
+                    osi_model = SMLToOSIConverter().to_osi(sml_model)
+                    inferred_json = Path("output") / "osi_inferred.json"
+                    inferred_yaml = Path("output") / "osi_inferred.yaml"
+                    with open(inferred_json, "w", encoding="utf-8") as jf:
+                        json.dump(osi_model.model_dump(mode="json"), jf, indent=2)
+                    with open(inferred_yaml, "w", encoding="utf-8") as yf:
+                        yaml.safe_dump(osi_model.model_dump(mode="json"), yf, sort_keys=False)
+                    console.print(f"  [green][OK][/green] Inferred OSI artifacts: {inferred_json}, {inferred_yaml}")
+                except Exception as ex:
+                    logger.warning(f"Failed to export inferred OSI artifacts (non-fatal): {ex}")
                 console.print("  [green][OK][/green] Semantic Views updated")
             except MissingSourceTableWarning as w:
                 console.print("\n  [yellow]⚠ Missing underlying table detected:[/yellow]")
@@ -1918,6 +1956,19 @@ def semantic_sync(
     if source == "snowflake" and target == "fabric":
         _run_snowflake_to_fabric(settings, name, dry_run, output_dir, parallel=parallel)
     elif source == "fabric" and target == "snowflake":
+        from semabridge.core.behavior import ConnectorBehavior
+        behavior = ConnectorBehavior()
+        behavior_path = Path("behavior.yaml")
+        if behavior_path.exists():
+            try:
+                behavior = ConnectorBehavior.from_yaml(behavior_path)
+            except Exception:
+                pass
+
+        if not dataset_id and behavior.features.offline_mode:
+            dataset_id = name or "offline_model"
+            console.print(f"[dim]offline_mode enabled - using dataset id: {dataset_id}[/dim]")
+
         if not dataset_id:
              console.print("[red]Error: --dataset-id is required when source is 'fabric'[/red]")
              raise typer.Exit(code=1)
