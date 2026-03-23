@@ -128,9 +128,9 @@ def sync_run(
 
     # Record semabridge.yaml version (config drift detection)
     try:
-        from pathlib import Path as _Path
-        yaml_path = _Path("semabridge.yaml")
-        if yaml_path.exists():
+        from semabridge.core.config_loader import get_default_config_path
+        yaml_path = get_default_config_path()
+        if yaml_path and yaml_path.exists():
             from semabridge.repository.schema_sync import SchemaVersionManager
             version_mgr = SchemaVersionManager()
             changed = version_mgr.sync_model_version(str(yaml_path))

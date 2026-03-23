@@ -18,15 +18,15 @@ import {
     Eye,
     PanelBottom,
     LogOut,
+    Code2,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import ThemeToggle from './ThemeToggle';
 import DropdownMenu from './DropdownMenu';
-import WorkspaceSelector from './WorkspaceSelector';
 import { useLogs } from '../context/LogsContext';
 import { useAuth } from '../context/AuthContext';
 
-export default function Header({ onToggleLogs, onToggleVersionControl, onToggleRepoMap, onToggleConnections, onToggleTerminal, onOpenCommandPalette, showRepoMap }) {
+export default function Header({ onToggleLogs, onToggleVersionControl, onToggleRepoMap, onToggleConnections, onToggleTerminal, onOpenCommandPalette, showRepoMap, onToggleYamlView, isYamlView }) {
     const { logs } = useLogs();
     const { user, logout } = useAuth();
     const [showUserMenu, setShowUserMenu] = useState(false);
@@ -52,7 +52,7 @@ export default function Header({ onToggleLogs, onToggleVersionControl, onToggleR
                 zIndex: 50,
             }}
         >
-            {/* Left: App Name + Workspace */}
+            {/* Left: App Name */}
             <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2">
                     <Hexagon size={18} className="text-accent-blue" strokeWidth={2.5} />
@@ -60,8 +60,6 @@ export default function Header({ onToggleLogs, onToggleVersionControl, onToggleR
                         SemaBridge
                     </h1>
                 </div>
-                <div className="h-4 w-px bg-border-main opacity-30" />
-                <WorkspaceSelector />
             </div>
 
             {/* Center: Global Search (Command Palette) */}
@@ -148,6 +146,16 @@ export default function Header({ onToggleLogs, onToggleVersionControl, onToggleR
                     </button>
 
                     <ThemeToggle />
+                    {onToggleYamlView && (
+                        <button
+                            onClick={onToggleYamlView}
+                            className={`p-2 rounded-md hover:bg-surface-hover ${isYamlView ? 'text-accent-blue' : 'text-secondary'}`}
+                            title={isYamlView ? 'Switch to UI view' : 'Switch to YAML view'}
+                            style={isYamlView ? { background: 'rgba(99,102,241,.15)' } : {}}
+                        >
+                            <Code2 size={16} />
+                        </button>
+                    )}
                     <button onClick={onToggleConnections} className="p-2 rounded-md hover:bg-surface-hover text-secondary" title="Connections & Settings">
                         <Settings size={16} />
                     </button>
@@ -171,7 +179,7 @@ export default function Header({ onToggleLogs, onToggleVersionControl, onToggleR
                                 <div className="px-3 py-2 border-b border-main">
                                     <p className="text-xs font-semibold text-primary truncate">{user?.username}</p>
                                     <p className="text-[10px] text-tertiary truncate">{user?.email}</p>
-                                    <span className="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-medium"
+                                    <span className="inline-block mt-1 px-1.5 py-0.5 rounded-full text-[9px] font-medium"
                                         style={{ background: 'var(--color-accent-faint)', color: 'var(--accent-blue)' }}>
                                         {user?.role}
                                     </span>

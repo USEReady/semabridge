@@ -1663,9 +1663,10 @@ def _run_snowflake_to_fabric(settings, name, dry_run, output_dir, parallel=False
 def _run_fabric_to_snowflake(settings, dataset_id, workspace_id, tag, sync, parallel=False):
     ws_id = workspace_id or settings.fabric.workspace_id
     from semabridge.core.behavior import ConnectorBehavior
+    from semabridge.core.config_loader import get_project_file_path
 
     behavior = ConnectorBehavior()
-    behavior_path = Path("behavior.yaml")
+    behavior_path = get_project_file_path("behavior.yaml")
     if behavior_path.exists():
         try:
             behavior = ConnectorBehavior.from_yaml(behavior_path)
@@ -1844,8 +1845,11 @@ def sync(
     parallel: bool = typer.Option(False, "--parallel", "-p", help="Enable concurrent extraction and deployment"),
 ):
     """
-    Synchronize semantic model between platforms.
-    Alias for 'semantic-sync'.
+    Core sync function.
+
+    WARNING:
+    Do not modify this function directly.
+    All enhancements must wrap this function externally.
     """
     semantic_sync(
         source=source,
@@ -1957,8 +1961,9 @@ def semantic_sync(
         _run_snowflake_to_fabric(settings, name, dry_run, output_dir, parallel=parallel)
     elif source == "fabric" and target == "snowflake":
         from semabridge.core.behavior import ConnectorBehavior
+        from semabridge.core.config_loader import get_project_file_path
         behavior = ConnectorBehavior()
-        behavior_path = Path("behavior.yaml")
+        behavior_path = get_project_file_path("behavior.yaml")
         if behavior_path.exists():
             try:
                 behavior = ConnectorBehavior.from_yaml(behavior_path)

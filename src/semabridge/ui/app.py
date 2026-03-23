@@ -65,7 +65,8 @@ def render_settings():
     
     # Try to load current config
     try:
-        config_path = Path.cwd() / "semabridge.yaml"
+        from semabridge.core.config_loader import get_project_file_path
+        config_path = get_project_file_path("semabridge.yaml")
         if config_path.exists():
             with open(config_path, "r") as f:
                 config = yaml.safe_load(f)

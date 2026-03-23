@@ -16,9 +16,14 @@
     "@xyflow/react": "^12.10.1",
     "clsx": "^2.1.1",
     "dagre": "^0.8.5",
+    "flexsearch": "^0.8.212",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.575.0",
+    "minisearch": "^7.2.0",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "react-router-dom": "^7.13.1",
+    "yaml": "^2.8.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

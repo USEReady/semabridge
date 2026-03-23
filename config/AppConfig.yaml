@@ -1,0 +1,7 @@
+app:
+  name: Semabridge
+  environment: development
+  log_level: INFO
+
+runtime:
+  command_runner: uv

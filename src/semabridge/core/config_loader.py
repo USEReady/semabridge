@@ -308,10 +308,10 @@ def get_default_config_path() -> Optional[Path]:
         Path to default config file if found, None otherwise
     """
     candidates = [
-        Path("semabridge.yaml"),
-        Path("semabridge.yml"),
         Path("config/semabridge.yaml"),
         Path("config/semabridge.yml"),
+        Path("semabridge.yaml"),
+        Path("semabridge.yml"),
     ]
     
     for candidate in candidates:
@@ -319,6 +319,24 @@ def get_default_config_path() -> Optional[Path]:
             return candidate
     
     return None
+
+
+def get_project_file_path(filename: str) -> Path:
+    """Resolve project-scoped files with config-first compatibility.
+
+    Search order:
+    1. ./config/<filename>
+    2. ./<filename>
+    3. ./config/<filename> (default target path when file doesn't exist yet)
+    """
+    config_candidate = Path("config") / filename
+    root_candidate = Path(filename)
+
+    if config_candidate.exists():
+        return config_candidate
+    if root_candidate.exists():
+        return root_candidate
+    return config_candidate
 
 
 def validate_config_schema(config: Dict[str, Any]) -> List[str]:

@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 
-const AUTH_BASE = 'http://127.0.0.1:8000/auth';
+const AUTH_BASE = (import.meta.env.VITE_AUTH_BASE_URL || '/auth').replace(/\/$/, '');
 const TOKEN_KEY = 'semabridge-token';
 
 const AuthContext = createContext(undefined);

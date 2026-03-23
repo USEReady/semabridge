@@ -26,7 +26,7 @@ export function LogsProvider({ children }) {
         };
         setLogs(prev => [entry, ...prev].slice(0, 500));
 
-        if (severity === 'warning' || severity === 'error' || severity === 'critical') {
+        if (severity === 'success' || severity === 'warning' || severity === 'error' || severity === 'critical') {
             const toast = { ...entry, visible: true };
             setToasts(prev => [...prev, toast]);
             setTimeout(() => {

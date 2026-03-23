@@ -1,0 +1,10 @@
+source:
+  type: fabric
+  workspace_id: "your-workspace-id"
+  models:
+    - "Your Semantic Model"
+
+target:
+  type: snowflake
+
+model_name: "SampleModel"

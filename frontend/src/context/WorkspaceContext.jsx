@@ -17,18 +17,44 @@ export function WorkspaceProvider({ children }) {
         const load = async () => {
             setIsLoading(true);
             try {
-                const data = await api.getWorkspaces();
-                setWorkspaces(data);
-                // If none selected yet, pick the first one
-                if (!activeWorkspaceId && data.length > 0) {
-                    setActiveWorkspaceId(data[0].id);
-                    localStorage.setItem(STORAGE_KEY, data[0].id);
+                const [baseWorkspaces, fabricWorkspaces] = await Promise.all([
+                    api.getWorkspaces().catch(() => []),
+                    api.fabricListWorkspaces().catch(() => ({ workspaces: [] })),
+                ]);
+
+                const merged = [];
+                const seen = new Set();
+                const pushUnique = (ws) => {
+                    if (!ws) return;
+                    const id = String(ws.id ?? ws.workspace_id ?? '').trim();
+                    if (!id || seen.has(id)) return;
+                    seen.add(id);
+                    merged.push({
+                        ...ws,
+                        id,
+                        name: ws.name ?? ws.displayName ?? ws.display_name ?? id,
+                    });
+                };
+
+                // Keep a stable local workspace option visible in the selector.
+                pushUnique({ id: 'semabridge-local', name: 'SemaBridge Workspace' });
+
+                (baseWorkspaces || []).forEach(pushUnique);
+                ((fabricWorkspaces && fabricWorkspaces.workspaces) || []).forEach(pushUnique);
+
+                setWorkspaces(merged);
+
+                // Keep selected workspace if valid; else choose first available.
+                const hasActive = merged.some(ws => ws.id === activeWorkspaceId);
+                if (!hasActive && merged.length > 0) {
+                    setActiveWorkspaceId(merged[0].id);
+                    localStorage.setItem(STORAGE_KEY, merged[0].id);
                 }
             } catch (err) {
                 console.warn('Failed to load workspaces, using defaults:', err.message);
                 // Fallback: use the env workspace as the single option
-                const fallbackId = activeWorkspaceId || 'default';
-                setWorkspaces([{ id: fallbackId, name: 'Default Workspace' }]);
+                const fallbackId = activeWorkspaceId || 'semabridge-local';
+                setWorkspaces([{ id: fallbackId, name: 'SemaBridge Workspace' }]);
             } finally {
                 setIsLoading(false);
             }

@@ -4,17 +4,18 @@ import {
     AlertTriangle,
     AlertCircle,
     Info,
+    Check,
     ChevronDown,
     ChevronUp,
     Copy,
     Trash2,
     ChevronLeft,
     ChevronRight,
-    Activity,
-    List,
+    Terminal,
+    Search,
+    History,
 } from 'lucide-react';
 import { useLogs } from '../context/LogsContext';
-import SearchInput from './common/SearchInput';
 
 const PAGE_SIZE = 25;
 
@@ -22,20 +23,26 @@ const SEVERITY_META = {
     info: {
         label: 'Info',
         icon: Info,
-        text: 'var(--text-tertiary)',
-        dot: 'var(--accent-blue)',
+        text: '#00d1ff',
+        dot: '#00d1ff',
+        bg: 'rgba(0, 209, 255, 0.12)',
+        border: 'rgba(0, 209, 255, 0.35)',
     },
     warning: {
         label: 'Warning',
         icon: AlertTriangle,
-        text: 'var(--color-warning)',
-        dot: 'var(--color-warning)',
+        text: '#ffb800',
+        dot: '#ffb800',
+        bg: 'rgba(255, 184, 0, 0.12)',
+        border: 'rgba(255, 184, 0, 0.35)',
     },
     error: {
         label: 'Error',
         icon: AlertCircle,
-        text: 'var(--color-danger)',
-        dot: 'var(--color-danger)',
+        text: '#ff4d4d',
+        dot: '#ff4d4d',
+        bg: 'rgba(255, 77, 77, 0.12)',
+        border: 'rgba(255, 77, 77, 0.35)',
     },
 };
 
@@ -72,7 +79,7 @@ function renderJsonSyntax(value, compact) {
 
     return lines.map((line, idx) => {
         const parts = [];
-        const regex = /("(?:\\.|[^"])*")\s*:|(\btrue\b|\bfalse\b|\bnull\b)|(-?\d+(?:\.\d+)?)|(\"(?:\\.|[^\"])*\")/g;
+        const regex = /("(?:\\.|[^"])*")\s*:|(\btrue\b|\bfalse\b|\bnull\b)|(-?\d+(?:\.\d+)?)|("(?:\\.|[^"])*")/g;
         let last = 0;
         let match;
 
@@ -114,51 +121,23 @@ function buildOriginBreadcrumb(source) {
     return `...${segments[segments.length - 2]} > ${segments[segments.length - 1]}`;
 }
 
-function extractLatencyMs(entry) {
-    const payloadLatency = entry?.payload?.latency;
-    if (typeof payloadLatency === 'number') return payloadLatency;
-    if (typeof payloadLatency === 'string') {
-        const m = payloadLatency.match(/(\d+(?:\.\d+)?)/);
-        if (m) return Number(m[1]);
-    }
-    const messageLatency = String(entry?.message || '').match(/(\d+(?:\.\d+)?)\s*ms/i);
-    return messageLatency ? Number(messageLatency[1]) : null;
-}
-
 function GeometricSeverityPill({ severity }) {
     const meta = SEVERITY_META[severity] || SEVERITY_META.info;
     const Icon = meta.icon;
-    const shapeClass = severity === 'warning' ? 'rotate-45 rounded-[2px]' : severity === 'error' ? 'rounded-[2px]' : 'rounded-full';
 
     return (
         <span
-            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold"
+            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-tight"
             style={{
-                background: 'var(--bg-surface-raised)',
+                background: meta.bg,
                 color: meta.text,
-                border: '1px solid var(--border-main)',
+                border: `1px solid ${meta.border}`,
             }}
         >
-            <span className={`h-1.5 w-1.5 ${shapeClass}`} style={{ background: meta.dot }} />
-            <Icon size={11} strokeWidth={1.75} />
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: meta.dot, boxShadow: `0 0 8px ${meta.dot}` }} />
+            <Icon size={11} strokeWidth={2} />
             {meta.label}
         </span>
-    );
-}
-
-function SoftButton({ active, onClick, children }) {
-    return (
-        <button
-            onClick={onClick}
-            className="inline-flex items-center rounded-[7px] px-3.5 py-1.5 text-[12px] font-semibold transition-colors"
-            style={{
-                background: active ? 'var(--bg-surface-hover)' : 'transparent',
-                color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                border: active ? '1px solid var(--border-main)' : '1px solid transparent',
-            }}
-        >
-            {children}
-        </button>
     );
 }
 
@@ -168,6 +147,7 @@ export default function LogsPanel({ isOpen, onClose }) {
     const [searchQuery, setSearchQuery] = useState('');
     const [expandedId, setExpandedId] = useState(null);
     const [compactJson, setCompactJson] = useState(false);
+    const [copiedEntryId, setCopiedEntryId] = useState(null);
     const [page, setPage] = useState(1);
 
     const filteredLogs = useMemo(() => {
@@ -200,16 +180,31 @@ export default function LogsPanel({ isOpen, onClose }) {
     const pageStart = (clampedPage - 1) * PAGE_SIZE;
     const pagedLogs = filteredLogs.slice(pageStart, pageStart + PAGE_SIZE);
 
-    const latencySummary = useMemo(() => {
-        const candidates = filteredLogs.map(extractLatencyMs).filter((v) => typeof v === 'number');
-        if (candidates.length === 0) return '--';
-        const avg = candidates.reduce((a, b) => a + b, 0) / candidates.length;
-        return `${avg.toFixed(1)} ms`;
-    }, [filteredLogs]);
+    const copyTextToClipboard = async (text) => {
+        if (navigator?.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'absolute';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+
+        const copied = document.execCommand('copy');
+        document.body.removeChild(textarea);
+        return copied;
+    };
 
     const handleCopyJson = async (entry) => {
         try {
-            await navigator.clipboard.writeText(JSON.stringify(entry, null, 2));
+            const copied = await copyTextToClipboard(JSON.stringify(entry, null, 2));
+            if (!copied) throw new Error('Clipboard copy not supported');
+            setCopiedEntryId(entry.id);
+            setTimeout(() => setCopiedEntryId((prev) => (prev === entry.id ? null : prev)), 1600);
             addLog('info', 'Logs', 'Copied JSON object to clipboard');
         } catch {
             addLog('warning', 'Logs', 'Clipboard copy failed in this browser context');
@@ -225,90 +220,114 @@ export default function LogsPanel({ isOpen, onClose }) {
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 backdrop-blur-sm" style={{ background: 'var(--bg-backdrop)' }} onClick={onClose} />
+            <div
+                className="absolute inset-0"
+                style={{ background: 'var(--bg-backdrop)', backdropFilter: 'blur(3px)' }}
+                onClick={onClose}
+            />
 
             <div
-                className="relative w-full max-w-6xl max-h-[90vh] rounded-xl flex flex-col overflow-hidden"
+                className="relative w-full max-w-5xl h-[85vh] rounded-lg overflow-hidden flex flex-col"
                 style={{
-                    background: 'linear-gradient(180deg, rgba(14,18,28,0.98) 0%, rgba(11,16,25,0.98) 100%)',
+                    background: 'var(--bg-surface)',
                     border: '1px solid var(--border-main)',
-                    boxShadow: '0 24px 56px rgba(0,0,0,0.5)',
+                    boxShadow: '0 22px 48px rgba(0,0,0,0.55)',
+                    backdropFilter: 'blur(10px)',
                 }}
             >
-                <header className="h-14 px-5 flex items-center justify-between border-b border-main/70">
-                    <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'var(--bg-surface-raised)', border: '1px solid var(--border-main)' }}>
-                            <List size={15} className="text-secondary" strokeWidth={1.75} />
+                <header className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: 'var(--border-main)', background: 'var(--bg-surface-raised)' }}>
+                    <div className="flex items-center gap-4">
+                        <div
+                            className="p-2 rounded-lg"
+                            style={{ background: 'rgba(100,103,242,0.12)', border: '1px solid rgba(100,103,242,0.3)' }}
+                        >
+                            <Terminal size={22} color="#6467f2" />
                         </div>
                         <div>
-                            <h2 className="text-[15px] font-semibold text-primary leading-none">Log Observer</h2>
-                            <p className="text-[10px] uppercase tracking-widest text-tertiary mt-1">Live Event Stream</p>
+                            <h2 className="text-xl font-black leading-none" style={{ color: '#e1e1e6' }}>Logs & Activity</h2>
+                            <p className="text-[10px] font-bold uppercase tracking-widest mt-1" style={{ color: '#9497ad' }}>
+                                Live System Feed
+                            </p>
                         </div>
                     </div>
 
                     <div className="flex items-center gap-3">
-                        <SearchInput
-                            value={searchQuery}
-                            onChange={(value) => {
-                                setSearchQuery(value);
-                                setPage(1);
-                            }}
-                            placeholder="Search… (Ctrl+K)  source:snowflake"
-                            width={360}
-                        />
-                        <div className="flex items-center gap-2 px-2.5 py-1 rounded-full" style={{ background: 'var(--bg-surface-raised)', border: '1px solid var(--border-main)' }}>
-                            <span className={`h-1.5 w-1.5 rounded-full ${wsConnected ? 'animate-pulse' : ''}`} style={{ background: wsConnected ? 'var(--color-success)' : 'var(--text-tertiary)' }} />
-                            <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: wsConnected ? 'var(--color-success)' : 'var(--text-tertiary)' }}>
-                                {wsConnected ? 'Live' : 'Idle'}
-                            </span>
+                        <div className="relative">
+                            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" color="#9497ad" />
+                            <input
+                                type="text"
+                                value={searchQuery}
+                                onChange={(e) => {
+                                    setSearchQuery(e.target.value);
+                                    setPage(1);
+                                }}
+                                placeholder="Search logs... source:api"
+                                className="w-64 rounded-lg pl-9 pr-3 py-2 text-sm outline-none"
+                                style={{
+                                    background: 'var(--bg-input)',
+                                    border: '1px solid var(--border-main)',
+                                    color: 'var(--text-primary)',
+                                }}
+                            />
                         </div>
-                        <button onClick={onClose} className="p-1.5 rounded-md hover:bg-surface-hover text-tertiary" aria-label="Close logs panel">
-                            <X size={16} strokeWidth={1.75} />
+                        <button className="p-2 rounded-lg" onClick={onClose} style={{ color: '#9497ad' }} aria-label="Close logs panel">
+                            <X size={18} />
                         </button>
                     </div>
                 </header>
 
-                <div className="px-5 py-2 border-b border-main/50 flex items-center gap-1.5">
-                    {[
-                        { id: 'all', label: 'All' },
-                        { id: 'info', label: 'Info' },
-                        { id: 'warning', label: 'Warning' },
-                        { id: 'error', label: 'Error' },
-                    ].map((item) => (
-                        <SoftButton
-                            key={item.id}
-                            active={activeFilter === item.id}
+                <nav
+                    className="flex items-center px-6 py-3 gap-1 border-b"
+                    style={{ borderColor: 'var(--border-main)', background: 'var(--bg-surface-raised)' }}
+                >
+                    {['all', 'info', 'warning', 'error'].map((id) => (
+                        <button
+                            key={id}
                             onClick={() => {
-                                setActiveFilter(item.id);
+                                setActiveFilter(id);
                                 setPage(1);
                             }}
+                            className="px-5 py-1.5 rounded-lg text-xs font-black uppercase transition-all"
+                            style={{
+                                background: activeFilter === id ? 'var(--accent-blue)' : 'transparent',
+                                color: activeFilter === id ? '#fff' : 'var(--text-tertiary)',
+                            }}
                         >
-                            {item.label}
-                        </SoftButton>
+                            {id}
+                        </button>
                     ))}
-                </div>
 
-                <div className="flex-1 overflow-y-auto custom-scrollbar px-4 py-2">
+                    <div
+                        className="ml-auto flex items-center gap-2 px-3 py-1.5 rounded-full"
+                        style={{ background: 'rgba(100,103,242,0.1)', border: '1px solid rgba(100,103,242,0.25)' }}
+                    >
+                        <span
+                            className={`h-2 w-2 rounded-full ${wsConnected ? 'animate-pulse' : ''}`}
+                            style={{ background: wsConnected ? '#6467f2' : '#9497ad' }}
+                        />
+                        <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: wsConnected ? '#6467f2' : '#9497ad' }}>
+                            {wsConnected ? 'Live Stream Active' : 'Stream Idle'}
+                        </span>
+                    </div>
+                </nav>
+
+                <div className="flex-1 overflow-y-auto custom-scrollbar">
                     {pagedLogs.length === 0 ? (
-                        <div className="h-full min-h-[240px] grid place-items-center text-tertiary text-sm">
-                            No logs match current filters.
+                        <div className="h-full min-h-[260px] grid place-items-center text-sm" style={{ color: '#9497ad' }}>
+                            No logs for current filter.
                         </div>
                     ) : (
-                        <table className="w-full text-left table-fixed border-separate [border-spacing:0_8px]">
-                            <colgroup>
-                                <col style={{ width: 160 }} />
-                                <col style={{ width: 150 }} />
-                                <col style={{ width: 260 }} />
-                                <col />
-                                <col style={{ width: 34 }} />
-                            </colgroup>
-                            <thead className="sticky top-0 z-10" style={{ background: 'rgba(14,18,28,0.96)' }}>
+                        <table className="w-full text-left border-collapse">
+                            <thead
+                                className="sticky top-0 z-10"
+                                style={{ background: 'var(--bg-surface-raised)', borderBottom: '1px solid var(--border-main)' }}
+                            >
                                 <tr>
-                                    <th className="px-3 py-2 text-[10px] font-semibold uppercase tracking-widest text-tertiary">Timestamp</th>
-                                    <th className="px-3 py-2 text-[10px] font-semibold uppercase tracking-widest text-tertiary">Severity</th>
-                                    <th className="px-3 py-2 text-[10px] font-semibold uppercase tracking-widest text-tertiary">Origin</th>
-                                    <th className="px-3 py-2 text-[10px] font-semibold uppercase tracking-widest text-tertiary">Message</th>
-                                    <th />
+                                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest" style={{ color: '#9497ad' }}>Timestamp</th>
+                                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest" style={{ color: '#9497ad' }}>Severity</th>
+                                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest" style={{ color: '#9497ad' }}>Origin</th>
+                                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest" style={{ color: '#9497ad' }}>Message</th>
+                                    <th className="px-6 py-4 w-10" />
                                 </tr>
                             </thead>
                             <tbody>
@@ -321,73 +340,62 @@ export default function LogsPanel({ isOpen, onClose }) {
                                     return (
                                         <Fragment key={entry.id}>
                                             <tr
+                                                className="group cursor-pointer transition-colors"
+                                                style={{
+                                                    background: isExpanded ? 'var(--color-accent-faint)' : 'transparent',
+                                                    borderBottom: '1px solid var(--border-main)',
+                                                }}
                                                 onClick={() => setExpandedId(isExpanded ? null : entry.id)}
-                                                className="cursor-pointer transition-colors"
-                                                style={{ background: isExpanded ? 'var(--bg-surface-hover)' : 'var(--bg-surface-raised)' }}
                                             >
-                                                <td className="px-3 py-3 rounded-l-lg text-xs font-mono text-tertiary whitespace-nowrap">{entry.timestamp}</td>
-                                                <td className="px-3 py-3">
-                                                    <GeometricSeverityPill severity={severity} />
-                                                </td>
-                                                <td className="px-3 py-3">
-                                                    <span className="block text-xs font-mono text-secondary truncate" title={sourceText}>
-                                                        {sourceBreadcrumb}
-                                                    </span>
-                                                </td>
-                                                <td className="px-3 py-3 text-sm text-primary font-medium truncate">{entry.message}</td>
-                                                <td className="px-2 py-3 rounded-r-lg text-tertiary">
-                                                    {isExpanded ? <ChevronUp size={15} strokeWidth={1.75} /> : <ChevronDown size={15} strokeWidth={1.75} />}
+                                                <td className="px-6 py-4 text-xs font-mono font-bold" style={{ color: '#a9acc2' }}>{entry.timestamp}</td>
+                                                <td className="px-6 py-4"><GeometricSeverityPill severity={severity} /></td>
+                                                <td className="px-6 py-4 text-xs font-mono font-bold" style={{ color: '#6467f2' }} title={sourceText}>{sourceBreadcrumb}</td>
+                                                <td className="px-6 py-4 text-sm font-medium" style={{ color: '#e1e1e6' }}>{String(entry.message || '')}</td>
+                                                <td className="px-6 py-4" style={{ color: '#9497ad' }}>
+                                                    {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                                                 </td>
                                             </tr>
 
-                                            <tr>
-                                                <td colSpan={5} className="p-0">
-                                                    <div className={`transition-all duration-200 ease-out overflow-hidden ${isExpanded ? 'max-h-[420px] opacity-100 mt-1' : 'max-h-0 opacity-0'}`}>
-                                                        <div className="rounded-lg border border-main bg-surface px-3 py-3">
-                                                            <div className="flex items-center justify-between mb-2 pb-2 border-b border-main/60">
-                                                                <div className="flex items-center gap-2 text-tertiary">
-                                                                    <Activity size={13} strokeWidth={1.75} className="text-secondary" />
-                                                                    <span className="text-[10px] uppercase tracking-widest font-semibold">Metadata</span>
-                                                                </div>
+                                            {isExpanded && (
+                                                <tr style={{ background: 'var(--color-accent-faint)' }}>
+                                                    <td colSpan={5} className="px-6 pb-5">
+                                                        <div className="rounded-lg p-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-main)' }}>
+                                                            <div className="flex items-center justify-between pb-3 mb-3" style={{ borderBottom: '1px solid var(--border-main)' }}>
+                                                                <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: '#9497ad' }}>
+                                                                    Extended Metadata
+                                                                </span>
                                                                 <div className="flex items-center gap-2">
                                                                     <button
                                                                         onClick={(e) => {
                                                                             e.stopPropagation();
                                                                             setCompactJson((prev) => !prev);
                                                                         }}
-                                                                        className="rounded-[7px] px-2.5 py-1 text-[10px] font-semibold"
-                                                                        style={{
-                                                                            background: compactJson ? 'var(--bg-surface-hover)' : 'transparent',
-                                                                            border: '1px solid var(--border-main)',
-                                                                            color: 'var(--text-secondary)',
-                                                                        }}
+                                                                        className="px-2.5 py-1 rounded text-[10px] font-black uppercase"
+                                                                        style={{ color: 'var(--text-tertiary)', border: '1px solid var(--border-main)' }}
                                                                     >
-                                                                        {compactJson ? 'Pretty JSON' : 'Format JSON'}
+                                                                        {compactJson ? 'Pretty JSON' : 'Compact JSON'}
                                                                     </button>
                                                                     <button
                                                                         onClick={(e) => {
                                                                             e.stopPropagation();
                                                                             handleCopyJson(entry);
                                                                         }}
-                                                                        className="inline-flex items-center gap-1.5 rounded-[7px] px-2.5 py-1 text-[10px] font-semibold"
-                                                                        style={{
-                                                                            border: '1px solid var(--border-main)',
-                                                                            color: 'var(--text-secondary)',
-                                                                            background: 'transparent',
-                                                                        }}
+                                                                        type="button"
+                                                                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-black uppercase"
+                                                                        style={{ color: '#6467f2', border: '1px solid rgba(100,103,242,0.4)' }}
                                                                     >
-                                                                        <Copy size={11} strokeWidth={1.75} />
-                                                                        Copy Object
+                                                                        {copiedEntryId === entry.id ? <Check size={12} /> : <Copy size={12} />}
+                                                                        {copiedEntryId === entry.id ? 'Copied' : 'Copy JSON'}
                                                                     </button>
                                                                 </div>
                                                             </div>
-                                                            <div className="rounded-md border border-main/70 bg-surface-raised p-2.5 overflow-x-auto font-mono text-xs leading-relaxed text-primary">
+                                                            <div className="rounded-lg p-3 overflow-x-auto text-xs font-mono" style={{ background: '#05060b', color: '#e1e1e6' }}>
                                                                 {renderJsonSyntax(entry, compactJson)}
                                                             </div>
                                                         </div>
-                                                    </div>
-                                                </td>
-                                            </tr>
+                                                    </td>
+                                                </tr>
+                                            )}
                                         </Fragment>
                                     );
                                 })}
@@ -396,59 +404,54 @@ export default function LogsPanel({ isOpen, onClose }) {
                     )}
                 </div>
 
-                <footer className="h-10 px-5 border-t border-main/60 bg-transparent flex items-center justify-between">
-                    <div className="flex items-center gap-4 text-[10px] font-semibold uppercase tracking-widest text-tertiary">
-                        <span>Total Records: {filteredLogs.length}</span>
-                        <span className="h-3.5 w-px bg-main" />
-                        <span>System Latency: {latencySummary}</span>
-                    </div>
+                <footer
+                    className="px-6 py-4 flex items-center justify-between border-t"
+                    style={{ borderColor: 'var(--border-main)', background: 'var(--bg-surface-raised)' }}
+                >
+                    <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: '#9497ad' }}>
+                        Entry Range: {filteredLogs.length === 0 ? '0-0' : `${pageStart + 1}-${Math.min(pageStart + PAGE_SIZE, filteredLogs.length)}`} / {filteredLogs.length}
+                    </p>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-3">
                         <button
                             onClick={clearLogs}
-                            className="inline-flex items-center gap-1.5 rounded-[7px] px-3 py-1.5 text-[10px] font-semibold"
-                            style={{ border: '1px solid var(--border-main)', color: 'var(--text-secondary)', background: 'transparent' }}
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider"
+                            style={{ border: '1px solid rgba(62,64,90,0.45)', color: '#9497ad' }}
                         >
-                            <Trash2 size={11} strokeWidth={1.75} />
+                            <Trash2 size={14} />
                             Clear
                         </button>
 
-                        <div className="inline-flex items-center rounded-[7px] overflow-hidden" style={{ border: '1px solid var(--border-main)' }}>
-                            <button
-                                onClick={() => setPageSafe(clampedPage - 1)}
-                                disabled={clampedPage <= 1}
-                                className="px-2 py-1.5 text-tertiary hover:text-primary disabled:opacity-40"
-                                style={{ background: 'transparent' }}
-                                aria-label="Previous page"
-                            >
-                                <ChevronLeft size={14} strokeWidth={1.75} />
-                            </button>
-                            {[clampedPage - 1, clampedPage, clampedPage + 1]
-                                .filter((p) => p >= 1 && p <= totalPages)
-                                .map((p) => (
-                                    <button
-                                        key={p}
-                                        onClick={() => setPageSafe(p)}
-                                        className="min-w-7 px-2 py-1.5 text-[11px] font-semibold"
-                                        style={{
-                                            borderLeft: '1px solid var(--border-main)',
-                                            background: p === clampedPage ? 'var(--bg-surface-hover)' : 'transparent',
-                                            color: p === clampedPage ? 'var(--text-primary)' : 'var(--text-secondary)',
-                                        }}
-                                    >
-                                        {p}
-                                    </button>
-                                ))}
-                            <button
-                                onClick={() => setPageSafe(clampedPage + 1)}
-                                disabled={clampedPage >= totalPages}
-                                className="px-2 py-1.5 text-tertiary hover:text-primary disabled:opacity-40"
-                                style={{ borderLeft: '1px solid var(--border-main)', background: 'transparent' }}
-                                aria-label="Next page"
-                            >
-                                <ChevronRight size={14} strokeWidth={1.75} />
-                            </button>
-                        </div>
+                        <button
+                            onClick={() => setPageSafe(clampedPage - 1)}
+                            disabled={clampedPage <= 1}
+                            className="p-2 rounded-lg disabled:opacity-40"
+                            style={{ border: '1px solid rgba(62,64,90,0.45)', color: '#9497ad' }}
+                            aria-label="Previous page"
+                        >
+                            <ChevronLeft size={16} />
+                        </button>
+                        <span className="text-xs font-bold px-2" style={{ color: '#e1e1e6' }}>
+                            {clampedPage} / {totalPages}
+                        </span>
+                        <button
+                            onClick={() => setPageSafe(clampedPage + 1)}
+                            disabled={clampedPage >= totalPages}
+                            className="p-2 rounded-lg disabled:opacity-40"
+                            style={{ border: '1px solid rgba(62,64,90,0.45)', color: '#9497ad' }}
+                            aria-label="Next page"
+                        >
+                            <ChevronRight size={16} />
+                        </button>
+
+                        <button
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider"
+                            style={{ background: '#6467f2', color: '#ffffff' }}
+                            onClick={() => addLog('info', 'logs-panel', 'History fetch is not configured yet')}
+                        >
+                            <History size={14} />
+                            Fetch History
+                        </button>
                     </div>
                 </footer>
             </div>

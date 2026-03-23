@@ -1,6 +1,83 @@
-﻿const API_BASE_URL = 'http://127.0.0.1:8001/api';
-const AUTH_BASE_URL = 'http://127.0.0.1:8001/auth';
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
 const TOKEN_KEY = 'semabridge-token';
+
+function normalizeProject(project) {
+    if (!project || typeof project !== 'object') return project;
+
+    // Some backend compatibility modes wrap created project as { status, project: {...} }
+    if (project.project && typeof project.project === 'object') {
+        return normalizeProject(project.project);
+    }
+
+    const id = project.id ?? project.project_id ?? null;
+    const source = project.source ?? project.adapter ?? project.source_type ?? null;
+    const targetType = project.target_type ?? project.target?.type ?? null;
+
+    return {
+        ...project,
+        id,
+        project_id: project.project_id ?? id,
+        source,
+        adapter: project.adapter ?? source,
+        target_type: targetType,
+    };
+}
+
+function dedupeProjects(projects) {
+    const byId = new Map();
+    const unnamed = [];
+
+    for (const raw of (projects || [])) {
+        const p = normalizeProject(raw);
+        const id = p?.id != null ? String(p.id) : '';
+
+        if (!id) {
+            unnamed.push(p);
+            continue;
+        }
+
+        const existing = byId.get(id);
+        if (!existing) {
+            byId.set(id, p);
+            continue;
+        }
+
+        // Keep the freshest payload when duplicate IDs are returned.
+        const prevTs = String(existing.updated_at || existing.created_at || '');
+        const nextTs = String(p.updated_at || p.created_at || '');
+        if (nextTs.localeCompare(prevTs) >= 0) {
+            byId.set(id, p);
+        }
+    }
+
+    return [...byId.values(), ...unnamed];
+}
+
+function normalizeFolder(folder) {
+    if (!folder || typeof folder !== 'object') return folder;
+
+    const id = folder.id ?? folder.folder_id ?? null;
+
+    return {
+        ...folder,
+        id,
+        folder_id: folder.folder_id ?? id,
+    };
+}
+
+function normalizeWorkspace(workspace) {
+    if (!workspace || typeof workspace !== 'object') return workspace;
+
+    const id = workspace.id ?? workspace.workspace_id ?? null;
+    const name = workspace.name ?? workspace.display_name ?? workspace.displayName ?? id;
+
+    return {
+        ...workspace,
+        id,
+        workspace_id: workspace.workspace_id ?? id,
+        name,
+    };
+}
 
 function getAuthHeaders() {
     const token = localStorage.getItem(TOKEN_KEY);
@@ -138,7 +215,8 @@ export const api = {
     // Workspaces
     async getWorkspaces() {
         const res = await authFetch(`${API_BASE_URL}/workspaces`);
-        return handleResponse(res);
+        const data = await handleResponse(res);
+        return (data || []).map(normalizeWorkspace);
     },
 
     // â”€â”€ Repository Map â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -155,6 +233,35 @@ export const api = {
 
     async getModelGraph(modelId = '__all__') {
         const res = await authFetch(`${API_BASE_URL}/repo/models/${encodeURIComponent(modelId)}/graph`);
+        return handleResponse(res);
+    },
+
+    async getGraphSnapshot(modelId = '__all__', snapshotId, includeSystemTables = false) {
+        if (!snapshotId) {
+            throw new Error('snapshotId is required');
+        }
+        const params = new URLSearchParams({
+            include_system_tables: includeSystemTables ? 'true' : 'false',
+        });
+        const res = await authFetch(`${API_BASE_URL}/graph/${encodeURIComponent(modelId)}/snapshot/${encodeURIComponent(snapshotId)}?${params}`);
+        return handleResponse(res);
+    },
+
+    async getGraphSnapshots(modelId = '__all__') {
+        const res = await authFetch(`${API_BASE_URL}/graph/${encodeURIComponent(modelId)}/snapshots`);
+        return handleResponse(res);
+    },
+
+    async compareGraphSnapshots(modelId = '__all__', fromSnapshotId, toSnapshotId, includeSystemTables = false) {
+        if (!fromSnapshotId || !toSnapshotId) {
+            throw new Error('fromSnapshotId and toSnapshotId are required');
+        }
+        const params = new URLSearchParams({
+            from_snapshot_id: String(fromSnapshotId),
+            to_snapshot_id: String(toSnapshotId),
+            include_system_tables: includeSystemTables ? 'true' : 'false',
+        });
+        const res = await authFetch(`${API_BASE_URL}/graph/${encodeURIComponent(modelId)}/compare?${params}`);
         return handleResponse(res);
     },
 
@@ -361,5 +468,341 @@ export const api = {
         });
         return handleResponse(res);
     },
+
+    // ── Projects ───────────────────────────────────────────────────────────
+    async listProjects() {
+        const res = await authFetch(`${API_BASE_URL}/projects`);
+        const data = await handleResponse(res);
+        return dedupeProjects(data || []);
+    },
+
+    async getProject(projectId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}`);
+        const data = await handleResponse(res);
+        return normalizeProject(data);
+    },
+
+    async createProject(data) {
+        const res = await authFetch(`${API_BASE_URL}/projects`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        const created = await handleResponse(res);
+        return normalizeProject(created?.project ?? created);
+    },
+
+    async updateProject(projectId, data) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        return handleResponse(res);
+    },
+
+    async deleteProject(projectId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}`, {
+            method: 'DELETE',
+        });
+        if (res.status === 204) return null;
+        return handleResponse(res);
+    },
+
+    // ── Job Runs ───────────────────────────────────────────────────────────
+    async listJobRuns(filters = {}) {
+        const params = new URLSearchParams();
+        if (filters.status) params.set('status', filters.status);
+        if (filters.project_id) params.set('project_id', filters.project_id);
+        const query = params.toString();
+        const res = await authFetch(`${API_BASE_URL}/jobs/runs${query ? `?${query}` : ''}`);
+        return handleResponse(res);
+    },
+
+    async getJobConfig(projectId) {
+        const url = projectId
+            ? `${API_BASE_URL}/jobs/config?project_id=${projectId}`
+            : `${API_BASE_URL}/jobs/config`;
+        const res = await authFetch(url);
+        return handleResponse(res);
+    },
+
+    async updateJobConfig(projectId, configData) {
+        const res = await authFetch(`${API_BASE_URL}/jobs/config`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(typeof projectId === 'object' ? projectId : { project_id: projectId, ...configData }),
+        });
+        return handleResponse(res);
+    },
+
+    async triggerJob(projectId) {
+        const res = await authFetch(`${API_BASE_URL}/jobs/trigger`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(projectId ? { project_id: projectId } : {}),
+        });
+        return handleResponse(res);
+    },
+
+    // ── Model Mapping ──────────────────────────────────────────────────────
+    async getMappings(projectId) {
+        const url = projectId
+            ? `${API_BASE_URL}/mappings?project_id=${projectId}`
+            : `${API_BASE_URL}/mappings`;
+        const res = await authFetch(url);
+        return handleResponse(res);
+    },
+
+    async autoMap(projectId) {
+        const res = await authFetch(`${API_BASE_URL}/mappings/auto`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(projectId ? { project_id: projectId } : {}),
+        });
+        return handleResponse(res);
+    },
+
+    async updateMapping(mappingId, data) {
+        const res = await authFetch(`${API_BASE_URL}/mappings/${mappingId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        return handleResponse(res);
+    },
+
+    async deleteMappings(projectId) {
+        const url = projectId
+            ? `${API_BASE_URL}/mappings?project_id=${projectId}`
+            : `${API_BASE_URL}/mappings`;
+        const res = await authFetch(url, { method: 'DELETE' });
+        if (res.status === 204) return null;
+        return handleResponse(res);
+    },
+
+    // ── Projects: enhanced CRUD ───────────────────────────────────────────
+
+    async patchProject(projectId, data) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        return handleResponse(res);
+    },
+
+    // ── Project Config (semabridge.yaml per-project blob) ─────────────────
+
+    async getProjectConfig(projectId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/config`);
+        return handleResponse(res);
+    },
+
+    async saveProjectConfig(projectId, configYaml) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/config`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config_yaml: configYaml }),
+        });
+        return handleResponse(res);
+    },
+
+    // ── Project Runs ──────────────────────────────────────────────────────
+
+    async getProjectRuns(projectId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/runs`);
+        return handleResponse(res);
+    },
+
+    async runProjectNow(projectId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
+            method: 'POST',
+        });
+        return handleResponse(res);
+    },
+
+    // ── Project Export ────────────────────────────────────────────────────
+
+    async exportProject(projectId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/export`);
+        if (!res.ok) {
+            const txt = await res.text();
+            throw new Error(`Export failed: ${txt}`);
+        }
+        const blob = await res.blob();
+        const cd = res.headers.get('Content-Disposition') || '';
+        const match = cd.match(/filename="?([^";]+)"?/);
+        const filename = match ? match[1] : `project_${projectId}.yaml`;
+        _triggerDownload(blob, filename);
+    },
+
+    async exportProjectsBulk(projectIds) {
+        const res = await authFetch(`${API_BASE_URL}/projects/export-bulk`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_ids: projectIds }),
+        });
+        if (!res.ok) {
+            const txt = await res.text();
+            throw new Error(`Bulk export failed: ${txt}`);
+        }
+        const blob = await res.blob();
+        _triggerDownload(blob, 'semabridge_projects.zip');
+    },
+
+    // ── Project Import ────────────────────────────────────────────────────
+
+    async importProjects(files) {
+        const form = new FormData();
+        for (const file of files) {
+            form.append('files', file);
+        }
+        const res = await authFetch(`${API_BASE_URL}/projects/import`, {
+            method: 'POST',
+            body: form,
+        });
+        return handleResponse(res);
+    },
+
+    // ── Folders ───────────────────────────────────────────────────────────
+
+    async listFolders() {
+        const res = await authFetch(`${API_BASE_URL}/folders`);
+        const data = await handleResponse(res);
+        return (data || []).map(normalizeFolder);
+    },
+
+    async createFolder(data) {
+        const res = await authFetch(`${API_BASE_URL}/folders`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        const folder = await handleResponse(res);
+        return normalizeFolder(folder);
+    },
+
+    async renameFolder(folderId, nameOrData, color) {
+        const payload = typeof nameOrData === 'object'
+            ? nameOrData
+            : { name: nameOrData, color };
+        const res = await authFetch(`${API_BASE_URL}/folders/${folderId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const folder = await handleResponse(res);
+        return normalizeFolder(folder);
+    },
+
+    async deleteFolder(folderId) {
+        const res = await authFetch(`${API_BASE_URL}/folders/${folderId}`, {
+            method: 'DELETE',
+        });
+        if (res.status === 204) return null;
+        return handleResponse(res);
+    },
+
+    async moveProjectToFolder(projectId, folderId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/folder`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folder_id: folderId }),
+        });
+        const data = await handleResponse(res);
+        return normalizeProject(data);
+    },
+
+    // ── Discovery ─────────────────────────────────────────────────────────
+
+    async discoverFabricWorkspaces() {
+        const res = await authFetch(`${API_BASE_URL}/discovery/fabric/workspaces`);
+        const data = await handleResponse(res);
+        return (data || []).map(normalizeWorkspace);
+    },
+
+    async discoverFabricModels(workspaceId) {
+        if (!workspaceId || workspaceId === 'undefined' || workspaceId === 'null') {
+            throw new Error('Workspace ID is required to discover Fabric models.');
+        }
+        const res = await authFetch(
+            `${API_BASE_URL}/discovery/fabric/workspaces/${encodeURIComponent(workspaceId)}/models`
+        );
+        return handleResponse(res);
+    },
+
+    async discoverFabricReports(workspaceId) {
+        if (!workspaceId || workspaceId === 'undefined' || workspaceId === 'null') {
+            throw new Error('Workspace ID is required to discover Fabric reports.');
+        }
+        const res = await authFetch(
+            `${API_BASE_URL}/discovery/fabric/workspaces/${encodeURIComponent(workspaceId)}/reports`
+        );
+        return handleResponse(res);
+    },
+
+    async discoverSnowflakeWarehouses() {
+        const res = await authFetch(`${API_BASE_URL}/discovery/snowflake/warehouses`);
+        return handleResponse(res);
+    },
+
+    async discoverSnowflakeDatabases() {
+        const res = await authFetch(`${API_BASE_URL}/discovery/snowflake/databases`);
+        return handleResponse(res);
+    },
+
+    async discoverSnowflakeSchemas(database) {
+        const res = await authFetch(
+            `${API_BASE_URL}/discovery/snowflake/databases/${encodeURIComponent(database)}/schemas`
+        );
+        return handleResponse(res);
+    },
+
+    // ── Global Config — connector sections ───────────────────────────────
+
+    async getGlobalConnectorConfig() {
+        const res = await authFetch(`${API_BASE_URL}/config/global/connectors`);
+        return handleResponse(res);
+    },
+
+    async saveGlobalConnectorConfig(data) {
+        const res = await authFetch(`${API_BASE_URL}/config/global/connectors`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        return handleResponse(res);
+    },
+
+    // ── Global Config — settings sections ────────────────────────────────
+
+    async getGlobalSettingsConfig() {
+        const res = await authFetch(`${API_BASE_URL}/config/global/settings`);
+        return handleResponse(res);
+    },
+
+    async saveGlobalSettingsConfig(data) {
+        const res = await authFetch(`${API_BASE_URL}/config/global/settings`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        return handleResponse(res);
+    },
 };
+
+// ---------------------------------------------------------------------------
+// Internal helper: trigger a file download from a Blob
+// ---------------------------------------------------------------------------
+function _triggerDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
 

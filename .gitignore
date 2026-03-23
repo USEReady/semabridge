@@ -58,6 +58,8 @@ coverage.xml
 
 # Virtual environments
 .venv
+.venv/
+.apm/
 venv/
 env/
 ENV/

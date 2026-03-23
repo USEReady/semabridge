@@ -475,7 +475,9 @@ def save_config(config: Dict[str, Any]):
     """
     
     try:
-        output_path = Path.cwd() / "semabridge.yaml"
+        from semabridge.core.config_loader import get_project_file_path
+        output_path = get_project_file_path("semabridge.yaml")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         
         with open(output_path, "w") as f:
             yaml.dump(config, f, default_flow_style=False, sort_keys=False)

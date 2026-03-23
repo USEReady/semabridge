@@ -29,6 +29,7 @@ from typing import Any, Dict, Literal, Optional
 from pydantic import Field
 from semabridge.connectors.snowflake_emitter import MissingSourceTableWarning
 from semabridge.core.settings import Settings, get_settings
+from semabridge.core.config_loader import get_project_file_path
 from semabridge.core.behavior import ConnectorBehavior
 from semabridge.core.run_summary import (
     STEP_NAMES,
@@ -442,7 +443,7 @@ class ExecutionEngine:
         elif config_path:
             # config_path provided — look for behavior.yaml alongside the config
             # file, or fall back to the CWD behavior.yaml.
-            candidate_dirs = [config_path.parent, Path(".")]
+            candidate_dirs = [config_path.parent, Path("config"), Path(".")]
             for d in candidate_dirs:
                 behavior_candidate = d / "behavior.yaml"
                 if behavior_candidate.exists():
@@ -458,7 +459,7 @@ class ExecutionEngine:
             # Last resort: try behavior.yaml in the current working directory.
             # This covers the API codepath where config is a Settings instance
             # that predates the .behavior property.
-            cwd_behavior = Path("behavior.yaml")
+            cwd_behavior = get_project_file_path("behavior.yaml")
             if cwd_behavior.exists():
                 try:
                     behavior = ConnectorBehavior.from_yaml(cwd_behavior)

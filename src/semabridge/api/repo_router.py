@@ -91,7 +91,9 @@ def _resolve_models_path() -> Path:
         return Path(env_val).expanduser().resolve()
 
     try:
-        sema_yaml = _get_repo_root() / "semabridge.yaml"
+        sema_yaml = _get_repo_root() / "config" / "semabridge.yaml"
+        if not sema_yaml.exists():
+            sema_yaml = _get_repo_root() / "semabridge.yaml"
         if sema_yaml.exists():
             cfg = yaml.safe_load(sema_yaml.read_text(encoding="utf-8"))
             raw = (cfg or {}).get("source", {}).get("repository_path")

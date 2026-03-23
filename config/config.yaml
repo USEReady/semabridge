@@ -26,5 +26,5 @@ options:
   global_exclude_models: []
 config_path: C:\Users\MANOJ\semabridge\semabridge-merged\config.yaml
 fabric:
-  workspace_id: semabridge-local
-  workspace_name: SemaBridge Workspace
+  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
+  workspace_name: semabridge

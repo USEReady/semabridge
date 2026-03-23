@@ -115,7 +115,8 @@ def resolve_log_level(cli_flag: Optional[str] = None) -> str:
     # 2. Project semabridge.yaml
     try:
         import yaml
-        project_cfg_path = Path("semabridge.yaml")
+        from semabridge.core.config_loader import get_project_file_path
+        project_cfg_path = get_project_file_path("semabridge.yaml")
         if project_cfg_path.exists():
             cfg = yaml.safe_load(project_cfg_path.read_text(encoding="utf-8")) or {}
             val = cfg.get("logging", {}).get("level")

@@ -135,7 +135,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # type: ignore[
                     from alembic.config import Config as _AlembicConfig
                     from alembic import command as _alembic_cmd
 
-                    _ini = _Path(__file__).parents[4] / "alembic.ini"
+                    _root = _Path(__file__).parents[4]
+                    _ini = _root / "config" / "alembic.ini"
+                    if not _ini.exists():
+                        _ini = _root / "alembic.ini"
                     _alembic_cfg = _AlembicConfig(str(_ini))
                     # Inject the live URL so Alembic uses the same database as the app.
                     _db_url = str(_orm_engine.url)
@@ -347,7 +350,8 @@ def _resolve_models_path() -> Path:
 
     # 3/4. Project-level semabridge.yaml
     try:
-        sema_yaml = Path("semabridge.yaml")
+        from semabridge.core.config_loader import get_default_config_path
+        sema_yaml = get_default_config_path() or Path("config/semabridge.yaml")
         if sema_yaml.exists():
             cfg = yaml.safe_load(sema_yaml.read_text(encoding="utf-8"))
             source_cfg = (cfg or {}).get("source", {})
@@ -1221,12 +1225,13 @@ async def save_model(model_id: str, payload: Dict[str, Any]):
 @app.get("/api/config")
 async def get_config():
     try:
-        config_path = Path("semabridge.yaml")
+        from semabridge.core.config_loader import get_default_config_path
+        config_path = get_default_config_path() or Path("config/semabridge.yaml")
 
         if not config_path.exists():
             raise HTTPException(
                 status_code=404,
-                detail="semabridge.yaml not found in project root"
+                detail="semabridge.yaml not found in project"
             )
 
         content = config_path.read_text(encoding="utf-8")
@@ -1510,7 +1515,10 @@ async def sync_models(payload: Dict[str, Any]):
         content = payload.get("content")
         if content:
             normalized_content = _normalize_yaml_windows_path_fields(content)
-            Path("semabridge.yaml").write_text(normalized_content, encoding="utf-8")
+            from semabridge.core.config_loader import get_project_file_path
+            config_target = get_project_file_path("semabridge.yaml")
+            config_target.parent.mkdir(parents=True, exist_ok=True)
+            config_target.write_text(normalized_content, encoding="utf-8")
         
         # 2. Reload settings to ensure we have latest config & env vars
         from semabridge.core.settings import reload_settings
@@ -1520,7 +1528,7 @@ async def sync_models(payload: Dict[str, Any]):
         from semabridge.core.config_loader import get_default_config_path, load_yaml_file
         config_path = get_default_config_path()
         if not config_path:
-             raise HTTPException(status_code=404, detail="semabridge.yaml not found in project root")
+               raise HTTPException(status_code=404, detail="semabridge.yaml not found in project")
         
         try:
             config = load_yaml_file(config_path)
@@ -1931,7 +1939,13 @@ def _compat_now_iso() -> str:
 
 
 def _compat_store_path() -> Path:
-    return Path(".semabridge_compat_store.json")
+    p = Path("config/.semabridge_compat_store.json")
+    if p.exists():
+        return p
+    legacy = Path(".semabridge_compat_store.json")
+    if legacy.exists():
+        return legacy
+    return p
 
 
 def _compat_save_store() -> None:
@@ -2068,7 +2082,8 @@ def _compat_ensure_loaded() -> None:
 
 
 def _compat_repo_yaml_path() -> Path:
-    return Path("semabridge.yaml")
+    from semabridge.core.config_loader import get_project_file_path
+    return get_project_file_path("semabridge.yaml")
 
 
 def _compat_load_repo_yaml_text() -> str:
@@ -3983,8 +3998,12 @@ def _clear_fabric_from_config() -> None:
     from pathlib import Path
 
     candidates = [
+        Path.cwd() / "config" / "config.yaml",
+        Path.cwd() / "config" / "semabridge.yaml",
         Path.cwd() / "config.yaml",
         Path.cwd() / "semabridge.yaml",
+        Path.cwd().parent / "config" / "config.yaml",
+        Path.cwd().parent / "config" / "semabridge.yaml",
         Path.cwd().parent / "config.yaml",
         Path.cwd().parent / "semabridge.yaml",
     ]
@@ -4295,8 +4314,12 @@ def _sync_workspace_to_config(workspace_id: str, workspace_name: str) -> None:
 
     # Locate config file â€” check common paths
     candidates = [
+        Path.cwd() / "config" / "config.yaml",
+        Path.cwd() / "config" / "semabridge.yaml",
         Path.cwd() / "config.yaml",
         Path.cwd() / "semabridge.yaml",
+        Path.cwd().parent / "config" / "config.yaml",
+        Path.cwd().parent / "config" / "semabridge.yaml",
         Path.cwd().parent / "config.yaml",
         Path.cwd().parent / "semabridge.yaml",
     ]

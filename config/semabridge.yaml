@@ -1,0 +1,19 @@
+project_name: f
+source:
+  type: fabric
+  workspace_id: semabridge-local
+  workspace: SemaBridge Workspace
+  models:
+    - Device
+target:
+  type: snowflake
+ui:
+  output_format: osi
+  editor_mode: form
+selection:
+  model_ids:
+    - 974e7d48-4a76-4518-99d7-6ea751e37ce8
+options:
+  auto_relationships: true
+  include_hidden_fields: false
+  generate_descriptions: true

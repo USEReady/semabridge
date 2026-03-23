@@ -30,7 +30,7 @@ class SyncWorker(QThread):
     
     def __init__(self, config_path: Optional[str] = None, config: Optional[Any] = None, duckdb_manager: Optional[Any] = None):
         super().__init__()
-        self.config_path = config_path or "semabridge.yaml"
+        self.config_path = config_path or "config/semabridge.yaml"
         self.config = config
         self.duckdb_manager = duckdb_manager
         self._result: Optional[Dict[str, Any]] = None

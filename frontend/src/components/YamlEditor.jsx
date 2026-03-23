@@ -328,7 +328,7 @@ export default function YamlEditor({ selectedItems = [], activeModelId = null, s
     const extensions = useMemo(() => [yaml()], []);
 
     // Save model to local repo + create DuckDB version
-    const handleSave = async () => {
+    const handleSave = useCallback(async () => {
         const activeTab = tabs.find(t => t.active);
         const modelId = activeTab?.modelId;
 
@@ -349,9 +349,9 @@ export default function YamlEditor({ selectedItems = [], activeModelId = null, s
         } finally {
             setIsSaving(false);
         }
-    };
+    }, [addLog, editorContent, tabs]);
 
-    const handleGenerate = async () => {
+    const handleGenerate = useCallback(async () => {
         if (!selectedItems || selectedItems.length === 0) {
             console.log("No models selected");
             return;
@@ -377,14 +377,14 @@ export default function YamlEditor({ selectedItems = [], activeModelId = null, s
         } catch (err) {
             console.error("Generation failed:", err);
         }
-    };
+    }, [pbixFolder, selectedItems, sourceType, targetType]);
     const activeTab = tabs.find(t => t.active);
 
     const [isDeploying, setIsDeploying] = useState(false);
     const [syncResult, setSyncResult] = useState(null);
     const [showModal, setShowModal] = useState(false);
 
-    const handleDeploy = async () => {
+    const handleDeploy = useCallback(async () => {
         // Block deploy if there are errors
         if (errors.length > 0) {
             addLog('error', 'Deploy', 'Cannot deploy: validation errors exist');
@@ -427,7 +427,24 @@ export default function YamlEditor({ selectedItems = [], activeModelId = null, s
         } finally {
             setIsDeploying(false);
         }
-    };
+    }, [addLog, editorContent, errors]);
+
+    useEffect(() => {
+        const handleGlobalSave = () => {
+            handleSave();
+        };
+        const handleGlobalSync = () => {
+            handleDeploy();
+        };
+
+        document.addEventListener('semabridge:save', handleGlobalSave);
+        document.addEventListener('semabridge:sync', handleGlobalSync);
+
+        return () => {
+            document.removeEventListener('semabridge:save', handleGlobalSave);
+            document.removeEventListener('semabridge:sync', handleGlobalSync);
+        };
+    }, [handleDeploy, handleSave]);
 
     return (
         <div className="flex-1 flex flex-col overflow-hidden h-full">

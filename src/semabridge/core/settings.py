@@ -17,6 +17,7 @@ from typing import List, Optional
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from semabridge.core.config_loader import get_project_file_path
 
 # Dialects that use an in-process connection (no external server, no SSL)
 _IN_PROCESS_DIALECTS: frozenset[str] = frozenset({"sqlite", "duckdb"})
@@ -534,7 +535,7 @@ class Settings(BaseSettings):
         """
         if self._behavior is None:
             from semabridge.core.behavior import ConnectorBehavior
-            behavior_path = Path("behavior.yaml")
+            behavior_path = get_project_file_path("behavior.yaml")
             if behavior_path.exists():
                 try:
                     self._behavior = ConnectorBehavior.from_yaml(behavior_path)
@@ -619,7 +620,7 @@ def resolve_workspace_id(
     # 2. Project-level semabridge.yaml
     try:
         import yaml as _yaml
-        p = Path("semabridge.yaml")
+        p = get_project_file_path("semabridge.yaml")
         if p.exists():
             cfg = _yaml.safe_load(p.read_text(encoding="utf-8")) or {}
             val = cfg.get("fabric", {}).get("default_workspace_id")
