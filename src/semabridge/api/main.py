@@ -4190,12 +4190,48 @@ def _resolve_fabric_access_token(header_bearer_token: Optional[str]) -> str:
         logger.info("Using Fabric token from FABRIC_ACCESS_TOKEN environment variable")
         return env_token
 
+    # Service-principal fallback from configured Fabric settings.
+    try:
+        import msal
+
+        fabric_cfg = settings.fabric
+        client_secret = (
+            fabric_cfg.client_secret.get_secret_value().strip()
+            if fabric_cfg.client_secret is not None
+            else ""
+        )
+        if fabric_cfg.tenant_id and fabric_cfg.client_id and client_secret:
+            authority = f"https://login.microsoftonline.com/{fabric_cfg.tenant_id}"
+            sp_cache_key = f"{authority}|confidential"
+            app_msal = _msal_app_cache.get(sp_cache_key)
+            if app_msal is None:
+                app_msal = msal.ConfidentialClientApplication(
+                    client_id=fabric_cfg.client_id,
+                    authority=authority,
+                    client_credential=client_secret,
+                )
+                _msal_app_cache[sp_cache_key] = app_msal
+
+            result = app_msal.acquire_token_for_client(scopes=_FABRIC_SCOPES)
+            access_token = (result.get("access_token") or "").strip()
+            if access_token:
+                logger.info("Using Fabric token from service-principal credentials")
+                return access_token
+
+            logger.warning(
+                "Service-principal Fabric token acquisition failed: %s",
+                result.get("error_description", result.get("error", "unknown")),
+            )
+    except Exception as exc:
+        logger.warning("Service-principal Fabric token lookup failed: %s", exc)
+
     logger.warning("No valid Fabric access token available")
     raise HTTPException(
         status_code=401,
         detail=(
             "No valid Fabric access token available. Provide Authorization: Bearer <token>, "
-            "sign in via Connections panel, or set FABRIC_ACCESS_TOKEN."
+            "sign in via Connections panel, set FABRIC_ACCESS_TOKEN, "
+            "or configure FABRIC_CLIENT_SECRET for service-principal auth."
         ),
     )
 

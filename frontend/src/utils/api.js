@@ -759,6 +759,11 @@ export const api = {
         return handleResponse(res);
     },
 
+    async discoverSnowflakeModels() {
+        const res = await authFetch(`${API_BASE_URL}/discovery/snowflake`);
+        return handleResponse(res);
+    },
+
     // ── Global Config — connector sections ───────────────────────────────
 
     async getGlobalConnectorConfig() {

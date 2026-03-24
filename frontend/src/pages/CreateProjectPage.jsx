@@ -139,21 +139,49 @@ export default function CreateProjectPage() {
 
   /* ─── Load selected Fabric workspace models on step 3 ─── */
   useEffect(() => {
-    if (step !== 3 || sourceConnector !== 'fabric' || !fabricWorkspaceId) {
-      if (step === 3 && sourceConnector === 'fabric' && !fabricWorkspaceId) {
+    if (step !== 3) return;
+
+    if (sourceConnector === 'fabric') {
+      if (!fabricWorkspaceId) {
         setWorkspaces([]);
+        return;
       }
+
+      const workspace = selectedWorkspace || { id: fabricWorkspaceId, name: fabricWorkspaceId };
+      setWorkspaces([workspace]);
+      setExpandedWs(prev => ({ ...prev, [fabricWorkspaceId]: true }));
+      setWsLoading(true);
+      api.discoverFabricModels(fabricWorkspaceId)
+        .then(data => setWsModels({ [fabricWorkspaceId]: data ?? [] }))
+        .catch(() => setWsModels({ [fabricWorkspaceId]: [] }))
+        .finally(() => setWsLoading(false));
       return;
     }
 
-    const workspace = selectedWorkspace || { id: fabricWorkspaceId, name: fabricWorkspaceId };
-    setWorkspaces([workspace]);
-    setExpandedWs(prev => ({ ...prev, [fabricWorkspaceId]: true }));
-    setWsLoading(true);
-    api.discoverFabricModels(fabricWorkspaceId)
-      .then(data => setWsModels({ [fabricWorkspaceId]: data ?? [] }))
-      .catch(() => setWsModels({ [fabricWorkspaceId]: [] }))
-      .finally(() => setWsLoading(false));
+    if (sourceConnector === 'snowflake') {
+      const rootId = 'snowflake';
+      setWorkspaces([{ id: rootId, name: 'Snowflake' }]);
+      setExpandedWs(prev => ({ ...prev, [rootId]: true }));
+      setWsLoading(true);
+      api.discoverSnowflakeModels()
+        .then(data => {
+          const normalized = (data ?? []).map((m, idx) => {
+            const fallbackName = m?.name || m?.displayName || m?.id || `model_${idx + 1}`;
+            const fallbackId = m?.id || m?.name || m?.displayName || `snowflake_model_${idx + 1}`;
+            return {
+              ...m,
+              id: fallbackId,
+              name: fallbackName,
+            };
+          });
+          setWsModels({ [rootId]: normalized });
+        })
+        .catch(() => setWsModels({ [rootId]: [] }))
+        .finally(() => setWsLoading(false));
+      return;
+    }
+
+    setWorkspaces([]);
   }, [step, sourceConnector, fabricWorkspaceId, selectedWorkspace]);
 
   const loadWsModels = useCallback(async (wsid) => {
@@ -199,7 +227,7 @@ export default function CreateProjectPage() {
     setCreateError('');
     setRunWarning('');
 
-    if (sourceConnector === 'fabric' && selectedModels.size > 0 && selectedModelNames.length === 0) {
+    if ((sourceConnector === 'fabric' || sourceConnector === 'snowflake') && selectedModels.size > 0 && selectedModelNames.length === 0) {
       setCreateError('Selected models could not be resolved. Please reselect the model(s) and try again.');
       return;
     }
@@ -290,6 +318,11 @@ export default function CreateProjectPage() {
     if (sourceConnector === 'snowflake') {
       if (snowflakeDatabase.trim()) source.database = snowflakeDatabase.trim();
       if (snowflakeSchema.trim()) source.schema = snowflakeSchema.trim();
+      if (selectedModelNames.length > 0) {
+        source.models = selectedModelNames;
+      } else if (selectedModels.size === 0) {
+        source.model = '*';
+      }
     }
 
     return source;
@@ -380,7 +413,7 @@ export default function CreateProjectPage() {
       lines.push('selection:');
       lines.push('  model_ids:');
       [...selectedModels]
-        .map(modelKey => modelKey.split('::')[1])
+        .map(modelKey => modelKey.includes('::') ? modelKey.split('::')[1] : modelKey)
         .forEach(modelId => lines.push(`    - "${escapeYamlString(modelId)}"`));
     }
 
@@ -1125,19 +1158,82 @@ function StepSourceBrowser({
   selectedModels, toggleModel, clearSelectedModels,
   modelQuery, setModelQuery, modelResults,
 }) {
-  if (sourceConnector !== 'fabric') {
+  if (sourceConnector !== 'fabric' && sourceConnector !== 'snowflake') {
     return (
       <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-        Source browsing is currently available for Microsoft Fabric.<br />
+        Source browsing is currently available for Microsoft Fabric and Snowflake.<br />
         All available objects will be included automatically.
       </div>
     );
   }
 
-  if (!selectedWorkspace) {
+  if (sourceConnector === 'fabric' && !selectedWorkspace) {
     return (
       <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
         Choose a Fabric workspace in Connector Config before selecting models.
+      </div>
+    );
+  }
+
+  if (sourceConnector === 'snowflake') {
+    const snowflakeModels = wsModels.snowflake || [];
+    const displayModels = modelQuery
+      ? modelResults.filter(m => m.wsid === 'snowflake')
+      : snowflakeModels.map(m => ({ ...m, _id: m.id }));
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div>
+          <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Select Sources</h2>
+          <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
+            Choose which Snowflake semantic objects to include. Leave all unchecked to include everything.
+          </p>
+        </div>
+
+        <div style={{ position: 'relative' }}>
+          <Search size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', pointerEvents: 'none' }} />
+          <input
+            value={modelQuery} onChange={e => setModelQuery(e.target.value)}
+            placeholder="Search Snowflake semantic objects…"
+            style={{ ...INPUT, paddingLeft: 30 }}
+            onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
+            onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
+          />
+        </div>
+
+        {selectedModels.size > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--accent-blue)', padding: '4px 0' }}>
+            {selectedModels.size} object{selectedModels.size !== 1 ? 's' : ''} selected
+            <button onClick={clearSelectedModels} style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 11 }}>
+              Clear
+            </button>
+          </div>
+        )}
+
+        <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
+          {wsLoading ? (
+            <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
+              <Loader2 size={18} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 8px', display: 'block' }} />
+              Discovering Snowflake semantic objects…
+            </div>
+          ) : displayModels.length === 0 ? (
+            <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
+              No Snowflake semantic objects found. Check connector setup in Settings.
+            </div>
+          ) : (
+            displayModels.map(m => {
+              const modelId = m._id || m.id;
+              return (
+                <ModelRow
+                  key={modelId}
+                  model={{ ...m, _id: modelId }}
+                  selected={selectedModels.has(modelId)}
+                  onToggle={() => toggleModel(modelId, m.name || m.id)}
+                />
+              );
+            })
+          )}
+        </div>
       </div>
     );
   }
