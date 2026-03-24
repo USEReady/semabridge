@@ -119,6 +119,59 @@ class SnowflakeEmitter(BaseEmitter):
         
         return sql
 
+    def _try_basic_dax_metric_fallback_expression(
+        self,
+        metric: SMLMetric,
+        table_alias: str,
+        dataset_col_lookup: Dict[str, set[str]],
+    ) -> Optional[str]:
+        """Translate a small set of common DAX expressions without LLM.
+
+        This is primarily used for Fabric -> Snowflake sync when metrics come
+        from Fabric as DAX and no ``sql_expression`` is available.
+        """
+        raw_expr = (metric.expression or "").strip()
+        if not raw_expr:
+            return None
+
+        # Normalize whitespace/newlines from Fabric list-style expressions.
+        expr = " ".join(raw_expr.split())
+        known_cols = dataset_col_lookup.get(metric.dataset, set())
+
+        # COUNTROWS('Table') -> COUNT(*)
+        if re.match(r"(?i)^COUNTROWS\(\s*'[^']+'\s*\)$", expr):
+            return "COUNT(*)"
+
+        # COUNTBLANK('Table'[Column]) -> COUNT_IF(alias."COLUMN" IS NULL)
+        m_blank = re.match(
+            r"(?i)^COUNTBLANK\(\s*(?:'[^']+'\s*)?\[([^\]]+)\]\s*\)$",
+            expr,
+        )
+        if m_blank:
+            col_name = self._sanitize_col_name(m_blank.group(1))
+            if known_cols and col_name not in known_cols:
+                return None
+            return f'COUNT_IF({table_alias}."{col_name}" IS NULL)'
+
+        # SUM/AVERAGE/MIN/MAX/COUNT/DISTINCTCOUNT('Table'[Column])
+        m_agg = re.match(
+            r"(?i)^(SUM|AVERAGE|MIN|MAX|COUNT|DISTINCTCOUNT)\(\s*(?:'[^']+'\s*)?\[([^\]]+)\]\s*\)$",
+            expr,
+        )
+        if m_agg:
+            agg = m_agg.group(1).upper()
+            col_name = self._sanitize_col_name(m_agg.group(2))
+            if known_cols and col_name not in known_cols:
+                return None
+
+            if agg == "AVERAGE":
+                return f'AVG({table_alias}."{col_name}")'
+            if agg == "DISTINCTCOUNT":
+                return f'COUNT(DISTINCT {table_alias}."{col_name}")'
+            return f'{agg}({table_alias}."{col_name}")'
+
+        return None
+
     def _build_schema_validation_map(self, sml: SMLModel) -> Dict[str, set[str]]:
         """
         Build a schema validation map from SML model.
@@ -3037,6 +3090,15 @@ class SnowflakeEmitter(BaseEmitter):
                 metrics_lines.append(f'  {alias}."{metric_name}" AS {expr}')
 
             elif metric.expression:
+                basic_expr = self._try_basic_dax_metric_fallback_expression(
+                    metric=metric,
+                    table_alias=alias,
+                    dataset_col_lookup=dataset_col_lookup,
+                )
+                if basic_expr:
+                    metrics_lines.append(f'  {alias}."{metric_name}" AS {basic_expr}')
+                    continue
+
                 llm_expr = self._try_llm_metric_fallback_expression(
                     metric=metric,
                     metric_name=metric_name,
@@ -4862,6 +4924,15 @@ class SnowflakeEmitter(BaseEmitter):
                 )
 
             elif metric.expression:
+                basic_expr = self._try_basic_dax_metric_fallback_expression(
+                    metric=metric,
+                    table_alias=alias,
+                    dataset_col_lookup=dataset_col_lookup,
+                )
+                if basic_expr:
+                    metrics_lines.append(f'  {alias}."{metric_name}" AS {basic_expr}')
+                    continue
+
                 llm_expr = self._try_llm_metric_fallback_expression(
                     metric=metric,
                     metric_name=metric_name,

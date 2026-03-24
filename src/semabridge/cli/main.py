@@ -1460,12 +1460,27 @@ def list_projects():
         conn.close()
 
 
-def _run_snowflake_to_fabric(settings, name, dry_run, output_dir, parallel=False):
+def _run_snowflake_to_fabric(
+    settings,
+    name,
+    dry_run,
+    output_dir,
+    parallel=False,
+    include_tables: Optional[str] = None,
+    semantic_view: Optional[str] = None,
+):
     model_name = name or settings.model.name
+    semantic_view_name = semantic_view.strip() if semantic_view and semantic_view.strip() else None
+    runtime_include_tables = None
+    if include_tables and include_tables.strip():
+        runtime_include_tables = [t.strip().upper() for t in include_tables.split(",") if t.strip()]
+    else:
+        runtime_include_tables = settings.model.included_table_list
     
     console.print(Panel.fit(
         f"[bold]Deploy: Snowflake -> Fabric[/bold]\n"
         f"Model: {model_name}\n"
+        f"{f'Semantic View: {semantic_view_name}' if semantic_view_name else 'Extraction: Table metadata mode'}\n"
         f"{'[yellow]DRY RUN - No publish[/yellow]' if dry_run else 'Publishing to Fabric'}",
         title="Deploy",
     ))
@@ -1494,6 +1509,8 @@ def _run_snowflake_to_fabric(settings, name, dry_run, output_dir, parallel=False
         from semabridge.utils.cache import MetadataCache
         from semabridge.repository.duckdb_manager import DuckDBManager
         from semabridge.connectors.inference_engine import SmlInferenceEngine
+        from semabridge.converter.semantic_view_to_osi import SemanticViewToOSIConverter
+        from semabridge.converter.osi_to_sml import OSIToSMLConverter
 
         # Step 1: Extract
         console.print("\n[bold cyan]Step 1/4: Extracting Snowflake metadata...[/bold cyan]")
@@ -1502,101 +1519,179 @@ def _run_snowflake_to_fabric(settings, name, dry_run, output_dir, parallel=False
             config=settings.snowflake,
             cache=cache,
             exclude_tables=settings.model.excluded_table_list,
-            include_tables=settings.model.included_table_list,
+            include_tables=runtime_include_tables,
         )
         concurrency_cfg = settings.concurrency
         use_parallel = parallel or concurrency_cfg.enable_parallel
         max_workers = concurrency_cfg.max_workers
-        metadata = extractor.extract_all(parallel=use_parallel, max_workers=max_workers)
-        semantic_data = extractor.read_semantic_tables()
-        console.print(f"  [green][OK][/green] Extracted {len(metadata['tables'])} tables")
+        if semantic_view_name:
+            console.print(f"  [dim]Semantic view mode enabled for: {semantic_view_name}[/dim]")
+            ddl = extractor.extract_semantic_view_ddl(semantic_view_name)
+            converter = SemanticViewToOSIConverter()
+            table_map = converter._parse_tables_clause(ddl)
+            semantic_tables = sorted({v.get("table_name", "").upper() for v in table_map.values() if v.get("table_name")})
+            console.print(f"  [green][OK][/green] Parsed semantic view DDL with {len(semantic_tables)} base table(s)")
+            if semantic_tables:
+                console.print(f"  [dim]Semantic view base tables: {', '.join(semantic_tables)}[/dim]")
 
-        # Step 2: Build SML
-        console.print("\n[bold cyan]Step 2/4: Building SML model...[/bold cyan]")
-        assembler = SMLAssembler(
-            model_name=model_name,
-            description=settings.model.description,
-            source_database=metadata.get("database", ""),
-            source_schema=metadata.get("schema", ""),
-        )
-        
-        # Add tables
-        for table_name, table_info in metadata.get("tables", {}).items():
-            columns = metadata.get("columns", {}).get(table_name, [])
-            assembler.add_table(
-                table_name=table_name,
-                columns=columns,
-                description=table_info.get("description", ""),
-                row_count=table_info.get("row_count"),
+            # Pull column metadata for only the semantic-view referenced tables.
+            scoped_extractor = SnowflakeExtractor(
+                config=settings.snowflake,
+                cache=cache,
+                exclude_tables=settings.model.excluded_table_list,
+                include_tables=semantic_tables if semantic_tables else None,
             )
-            
-        # Detect relationships
-        rel_detector = RelationshipDetector(
-            tables=metadata.get("tables", {}),
-            columns=metadata.get("columns", {}),
-            primary_keys=metadata.get("primary_keys", {}),
-            explicit_fks=metadata.get("foreign_keys", []),
-        )
-        relationships = rel_detector.detect_all()
-        for rel in relationships:
-            assembler.add_relationship(rel["name"], rel["from_table"], rel["from_column"], rel["to_table"], rel["to_column"])
-
-        # Semantic Inference
-        engine = SmlInferenceEngine(
-            tables=metadata.get("tables", {}),
-            columns=metadata.get("columns", {}),
-            relationships=relationships,
-            primary_keys=metadata.get("primary_keys", {})
-        )
-        scores = engine.classify()
-        classification_map = {}
-        for ds in assembler._datasets:
-            score = scores.get(ds.unique_name)
-            if score:
-                classification = score.classification
-                classification_map[ds.unique_name] = classification
-                if classification == "FACT": ds.is_fact = True
-                elif classification == "TIME": ds.is_fact = False
-                else: ds.is_fact = False
-                
-        # Measures
-        measure_detector = MeasureDetector(
-            tables=metadata.get("tables", {}),
-            columns=metadata.get("columns", {}),
-            relationships=relationships,
-        )
-        all_measures = measure_detector.detect_all_measures(classification=classification_map)
-        for table_name, measures in all_measures.items():
-            for measure in measures[:5]:
-                assembler.add_metric(measure["name"], table_name, measure["column"], measure["aggregation"])
-
-        # Semantic Data
-        for measure in semantic_data.get("measures", []):
-            assembler.add_metric(
-                name=measure["name"],
-                dataset=measure["table_name"],
-                source_column="",
-                expression=measure["expression"],
-                description=measure.get("description", ""),
+            metadata = scoped_extractor.extract_all(parallel=use_parallel, max_workers=max_workers)
+            col_meta = {
+                t: metadata.get("columns", {}).get(t, [])
+                for t in metadata.get("tables", {})
+            }
+            osi_model = converter.to_osi(
+                {
+                    "ddl": ddl,
+                    "view_name": semantic_view_name,
+                    "column_metadata": col_meta,
+                }
+            )
+            console.print(
+                f"  [green][OK][/green] Extracted OSI from semantic view: "
+                f"{len(osi_model.datasets)} dataset(s), "
+                f"{len(osi_model.dimensions)} dimension(s), "
+                f"{len(osi_model.metrics)} metric(s), "
+                f"{len(osi_model.relationships)} relationship(s)"
             )
 
-        sml_model = assembler.build()
-        
-        # Architecture Compliance: Pass through OSI Intermediate
-        from semabridge.converter.sml_to_osi import SMLToOSIConverter
-        from semabridge.converter.osi_to_sml import OSIToSMLConverter
-        sml_to_osi = SMLToOSIConverter()
-        osi_to_sml = OSIToSMLConverter()
-        osi_model = sml_to_osi.convert(sml_model)
-        sml_model = osi_to_sml.from_osi(osi_model)
+            console.print("\n[bold cyan]Step 2/4: Building SML model...[/bold cyan]")
+            sml_model = OSIToSMLConverter().from_osi(osi_model)
+        else:
+            metadata = extractor.extract_all(parallel=use_parallel, max_workers=max_workers)
+            semantic_data = extractor.read_semantic_tables()
+            extracted_tables = len(metadata.get("tables", {}))
+            console.print(f"  [green][OK][/green] Extracted {extracted_tables} tables")
+            if runtime_include_tables:
+                console.print(f"  [dim]Applied include filter: {', '.join(runtime_include_tables)}[/dim]")
+
+            if extracted_tables == 0:
+                raise ValueError(
+                    "No tables matched extraction. If you provided a semantic model/view name, "
+                    "use --semantic-view <view_name> instead of --include-tables."
+                )
+
+            # Step 2: Build SML
+            console.print("\n[bold cyan]Step 2/4: Building SML model...[/bold cyan]")
+            assembler = SMLAssembler(
+                model_name=model_name,
+                description=settings.model.description,
+                source_database=metadata.get("database", ""),
+                source_schema=metadata.get("schema", ""),
+            )
+
+            # Add tables
+            for table_name, table_info in metadata.get("tables", {}).items():
+                columns = metadata.get("columns", {}).get(table_name, [])
+                assembler.add_table(
+                    table_name=table_name,
+                    columns=columns,
+                    description=table_info.get("description", ""),
+                    row_count=table_info.get("row_count"),
+                )
+
+            # Detect relationships
+            rel_detector = RelationshipDetector(
+                tables=metadata.get("tables", {}),
+                columns=metadata.get("columns", {}),
+                primary_keys=metadata.get("primary_keys", {}),
+                explicit_fks=metadata.get("foreign_keys", []),
+            )
+            relationships = rel_detector.detect_all()
+            for rel in relationships:
+                assembler.add_relationship(rel["name"], rel["from_table"], rel["from_column"], rel["to_table"], rel["to_column"])
+
+            # Semantic Inference
+            engine = SmlInferenceEngine(
+                tables=metadata.get("tables", {}),
+                columns=metadata.get("columns", {}),
+                relationships=relationships,
+                primary_keys=metadata.get("primary_keys", {})
+            )
+            scores = engine.classify()
+            classification_map = {}
+            for ds in assembler._datasets:
+                score = scores.get(ds.unique_name)
+                if score:
+                    classification = score.classification
+                    classification_map[ds.unique_name] = classification
+                    if classification == "FACT":
+                        ds.is_fact = True
+                    elif classification == "TIME":
+                        ds.is_fact = False
+                    else:
+                        ds.is_fact = False
+
+            # Measures
+            measure_detector = MeasureDetector(
+                tables=metadata.get("tables", {}),
+                columns=metadata.get("columns", {}),
+                relationships=relationships,
+            )
+            all_measures = measure_detector.detect_all_measures(classification=classification_map)
+            for table_name, measures in all_measures.items():
+                for measure in measures[:5]:
+                    assembler.add_metric(measure["name"], table_name, measure["column"], measure["aggregation"])
+
+            # Semantic Data
+            for measure in semantic_data.get("measures", []):
+                assembler.add_metric(
+                    name=measure["name"],
+                    dataset=measure["table_name"],
+                    source_column="",
+                    expression=measure["expression"],
+                    description=measure.get("description", ""),
+                )
+
+            sml_model = assembler.build()
+
+            # Architecture Compliance: Pass through OSI Intermediate
+            from semabridge.converter.sml_to_osi import SMLToOSIConverter
+            sml_to_osi = SMLToOSIConverter()
+            osi_to_sml = OSIToSMLConverter()
+            osi_model = sml_to_osi.to_osi(sml_model)
+            sml_model = osi_to_sml.from_osi(osi_model)
+
+        # Keep deployment model name deterministic from CLI option.
+        sml_model.unique_name = model_name
+        sml_model.label = model_name
+
+        total_columns = sum(len(ds.columns) for ds in sml_model.datasets)
+        total_measures = len(sml_model.metrics)
+        total_dim_attrs = sum(len(dim.attributes) for dim in sml_model.dimensions)
+        if total_columns == 0:
+            raise ValueError(
+                "No columns were extracted for deployment. Ensure the selected semantic view/tables exist "
+                "and include column definitions."
+            )
         
         output_dir.mkdir(parents=True, exist_ok=True)
         sml_path = output_dir / "sml" / "model.yaml"
         SMLSerializer.save(sml_model, sml_path)
-        console.print(f"  [green][OK][/green] Built OSI-compatible SML model with {sml_model.dataset_count} datasets")
+        console.print(
+            f"  [green][OK][/green] Built OSI-compatible SML model with {sml_model.dataset_count} dataset(s), "
+            f"{total_columns} column(s), {total_measures} measure(s), {len(sml_model.relationships)} relationship(s)"
+        )
+        console.print(
+            f"  [dim]Mapping check: Snowflake dimension attributes={total_dim_attrs} -> Fabric columns={total_columns}; "
+            f"Snowflake metrics={total_measures} -> Fabric measures={total_measures}[/dim]"
+        )
 
         # Step 3: Versioning
         console.print("\n[bold cyan]Step 3/4: Versioning in DuckDB...[/bold cyan]")
+        # Ensure legacy DuckDBManager does not collide with an active
+        # SQLAlchemy DuckDB engine created earlier in this run (e.g., cache).
+        try:
+            from semabridge.repository.orm.session_factory import db_manager
+            db_manager.dispose()
+        except Exception as _dispose_err:
+            logger.debug(f"Non-fatal DB engine dispose warning: {_dispose_err}")
         db_manager = DuckDBManager()
         db_manager.ensure_project(model_name, sml_model.label, settings.fabric.workspace_id, adapter="snowflake")
         sml_dict = sml_model.model_dump(mode='json')
@@ -1744,6 +1839,13 @@ def _run_fabric_to_snowflake(settings, dataset_id, workspace_id, tag, sync, para
         
         # Step 3: Version Control
         console.print("\n[bold cyan]Step 3/4: Versioning in DuckDB...[/bold cyan]")
+        # Ensure legacy DuckDBManager does not collide with an active
+        # SQLAlchemy DuckDB engine created earlier in this run.
+        try:
+            from semabridge.repository.orm.session_factory import db_manager
+            db_manager.dispose()
+        except Exception as _dispose_err:
+            logger.debug(f"Non-fatal DB engine dispose warning: {_dispose_err}")
         db_manager = DuckDBManager()
         db_manager.ensure_project(dataset_id, sml_model.label, ws_id, adapter="fabric")
         
@@ -1841,6 +1943,16 @@ def sync(
     tag: Optional[str] = typer.Option(None, "--tag", "-t", help="Version tag"),
     name: Optional[str] = typer.Option(None, "--name", "-n", help="Override model name"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Skip final publishing"),
+    semantic_view: Optional[str] = typer.Option(
+        None,
+        "--semantic-view",
+        help="Snowflake semantic view name to extract and sync",
+    ),
+    include_tables: Optional[str] = typer.Option(
+        None,
+        "--include-tables",
+        help="Comma-separated Snowflake tables to include for this run only",
+    ),
     output_dir: Path = typer.Option(Path("output"), "--output-dir", "-o", help="Output directory"),
     parallel: bool = typer.Option(False, "--parallel", "-p", help="Enable concurrent extraction and deployment"),
 ):
@@ -1859,6 +1971,8 @@ def sync(
         tag=tag,
         name=name,
         dry_run=dry_run,
+        semantic_view=semantic_view,
+        include_tables=include_tables,
         output_dir=output_dir,
         parallel=parallel,
     )
@@ -1873,6 +1987,16 @@ def semantic_sync(
     tag: Optional[str] = typer.Option(None, "--tag", "-t", help="Version tag"),
     name: Optional[str] = typer.Option(None, "--name", "-n", help="Override model name"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Skip final publishing"),
+    semantic_view: Optional[str] = typer.Option(
+        None,
+        "--semantic-view",
+        help="Snowflake semantic view name to extract and sync",
+    ),
+    include_tables: Optional[str] = typer.Option(
+        None,
+        "--include-tables",
+        help="Comma-separated Snowflake tables to include for this run only",
+    ),
     output_dir: Path = typer.Option(Path("output"), "--output-dir", "-o", help="Output directory"),
     parallel: bool = typer.Option(False, "--parallel", "-p", help="Enable concurrent extraction and deployment"),
 ):
@@ -1958,7 +2082,15 @@ def semantic_sync(
              raise typer.Exit(code=1)
     
     if source == "snowflake" and target == "fabric":
-        _run_snowflake_to_fabric(settings, name, dry_run, output_dir, parallel=parallel)
+        _run_snowflake_to_fabric(
+            settings,
+            name,
+            dry_run,
+            output_dir,
+            parallel=parallel,
+            semantic_view=semantic_view,
+            include_tables=include_tables,
+        )
     elif source == "fabric" and target == "snowflake":
         from semabridge.core.behavior import ConnectorBehavior
         from semabridge.core.config_loader import get_project_file_path

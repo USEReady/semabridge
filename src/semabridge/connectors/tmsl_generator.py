@@ -158,6 +158,9 @@ class TMSLGenerator:
                 "name": col.unique_name,
                 "dataType": col.data_type.to_powerbi(),
                 "sourceColumn": col.unique_name,
+                # Prevent numeric columns from being treated as implicit
+                # measure-like fields in Fabric/Power BI model explorers.
+                "summarizeBy": "none",
             }
             
             if col.description:

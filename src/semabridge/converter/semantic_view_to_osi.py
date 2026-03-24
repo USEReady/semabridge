@@ -300,15 +300,27 @@ class SemanticViewToOSIConverter(BaseConverter):
                 r'(\w+)\s+AS\s+' + _QUALIFIED, entry, re.IGNORECASE
             )
             if not alias_match:
-                # Try without db/schema qualification
-                alias_match = re.match(
-                    r'(\w+)\s+AS\s+"?(\w+)"?', entry, re.IGNORECASE
-                )
-                if not alias_match:
-                    logger.debug(f"Could not parse TABLES entry: {entry!r}")
-                    continue
-                alias = alias_match.group(1)
-                table_name = _strip_quotes(alias_match.group(2))
+                # Pattern: db.schema.TABLE PRIMARY KEY (...)  (no explicit alias)
+                qualified_match = re.match(_QUALIFIED, entry, re.IGNORECASE)
+                if qualified_match:
+                    table_name = _strip_quotes(qualified_match.group(3))
+                    alias = table_name
+                else:
+                    alias = None
+                    table_name = None
+            if not alias_match:
+                if alias and table_name:
+                    pass
+                else:
+                    # Try without db/schema qualification
+                    alias_match = re.match(
+                        r'(\w+)\s+AS\s+"?(\w+)"?', entry, re.IGNORECASE
+                    )
+                    if not alias_match:
+                        logger.debug(f"Could not parse TABLES entry: {entry!r}")
+                        continue
+                    alias = alias_match.group(1)
+                    table_name = _strip_quotes(alias_match.group(2))
             else:
                 alias = alias_match.group(1)
                 table_name = _strip_quotes(alias_match.group(4))
@@ -548,7 +560,9 @@ class SemanticViewToOSIConverter(BaseConverter):
         """
         Parse the MEASURES clause into ``OSIMetric`` objects.
         """
-        content = _extract_clause(ddl, "MEASURES")
+        # Snowflake semantic view syntax uses METRICS; keep MEASURES for
+        # backward compatibility with older test fixtures.
+        content = _extract_clause(ddl, "METRICS") or _extract_clause(ddl, "MEASURES")
         if not content:
             return []
 
@@ -570,13 +584,32 @@ class SemanticViewToOSIConverter(BaseConverter):
             label = _strip_quotes(expr) if is_label_alias else col.replace("_", " ").title()
             sql_expr = None if is_label_alias else expr
 
+            # Convert common Snowflake SQL metric patterns into Fabric-safe DAX.
+            # This avoids publishing invalid SQL expressions into model.bim measures.
+            normalized_expr = sql_expr
+            if sql_expr:
+                count_star = re.match(r"(?i)^COUNT\(\s*\*\s*\)$", sql_expr)
+                if count_star:
+                    normalized_expr = f"COUNTROWS('{table_name}')"
+                else:
+                    sum_col = re.match(r"(?i)^SUM\(\s*(?:\w+\.)?\"?(\w+)\"?\s*\)$", sql_expr)
+                    if sum_col:
+                        normalized_expr = f"SUM([{sum_col.group(1)}])"
+                    else:
+                        null_count = re.match(
+                            r"(?is)^SUM\(\s*CASE\s+WHEN\s+(?:\w+\.)?\"?(\w+)\"?\s+IS\s+NULL\s+THEN\s+1\s+ELSE\s+0\s+END\s*\)$",
+                            sql_expr,
+                        )
+                        if null_count:
+                            normalized_expr = f"COUNTBLANK([{null_count.group(1)}])"
+
             metrics.append(
                 OSIMetric(
                     unique_name=f"{table_name}.{col}",
                     label=label,
                     dataset=table_name,
                     source_column=col,
-                    expression=sql_expr,
+                    expression=normalized_expr,
                     description=f"Measure from Snowflake semantic view",
                 )
             )
