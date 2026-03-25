@@ -22,10 +22,12 @@ from __future__ import annotations
 import time
 import uuid
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
+import yaml
 from pydantic import Field
 from semabridge.connectors.snowflake_emitter import MissingSourceTableWarning
 from semabridge.core.settings import Settings, get_settings
@@ -637,15 +639,62 @@ class ExecutionEngine:
         
         config = context.config
         cache = MetadataCache(config.model.cache_dir) if config.model.cache_enabled else None
+
+        # BACKUP (old behavior): serial extraction + only env-based include list
+        # extractor = SnowflakeExtractor(
+        #     config=config.snowflake,
+        #     cache=cache,
+        #     exclude_tables=config.model.excluded_table_list,
+        #     include_tables=config.model.included_table_list,
+        # )
+        # metadata = extractor.extract_all()
+
+        include_tables, include_source = self._resolve_snowflake_include_tables(context)
+        parallel_enabled, max_workers = self._resolve_snowflake_parallelism(context)
+
+        logger.info(
+            "Snowflake extraction plan: include_tables=%s source=%s parallel=%s workers=%s",
+            len(include_tables) if include_tables else 0,
+            include_source or "none",
+            parallel_enabled,
+            max_workers,
+        )
         
         extractor = SnowflakeExtractor(
             config=config.snowflake,
             cache=cache,
             exclude_tables=config.model.excluded_table_list,
-            include_tables=config.model.included_table_list,
+            include_tables=include_tables,
         )
         
-        metadata = extractor.extract_all()
+        metadata = extractor.extract_all(
+            parallel=parallel_enabled,
+            max_workers=max_workers,
+        )
+
+        # BACKUP (old behavior): no compatibility retry when include filter matched zero tables
+        # semantic_data = extractor.read_semantic_tables()
+        # metadata["semantic_tables"] = semantic_data
+
+        # Backward compatibility guard:
+        # if include list came from project YAML/UI and resolves to zero tables,
+        # retry without include filter to preserve legacy "full-schema" behavior.
+        if include_tables and not metadata.get("tables") and include_source != "model.include_tables":
+            logger.warning(
+                "Include filter from %s matched 0 tables; retrying full schema extraction for compatibility",
+                include_source,
+            )
+            extractor = SnowflakeExtractor(
+                config=config.snowflake,
+                cache=cache,
+                exclude_tables=config.model.excluded_table_list,
+                include_tables=None,
+            )
+            metadata = extractor.extract_all(
+                parallel=parallel_enabled,
+                max_workers=max_workers,
+            )
+
         semantic_data = extractor.read_semantic_tables()
         metadata["semantic_tables"] = semantic_data
         
@@ -659,6 +708,96 @@ class ExecutionEngine:
         self._record_step(4, StepStatus.SUCCESS, f"Extracted {table_count} tables")
         
         return source_format
+
+    def _resolve_snowflake_include_tables(self, context: RunContext) -> tuple[Optional[list[str]], Optional[str]]:
+        """Resolve include-tables from env/settings first, then project YAML/UI config.
+
+        Priority order:
+        1) MODEL_INCLUDE_TABLES / settings.model.include_tables
+        2) source.include_tables
+        3) source.tables
+        4) source.models (UI-selected tables/models)
+        5) selection.model_ids
+        """
+        include_from_model = context.config.model.included_table_list
+        if include_from_model:
+            return include_from_model, "model.include_tables"
+
+        config_path = get_project_file_path("semabridge.yaml")
+        if not config_path.exists():
+            return None, None
+
+        try:
+            cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Could not parse semabridge.yaml for include tables: %s", exc)
+            return None, None
+
+        source_cfg = cfg.get("source") if isinstance(cfg.get("source"), dict) else {}
+        if str(source_cfg.get("type") or "").strip().lower() != "snowflake":
+            return None, None
+
+        def _normalize_list(value: Any) -> list[str]:
+            if value is None:
+                return []
+            if isinstance(value, str):
+                raw = [v.strip() for v in value.split(",") if v and v.strip()]
+            elif isinstance(value, list):
+                raw = [str(v).strip() for v in value if str(v).strip()]
+            else:
+                raw = []
+            seen: set[str] = set()
+            normalized: list[str] = []
+            for item in raw:
+                key = item.upper()
+                if key not in seen:
+                    seen.add(key)
+                    normalized.append(key)
+            return normalized
+
+        candidates: list[tuple[str, Any]] = [
+            ("source.include_tables", source_cfg.get("include_tables")),
+            ("source.tables", source_cfg.get("tables")),
+            ("source.models", source_cfg.get("models")),
+            ("selection.model_ids", (cfg.get("selection") or {}).get("model_ids") if isinstance(cfg.get("selection"), dict) else None),
+        ]
+
+        for source_name, source_value in candidates:
+            include_tables = _normalize_list(source_value)
+            if include_tables:
+                return include_tables, source_name
+
+        return None, None
+
+    def _resolve_snowflake_parallelism(self, context: RunContext) -> tuple[bool, int]:
+        """Resolve Snowflake extraction parallel settings with env overrides.
+
+        Environment overrides (optional):
+        - SNOWFLAKE_EXTRACT_PARALLEL=true|false
+        - SNOWFLAKE_EXTRACT_MAX_WORKERS=<int>
+        """
+        cpu_count = os.cpu_count() or 4
+        default_workers = max(2, min(16, cpu_count))
+
+        configured_workers = context.config.concurrency.max_workers
+        max_workers = configured_workers if configured_workers > 0 else default_workers
+
+        env_workers = os.getenv("SNOWFLAKE_EXTRACT_MAX_WORKERS", "").strip()
+        if env_workers.isdigit():
+            max_workers = int(env_workers)
+
+        max_workers = max(1, min(max_workers, 32))
+
+        env_parallel = os.getenv("SNOWFLAKE_EXTRACT_PARALLEL", "").strip().lower()
+        if env_parallel in {"0", "false", "no", "off"}:
+            parallel_enabled = False
+        elif env_parallel in {"1", "true", "yes", "on"}:
+            parallel_enabled = True
+        else:
+            # Default to parallel extraction for Snowflake to reduce long-running sync times.
+            parallel_enabled = True
+
+        return parallel_enabled, max_workers
     
     def _extract_fabric(
         self,
