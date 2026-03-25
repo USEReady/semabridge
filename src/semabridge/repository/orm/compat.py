@@ -161,7 +161,21 @@ def upsert(
         update_columns = [k for k in rows[0].keys() if k not in index_set]
 
     if dialect_name in ("postgresql", "sqlite", "duckdb"):
-        _upsert_on_conflict(session, table, rows, index_elements, update_columns)
+        try:
+            _upsert_on_conflict(
+                session,
+                table,
+                rows,
+                index_elements,
+                update_columns,
+                dialect_name=dialect_name,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Some dialect/compiler combinations (notably duckdb-engine with
+            # sqlite-specific ON CONFLICT objects) can fail at compile/runtime.
+            # Fall back to merge-upsert to keep sync resilient.
+            session.rollback()
+            _upsert_merge_fallback(session, model_class, rows, index_elements)
     elif dialect_name == "mysql":
         _upsert_on_duplicate_key(session, table, rows, update_columns)
     else:
@@ -187,11 +201,16 @@ def _upsert_on_conflict(
     rows: List[Dict[str, Any]],
     index_elements: Sequence[str],
     update_columns: Sequence[str],
+    dialect_name: str,
 ) -> None:
     """INSERT … ON CONFLICT DO UPDATE (PostgreSQL / SQLite / DuckDB)."""
-    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+    if dialect_name in ("postgresql", "duckdb"):
+        # duckdb-engine follows PostgreSQL's ON CONFLICT semantics.
+        from sqlalchemy.dialects.postgresql import insert as dialect_insert
+    else:
+        from sqlalchemy.dialects.sqlite import insert as dialect_insert
 
-    stmt = sqlite_insert(table)
+    stmt = dialect_insert(table)
     set_dict = {col: stmt.excluded[col] for col in update_columns}
     stmt = stmt.on_conflict_do_update(
         index_elements=list(index_elements),

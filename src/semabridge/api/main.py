@@ -1541,8 +1541,30 @@ async def sync_models(payload: Dict[str, Any]):
                 config = load_yaml_file(config_path)
             else:
                 raise parse_err
-        source_type = config.get("source", {}).get("type", "fabric")
-        target_type = config.get("target", {}).get("type", "snowflake")
+        source_cfg = config.get("source", {}) or {}
+        source_type = source_cfg.get("type", "fabric")
+
+        # Support both legacy `target: {...}` and new `targets: [{...}]` schemas.
+        target_cfg = config.get("target") or {}
+        if not target_cfg:
+            targets_list = config.get("targets") or []
+            if isinstance(targets_list, list) and targets_list:
+                first_target = targets_list[0]
+                if isinstance(first_target, dict):
+                    target_cfg = first_target
+                elif isinstance(first_target, str):
+                    target_cfg = {"type": first_target}
+
+        target_type = (target_cfg or {}).get("type", "snowflake")
+
+        # Normalize connector aliases from UI/config variants.
+        _TYPE_ALIASES = {
+            "snowflake_semantic_view": "snowflake",
+            "microsoft_fabric": "fabric",
+            "ms_fabric": "fabric",
+        }
+        source_type = _TYPE_ALIASES.get(str(source_type), source_type)
+        target_type = _TYPE_ALIASES.get(str(target_type), target_type)
         
         # 4. Build list of sync jobs â€” one per model entry so ALL selected models run.
         # Each job: {"dataset_id": str|None, "pbix_path": str|None, "model_label": str}
@@ -1657,14 +1679,18 @@ async def sync_models(payload: Dict[str, Any]):
         # 5. Execute each model in sequence, collect per-model results.
         per_model_results: List[Dict[str, Any]] = []
         last_summary = None
-        resolved_workspace_id = str(config.get("source", {}).get("workspace_id") or "default")
+        resolved_workspace_id = str(
+            source_cfg.get("workspace_id")
+            or (target_cfg.get("workspace_id") if isinstance(target_cfg, dict) else None)
+            or (config.get("fabric", {}) or {}).get("workspace_id")
+            or settings.fabric.workspace_id
+            or "default"
+        )
 
-        # Normalise source_type for the execution engine which only accepts
-        # "fabric", "snowflake", or "pbix".
-        _ENGINE_SOURCE_MAP = {
-            "snowflake_semantic_view": "snowflake",
-        }
-        engine_source_type = _ENGINE_SOURCE_MAP.get(source_type, source_type)
+        # Execution engine accepts canonical connector values.
+        engine_source_type = source_type
+
+        deploy_enabled = bool((target_cfg or {}).get("deploy", True))
 
         for job in sync_jobs:
             model_label = job["model_label"]
@@ -1675,9 +1701,9 @@ async def sync_models(payload: Dict[str, Any]):
                     target=target_type,
                     dataset_id=job["dataset_id"],
                     pbix_path=job["pbix_path"],
-                    project_name=config.get("model_name") or model_label,
+                    project_name=config.get("model_name") or config.get("project_name") or model_label,
                     tag=str(config.get("version_tag", "v1.0")),
-                    deploy=config.get("target", {}).get("deploy", True),
+                    deploy=deploy_enabled,
                     dry_run=False,
                 )
                 last_summary = summary

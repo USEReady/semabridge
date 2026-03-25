@@ -49,6 +49,35 @@ class FabricExtractor:
             # Conservative lifetime for request-provided tokens.
             self._token_expires_at = time.time() + 600
             logger.info("FabricExtractor initialized with request-provided access token")
+
+    def list_workspaces(self) -> list[dict[str, Any]]:
+        """List Fabric workspaces visible to the authenticated principal."""
+        api_url = f"{self.config.api_base_url}/workspaces"
+        try:
+            response = requests.get(api_url, headers=self._get_headers(), timeout=15)
+            response.raise_for_status()
+            return response.json().get("value", [])
+        except RequestException as e:
+            logger.warning("Workspace resolution: failed to list workspaces: %s", e)
+            return []
+
+    def resolve_workspace_id(self, workspace_id_or_name: str) -> str:
+        """Resolve workspace display name to GUID. Returns original value if unresolved."""
+        import re
+
+        guid_pattern = r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        if re.match(guid_pattern, workspace_id_or_name):
+            return workspace_id_or_name
+
+        for ws in self.list_workspaces():
+            if ws.get("displayName", "").strip().lower() == workspace_id_or_name.strip().lower():
+                resolved = ws.get("id", "")
+                if resolved:
+                    logger.info("Resolved workspace '%s' -> '%s'", workspace_id_or_name, resolved)
+                    return resolved
+
+        logger.warning("Could not resolve workspace '%s' to GUID; using as-is", workspace_id_or_name)
+        return workspace_id_or_name
     
     def list_semantic_models(self) -> list[dict[str, Any]]:
         """
@@ -57,7 +86,7 @@ class FabricExtractor:
         Returns:
             List of model dictionaries with 'id', 'displayName', 'description', etc.
         """
-        workspace_id = self.config.workspace_id
+        workspace_id = self.resolve_workspace_id(self.config.workspace_id)
         api_url = f"{self.config.api_base_url}/workspaces/{workspace_id}/semanticModels"
         
         try:
@@ -241,7 +270,7 @@ class FabricExtractor:
         Args:
             dataset_id: Model GUID or display name (will be resolved automatically)
         """
-        workspace_id = self.config.workspace_id
+        workspace_id = self.resolve_workspace_id(self.config.workspace_id)
         
         # Resolve name to ID if needed
         resolved_id = self.resolve_model_id(dataset_id)
@@ -846,4 +875,3 @@ ORDER BY {date_column}
         except Exception as e:
             logger.warning(f"Failed to get date dimension values: {e}")
             return []
-

@@ -169,12 +169,42 @@ async def extract_metadata(inp: ExtractInput) -> ExtractOutput:
         )
         relationships = rel_detector.detect_all()
         for rel in relationships:
+            from_table = str(
+                rel.get("from_table")
+                or rel.get("source_table")
+                or rel.get("left_table")
+                or ""
+            ).strip()
+            from_column = str(
+                rel.get("from_column")
+                or rel.get("source_column")
+                or rel.get("left_column")
+                or ""
+            ).strip()
+            to_table = str(
+                rel.get("to_table")
+                or rel.get("target_table")
+                or rel.get("right_table")
+                or ""
+            ).strip()
+            to_column = str(
+                rel.get("to_column")
+                or rel.get("target_column")
+                or rel.get("right_column")
+                or ""
+            ).strip()
+            rel_name = str(rel.get("name") or "").strip() or f"REL_{from_table}_{to_table}"
+
+            if not (from_table and from_column and to_table and to_column):
+                logger.warning("Skipping malformed relationship during temporal conversion: %s", rel)
+                continue
+
             assembler.add_relationship(
-                name=rel["name"],
-                from_table=rel["from_table"],
-                from_column=rel["from_column"],
-                to_table=rel["to_table"],
-                to_column=rel["to_column"],
+                name=rel_name,
+                from_table=from_table,
+                from_column=from_column,
+                to_table=to_table,
+                to_column=to_column,
             )
 
         # Detect hierarchies

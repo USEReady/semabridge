@@ -45,7 +45,7 @@ from semabridge.core.source_format import (
     from_snowflake_metadata,
 )
 from semabridge.intermediate.models import OSIModel
-from semabridge.sml.models import SMLModel
+from semabridge.sml.models import SMLModel, SMLRelationship
 from semabridge.repository.model_repository import ModelRepository
 from semabridge.utils.logger import get_logger
 from semabridge.utils.relationship_naming import generate_relationship_name
@@ -951,15 +951,24 @@ class ExecutionEngine:
 
         Stage placement is intentional: after canonical SML creation and before
         target-format conversion/deployment.
+        
+        Deduplication strategy:
+        1. Remove exact endpoint duplicates (same columns)
+        2. Remove multiple relationships between same table pair (keep strongest)
+        3. Remove direct relationships that create cycles (redundant paths)
+           - If A->B exists and A->C->B exists, remove A->B (shorter path preferred)
+           - Fabric's ambiguous path error indicates we need to break cycles
         """
         if not getattr(model, "relationships", None):
             return
 
         normalized: list[SMLRelationship] = []
         seen_endpoints: set[tuple[str, str, str, str]] = set()
+        table_pair_candidates: dict[tuple[str, str], list[SMLRelationship]] = {}
         renamed_count = 0
         deduped_count = 0
 
+        # First pass: collect by exact endpoint and table pair
         for rel in model.relationships:
             from_col = rel.from_columns[0] if rel.from_columns else ""
             to_col = rel.to_columns[0] if rel.to_columns else ""
@@ -970,12 +979,70 @@ class ExecutionEngine:
                 to_col.upper(),
             )
 
-            # Deduplicate only exact endpoint duplicates.
+            # Skip exact endpoint duplicates
             if endpoint_key in seen_endpoints:
                 deduped_count += 1
                 continue
             seen_endpoints.add(endpoint_key)
 
+            # Group by table pair for ambiguity detection
+            table_pair = (rel.from_dataset.upper(), rel.to_dataset.upper())
+            if table_pair not in table_pair_candidates:
+                table_pair_candidates[table_pair] = []
+            table_pair_candidates[table_pair].append(rel)
+
+        # Second pass: resolve ambiguous table pairs (keep strongest relationship)
+        candidate_rels: list[SMLRelationship] = []
+        for table_pair, rel_group in table_pair_candidates.items():
+            if len(rel_group) > 1:
+                # Multiple relationships between same tables - keep strongest
+                best_rel = self._select_strongest_relationship(rel_group)
+                logger.info(
+                    "Ambiguous relationships detected for %s -> %s: "
+                    "keeping %s (others removed)",
+                    table_pair[0],
+                    table_pair[1],
+                    best_rel.unique_name,
+                )
+                deduped_count += len(rel_group) - 1
+                candidate_rels.append(best_rel)
+            else:
+                candidate_rels.append(rel_group[0])
+
+        # Third pass: detect and break cycles/transitive ambiguities
+        # Build a graph to detect if keeping A->B creates redundant paths
+        graph: dict[str, set[str]] = {}
+        for rel in candidate_rels:
+            from_table = rel.from_dataset.upper()
+            to_table = rel.to_dataset.upper()
+            if from_table not in graph:
+                graph[from_table] = set()
+            graph[from_table].add(to_table)
+
+        # Check each relationship to see if removing it eliminates cycles
+        final_rels: list[SMLRelationship] = []
+        for rel in candidate_rels:
+            from_table = rel.from_dataset.upper()
+            to_table = rel.to_dataset.upper()
+            
+            # Check if there's an alternate path (excluding this direct edge)
+            has_alternate_path = self._has_path(from_table, to_table, graph, exclude_edge=(from_table, to_table))
+            
+            if has_alternate_path:
+                logger.info(
+                    "Cycle detected for %s -> %s: removing direct edge (alternate path exists via other tables)",
+                    from_table,
+                    to_table,
+                )
+                deduped_count += 1
+                # Skip this relationship - the alternate path will handle connectivity
+            else:
+                final_rels.append(rel)
+
+        # Fourth pass: canonicalize names
+        for rel in final_rels:
+            from_col = rel.from_columns[0] if rel.from_columns else ""
+            to_col = rel.to_columns[0] if rel.to_columns else ""
             canonical_name = generate_relationship_name(
                 rel.from_dataset,
                 from_col,
@@ -986,9 +1053,7 @@ class ExecutionEngine:
                 renamed_count += 1
                 rel.unique_name = canonical_name
 
-            normalized.append(rel)
-
-        model.relationships = normalized
+        model.relationships = final_rels
 
         if renamed_count or deduped_count:
             logger.info(
@@ -1007,6 +1072,77 @@ class ExecutionEngine:
                 rel.to_dataset,
                 rel.to_column,
             )
+
+    def _has_path(self, from_table: str, to_table: str, graph: dict[str, set[str]], exclude_edge: tuple[str, str] = None, max_depth: int = 5) -> bool:
+        """Check if there's a path from from_table to to_table, optionally excluding a specific edge.
+        
+        Uses BFS with max depth to detect if alternate paths exist through intermediary tables.
+        Limited to 5 hops to avoid exploring distant relationships.
+        """
+        from collections import deque
+        
+        if from_table == to_table:
+            return True
+        
+        queue: deque = deque([(from_table, 0)])
+        visited: set[str] = {from_table}
+        
+        while queue:
+            current, depth = queue.popleft()
+            
+            if depth >= max_depth:
+                continue
+            
+            for next_table in graph.get(current, set()):
+                # Skip excluded edge
+                if exclude_edge and (current, next_table) == exclude_edge:
+                    continue
+                
+                if next_table == to_table:
+                    return True
+                
+                if next_table not in visited:
+                    visited.add(next_table)
+                    queue.append((next_table, depth + 1))
+        
+        return False
+
+    def _select_strongest_relationship(self, candidates: list[SMLRelationship]) -> SMLRelationship:
+        """Select the strongest relationship from ambiguous candidates.
+        
+        Strength hierarchy:
+        1. Explicit foreign keys (from metadata)
+        2. FK column naming pattern (ends with _id, _key, etc.)
+        3. Column name matches target table name
+        4. First encountered (fallback)
+        """
+        # Score each candidate
+        scored = []
+        for rel in candidates:
+            score = 0
+            from_col = rel.from_columns[0] if rel.from_columns else ""
+            to_dataset = rel.to_dataset.upper()
+
+            # Preference 1: Explicit foreign key (marked in metadata)
+            if getattr(rel, "is_explicit_fk", False):
+                score += 100
+
+            # Preference 2: Standard FK naming conventions
+            fk_suffixes = ["_ID", "_KEY", "_FK", "_CODE"]
+            if any(from_col.upper().endswith(suffix) for suffix in fk_suffixes):
+                score += 50
+
+            # Preference 3: Column matches target table name
+            # e.g., scenario_id -> scenario table
+            col_base = from_col.upper().rstrip("_ID_KEYFK")
+            if col_base == to_dataset or col_base.rstrip("S") == to_dataset:
+                score += 25
+
+            scored.append((score, rel))
+
+        # Return highest-scored relationship, or first if tied
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored[0][1]
     
     def _convert_snowflake_to_sml(self, context: RunContext) -> SMLModel:
         """Convert Snowflake source to SML."""
@@ -1037,12 +1173,24 @@ class ExecutionEngine:
             source_schema=sf.schema_name,
         )
         
-        # Add tables
+        # Add tables (deduplicate columns by name to avoid downstream conflicts)
         for table_name, table_info in metadata["tables"].items():
             columns = metadata["columns"].get(table_name, [])
+            seen_cols: set[str] = set()
+            deduped_cols: list[dict[str, Any]] = []
+            for col in columns:
+                col_name = str(col.get("name") or col.get("COLUMN_NAME") or "").strip()
+                if not col_name:
+                    continue
+                key = col_name.upper()
+                if key in seen_cols:
+                    logger.debug("Skipping duplicate column %s in table %s", col_name, table_name)
+                    continue
+                seen_cols.add(key)
+                deduped_cols.append(col)
             assembler.add_table(
                 table_name=table_name,
-                columns=columns,
+                columns=deduped_cols,
                 description=table_info.get("description", ""),
                 row_count=table_info.get("row_count"),
             )
@@ -1057,12 +1205,47 @@ class ExecutionEngine:
         relationships = rel_detector.detect_all()
         
         for rel in relationships:
+            from_table = str(
+                rel.get("from_table")
+                or rel.get("source_table")
+                or rel.get("left_table")
+                or ""
+            ).strip()
+            from_column = str(
+                rel.get("from_column")
+                or rel.get("source_column")
+                or rel.get("left_column")
+                or ""
+            ).strip()
+            to_table = str(
+                rel.get("to_table")
+                or rel.get("target_table")
+                or rel.get("right_table")
+                or ""
+            ).strip()
+            to_column = str(
+                rel.get("to_column")
+                or rel.get("target_column")
+                or rel.get("right_column")
+                or ""
+            ).strip()
+            rel_name = str(rel.get("name") or "").strip() or generate_relationship_name(
+                from_table,
+                from_column,
+                to_table,
+                to_column,
+            )
+
+            if not (from_table and from_column and to_table and to_column):
+                logger.warning("Skipping malformed relationship during SML conversion: %s", rel)
+                continue
+
             assembler.add_relationship(
-                name=rel["name"],
-                from_table=rel["from_table"],
-                from_column=rel["from_column"],
-                to_table=rel["to_table"],
-                to_column=rel["to_column"],
+                name=rel_name,
+                from_table=from_table,
+                from_column=from_column,
+                to_table=to_table,
+                to_column=to_column,
             )
         
         # Classify tables

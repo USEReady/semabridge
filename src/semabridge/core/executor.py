@@ -574,12 +574,24 @@ class CLIExecutor:
             source_schema=metadata.get("schema", ""),
         )
         
-        # Add tables
+        # Add tables (deduplicate columns by name)
         for table_name, table_info in metadata.get("tables", {}).items():
             columns = metadata.get("columns", {}).get(table_name, [])
+            seen_cols = set()
+            deduped_cols = []
+            for col in columns:
+                col_name = str(col.get("name") or col.get("COLUMN_NAME") or "").strip()
+                if not col_name:
+                    continue
+                key = col_name.upper()
+                if key in seen_cols:
+                    logger.debug("Skipping duplicate column %s in table %s", col_name, table_name)
+                    continue
+                seen_cols.add(key)
+                deduped_cols.append(col)
             assembler.add_table(
                 table_name=table_name,
-                columns=columns,
+                columns=deduped_cols,
                 description=table_info.get("description", ""),
                 row_count=table_info.get("row_count"),
             )
@@ -594,12 +606,42 @@ class CLIExecutor:
         
         relationships = rel_detector.detect_all()
         for rel in relationships:
+            from_table = str(
+                rel.get("from_table")
+                or rel.get("source_table")
+                or rel.get("left_table")
+                or ""
+            ).strip()
+            from_column = str(
+                rel.get("from_column")
+                or rel.get("source_column")
+                or rel.get("left_column")
+                or ""
+            ).strip()
+            to_table = str(
+                rel.get("to_table")
+                or rel.get("target_table")
+                or rel.get("right_table")
+                or ""
+            ).strip()
+            to_column = str(
+                rel.get("to_column")
+                or rel.get("target_column")
+                or rel.get("right_column")
+                or ""
+            ).strip()
+            rel_name = str(rel.get("name") or "").strip() or f"REL_{from_table}_{to_table}"
+
+            if not (from_table and from_column and to_table and to_column):
+                logger.warning("Skipping malformed relationship during SML conversion: %s", rel)
+                continue
+
             assembler.add_relationship(
-                name=rel["name"],
-                from_table=rel["from_table"],
-                from_column=rel["from_column"],
-                to_table=rel["to_table"],
-                to_column=rel["to_column"],
+                name=rel_name,
+                from_table=from_table,
+                from_column=from_column,
+                to_table=to_table,
+                to_column=to_column,
             )
         
         # Classify tables

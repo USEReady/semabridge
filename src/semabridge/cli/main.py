@@ -1662,6 +1662,11 @@ def _run_snowflake_to_fabric(
         sml_model.unique_name = model_name
         sml_model.label = model_name
 
+        # Normalize relationships to avoid ambiguous paths (multiple paths between same tables)
+        from semabridge.core.execution_engine import ExecutionEngine
+        engine = ExecutionEngine()
+        engine._normalize_relationships_for_target(sml_model)
+
         total_columns = sum(len(ds.columns) for ds in sml_model.datasets)
         total_measures = len(sml_model.metrics)
         total_dim_attrs = sum(len(dim.attributes) for dim in sml_model.dimensions)
