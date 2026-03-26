@@ -103,7 +103,7 @@ class RunContext:
     config: Settings
     start_time: float
     source_type: Literal["snowflake", "fabric", "pbix"]
-    target_type: Optional[Literal["snowflake", "fabric"]] = None
+    target_type: Optional[Literal["snowflake", "fabric", "databricks"]] = None
     behavior: ConnectorBehavior = Field(default_factory=ConnectorBehavior)
     
     # Artifacts accumulated during execution
@@ -124,7 +124,7 @@ class ExecutionEngine:
     """
     
     SUPPORTED_SOURCES = {"snowflake", "fabric", "pbix"}
-    SUPPORTED_TARGETS = {"snowflake", "fabric", None}
+    SUPPORTED_TARGETS = {"snowflake", "fabric", "databricks", None}
     
     def __init__(self, db_manager: Optional[ModelRepository] = None):
         self.db_manager = db_manager or ModelRepository()
@@ -187,6 +187,13 @@ class ExecutionEngine:
         _setenv("FABRIC_CLIENT_SECRET",fabric.get("client_secret"))
         _setenv("FABRIC_WORKSPACE_ID", fabric.get("workspace_id"))
 
+        databricks = raw.get("databricks") or {}
+        _setenv("DATABRICKS_HOST", databricks.get("host"))
+        _setenv("DATABRICKS_TOKEN", databricks.get("token"))
+        _setenv("DATABRICKS_WAREHOUSE_ID", databricks.get("warehouse_id"))
+        _setenv("DATABRICKS_CATALOG", databricks.get("catalog"))
+        _setenv("DATABRICKS_SCHEMA", databricks.get("schema") or databricks.get("schema_name"))
+
         tel = raw.get("telemetry") or {}
         _setenv("TELEMETRY_ENABLED",       tel.get("enabled"))
         _setenv("TELEMETRY_OTLP_ENDPOINT", tel.get("otlp_endpoint"))
@@ -201,7 +208,7 @@ class ExecutionEngine:
     def execute(
         self,
         source: Literal["snowflake", "fabric", "pbix"],
-        target: Optional[Literal["snowflake", "fabric"]] = None,
+        target: Optional[Literal["snowflake", "fabric", "databricks"]] = None,
         project_name: Optional[str] = None,
         config_path: Optional[Path] = None,
         deploy: bool = True,
@@ -399,6 +406,11 @@ class ExecutionEngine:
                     f"Unsupported target connector: '{target}'. "
                     f"Supported: {self.SUPPORTED_TARGETS - {None}}"
                 )
+
+            if target == "databricks" and source != "fabric":
+                raise ConfigValidationError(
+                    "Databricks target is currently supported only for fabric source runs"
+                )
             
             self._record_step(1, StepStatus.SUCCESS, "Configuration validated")
             return config
@@ -575,6 +587,9 @@ class ExecutionEngine:
                 auth_sources.append("UI token")
             else:
                 auth_sources.append("ENV")
+        elif context.target_type == "databricks":
+            if not config.validate_databricks():
+                missing.append("Databricks credentials (DATABRICKS_*)")
         
         if missing:
             msg = f"Missing authentication: {', '.join(missing)}"
@@ -1779,6 +1794,8 @@ class ExecutionEngine:
                 self._convert_to_fabric_target(context)
             elif context.target_type == "snowflake":
                 self._convert_to_snowflake_target(context)
+            elif context.target_type == "databricks":
+                self._convert_to_databricks_target(context)
             
             self._record_step(8, StepStatus.SUCCESS, f"Target format generated")
             
@@ -1830,6 +1847,22 @@ class ExecutionEngine:
             f.write(yaml_out)
         
         context.target_artifact_path = str(ddl_path)
+
+    def _convert_to_databricks_target(self, context: RunContext) -> None:
+        """Generate Databricks SQL artifact."""
+        from semabridge.connectors.databricks_publisher import DatabricksPublisher
+
+        publisher = DatabricksPublisher(context.config.databricks)
+        statements = publisher.generate_sql_statements(context.sml_model)
+
+        output_dir = Path("output/databricks")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        sql_path = output_dir / "semantic_model.sql"
+
+        with open(sql_path, "w", encoding="utf-8") as f:
+            f.write(";\n\n".join(statements) + ";\n")
+
+        context.target_artifact_path = str(sql_path)
     
     # =========================================================================
     # Step 9: Deploy to Target (Optional)
@@ -1849,6 +1882,8 @@ class ExecutionEngine:
                 self._deploy_to_fabric(context)
             elif context.target_type == "snowflake":
                 self._deploy_to_snowflake(context)
+            elif context.target_type == "databricks":
+                self._deploy_to_databricks(context)
         
             self._record_step(9, StepStatus.SUCCESS, "Deployment complete")
 
@@ -1932,6 +1967,13 @@ class ExecutionEngine:
         # ── Optional: Sync materialized DAX measures to MEASURES_* tables ────
         if context.source_type == "fabric" and self._should_sync_measures(context):
             self._sync_fabric_measures(context, emitter)
+
+    def _deploy_to_databricks(self, context: RunContext) -> None:
+        """Deploy SML metadata projection to Databricks."""
+        from semabridge.connectors.databricks_publisher import DatabricksPublisher
+
+        publisher = DatabricksPublisher(context.config.databricks)
+        publisher.publish(context.sml_model)
 
     def _export_inferred_osi_artifacts(self, context: RunContext) -> None:
         """Write OSI JSON/YAML with the latest inferred column datatypes."""

@@ -1555,6 +1555,12 @@ async def sync_models(payload: Dict[str, Any]):
                 elif isinstance(first_target, str):
                     target_cfg = {"type": first_target}
 
+        # Fallback for UI/project payloads that store target as scalar fields.
+        if not target_cfg:
+            scalar_target = config.get("target_type") or config.get("targetType")
+            if scalar_target:
+                target_cfg = {"type": scalar_target}
+
         target_type = (target_cfg or {}).get("type", "snowflake")
 
         # Normalize connector aliases from UI/config variants.
@@ -1562,9 +1568,13 @@ async def sync_models(payload: Dict[str, Any]):
             "snowflake_semantic_view": "snowflake",
             "microsoft_fabric": "fabric",
             "ms_fabric": "fabric",
+            "databricks_sql": "databricks",
+            "dbx": "databricks",
         }
-        source_type = _TYPE_ALIASES.get(str(source_type), source_type)
-        target_type = _TYPE_ALIASES.get(str(target_type), target_type)
+        source_key = str(source_type or "").strip().lower()
+        target_key = str(target_type or "").strip().lower()
+        source_type = _TYPE_ALIASES.get(source_key, source_key or "fabric")
+        target_type = _TYPE_ALIASES.get(target_key, target_key or "snowflake")
         
         # 4. Build list of sync jobs â€” one per model entry so ALL selected models run.
         # Each job: {"dataset_id": str|None, "pbix_path": str|None, "model_label": str}
@@ -2140,6 +2150,8 @@ def _compat_clean_project_name(raw: Any, fallback: str = "Untitled Project") -> 
 def _compat_project_payload(project_id: str, payload: dict) -> Dict[str, Any]:
     source_obj = payload.get("source") if isinstance(payload.get("source"), dict) else {}
     target_obj = payload.get("target") if isinstance(payload.get("target"), dict) else {}
+    targets_list = payload.get("targets") if isinstance(payload.get("targets"), list) else []
+    first_target_obj = targets_list[0] if targets_list and isinstance(targets_list[0], dict) else {}
     project_name = _compat_clean_project_name(payload.get("name"), f"Project {project_id[-6:]}")
     return {
         "id": project_id,
@@ -2149,7 +2161,7 @@ def _compat_project_payload(project_id: str, payload: dict) -> Dict[str, Any]:
         "source": source_obj.get("type") or payload.get("source_type") or "fabric",
         "adapter": source_obj.get("type") or payload.get("source_type") or "fabric",
         "workspace_id": source_obj.get("workspace_id") or "",
-        "target_type": target_obj.get("type") or payload.get("target_type") or "snowflake",
+        "target_type": target_obj.get("type") or first_target_obj.get("type") or payload.get("target_type") or "snowflake",
         "folder_id": payload.get("folder_id"),
         "status": "draft",
         "created_at": _compat_now_iso(),
@@ -2289,6 +2301,11 @@ async def patch_project_compat(project_id: str, payload: dict):
 
     if isinstance(payload.get("target"), dict):
         project["target_type"] = payload["target"].get("type") or project.get("target_type")
+
+    if isinstance(payload.get("targets"), list) and payload.get("targets"):
+        first_target = payload["targets"][0] if isinstance(payload["targets"][0], dict) else {}
+        if first_target.get("type"):
+            project["target_type"] = first_target.get("type")
 
     project["updated_at"] = _compat_now_iso()
     _compat_projects[project_id] = project

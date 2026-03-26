@@ -423,6 +423,61 @@ class TestDeploymentMethodDispatch:
         )
 
 
+class TestDatabricksTargetRouting:
+    """Ensure databricks target path is isolated and reachable."""
+
+    def test_step8_routes_to_databricks_converter(self, mock_db_manager):
+        engine = ExecutionEngine(db_manager=mock_db_manager)
+        called = []
+
+        ctx = MagicMock()
+        ctx.target_type = "databricks"
+
+        engine._convert_to_databricks_target = lambda _ctx: called.append("convert")
+
+        engine._step8_convert_to_target(ctx)
+        assert called == ["convert"]
+
+    def test_step9_routes_to_databricks_deployer(self, mock_db_manager):
+        engine = ExecutionEngine(db_manager=mock_db_manager)
+        called = []
+
+        ctx = MagicMock()
+        ctx.target_type = "databricks"
+
+        engine._deploy_to_databricks = lambda _ctx: called.append("deploy")
+
+        engine._step9_deploy(ctx)
+        assert called == ["deploy"]
+
+    def test_step3_requires_databricks_credentials_for_databricks_target(self, mock_db_manager):
+        engine = ExecutionEngine(db_manager=mock_db_manager)
+
+        ctx = MagicMock()
+        ctx.source_type = "fabric"
+        ctx.target_type = "databricks"
+        ctx.behavior.features.offline_mode = True
+
+        cfg = MagicMock()
+        cfg.validate_fabric.return_value = True
+        cfg.validate_snowflake.return_value = True
+        cfg.validate_databricks.return_value = False
+        ctx.config = cfg
+
+        with pytest.raises(Exception) as exc:
+            engine._step3_resolve_auth(ctx)
+
+        assert "Databricks credentials" in str(exc.value)
+
+    def test_step1_rejects_non_fabric_databricks_target(self, mock_db_manager):
+        engine = ExecutionEngine(db_manager=mock_db_manager)
+
+        with pytest.raises(Exception) as exc:
+            engine._step1_load_config(config_path=None, source="snowflake", target="databricks")
+
+        assert "supported only for fabric source" in str(exc.value)
+
+
 # ---------------------------------------------------------------------------
 # Tests: from_yaml factory
 # ---------------------------------------------------------------------------

@@ -1,14 +1,14 @@
-project_name: SN-FABRIC
+project_name: FB-SF-1
 source:
-  type: snowflake
-  database: SEMABRIDGE_DB
-  schema: PUBLIC
+  type: fabric
+  workspace_id: semabridge-local
+  workspace: SemaBridge Workspace
   models:
-    - CONTINENT_semantic
+    - CONTINENT_SEMANTIC
 targets:
-  - type: fabric
+  - type: snowflake
 mappings:
-  - source: CONTINENT_semantic
+  - source: CONTINENT_SEMANTIC
     target: continent_semantic_mapped
     type: table
     columns:
@@ -27,11 +27,13 @@ mappings:
         type: TIMESTAMP
 ui:
   intermediate_format: osi
-  editor_mode: yaml
+  editor_mode: form
+  output_format: osi
 selection:
   model_ids:
-    - CONTINENT_semantic
+    - 34277c5f-657d-4d29-bb7d-3d4496aac6c4
 options:
   auto_relationships: true
-  include_hidden_fields: false
   generate_descriptions: true
+target:
+  type: snowflake

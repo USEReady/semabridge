@@ -136,6 +136,39 @@ class FabricConfig(BaseSettings):
         return v.strip()
 
 
+class DatabricksConfig(BaseSettings):
+    """Databricks SQL Warehouse configuration."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="DATABRICKS_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    host: str = Field(..., description="Databricks workspace host, e.g. adb-12345.11.azuredatabricks.net")
+    token: SecretStr = Field(..., description="Databricks personal access token")
+    warehouse_id: str = Field(..., description="Databricks SQL warehouse ID for statement execution")
+    catalog: str = Field(default="main", description="Unity Catalog catalog name for semantic objects")
+    schema_name: str = Field(default="semabridge", validation_alias="DATABRICKS_SCHEMA", description="Unity Catalog schema for semantic objects")
+
+    @field_validator("host")
+    @classmethod
+    def validate_host(cls, v: str) -> str:
+        if not v or v.startswith("your-"):
+            raise ValueError("DATABRICKS_HOST must be set to your Databricks workspace host")
+        val = v.strip().rstrip("/")
+        if val.startswith("https://"):
+            val = val[len("https://"):]
+        elif val.startswith("http://"):
+            val = val[len("http://"):]
+        return val
+
+    @property
+    def api_base_url(self) -> str:
+        return f"https://{self.host}"
+
+
 class ModelConfig(BaseSettings):
     """Semantic model configuration."""
     
@@ -451,6 +484,7 @@ class Settings(BaseSettings):
     # Sub-configurations are loaded separately to avoid nesting issues
     _snowflake: Optional[SnowflakeConfig] = None
     _fabric: Optional[FabricConfig] = None
+    _databricks: Optional[DatabricksConfig] = None
     _model: Optional[ModelConfig] = None
     _logging: Optional[LoggingConfig] = None
     _concurrency: Optional[ConcurrencyConfig] = None
@@ -479,6 +513,13 @@ class Settings(BaseSettings):
         if self._model is None:
             self._model = ModelConfig()
         return self._model
+
+    @property
+    def databricks(self) -> DatabricksConfig:
+        """Get Databricks configuration (lazy loaded)."""
+        if self._databricks is None:
+            self._databricks = DatabricksConfig()
+        return self._databricks
     
     @property
     def logging(self) -> LoggingConfig:
@@ -558,6 +599,14 @@ class Settings(BaseSettings):
         """Validate Fabric configuration is complete."""
         try:
             _ = self.fabric
+            return True
+        except Exception:
+            return False
+
+    def validate_databricks(self) -> bool:
+        """Validate Databricks configuration is complete."""
+        try:
+            _ = self.databricks
             return True
         except Exception:
             return False

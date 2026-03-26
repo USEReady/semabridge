@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import time
 from typing import Any, Optional
 
@@ -54,6 +55,7 @@ class FabricPublisher:
         self.config = config
         self._access_token: Optional[str] = None
         self._token_expiry: float = 0
+        self._resolved_workspace_id: Optional[str] = None
     
     def _get_access_token(self, force_refresh: bool = False) -> str:
         """Get a valid access token, refreshing if needed."""
@@ -160,6 +162,46 @@ class FabricPublisher:
             "Authorization": f"Bearer {self._get_access_token()}",
             "Content-Type": "application/json",
         }
+
+    def list_workspaces(self) -> list[dict[str, Any]]:
+        """List Fabric workspaces visible to the authenticated principal."""
+        url = f"{self.FABRIC_API_BASE}/workspaces"
+        try:
+            with httpx.Client(timeout=30) as client:
+                response = client.get(url, headers=self._get_headers())
+                if response.status_code != 200:
+                    logger.warning("Workspace resolution: list failed with %s", response.status_code)
+                    return []
+                return response.json().get("value", [])
+        except Exception as exc:
+            logger.warning("Workspace resolution: failed to list workspaces: %s", exc)
+            return []
+
+    def resolve_workspace_id(self, workspace_id_or_name: str) -> str:
+        """Resolve workspace display name to GUID. Returns original value if unresolved."""
+        raw = str(workspace_id_or_name or "").strip()
+        if not raw:
+            return raw
+
+        guid_pattern = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        if re.match(guid_pattern, raw):
+            return raw
+
+        for ws in self.list_workspaces():
+            if ws.get("displayName", "").strip().lower() == raw.lower():
+                resolved = ws.get("id", "")
+                if resolved:
+                    logger.info("Resolved Fabric workspace '%s' -> '%s'", raw, resolved)
+                    return resolved
+
+        logger.warning("Could not resolve Fabric workspace '%s' to GUID; using as-is", raw)
+        return raw
+
+    def _workspace_id(self) -> str:
+        """Get resolved workspace ID (cached)."""
+        if not self._resolved_workspace_id:
+            self._resolved_workspace_id = self.resolve_workspace_id(self.config.workspace_id)
+        return self._resolved_workspace_id
     
     def publish(
         self,
@@ -274,7 +316,8 @@ class FabricPublisher:
     
     def _create_model(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Create a new semantic model."""
-        url = f"{self.FABRIC_API_BASE}/workspaces/{self.config.workspace_id}/semanticModels"
+        workspace_id = self._workspace_id()
+        url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/semanticModels"
         
         logger.debug(f"Creating semantic model: {payload['displayName']}")
         
@@ -291,7 +334,12 @@ class FabricPublisher:
                 return result
             else:
                 error_text = response.text
-                logger.error(f"Create failed: {response.status_code} - {error_text}")
+                logger.error(
+                    "Create failed: workspace=%s status=%s body=%s",
+                    workspace_id,
+                    response.status_code,
+                    error_text,
+                )
                 raise PublishError(f"Failed to create model: {response.status_code} - {error_text}")
     
     def _update_model(
@@ -300,7 +348,8 @@ class FabricPublisher:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         """Update an existing semantic model."""
-        url = f"{self.FABRIC_API_BASE}/workspaces/{self.config.workspace_id}/semanticModels/{model_id}/updateDefinition"
+        workspace_id = self._workspace_id()
+        url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/semanticModels/{model_id}/updateDefinition"
         
         logger.debug(f"Updating semantic model: {model_id}")
         
@@ -407,7 +456,8 @@ class FabricPublisher:
 
     def refresh_model(self, model_id: str) -> bool:
         """Trigger a refresh of the semantic model."""
-        url = f"{self.FABRIC_API_BASE}/workspaces/{self.config.workspace_id}/semanticModels/{model_id}/refresh"
+        workspace_id = self._workspace_id()
+        url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/semanticModels/{model_id}/refresh"
         
         logger.info(f"Triggering refresh for model: {model_id}")
         
@@ -470,7 +520,8 @@ class FabricPublisher:
     
     def find_model_by_name(self, name: str) -> Optional[dict[str, Any]]:
         """Find a semantic model by name in the workspace."""
-        url = f"{self.FABRIC_API_BASE}/workspaces/{self.config.workspace_id}/semanticModels"
+        workspace_id = self._workspace_id()
+        url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/semanticModels"
         
         try:
             with httpx.Client(timeout=30) as client:
@@ -493,7 +544,8 @@ class FabricPublisher:
     
     def list_models(self) -> list[dict[str, Any]]:
         """List all semantic models in the workspace."""
-        url = f"{self.FABRIC_API_BASE}/workspaces/{self.config.workspace_id}/semanticModels"
+        workspace_id = self._workspace_id()
+        url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/semanticModels"
         
         with httpx.Client(timeout=30) as client:
             response = client.get(url, headers=self._get_headers())
@@ -505,7 +557,8 @@ class FabricPublisher:
     
     def delete_model(self, model_id: str) -> bool:
         """Delete a semantic model."""
-        url = f"{self.FABRIC_API_BASE}/workspaces/{self.config.workspace_id}/semanticModels/{model_id}"
+        workspace_id = self._workspace_id()
+        url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/semanticModels/{model_id}"
         
         with httpx.Client(timeout=30) as client:
             response = client.delete(url, headers=self._get_headers())

@@ -143,3 +143,19 @@ def test_validate_full_definition_payload_rejects_non_deterministic_name() -> No
 
     with pytest.raises(PublishError, match="non-deterministic relationship name"):
         publisher._validate_full_definition_payload(payload)
+
+
+def test_resolve_workspace_id_returns_guid_as_is() -> None:
+    publisher = _make_publisher()
+    guid = "12345678-1234-1234-1234-1234567890ab"
+
+    assert publisher.resolve_workspace_id(guid) == guid
+
+
+def test_resolve_workspace_id_matches_display_name() -> None:
+    publisher = _make_publisher()
+    publisher.list_workspaces = lambda: [
+        {"id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "displayName": "SemaBridge Workspace"}
+    ]
+
+    assert publisher.resolve_workspace_id("SemaBridge Workspace") == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
