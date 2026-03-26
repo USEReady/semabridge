@@ -72,6 +72,8 @@ class SourceFormat(BaseModel):
     columns: Dict[str, List[ColumnInfo]] = Field(default_factory=dict)
     foreign_keys: List[ForeignKeyInfo] = Field(default_factory=list)
     primary_keys: Dict[str, List[str]] = Field(default_factory=dict)
+    semantic_view_name: Optional[str] = None
+    semantic_view_ddl: Optional[str] = None
     
     # For Fabric source
     tmsl_definition: Optional[Dict[str, Any]] = None
@@ -228,6 +230,8 @@ def from_snowflake_metadata(
     project_id: str,
     run_id: str,
     metadata: Dict[str, Any],
+    semantic_view_name: Optional[str] = None,
+    semantic_view_ddl: Optional[str] = None,
 ) -> SourceFormat:
     """
     Create SourceFormat from Snowflake extractor output.
@@ -277,6 +281,8 @@ def from_snowflake_metadata(
         columns=columns,
         foreign_keys=foreign_keys,
         primary_keys=metadata.get("primary_keys", {}),
+        semantic_view_name=semantic_view_name,
+        semantic_view_ddl=semantic_view_ddl,
     )
 
 

@@ -1,15 +1,15 @@
-project_name: b
+project_name: SN-FABRIC
 source:
   type: snowflake
   database: SEMABRIDGE_DB
   schema: PUBLIC
   models:
-    - CORE_FINANCE_V1_SEMANTIC
+    - CONTINENT_semantic
 targets:
   - type: fabric
 mappings:
-  - source: CORE_FINANCE_V1_SEMANTIC
-    target: core_finance_v1_semantic_mapped
+  - source: CONTINENT_semantic
+    target: continent_semantic_mapped
     type: table
     columns:
       - source: id
@@ -27,10 +27,10 @@ mappings:
         type: TIMESTAMP
 ui:
   intermediate_format: osi
-  editor_mode: form
+  editor_mode: yaml
 selection:
   model_ids:
-    - CORE_FINANCE_V1_SEMANTIC
+    - CONTINENT_semantic
 options:
   auto_relationships: true
   include_hidden_fields: false

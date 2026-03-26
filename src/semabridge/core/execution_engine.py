@@ -23,6 +23,7 @@ import time
 import uuid
 import json
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -620,7 +621,7 @@ class ExecutionEngine:
         
         try:
             if context.source_type == "snowflake":
-                return self._extract_snowflake(context)
+                return self._extract_snowflake(context, dataset_id)
             elif context.source_type == "fabric":
                 return self._extract_fabric(context, dataset_id, workspace_id)
             elif context.source_type == "pbix":
@@ -632,7 +633,11 @@ class ExecutionEngine:
             self._record_step(4, StepStatus.FAILED, str(e))
             raise ExtractionError(f"Extraction failed: {e}") from e
     
-    def _extract_snowflake(self, context: RunContext) -> SourceFormat:
+    def _extract_snowflake(
+        self,
+        context: RunContext,
+        dataset_id: Optional[str] = None,
+    ) -> SourceFormat:
         """Extract from Snowflake."""
         from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
         from semabridge.utils.cache import MetadataCache
@@ -650,6 +655,26 @@ class ExecutionEngine:
         # metadata = extractor.extract_all()
 
         include_tables, include_source = self._resolve_snowflake_include_tables(context)
+        semantic_view_name: Optional[str] = None
+        semantic_view_ddl: Optional[str] = None
+
+        # If a specific model was requested for this run, scope extraction to that model.
+        # For Snowflake this may be a semantic view name or a table name.
+        if dataset_id:
+            scope_probe = SnowflakeExtractor(
+                config=config.snowflake,
+                cache=cache,
+                exclude_tables=config.model.excluded_table_list,
+                include_tables=None,
+            )
+            scoped_tables, semantic_view_name, semantic_view_ddl = self._resolve_snowflake_dataset_scope(
+                dataset_id,
+                scope_probe,
+            )
+            if scoped_tables:
+                include_tables = scoped_tables
+                include_source = "dataset_id.semantic_view" if semantic_view_name else "dataset_id.table"
+
         parallel_enabled, max_workers = self._resolve_snowflake_parallelism(context)
 
         logger.info(
@@ -679,21 +704,33 @@ class ExecutionEngine:
         # Backward compatibility guard:
         # if include list came from project YAML/UI and resolves to zero tables,
         # retry without include filter to preserve legacy "full-schema" behavior.
-        if include_tables and not metadata.get("tables") and include_source != "model.include_tables":
-            logger.warning(
-                "Include filter from %s matched 0 tables; retrying full schema extraction for compatibility",
-                include_source,
-            )
-            extractor = SnowflakeExtractor(
-                config=config.snowflake,
-                cache=cache,
-                exclude_tables=config.model.excluded_table_list,
-                include_tables=None,
-            )
-            metadata = extractor.extract_all(
-                parallel=parallel_enabled,
-                max_workers=max_workers,
-            )
+        strict_sources = {
+            "source.models",
+            "selection.model_ids",
+            "dataset_id.semantic_view",
+            "dataset_id.table",
+        }
+        if include_tables and not metadata.get("tables"):
+            if include_source in strict_sources:
+                raise ExtractionError(
+                    f"Include filter from {include_source} matched 0 tables for '{dataset_id}'. "
+                    "Refine the selected model or verify semantic view/table names."
+                )
+            if include_source != "model.include_tables":
+                logger.warning(
+                    "Include filter from %s matched 0 tables; retrying full schema extraction for compatibility",
+                    include_source,
+                )
+                extractor = SnowflakeExtractor(
+                    config=config.snowflake,
+                    cache=cache,
+                    exclude_tables=config.model.excluded_table_list,
+                    include_tables=None,
+                )
+                metadata = extractor.extract_all(
+                    parallel=parallel_enabled,
+                    max_workers=max_workers,
+                )
 
         semantic_data = extractor.read_semantic_tables()
         metadata["semantic_tables"] = semantic_data
@@ -702,12 +739,55 @@ class ExecutionEngine:
             project_id=context.project_id,
             run_id=context.run_id,
             metadata=metadata,
+            semantic_view_name=semantic_view_name,
+            semantic_view_ddl=semantic_view_ddl,
         )
         
         table_count = len(source_format.tables)
         self._record_step(4, StepStatus.SUCCESS, f"Extracted {table_count} tables")
         
         return source_format
+
+    def _resolve_snowflake_dataset_scope(
+        self,
+        dataset_id: str,
+        extractor: Any,
+    ) -> tuple[Optional[list[str]], Optional[str], Optional[str]]:
+        """Resolve a run-scoped Snowflake dataset selector to include tables.
+
+        Tries semantic-view DDL parsing first, then falls back to table-name scope.
+        """
+        selector = str(dataset_id or "").strip()
+        if not selector:
+            return None, None, None
+
+        try:
+            from semabridge.converter.semantic_view_to_osi import SemanticViewToOSIConverter
+
+            ddl = extractor.extract_semantic_view_ddl(selector)
+            converter = SemanticViewToOSIConverter()
+            table_map = converter._parse_tables_clause(ddl)
+            include_tables = sorted(
+                {
+                    v.get("table_name", "").upper()
+                    for v in table_map.values()
+                    if v.get("table_name")
+                }
+            )
+            logger.info(
+                "Resolved Snowflake model scope from semantic view '%s': %s base table(s)",
+                selector,
+                len(include_tables),
+            )
+            return include_tables or None, selector, ddl
+        except Exception as exc:  # noqa: BLE001
+            logger.info(
+                "Dataset selector '%s' not resolved as semantic view (%s); using table-name scope fallback",
+                selector,
+                exc,
+            )
+
+        return [selector.upper()], None, None
 
     def _resolve_snowflake_include_tables(self, context: RunContext) -> tuple[Optional[list[str]], Optional[str]]:
         """Resolve include-tables from env/settings first, then project YAML/UI config.
@@ -811,6 +891,7 @@ class ExecutionEngine:
         config = context.config
         ws_id = workspace_id or config.fabric.workspace_id
         interactive_token: Optional[str] = None
+        stored_workspace_id: str = ""
 
         if context.behavior.features.offline_mode:
             offline_path = Path(context.behavior.features.offline_fabric_model_path)
@@ -865,6 +946,35 @@ class ExecutionEngine:
         
         if not dataset_id:
             raise ExtractionError("dataset_id is required for Fabric source")
+
+        guid_pattern = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+
+        def _is_guid(value: str) -> bool:
+            return bool(value and re.match(guid_pattern, value))
+
+        requested_ws = str(ws_id or "").strip()
+        configured_ws = str(config.fabric.workspace_id or "").strip()
+        stored_ws = str(stored_workspace_id or "").strip()
+
+        # UI aliases (for example, semabridge-local) are not accepted by Fabric API.
+        # Prefer known GUIDs from credentials or environment-backed config.
+        if requested_ws and not _is_guid(requested_ws):
+            if _is_guid(stored_ws):
+                logger.info(
+                    "Fabric workspace '%s' appears to be an alias; using credential workspace GUID '%s'",
+                    requested_ws,
+                    stored_ws,
+                )
+                requested_ws = stored_ws
+            elif _is_guid(configured_ws):
+                logger.info(
+                    "Fabric workspace '%s' appears to be an alias; using configured workspace GUID '%s'",
+                    requested_ws,
+                    configured_ws,
+                )
+                requested_ws = configured_ws
+
+        ws_id = requested_ws or configured_ws or stored_ws
 
         if ws_id and config.fabric.workspace_id != ws_id:
             config.fabric.workspace_id = ws_id
@@ -1292,6 +1402,39 @@ class ExecutionEngine:
         
         config = context.config
         sf = context.source_format
+
+        # Prefer semantic-view driven conversion when Step 4 captured DDL.
+        if sf.semantic_view_ddl:
+            try:
+                from semabridge.converter.semantic_view_to_osi import SemanticViewToOSIConverter
+                from semabridge.converter.osi_to_sml import OSIToSMLConverter
+
+                column_metadata = {
+                    table_name: [col.model_dump() for col in cols]
+                    for table_name, cols in sf.columns.items()
+                }
+                osi_model = SemanticViewToOSIConverter().to_osi(
+                    {
+                        "ddl": sf.semantic_view_ddl,
+                        "view_name": sf.semantic_view_name or context.project_id,
+                        "column_metadata": column_metadata,
+                    }
+                )
+                context.osi_model = osi_model
+                sml_model = OSIToSMLConverter().from_osi(osi_model)
+
+                self._record_step(
+                    6,
+                    StepStatus.SUCCESS,
+                    f"{sml_model.dataset_count} datasets, {sml_model.metric_count} metrics",
+                )
+                return sml_model
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Semantic-view conversion failed for '%s'; falling back to metadata inference: %s",
+                    sf.semantic_view_name or context.project_id,
+                    exc,
+                )
         
         # Convert source format back to metadata dict for existing assembler
         metadata = {

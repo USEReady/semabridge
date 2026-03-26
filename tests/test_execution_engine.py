@@ -506,3 +506,253 @@ class TestTelemetryHooks:
         from semabridge.utils import telemetry  # noqa — just import check
         assert callable(telemetry.flush)
         assert callable(telemetry.record_run)
+
+
+class TestSnowflakeModelScoping:
+    """Guards for Snowflake model-specific extraction and conversion behavior."""
+
+    def _make_snowflake_context(self) -> MagicMock:
+        ctx = MagicMock()
+        cfg = MagicMock()
+        cfg.model.cache_enabled = False
+        cfg.model.cache_dir = "."
+        cfg.model.excluded_table_list = []
+        cfg.model.included_table_list = []
+        cfg.model.description = "test"
+        cfg.concurrency.max_workers = 4
+        cfg.snowflake = MagicMock()
+
+        ctx.config = cfg
+        ctx.project_id = "TEST_PROJECT"
+        ctx.run_id = str(uuid.uuid4())
+        return ctx
+
+    def test_extract_snowflake_model_scope_does_not_fallback_to_full_schema(self, monkeypatch):
+        engine = ExecutionEngine(db_manager=MagicMock())
+        ctx = self._make_snowflake_context()
+
+        monkeypatch.setattr(
+            engine,
+            "_resolve_snowflake_include_tables",
+            lambda _context: (["CONTINENT_SEMANTIC"], "source.models"),
+        )
+        monkeypatch.setattr(
+            engine,
+            "_resolve_snowflake_parallelism",
+            lambda _context: (False, 1),
+        )
+
+        class EmptyExtractor:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def extract_all(self, parallel=False, max_workers=1):
+                return {
+                    "database": "DB",
+                    "schema": "PUBLIC",
+                    "tables": {},
+                    "columns": {},
+                    "primary_keys": {},
+                    "foreign_keys": [],
+                }
+
+            def read_semantic_tables(self):
+                return {}
+
+        monkeypatch.setattr(
+            "semabridge.connectors.snowflake_extractor.SnowflakeExtractor",
+            EmptyExtractor,
+        )
+
+        with pytest.raises(Exception) as exc:
+            engine._extract_snowflake(ctx, dataset_id="CONTINENT_semantic")
+
+        assert "matched 0 tables" in str(exc.value)
+
+    def test_extract_snowflake_scopes_using_semantic_view_tables(self, monkeypatch):
+        engine = ExecutionEngine(db_manager=MagicMock())
+        ctx = self._make_snowflake_context()
+
+        monkeypatch.setattr(
+            engine,
+            "_resolve_snowflake_include_tables",
+            lambda _context: (None, None),
+        )
+        monkeypatch.setattr(
+            engine,
+            "_resolve_snowflake_parallelism",
+            lambda _context: (False, 1),
+        )
+
+        class ScopedExtractor:
+            init_include_tables: list = []
+
+            def __init__(self, *args, **kwargs):
+                ScopedExtractor.init_include_tables.append(kwargs.get("include_tables"))
+
+            def extract_semantic_view_ddl(self, _name: str) -> str:
+                return (
+                    'CREATE OR REPLACE SEMANTIC VIEW "DB"."PUBLIC"."CONTINENT_SEMANTIC" '
+                    'TABLES (F AS "DB"."PUBLIC"."FACT_SALES" PRIMARY KEY ("ID"))'
+                )
+
+            def extract_all(self, parallel=False, max_workers=1):
+                return {
+                    "database": "DB",
+                    "schema": "PUBLIC",
+                    "tables": {"FACT_SALES": {"description": "", "row_count": 1}},
+                    "columns": {
+                        "FACT_SALES": [
+                            {
+                                "name": "ID",
+                                "data_type": "NUMBER",
+                                "is_nullable": False,
+                                "ordinal_position": 1,
+                            }
+                        ]
+                    },
+                    "primary_keys": {"FACT_SALES": ["ID"]},
+                    "foreign_keys": [],
+                }
+
+            def read_semantic_tables(self):
+                return {}
+
+        monkeypatch.setattr(
+            "semabridge.connectors.snowflake_extractor.SnowflakeExtractor",
+            ScopedExtractor,
+        )
+
+        sf = engine._extract_snowflake(ctx, dataset_id="CONTINENT_semantic")
+
+        assert "FACT_SALES" in sf.tables
+        assert sf.semantic_view_name == "CONTINENT_semantic"
+        assert "SEMANTIC VIEW" in (sf.semantic_view_ddl or "")
+        assert ScopedExtractor.init_include_tables[1] == ["FACT_SALES"]
+
+    def test_convert_snowflake_prefers_semantic_view_conversion(self):
+        engine = ExecutionEngine(db_manager=MagicMock())
+
+        ctx = MagicMock()
+        ctx.project_id = "CONTINENT_semantic"
+        ctx.config.model.description = "test"
+        ctx.source_format = MagicMock()
+        ctx.source_format.semantic_view_ddl = "CREATE OR REPLACE SEMANTIC VIEW ..."
+        ctx.source_format.semantic_view_name = "CONTINENT_semantic"
+        ctx.source_format.columns = {}
+
+        osi_model = MagicMock()
+        sml_model = MagicMock()
+        sml_model.dataset_count = 2
+        sml_model.metric_count = 3
+
+        with patch(
+            "semabridge.converter.semantic_view_to_osi.SemanticViewToOSIConverter.to_osi",
+            return_value=osi_model,
+        ), patch(
+            "semabridge.converter.osi_to_sml.OSIToSMLConverter.from_osi",
+            return_value=sml_model,
+        ):
+            result = engine._convert_snowflake_to_sml(ctx)
+
+        assert result is sml_model
+        assert ctx.osi_model is osi_model
+
+
+class TestFabricWorkspaceResolution:
+    """Ensure Fabric source extraction uses valid workspace GUIDs when aliases are passed."""
+
+    def _make_fabric_context(self, configured_workspace: str) -> MagicMock:
+        ctx = MagicMock()
+        cfg = MagicMock()
+        cfg.fabric.workspace_id = configured_workspace
+        cfg.model.cache_enabled = False
+        ctx.config = cfg
+        ctx.behavior.features.offline_mode = False
+        ctx.behavior.features.offline_fabric_model_path = ""
+        ctx.project_id = "CONTINENT_SEMANTIC"
+        ctx.run_id = str(uuid.uuid4())
+        return ctx
+
+    def test_extract_fabric_alias_prefers_configured_guid(self):
+        engine = ExecutionEngine(db_manager=MagicMock())
+        configured_guid = "d875c0c3-59e9-4d55-a7f0-99595b756718"
+        ctx = self._make_fabric_context(configured_guid)
+
+        class StubExtractor:
+            seen_workspace_ids: list[str] = []
+
+            def __init__(self, fabric_config):
+                StubExtractor.seen_workspace_ids.append(fabric_config.workspace_id)
+
+            def resolve_model_id(self, dataset_id: str) -> str:
+                return dataset_id
+
+            def get_model_definition(self, _dataset_id: str):
+                return {"model": {"name": "CONTINENT_SEMANTIC", "tables": []}}
+
+            def get_table_row_counts(self, _dataset_id: str):
+                return {}
+
+        with patch(
+            "semabridge.repository.credential_manager.CredentialManager"
+        ) as mock_cm, patch(
+            "semabridge.connectors.fabric_extractor.FabricExtractor",
+            StubExtractor,
+        ):
+            cm = mock_cm.return_value
+            cm.get_credentials.return_value = {}
+            cm.get_msal_token.return_value = None
+            cm.get_fabric_auth_method.return_value = "none"
+            cm.has_valid_token.return_value = False
+
+            sf = engine._extract_fabric(
+                context=ctx,
+                dataset_id="CONTINENT_SEMANTIC",
+                workspace_id="semabridge-local",
+            )
+
+        assert StubExtractor.seen_workspace_ids[-1] == configured_guid
+        assert sf.workspace_id == configured_guid
+
+    def test_extract_fabric_alias_prefers_stored_credential_guid(self):
+        engine = ExecutionEngine(db_manager=MagicMock())
+        configured_alias = "semabridge-local"
+        stored_guid = "11111111-2222-3333-4444-555555555555"
+        ctx = self._make_fabric_context(configured_alias)
+
+        class StubExtractor:
+            seen_workspace_ids: list[str] = []
+
+            def __init__(self, fabric_config):
+                StubExtractor.seen_workspace_ids.append(fabric_config.workspace_id)
+
+            def resolve_model_id(self, dataset_id: str) -> str:
+                return dataset_id
+
+            def get_model_definition(self, _dataset_id: str):
+                return {"model": {"name": "CONTINENT_SEMANTIC", "tables": []}}
+
+            def get_table_row_counts(self, _dataset_id: str):
+                return {}
+
+        with patch(
+            "semabridge.repository.credential_manager.CredentialManager"
+        ) as mock_cm, patch(
+            "semabridge.connectors.fabric_extractor.FabricExtractor",
+            StubExtractor,
+        ):
+            cm = mock_cm.return_value
+            cm.get_credentials.return_value = {"workspace_id": stored_guid}
+            cm.get_msal_token.return_value = None
+            cm.get_fabric_auth_method.return_value = "none"
+            cm.has_valid_token.return_value = False
+
+            sf = engine._extract_fabric(
+                context=ctx,
+                dataset_id="CONTINENT_SEMANTIC",
+                workspace_id="semabridge-local",
+            )
+
+        assert StubExtractor.seen_workspace_ids[-1] == stored_guid
+        assert sf.workspace_id == stored_guid
