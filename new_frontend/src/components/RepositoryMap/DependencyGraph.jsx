@@ -9,6 +9,7 @@ import {
     Panel,
 } from '@xyflow/react';
 import { Loader2, Database } from 'lucide-react';
+import { useReactFlow } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
 
@@ -45,12 +46,13 @@ const tdStyle = {
 // ────────────────────────────────────────────
 // Dagre hierarchical layout
 // ────────────────────────────────────────────
-function applyDagreLayout(nodes, edges, direction = 'TB', opts = {}) {
+function applyDagreLayout(nodes, edges, direction = 'LR', opts = {}) {
+    // Use LR (left-to-right) for ER/table view for Power BI/dbdiagram style
     const {
-        nodeWidth = 240,
-        nodeHeight = 80,
-        nodeSep = 60,
-        rankSep = 100,
+        nodeWidth = 260,
+        nodeHeight = 110,
+        nodeSep = 120,
+        rankSep = 180,
     } = opts;
     const g = new dagre.graphlib.Graph();
     g.setDefaultEdgeLabel(() => ({}));
@@ -227,6 +229,7 @@ export default function DependencyGraph({
     snapshotId = null,
     diffMode = false,
 }) {
+    const { getNodes } = useReactFlow?.() || {};
     const [nodes, setNodes, onNodesChange] = useNodesState([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState([]);
     const [versionCounts, setVersionCounts] = useState({});
@@ -452,12 +455,16 @@ export default function DependencyGraph({
         const denseModelView = modelView && filteredNodes.length > 350;
         const denseTableView = tableView && filteredNodes.length > 260;
 
-        if (erMode) {
-            filteredNodes = applyERGridLayout(filteredNodes, filteredEdges);
+        if (erMode || tableView) {
+            // Use LR dagre for ER/table view for best readability
+            filteredNodes = applyDagreLayout(
+                filteredNodes,
+                filteredEdges,
+                'LR',
+                { nodeWidth: 260, nodeHeight: 110, nodeSep: 120, rankSep: 180 }
+            );
         } else if (modelView) {
             filteredNodes = applyModelGridLayout(filteredNodes, denseModelView);
-        } else if (tableView) {
-            filteredNodes = applyTableGridLayout(filteredNodes, filteredEdges);
         } else if (layout === 'hierarchical') {
             filteredNodes = applyDagreLayout(
                 filteredNodes,
@@ -622,55 +629,21 @@ export default function DependencyGraph({
                                     <th style={thStyle}>Schema</th>
                                     <th style={thStyle}>Columns</th>
                                     <th style={thStyle}>Rows</th>
-                                    <th style={thStyle}>Preview Columns</th>
+                                    <th style={thStyle}>Details</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {tableRows.map((n) => {
-                                    const d = n?.data || {};
+                                    const d = n.data || {};
                                     const columns = Array.isArray(d.columns) ? d.columns : [];
-                                    const rowCount = typeof d.row_count === 'number'
-                                        ? d.row_count
-                                        : Array.isArray(d.preview_rows)
-                                            ? d.preview_rows.length
-                                            : '-';
-                                    const previewCols = columns.slice(0, 6).map(c => c?.name || c).filter(Boolean).join(', ');
-
+                                    const rowCount = d.row_count || '-';
                                     return (
-                                        <tr
-                                            key={n.id}
-                                            style={{ cursor: 'pointer' }}
-                                        >
-                                            <td 
-                                                style={tdStyle}
-                                                onClick={() => onNodeClick?.({ ...d, id: n.id })}
-                                            >
-                                                {d.label || n.id}
-                                            </td>
-                                            <td 
-                                                style={tdStyle}
-                                                onClick={() => onNodeClick?.({ ...d, id: n.id })}
-                                            >
-                                                {d.model_label || d.model_name || d.model_id || '-'}
-                                            </td>
-                                            <td 
-                                                style={tdStyle}
-                                                onClick={() => onNodeClick?.({ ...d, id: n.id })}
-                                            >
-                                                {d.schema || 'PUBLIC'}
-                                            </td>
-                                            <td 
-                                                style={tdStyle}
-                                                onClick={() => onNodeClick?.({ ...d, id: n.id })}
-                                            >
-                                                {columns.length}
-                                            </td>
-                                            <td 
-                                                style={tdStyle}
-                                                onClick={() => onNodeClick?.({ ...d, id: n.id })}
-                                            >
-                                                {rowCount}
-                                            </td>
+                                        <tr key={n.id}>
+                                            <td style={tdStyle}>{d.label}</td>
+                                            <td style={tdStyle}>{d.model_label || d.model_name || d.model_id || '-'}</td>
+                                            <td style={tdStyle}>{d.schema || 'PUBLIC'}</td>
+                                            <td style={tdStyle}>{columns.length}</td>
+                                            <td style={tdStyle}>{rowCount}</td>
                                             <td style={{ ...tdStyle, color: 'var(--text-tertiary)' }}>
                                                 <details style={{ cursor: 'pointer' }}>
                                                     <summary style={{ userSelect: 'none', color: '#A5B4FC', fontWeight: 600 }}>
@@ -684,8 +657,8 @@ export default function DependencyGraph({
                                                             maxHeight: 300,
                                                             overflowY: 'auto',
                                                         }}>
-                                                            <table style={{ 
-                                                                width: '100%', 
+                                                            <table style={{
+                                                                width: '100%',
                                                                 borderCollapse: 'collapse',
                                                                 fontSize: 11,
                                                                 marginTop: 4,

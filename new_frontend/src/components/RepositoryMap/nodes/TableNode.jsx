@@ -4,6 +4,7 @@ import { Database } from 'lucide-react';
 /**
  * TableNode — green source-table node for the dependency graph.
  */
+
 export default function TableNode({ data, selected }) {
     const isBroken = data.status === 'broken';
     const diffStatus = data.diffStatus;
@@ -16,70 +17,107 @@ export default function TableNode({ data, selected }) {
             : Array.isArray(data.preview_rows)
                 ? data.preview_rows.length
                 : null;
+    // Color palette
     const borderColor =
-        diffStatus === 'added' ? '#22C55E'
-            : diffStatus === 'removed' ? '#EF4444'
-                : diffStatus === 'modified' ? '#EAB308'
-                    : isBroken ? '#EF4444' : selected ? '#4ADE80' : '#22C55E';
+        diffStatus === 'added' ? '#4ade80'
+            : diffStatus === 'removed' ? '#f87171'
+                : diffStatus === 'modified' ? '#eab308'
+                    : isBroken ? '#f87171' : selected ? '#6467f2' : '#334155';
+    const headerBg = isBroken ? '#f87171' : '#18181b';
+    const badgeBg = isBroken ? '#f87171' : '#22c55e';
+    const badgeColor = isBroken ? '#fff' : '#22c55e';
+    const shadow = selected ? '0 0 24px 0 #6467f2aa' : '0 2px 16px 0 #0006';
 
     return (
-        <div style={{
-            background: 'linear-gradient(135deg, #14432A 0%, #1E293B 100%)',
-            border: `2px solid ${borderColor}`,
-            borderRadius: compact ? 10 : 12,
-            padding: compact ? (dense ? '8px 10px' : '9px 12px') : '10px 14px',
-            minWidth: compact ? (dense ? 165 : 190) : 180,
-            boxShadow: selected
-                ? '0 0 20px rgba(34,197,94,.3)'
-                : '0 4px 16px rgba(0,0,0,.25)',
-            transition: 'box-shadow .2s, border-color .2s',
-            opacity: diffStatus === 'removed' ? 0.78 : 1,
-        }}>
+        <div
+            className="er-node"
+            style={{
+                background: '#0f172a',
+                border: `2px solid ${borderColor}`,
+                borderRadius: 12,
+                minWidth: 240,
+                maxWidth: 270,
+                boxShadow: shadow,
+                transition: 'box-shadow .2s, border-color .2s',
+                opacity: diffStatus === 'removed' ? 0.78 : 1,
+                userSelect: 'none',
+                overflow: 'hidden',
+                fontFamily: 'Inter, sans-serif',
+            }}
+        >
             {/* Header */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: compact ? 2 : 4 }}>
-                <Database size={compact ? 12 : 13} style={{ color: '#4ADE80' }} />
+            <div style={{
+                background: headerBg,
+                borderBottom: `1.5px solid ${badgeBg}33`,
+                padding: '10px 16px 8px 16px',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Database size={16} style={{ color: badgeBg, flexShrink: 0 }} />
+                    <span style={{
+                        fontWeight: 700, fontSize: 14, color: '#fff', letterSpacing: '.01em',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        maxWidth: 140,
+                    }}>{data.label}</span>
+                </div>
                 <span style={{
-                    fontSize: compact ? 11 : 12, fontWeight: 700, color: '#D1FAE5',
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    fontSize: 10, fontWeight: 700, background: badgeBg + '22', color: badgeColor,
+                    borderRadius: 6, padding: '2px 8px', border: `1px solid ${badgeBg}55`,
+                    textTransform: 'uppercase', letterSpacing: '.04em',
                 }}>
-                    {data.label}
+                    TABLE
                 </span>
             </div>
-
-            {/* Subtitle */}
-            <div style={{ fontSize: compact ? 9 : 10, color: '#86EFAC', opacity: .8 }}>
-                {data.schema || 'PUBLIC'} · {columnCount} cols{rowCount !== null ? ` · ${rowCount} rows` : ''}
+            {/* Schema/Meta */}
+            <div style={{
+                fontSize: 11, color: '#a5b4fc', background: '#18181b',
+                padding: '4px 16px', borderBottom: '1px solid #1e293b',
+                display: 'flex', alignItems: 'center', gap: 10,
+            }}>
+                <span style={{ color: '#38bdf8', fontWeight: 600 }}>{data.schema || 'PUBLIC'}</span>
+                <span style={{ color: '#64748b' }}>{columnCount} cols</span>
+                {rowCount !== null && <span style={{ color: '#64748b' }}>{rowCount} rows</span>}
             </div>
-
-            {data.columns && data.columns.length > 0 && (
-                <div style={{
-                    marginTop: compact ? 4 : 6, fontSize: compact ? 8 : 9, color: '#94A3B8',
-                    display: 'flex', flexWrap: 'wrap', gap: 3,
-                }}>
-                    {data.columns.slice(0, compact ? 5 : 6).map((col, i) => (
-                        <span key={i} style={{
-                            background: 'rgba(34,197,94,.12)',
-                            padding: '1px 6px',
-                            borderRadius: 4,
-                            border: '1px solid rgba(34,197,94,.2)',
-                        }}>
-                            {col.name}
-                        </span>
-                    ))}
-                    {data.columns.length > (compact ? 5 : 6) && (
-                        <span style={{ opacity: .5 }}>+{data.columns.length - (compact ? 5 : 6)}</span>
-                    )}
-                </div>
-            )}
-
+            {/* Columns List */}
+            <div style={{
+                padding: '8px 16px 10px 16px',
+                background: 'transparent',
+                fontSize: 11,
+                color: '#cbd5e1',
+                minHeight: 38,
+                display: 'flex', flexWrap: 'wrap', gap: 5,
+            }}>
+                {data.columns && data.columns.length > 0 ? (
+                    <>
+                        {data.columns.slice(0, 6).map((col, i) => (
+                            <span key={i} style={{
+                                background: '#18181b',
+                                color: '#22c55e',
+                                borderRadius: 4,
+                                border: '1px solid #22c55e33',
+                                padding: '2px 8px',
+                                fontWeight: 600,
+                                fontSize: 10,
+                                letterSpacing: '.01em',
+                            }}>{col.name}</span>
+                        ))}
+                        {data.columns.length > 6 && (
+                            <span style={{ color: '#64748b', fontWeight: 600, fontSize: 10 }}>+{data.columns.length - 6} more</span>
+                        )}
+                    </>
+                ) : (
+                    <span style={{ color: '#64748b', fontStyle: 'italic' }}>No columns</span>
+                )}
+            </div>
+            {/* Broken Table Warning */}
             {isBroken && (
                 <div style={{
-                    marginTop: 4, fontSize: 9, color: '#EF4444', fontWeight: 600,
+                    background: '#f87171', color: '#fff', fontWeight: 700,
+                    fontSize: 11, padding: '6px 0', textAlign: 'center',
                 }}>
                     ⚠ Table not found
                 </div>
             )}
-
             <Handle type="source" position={Position.Bottom} style={handleStyle} />
             <Handle type="target" position={Position.Top} style={handleStyle} />
         </div>

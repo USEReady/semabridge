@@ -9,8 +9,10 @@ import {
 import { api } from '../../utils/api';
 import FileTreePanel from './FileTreePanel';
 import DependencyGraph from './DependencyGraph';
+import dagre from 'dagre';
 import DetailPanel from './DetailPanel';
 import ModelDataPanel from './ModelDataPanel';
+import { ReactFlowProvider } from '@xyflow/react';
 
 const EXPLORE_UI_PREFS_KEY = 'semabridge:explore-ui-prefs';
 
@@ -344,14 +346,94 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         { id: 'broken', label: 'Broken Refs' },
     ];
 
+    // --- FULL SCREEN STATE ---
+    const [fullScreen, setFullScreen] = useState(false);
+
+    // --- DAGRE LAYOUT FOR CLEAN RELATIONSHIP DIAGRAM ---
+    const getDagreLayoutedGraph = (rawGraph) => {
+        const g = new dagre.graphlib.Graph();
+        g.setDefaultEdgeLabel(() => ({}));
+        // Layout direction: TB (top-bottom) or LR (left-right)
+        const direction = 'LR';
+        g.setGraph({ rankdir: direction, nodesep: 80, ranksep: 120, edgesep: 40 });
+
+        // Assign rank for hierarchy: model=0, table=1, measure=2
+        const nodeRanks = { model: 0, table: 1, measure: 2 };
+        // Group nodes by model for visual clustering
+        const modelGroups = {};
+
+        (rawGraph.nodes || []).forEach((node) => {
+            const type = String(node?.type || node?.data?.nodeType || '').toLowerCase();
+            const nodeType = type.includes('model') ? 'model' : type.includes('table') ? 'table' : type.includes('measure') ? 'measure' : 'other';
+            // Default node size (width, height)
+            let width = 180, height = 60;
+            if (nodeType === 'model') height = 70;
+            if (nodeType === 'measure') height = 50;
+            g.setNode(node.id, { ...node, width, height, rank: nodeRanks[nodeType] ?? 1 });
+            // Group by model for later offset
+            const modelId = node?.data?.model_id || node.id;
+            if (!modelGroups[modelId]) modelGroups[modelId] = [];
+            modelGroups[modelId].push(node.id);
+        });
+        (rawGraph.edges || []).forEach((edge) => {
+            g.setEdge(edge.source, edge.target, { ...edge });
+        });
+
+        dagre.layout(g);
+
+        // Apply dagre-calculated positions, then offset by model group for visual clustering
+        const modelOffsets = {};
+        let groupIdx = 0;
+        const groupSpacing = 320; // space between model clusters
+        Object.keys(modelGroups).forEach((modelId) => {
+            modelOffsets[modelId] = groupIdx * groupSpacing;
+            groupIdx++;
+        });
+
+        const nodes = (rawGraph.nodes || []).map((node) => {
+            const dagreNode = g.node(node.id);
+            const modelId = node?.data?.model_id || node.id;
+            // Offset x by model group for visual grouping
+            const offsetX = modelOffsets[modelId] || 0;
+            return {
+                ...node,
+                position: {
+                    x: (dagreNode?.x || 0) + offsetX,
+                    y: dagreNode?.y || 0,
+                },
+                // For React Flow, must set positionAbsolute for deterministic layout
+                positionAbsolute: {
+                    x: (dagreNode?.x || 0) + offsetX,
+                    y: dagreNode?.y || 0,
+                },
+                // Optionally, lock nodes to prevent drag (optional)
+                draggable: false,
+            };
+        });
+        // Edges: force type 'step' for orthogonal routing
+        const edges = (rawGraph.edges || []).map((edge) => ({
+            ...edge,
+            type: 'step',
+        }));
+        return { ...rawGraph, nodes, edges };
+    };
+
     const renderedGraphData = useMemo(() => {
-        if (!diffMode) return graphData;
-        const styled = diffReport?.styled_graph;
-        if (styled && Array.isArray(styled.nodes) && styled.nodes.length > 0) {
-            return normalizeGraphPayload(styled);
+        // Use diff graph if in diff mode
+        let baseGraph = graphData;
+        if (diffMode) {
+            const styled = diffReport?.styled_graph;
+            if (styled && Array.isArray(styled.nodes) && styled.nodes.length > 0) {
+                baseGraph = normalizeGraphPayload(styled);
+            }
         }
-        return graphData;
-    }, [diffMode, diffReport, graphData]);
+        // Only apply dagre layout in ER mode (relationship view)
+        if (erMode && baseGraph.nodes && baseGraph.nodes.length > 0) {
+            return getDagreLayoutedGraph(baseGraph);
+        }
+        // For non-ER mode, keep original positions (e.g., force layout)
+        return baseGraph;
+    }, [diffMode, diffReport, graphData, erMode]);
 
     const modelOptions = useMemo(() => {
         const nodes = Array.isArray(renderedGraphData?.nodes) ? renderedGraphData.nodes : [];
@@ -782,22 +864,84 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                 )}
 
                 {/* Dependency Graph */}
-                <div style={{ flex: 1, position: 'relative' }}>
-                    <DependencyGraph
-                        graphData={renderedGraphData}
-                        layout={layout}
-                        erMode={erMode}
-                        selectedModelId={selectedModelId}
-                        selectedTableId={selectedTableId}
-                        searchQuery={searchQuery}
-                        filterType={filterType}
-                        showVersionBadges={showVersionBadges}
-                        onNodeClick={handleNodeClick}
-                        isLoading={loading}
-                        snapshotId={snapshotId}
-                        diffMode={diffMode}
-                    />
-                </div>
+                {/* Full Screen Relationship Diagram (ER/Table View) */}
+                {(erMode || filterType === 'tables') && fullScreen && (
+                    <div style={{
+                        position: 'fixed',
+                        top: 0, left: 0, right: 0, bottom: 0,
+                        background: 'var(--bg-app)',
+                        zIndex: 2000,
+                        display: 'flex', flexDirection: 'column',
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 20px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border-color)' }}>
+                            <span style={{ fontWeight: 700, fontSize: 15, color: '#818CF8' }}>Model Relationship Explorer (Full Screen)</span>
+                            <button onClick={() => setFullScreen(false)} style={{ ...iconBtnStyle, fontSize: 18, color: '#EF4444', border: '1px solid #EF4444', borderRadius: 6, padding: '4px 12px', fontWeight: 700 }}>Exit Full Screen ✕</button>
+                        </div>
+                        <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+                            <ReactFlowProvider>
+                                <DependencyGraph
+                                    graphData={renderedGraphData}
+                                    layout={layout}
+                                    erMode={erMode}
+                                    selectedModelId={selectedModelId}
+                                    selectedTableId={selectedTableId}
+                                    searchQuery={searchQuery}
+                                    filterType={filterType}
+                                    showVersionBadges={showVersionBadges}
+                                    onNodeClick={handleNodeClick}
+                                    isLoading={loading}
+                                    snapshotId={snapshotId}
+                                    diffMode={diffMode}
+                                    defaultEdgeOptions={{ type: 'step' }}
+                                    // Pass a prop to enable zoom/pan/minimap in full screen
+                                    fullScreenMode={true}
+                                />
+                            </ReactFlowProvider>
+                        </div>
+                    </div>
+                )}
+                {/* Normal (non-fullscreen) diagram */}
+                {!(erMode || filterType === 'tables') || !fullScreen ? (
+                    <div style={{ flex: 1, position: 'relative' }}>
+                        <ReactFlowProvider>
+                          <DependencyGraph
+                              graphData={renderedGraphData}
+                              layout={layout}
+                              erMode={erMode}
+                              selectedModelId={selectedModelId}
+                              selectedTableId={selectedTableId}
+                              searchQuery={searchQuery}
+                              filterType={filterType}
+                              showVersionBadges={showVersionBadges}
+                              onNodeClick={handleNodeClick}
+                              isLoading={loading}
+                              snapshotId={snapshotId}
+                              diffMode={diffMode}
+                              defaultEdgeOptions={{ type: 'step' }}
+                              fullScreenMode={false}
+                          />
+                        </ReactFlowProvider>
+                        {/* Full Screen Toggle Button (only in ER/Table view) */}
+                        {(erMode || filterType === 'tables') && (
+                            <button
+                                onClick={() => setFullScreen(true)}
+                                title="Full Screen Relationship Diagram"
+                                style={{
+                                    position: 'absolute',
+                                    top: 18, right: 18, zIndex: 100,
+                                    background: '#18181b', color: '#fff',
+                                    border: '1px solid #818CF8', borderRadius: 8,
+                                    padding: '7px 18px', fontWeight: 700, fontSize: 15,
+                                    boxShadow: '0 2px 8px rgba(0,0,0,.18)',
+                                    cursor: 'pointer',
+                                    opacity: 0.92,
+                                }}
+                            >
+                                ⛶ Full Screen
+                            </button>
+                        )}
+                    </div>
+                ) : null}
 
                 {/* Detail / Preview Panel - Modal Overlay */}
                 {showDetail && !workbenchOpen && (
