@@ -2,9 +2,10 @@ import { useState, useRef, useEffect } from 'react';
 import { ChevronDown, Building2, Check, Loader2 } from 'lucide-react';
 import { useWorkspace } from '../context/WorkspaceContext';
 
-export default function WorkspaceSelector() {
+
     const { workspaces, activeWorkspaceId, activeWorkspace, selectWorkspace, isLoading } = useWorkspace();
     const [isOpen, setIsOpen] = useState(false);
+    const [error, setError] = useState(null);
     const ref = useRef(null);
 
     // Close on outside click
@@ -15,6 +16,15 @@ export default function WorkspaceSelector() {
         document.addEventListener('mousedown', handler);
         return () => document.removeEventListener('mousedown', handler);
     }, []);
+
+    // Watch for empty or error state
+    useEffect(() => {
+        if (!isLoading && workspaces.length === 0) {
+            setError('No Fabric workspaces found for the selected account.\nCheck your account permissions or try re-authenticating.');
+        } else {
+            setError(null);
+        }
+    }, [isLoading, workspaces]);
 
     return (
         <div ref={ref} className="relative">
@@ -34,7 +44,15 @@ export default function WorkspaceSelector() {
                 <ChevronDown size={10} className={`text-tertiary transition-transform ${isOpen ? 'rotate-180' : ''}`} />
             </button>
 
-            {isOpen && (
+            {/* Error or empty state banner */}
+            {error && !isLoading && (
+                <div className="absolute left-0 mt-2 w-72 bg-red-50 border border-red-300 text-red-700 rounded-xl shadow-lg p-3 z-50 text-xs">
+                    <strong>Workspace Error:</strong>
+                    <div className="mt-1 whitespace-pre-line">{error}</div>
+                </div>
+            )}
+
+            {isOpen && !error && (
                 <div className="absolute top-full left-0 mt-1 w-72 bg-surface border border-main rounded-xl shadow-2xl z-50 overflow-hidden animate-in slide-in-from-top-1 duration-150">
                     <div className="px-3 py-2 border-b border-main">
                         <p className="text-[10px] font-bold uppercase tracking-wider text-tertiary">Select Workspace</p>

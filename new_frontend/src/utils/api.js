@@ -87,7 +87,15 @@ function getAuthHeaders() {
 
 async function handleResponse(res) {
     if (res.status === 401) {
-        // Token expired or invalid â€” clear it so the UI shows login
+        try {
+            const cloned = res.clone();
+            const data = await cloned.json();
+            if (data?.error === 'reauth_required' || data?.detail?.error === 'reauth_required') {
+                return data.detail || data;
+            }
+        } catch(e) {}
+        
+        // Token expired or invalid — clear it so the UI shows login
         localStorage.removeItem(TOKEN_KEY);
         window.dispatchEvent(new Event('semabridge:auth-expired'));
     }
@@ -108,6 +116,55 @@ async function authFetch(url, options = {}) {
 }
 
 export const api = {
+    // ── Auth & Identity Vault ──────────────────────────────────────────────
+    async getAccounts(connectorType = '') {
+        const query = connectorType ? `?connector_type=${encodeURIComponent(connectorType)}` : '';
+        const res = await authFetch(`${API_BASE_URL}/accounts${query}`);
+        return handleResponse(res);
+    },
+
+    async createAccount(payload) {
+        const res = await authFetch(`${API_BASE_URL}/accounts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        return handleResponse(res);
+    },
+
+    async deleteAccount(accountId) {
+        const res = await authFetch(`${API_BASE_URL}/accounts/${accountId}`, {
+            method: 'DELETE'
+        });
+        if (res.status === 204) return null;
+        return handleResponse(res);
+    },
+
+    async updateAccountTag(accountId, tag) {
+        const res = await authFetch(`${API_BASE_URL}/accounts/${accountId}/tag`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tag })
+        });
+        return handleResponse(res);
+    },
+
+    async setDefaultAccount(accountId) {
+        const res = await authFetch(`${API_BASE_URL}/accounts/${accountId}/default`, {
+            method: 'PATCH',
+        });
+        return handleResponse(res);
+    },
+
+    async linkProjectAccount(projectId, payload) {
+        const res = await authFetch(`${API_BASE_URL}/accounts/project/${projectId}/link-account`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        return handleResponse(res);
+    },
+
     async getHealth() {
         const res = await authFetch(`${API_BASE_URL}/health`);
         return handleResponse(res);
@@ -739,9 +796,9 @@ export const api = {
     // ── Discovery ─────────────────────────────────────────────────────────
 
     async discoverFabricWorkspaces() {
-        const res = await authFetch(`${API_BASE_URL}/discovery/fabric/workspaces`);
+        const res = await authFetch(`${API_BASE_URL}/connections/fabric/workspaces`);
         const data = await handleResponse(res);
-        return (data || []).map(normalizeWorkspace);
+        return (data.workspaces || data || []).map(normalizeWorkspace);
     },
 
     async discoverFabricModels(workspaceId) {
@@ -814,6 +871,30 @@ export const api = {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
+        });
+        return handleResponse(res);
+    },
+
+    // ── Fabric Workspace helpers ──────────────────────────────────────────
+
+    /**
+     * Returns the workspace_id and workspace_name that were previously saved
+     * via the Settings → Connections page. Used to pre-populate the project
+     * wizard without requiring the user to re-select the same workspace.
+     */
+    async getFabricDefaultWorkspace() {
+        const res = await authFetch(`${API_BASE_URL}/connections/fabric/default-workspace`);
+        return handleResponse(res);
+    },
+
+    /**
+     * Persist a workspace selection globally (mirrors the Settings flow).
+     */
+    async selectFabricWorkspace({ workspace_id, workspace_name = '' }) {
+        const res = await authFetch(`${API_BASE_URL}/connections/fabric/select-workspace`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ workspace_id, workspace_name }),
         });
         return handleResponse(res);
     },

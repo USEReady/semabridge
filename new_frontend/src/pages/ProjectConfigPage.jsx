@@ -6,7 +6,7 @@ import CodeMirror from '@uiw/react-codemirror';
 import { yaml as yamlLang } from '@codemirror/lang-yaml';
 
 import GlobalConfigModal from '../components/projects/GlobalConfigModal';
-import PreSyncSummary from '../components/projects/PreSyncSummary';
+
 import SearchableSelect from '../components/common/SearchableSelect';
 import { useTheme } from '../context/ThemeProvider';
 import { useLogs } from '../context/LogsContext';
@@ -449,6 +449,10 @@ export default function ProjectConfigPage() {
       } else if (status === 'success') {
         addLog('success', 'Sync', 'Sync completed successfully.');
         setSaveInfo('Sync completed successfully.');
+        // Fallback: force progress bar to 100% and status to 'success'
+        if (typeof window !== 'undefined' && window.dispatchEvent) {
+          window.dispatchEvent(new CustomEvent('semabridge-sync-fallback', { detail: { projectId: id, status: 'success', progress: 100 } }));
+        }
       } else if (status === 'warning' || status === 'partial') {
         addLog('warning', 'Sync', `Sync completed with warnings${run?.error ? `: ${run.error}` : ''}`);
         setSaveInfo('Sync completed with warnings. Check logs for details.');
@@ -632,7 +636,7 @@ export default function ProjectConfigPage() {
       </div>
 
       <div style={{ padding: '14px 28px', borderTop: '1px solid var(--border-main)' }}>
-        <PreSyncSummary config={effectiveConfig} projectName={project?.name} />
+
       </div>
 
       <div style={{ padding: '14px 28px', borderTop: '1px solid var(--border-main)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
@@ -682,7 +686,6 @@ function FormEditor({ value, onChange }) {
           <option value="atscale">AtScale</option>
           <option value="osi">OSI (Open Semantic Interchange)</option>
           <option value="sml">SML</option>
-          <option value="dax">DAX</option>
         </select>
       </div>
 

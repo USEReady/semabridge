@@ -27,6 +27,7 @@ function extractRunError(run) {
 }
 
 export default function StatusBar() {
+    // Remove showSyncBar, always render the bar
     const [connected, setConnected] = useState(false);
     const { wsConnected, addLog } = useLogs();
     const seenStatusRef = useRef(new Map());
@@ -37,6 +38,8 @@ export default function StatusBar() {
         indeterminate,
         warning,
     } = useProjectSync();
+
+    // No-op: always show the bar, only sync status is conditional
 
     // Replicating PyQt ProgressBar behavior + Health Checking
     useEffect(() => {
@@ -75,23 +78,40 @@ export default function StatusBar() {
         });
     }, [runs, addLog]);
 
-    const isSyncing = currentSyncStatus === 'running' && currentSyncId;
 
-    const latestCompletedRun = runs.find((run) => {
+    const latestSuccessfulRun = runs.find((run) => {
         const status = String(run?.status || '').toLowerCase();
-        return status && status !== 'running';
+        return status === 'success';
     });
 
-    const lastSyncTimestamp = latestCompletedRun?.completed_at || latestCompletedRun?.started_at;
-    const lastSyncLabel = lastSyncTimestamp
-        ? new Date(lastSyncTimestamp).toLocaleString()
-        : 'Never';
+    let lastSyncLabel = 'Never';
+    if (latestSuccessfulRun) {
+        const ts = latestSuccessfulRun.completed_at || latestSuccessfulRun.started_at;
+        if (ts) {
+            const dateStr = ts.includes('Z') || ts.includes('+') ? ts : `${ts}Z`;
+            const d = new Date(dateStr);
+            if (!isNaN(d.getTime())) {
+                lastSyncLabel = d.toLocaleString('en-IN', {
+                    timeZone: 'Asia/Kolkata',
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: true
+                });
+            }
+        }
+    }
 
-    // TASK 2 & 3: Guard progress and disable transitions for starting state
+
     const safeProgress = progress ?? 0;
+    const isSyncing = (currentSyncStatus === 'running' || currentSyncStatus === 'starting' || currentSyncStatus === 'pending') && currentSyncId;
     const isStarting = safeProgress < 5;
     const transitionStyle = isStarting ? 'none' : 'width 1s linear';
 
+    // The bar is always visible; only the sync progress section is conditional
     return (
         <footer
             className="theme-transition flex items-center justify-between px-4 h-8 shrink-0 text-[11px] select-none"
@@ -119,15 +139,7 @@ export default function StatusBar() {
                     </span>
                 </div>
 
-                <div className="w-px h-3.5 bg-white/5" />
 
-                <div className="flex items-center gap-1">
-                    <Radio size={11} className={wsConnected ? 'text-emerald-400' : 'text-slate-500'} />
-                    <span>Alerts:</span>
-                    <span className={`font-bold uppercase text-[9px] ${wsConnected ? 'text-emerald-500' : 'text-amber-500'}`}>
-                        {wsConnected ? 'LIVE' : 'OFF'}
-                    </span>
-                </div>
 
                 {isSyncing && (
                     <div className="flex items-center gap-3 ml-4">
@@ -135,18 +147,6 @@ export default function StatusBar() {
                             <RefreshCw size={11} className="animate-spin" />
                             Sync in progress
                         </span>
-                        <div className="w-32 h-1.5 bg-indigo-500/10 rounded-full overflow-hidden border border-white/5">
-                            <div
-                                className={indeterminate ? 'h-full sync-progress-zebra' : 'h-full bg-indigo-500'}
-                                data-is-starting={isStarting}
-                                style={{
-                                    width: `${safeProgress}%`,
-                                    transition: transitionStyle,
-                                }}
-                            />
-                        </div>
-                        <span className="text-indigo-400 font-mono w-8">{safeProgress}%</span>
-                        {warning && <span className="text-amber-400">{warning}</span>}
                     </div>
                 )}
             </div>

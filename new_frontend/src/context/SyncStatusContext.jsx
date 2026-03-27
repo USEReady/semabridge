@@ -55,8 +55,20 @@ export function SyncStatusProvider({ children }) {
 
   useEffect(() => {
     let disposed = false;
+    let timeoutId;
+
+    // Listen for fallback event from sync POST
+    function handleFallback(e) {
+      const { projectId, status, progress } = e.detail || {};
+      if (projectId && (status === 'success' || progress === 100)) {
+        setCurrentProgress(100);
+        setCurrentSyncStatus('success');
+      }
+    }
+    window.addEventListener('semabridge-sync-fallback', handleFallback);
 
     const poll = async () => {
+      if (disposed) return;
       try {
         const data = await api.listJobRuns();
         if (disposed) return;
@@ -87,18 +99,29 @@ export function SyncStatusProvider({ children }) {
           return shallowEqualObject(prev, merged) ? prev : merged;
         });
 
-        const activeRun = runList.find((r) => normalizeStatus(r?.status) === 'running') || null;
+        // Fallback: if any run is success/completed, force progress to 100%
+        const completedRun = runList.find((r) => normalizeStatus(r?.status) === 'success');
+        if (completedRun) {
+          setCurrentProgress(100);
+          setCurrentSyncStatus('success');
+        }
+
+        // Only consider a run as active if it started less than 1 hour ago
+        const now = Date.now();
+        const activeRun = runList.find((r) => {
+          if (normalizeStatus(r?.status) !== 'running') return false;
+          const started = r?.started_at ? new Date(r.started_at).getTime() : 0;
+          // If no started_at, treat as active (legacy safety)
+          if (!started) return true;
+          // 1 hour = 3600000 ms
+          return (now - started) < 3600000;
+        }) || null;
         if (!activeRun) {
-          // Sync has completed or stopped
           setCurrentSyncStatus((prev) => (prev === 'draft' ? prev : 'draft'));
-          
-          // Clear any pending completion timeout
           if (completionTimeoutRef.current) {
             clearTimeout(completionTimeoutRef.current);
             completionTimeoutRef.current = null;
           }
-          
-          // Wait 2 seconds before clearing sync ID to let user see 100%
           if (currentSyncId) {
             completionTimeoutRef.current = setTimeout(() => {
               setCurrentSyncId((prev) => (prev === '' ? prev : ''));
@@ -113,7 +136,6 @@ export function SyncStatusProvider({ children }) {
             realProgressRef.current = 0;
             previousSyncIdRef.current = '';
           }
-          
           lastRealChangeAtRef.current = Date.now();
           setIndeterminate((prev) => (prev ? false : prev));
           setWarning((prev) => (prev ? '' : prev));
@@ -123,13 +145,11 @@ export function SyncStatusProvider({ children }) {
         const pid = String(activeRun?.project_id || '');
         const realProgress = deriveProgressFromRun(activeRun);
 
-        // Clear any pending completion timeout if sync restarts
         if (completionTimeoutRef.current) {
           clearTimeout(completionTimeoutRef.current);
           completionTimeoutRef.current = null;
         }
 
-        // TASK 1: Detect new sync start and reset progress to 0
         if (pid !== previousSyncIdRef.current) {
           previousSyncIdRef.current = pid;
           setCurrentProgress((prev) => (prev === 0 ? prev : 0));
@@ -165,30 +185,46 @@ export function SyncStatusProvider({ children }) {
               });
             }
           }
-        } catch {
-          // Ignore transient project poll failures.
-        }
+        } catch {}
 
         const stalledMs = Date.now() - lastRealChangeAtRef.current;
         if (stalledMs > 60000) {
           setIndeterminate((prev) => (prev ? prev : true));
           setWarning((prev) => (prev === 'Sync is taking longer than expected...' ? prev : 'Sync is taking longer than expected...'));
         }
+
+        // Recursive polling: only schedule next poll after this one finishes
+        if (!disposed && (activeRun || !completedRun)) {
+          timeoutId = setTimeout(poll, 1000);
+        }
       } catch {
         // Keep previous values on transient poll errors.
+        if (!disposed) {
+          timeoutId = setTimeout(poll, 2000);
+        }
       }
     };
 
     poll();
-    const timer = setInterval(poll, 3000);
     return () => {
       disposed = true;
-      clearInterval(timer);
+      clearTimeout(timeoutId);
       if (completionTimeoutRef.current) {
         clearTimeout(completionTimeoutRef.current);
       }
+      window.removeEventListener('semabridge-sync-fallback', handleFallback);
     };
   }, []);
+
+  // Completion watcher: when progress hits 100, force status to 'success' after a short delay
+  useEffect(() => {
+    if (currentProgress === 100) {
+      const timer = setTimeout(() => {
+        setCurrentSyncStatus('success');
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [currentProgress]);
 
   useEffect(() => {
     if (currentSyncStatus !== 'running') return undefined;

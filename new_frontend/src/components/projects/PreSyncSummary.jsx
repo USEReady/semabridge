@@ -31,11 +31,15 @@ export default function PreSyncSummary({ config, projectName }) {
     const checkToken = async () => {
       setTokenLoading(true);
       try {
-        const result = await api.post('/api/config/validate-live', {
-          source_type: config?.source?.type,
-          workspace_id: config?.source?.workspace_id,
+        const response = await fetch('/api/config/validate-live', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            source_type: config?.source?.type,
+            workspace_id: config?.source?.workspace_id,
+          }),
         });
-        
+        const result = await response.json();
         const hasTokenError = result?.errors?.some(
           e => e.message && (e.message.includes('401') || e.message.includes('expired'))
         );

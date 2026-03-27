@@ -11,7 +11,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, ArrowRight, Check, X, Loader2,
-  ChevronDown, ChevronRight, CheckSquare, Square,
+  ChevronDown, ChevronRight, CheckSquare, Square, RefreshCw
 } from 'lucide-react';
 import { api } from '../utils/api';
 import { useHPSearch } from '../hooks/useHPSearch';
@@ -43,7 +43,6 @@ const INTERMEDIATE_FORMAT_TYPES = [
   { value: 'atscale', label: 'AtScale' },
   { value: 'osi', label: 'OSI (Open Semantic Interchange)' },
   { value: 'sml', label: 'SML' },
-  { value: 'dax', label: 'DAX' },
 ];
 
 const INPUT = {
@@ -88,6 +87,17 @@ export default function CreateProjectPage() {
   const [domainHint, setDomainHint] = useState('');
   const [modelQueryRegex, setModelQueryRegex] = useState(false);
 
+  // Global default workspace from Settings — fetched once on mount.
+  // This is the workspace the user saved in Settings → Connections.
+  const [globalDefaultWorkspaceId, setGlobalDefaultWorkspaceId] = useState('');
+  const [globalDefaultWorkspaceName, setGlobalDefaultWorkspaceName] = useState('');
+  const [workspaceManuallySet, setWorkspaceManuallySet] = useState(false);
+  // Workspace list returned by the backend's smart auto-detect (Tier 3).
+  // Used to populate the dropdown when the useWorkspace() hook hasn't loaded yet.
+  const [allWorkspacesFromApi, setAllWorkspacesFromApi] = useState([]);
+  // The workspace the backend recommends for this session (source: auto/saved/config).
+  const [sessionWorkspaceId, setSessionWorkspaceId] = useState('');
+
   // Step 3
   const [workspaces, setWorkspaces] = useState([]);
   const [wsLoading, setWsLoading] = useState(false);
@@ -122,12 +132,112 @@ export default function CreateProjectPage() {
     .map(modelKey => selectedModelNameByKey[modelKey])
     .filter(Boolean);
 
-  useEffect(() => {
-    if (sourceConnector !== 'fabric' || fabricWorkspaceId) return;
+  const [isRefreshingWorkspaces, setIsRefreshingWorkspaces] = useState(false);
 
-    const fallbackWorkspaceId = activeWorkspaceId || availableWorkspaces[0]?.id || '';
-    if (fallbackWorkspaceId) setFabricWorkspaceId(fallbackWorkspaceId);
-  }, [sourceConnector, fabricWorkspaceId, activeWorkspaceId, availableWorkspaces]);
+  const fetchFabricWorkspaces = useCallback(async () => {
+    setIsRefreshingWorkspaces(true);
+    try {
+      const data = await api.getFabricDefaultWorkspace();
+      console.log('[SemaBridge] getFabricDefaultWorkspace raw response:', data);
+      if (data?.workspace_id) {
+        setGlobalDefaultWorkspaceId(data.workspace_id);
+        setGlobalDefaultWorkspaceName(data.workspace_name || '');
+        setSessionWorkspaceId(data.workspace_id);
+      }
+      const apiWorkspaces = (data?.all_workspaces || []).map(ws => ({
+        id: ws.id,
+        name: ws.name,
+        displayName: ws.name,
+        type: ws.type,
+      }));
+      console.log('[SemaBridge] Resolved workspace list:', apiWorkspaces);
+      if (apiWorkspaces.length > 0) {
+        setAllWorkspacesFromApi(apiWorkspaces);
+        // Purge stale localStorage key if the stored ID is no longer in the live list
+        const storedId = localStorage.getItem('semabridge_workspace_id');
+        if (storedId && !apiWorkspaces.some(w => w.id === storedId)) {
+          console.warn('[SemaBridge] Purging stale workspace from localStorage:', storedId);
+          localStorage.removeItem('semabridge_workspace_id');
+        }
+      }
+    } catch {
+      // silently ignore
+    } finally {
+      setIsRefreshingWorkspaces(false);
+    }
+  }, []);
+
+  // Fetch the global default workspace once on mount.
+  useEffect(() => {
+    fetchFabricWorkspaces();
+  }, [fetchFabricWorkspaces]);
+
+  // Re-fetch workspaces whenever entering Step 2
+  useEffect(() => {
+    if (step === 2 && sourceConnector === 'fabric') {
+      fetchFabricWorkspaces();
+    }
+  }, [step, sourceConnector, fetchFabricWorkspaces]);
+
+  // Auto-populate the workspace dropdown on step 2 when Fabric is the source.
+  // Priority: manual override > active session exact match > 'semabridge' name > global default > generic fallback.
+  useEffect(() => {
+    if (sourceConnector !== 'fabric') return;
+    if (workspaceManuallySet) return; // user made an explicit choice — never reset
+
+    // Combine both lists; prioritize availableWorkspaces (richer metadata)
+    const liveList = availableWorkspaces.length > 0 ? availableWorkspaces : allWorkspacesFromApi;
+
+    // Don't run if we have no live data yet
+    if (liveList.length === 0) return;
+
+    // If current selection is in the live list, keep it — no re-selection needed
+    if (fabricWorkspaceId && liveList.some(ws => ws.id === fabricWorkspaceId)) return;
+
+    // 1. Strict case-sensitive name match against session workspace name
+    const activeWsName = (globalDefaultWorkspaceName || '').trim();
+    const sessionMatch = liveList.find(ws =>
+      ws.id === sessionWorkspaceId ||
+      (activeWsName && ws.name?.trim() === activeWsName)
+    );
+
+    // 2. Project-named workspace ('semabridge')
+    const semabridgeWs = liveList.find(ws => ws.name?.toLowerCase() === 'semabridge');
+
+    // 3. Any non-personal workspace (exclude 'My workspace')
+    const nonPersonal = liveList.find(ws => ws.name !== 'My workspace');
+
+    const preferred =
+      sessionMatch?.id ||
+      semabridgeWs?.id ||
+      globalDefaultWorkspaceId ||
+      nonPersonal?.id ||
+      liveList[0]?.id ||
+      '';
+
+    if (preferred) {
+      console.log('[SemaBridge] Auto-selecting workspace:', preferred);
+      setFabricWorkspaceId(preferred);
+    }
+  }, [sourceConnector, fabricWorkspaceId, workspaceManuallySet, sessionWorkspaceId,
+      globalDefaultWorkspaceName, globalDefaultWorkspaceId, availableWorkspaces, allWorkspacesFromApi]);
+
+  // Ghost-purge: if the current selection no longer exists in the live list, force-clear it
+  // so the auto-select above can immediately re-run and pick the correct workspace.
+  // This eliminates the "Primary Workspace" zombie that was persisted in localStorage.
+  useEffect(() => {
+    if (!fabricWorkspaceId) return;
+    const liveList = availableWorkspaces.length > 0 ? availableWorkspaces : allWorkspacesFromApi;
+    if (liveList.length === 0) return; // don't clear before we have data
+    const stillExists = liveList.some(ws => ws.id === fabricWorkspaceId);
+    if (!stillExists) {
+      console.warn('[SemaBridge] Ghost workspace detected — force-clearing:', fabricWorkspaceId);
+      setFabricWorkspaceId('');
+      setWorkspaceManuallySet(false);
+      localStorage.removeItem('semabridge_workspace_id');
+    }
+  }, [fabricWorkspaceId, availableWorkspaces, allWorkspacesFromApi]);
+
 
   useEffect(() => {
     if (!sourceConnector) return;
@@ -147,6 +257,17 @@ export default function CreateProjectPage() {
     setModelQuery('');
   }, [fabricWorkspaceId, sourceConnector, setModelQuery]);
 
+
+  // Defensive: auto-select first available workspace if missing after loading
+  useEffect(() => {
+    if (step === 3 && sourceConnector === 'fabric' && !fabricWorkspaceId && !wsLoading) {
+      const liveList = availableWorkspaces.length > 0 ? availableWorkspaces : allWorkspacesFromApi;
+      if (liveList.length > 0) {
+        setFabricWorkspaceId(liveList[0].id);
+      }
+    }
+  }, [step, sourceConnector, fabricWorkspaceId, wsLoading, availableWorkspaces, allWorkspacesFromApi]);
+
   /* ─── Load selected Fabric workspace models on step 3 ─── */
   useEffect(() => {
     if (step !== 3) return;
@@ -161,9 +282,18 @@ export default function CreateProjectPage() {
       setWorkspaces([workspace]);
       setExpandedWs(prev => ({ ...prev, [fabricWorkspaceId]: true }));
       setWsLoading(true);
+      console.log('[SemaBridge] Discovering Fabric models for workspaceId:', fabricWorkspaceId);
       api.discoverFabricModels(fabricWorkspaceId)
-        .then(data => setWsModels({ [fabricWorkspaceId]: data ?? [] }))
-        .catch(() => setWsModels({ [fabricWorkspaceId]: [] }))
+        .then(data => {
+          if (!Array.isArray(data) || data.length === 0) {
+            setRunWarning('No semantic models found for this workspace. Check Fabric permissions or workspace contents.');
+          }
+          setWsModels({ [fabricWorkspaceId]: data ?? [] });
+        })
+        .catch((err) => {
+          setRunWarning('Failed to load semantic models: ' + (err?.message || 'Unknown error'));
+          setWsModels({ [fabricWorkspaceId]: [] });
+        })
         .finally(() => setWsLoading(false));
       return;
     }
@@ -192,7 +322,7 @@ export default function CreateProjectPage() {
     }
 
     setWorkspaces([]);
-  }, [step, sourceConnector, fabricWorkspaceId, selectedWorkspace]);
+  }, [step, sourceConnector, fabricWorkspaceId, selectedWorkspace, availableWorkspaces, allWorkspacesFromApi]);
 
   const loadWsModels = useCallback(async (wsid) => {
     if (wsModels[wsid]) return;
@@ -274,6 +404,13 @@ export default function CreateProjectPage() {
         preferred_interface: 'ui',
         config_yaml: buildConfigYaml(source, targets),
       };
+
+      // Validation Check: Ensure selectedAccountId and selectedWorkspaceId match
+      if (sourceConnector === 'fabric' && selectedWorkspace) {
+        payload.selectedWorkspaceId = selectedWorkspace.id || fabricWorkspaceId;
+        payload.selectedAccountId = selectedWorkspace.account_id || selectedWorkspace.accountId;
+      }
+
       let project = await api.createProject(payload);
 
       // Compatibility fallback: some backend modes return create responses
@@ -623,8 +760,20 @@ export default function CreateProjectPage() {
             targetDatabase={targetDatabase} setTargetDatabase={setTargetDatabase}
             targetSchema={targetSchema} setTargetSchema={setTargetSchema}
             domainHint={domainHint} setDomainHint={setDomainHint}
-            workspaces={availableWorkspaces}
+            workspaces={availableWorkspaces.length > 0 ? availableWorkspaces : allWorkspacesFromApi}
             workspacesLoading={workspacesLoading}
+            globalDefaultWorkspaceId={globalDefaultWorkspaceId}
+            globalDefaultWorkspaceName={globalDefaultWorkspaceName}
+            sessionWorkspaceId={sessionWorkspaceId}
+            workspaceManuallySet={workspaceManuallySet}
+            onWorkspaceManualChange={(id) => {
+              // Mark that the user has overridden the global default.
+              setWorkspaceManuallySet(true);
+              setFabricWorkspaceId(id);
+            }}
+            isRefreshingWorkspaces={isRefreshingWorkspaces}
+            fetchFabricWorkspaces={fetchFabricWorkspaces}
+            runWarning={runWarning}
           />
         )}
         {step === 3 && (
@@ -951,7 +1100,7 @@ function StepBasicInfo({
                   </div>
                   {t.icon && <span style={{ fontSize: 16 }}>{t.icon}</span>}
                   <span style={{ flex: 1 }}>{t.label}</span>
-                  {isSelected && <span style={{ fontSize: 11, color: 'var(--accent-blue)', fontWeight: 500 }}>Added</span>}
+                  {isSelected && <span style={{ fontSize: 11, color: 'var(--accent-blue)', fontWeight: 500 }}></span>}
                 </button>
               );
             })}
@@ -1021,7 +1170,20 @@ function StepConnectorConfig({
   setDomainHint,
   workspaces,
   workspacesLoading,
+  globalDefaultWorkspaceId,
+  globalDefaultWorkspaceName,
+  sessionWorkspaceId,
+  workspaceManuallySet,
+  onWorkspaceManualChange,
+  isRefreshingWorkspaces,
+  fetchFabricWorkspaces,
+  runWarning,
 }) {
+  // True when the currently selected workspace is the one saved in Settings.
+  const isUsingGlobalDefault = Boolean(
+    globalDefaultWorkspaceId && fabricWorkspaceId === globalDefaultWorkspaceId
+  );
+
   const selectedTargets = [...targetConnectors];
   const sourceLabel = CONNECTOR_TYPES.find(c => c.value === sourceConnector)?.label || sourceConnector;
 
@@ -1056,7 +1218,36 @@ function StepConnectorConfig({
 
         {sourceConnector === 'fabric' && (
           <div>
-            <label style={LABEL}>Fabric Workspace</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <label style={{ ...LABEL, margin: 0 }}>Fabric Workspace</label>
+              {isUsingGlobalDefault && (
+                <span style={{
+                  fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 999,
+                  background: 'var(--color-success-bg)', color: 'var(--color-success)',
+                  border: '1px solid var(--color-success)30', letterSpacing: '0.3px',
+                }}>
+                  ✓ Default
+                </span>
+              )}
+              <div style={{ flex: 1 }} />
+              <button 
+                onClick={fetchFabricWorkspaces} 
+                disabled={isRefreshingWorkspaces}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 4,
+                  background: 'none', border: 'none', cursor: isRefreshingWorkspaces ? 'not-allowed' : 'pointer',
+                  fontSize: 11, color: 'var(--text-tertiary)', padding: '2px 6px',
+                  borderRadius: 4, transition: 'all 0.2s ease',
+                  opacity: isRefreshingWorkspaces ? 0.6 : 1
+                }}
+                onMouseEnter={e => { if(!isRefreshingWorkspaces) e.currentTarget.style.color = 'var(--text-primary)'; }}
+                onMouseLeave={e => { if(!isRefreshingWorkspaces) e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+                title="Refresh workspaces"
+              >
+                <RefreshCw size={12} style={{ animation: isRefreshingWorkspaces ? 'spin 1s linear infinite' : 'none' }} />
+                Refresh
+              </button>
+            </div>
             <SearchableSelect
               items={workspaces}
               displayKey="name"
@@ -1064,16 +1255,31 @@ function StepConnectorConfig({
               searchFields={['name', 'id', 'workspace_id']}
               placeholder="Choose a workspace"
               value={fabricWorkspaceId}
-              onChange={item => setFabricWorkspaceId(item?.id || '')}
+              onChange={item => {
+                const newId = item?.id || '';
+                // If the user picks a different workspace, notify the parent.
+                if (newId !== fabricWorkspaceId && onWorkspaceManualChange) {
+                  onWorkspaceManualChange(newId);
+                } else {
+                  setFabricWorkspaceId(newId);
+                }
+              }}
               loading={workspacesLoading}
               clearable={false}
             />
             <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
-              Pick one workspace here. Step 3 will show models from this workspace only.
+              {isUsingGlobalDefault
+                ? `Pre-selected from your active Fabric session${globalDefaultWorkspaceName ? ` (${globalDefaultWorkspaceName})` : ''}. You can override it below.`
+                : 'Pick one workspace here. Step 3 will show models from this workspace only.'}
             </p>
             {!workspacesLoading && workspaces.length === 0 && (
               <p style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 8 }}>
                 No Fabric workspaces were found. Check connector setup in Settings.
+              </p>
+            )}
+            {runWarning && (
+              <p style={{ fontSize: 12, color: 'var(--color-error)', marginTop: 8 }}>
+                {runWarning}
               </p>
             )}
           </div>
@@ -1446,8 +1652,7 @@ function StepMappingOptions({
   selectedModelNames,
 }) {
   const [expandedMapping, setExpandedMapping] = useState(null);
-  const sensitiveKeywords = ['password', 'credential', 'secret', 'token'];
-  
+
   // Get relationships from session storage (read-only)
   const detectedRelationships = (() => {
     try {
@@ -1472,28 +1677,7 @@ function StepMappingOptions({
     ));
   }, [detectedMappings, explicitTables]);
 
-  const sensitiveMatches = useMemo(() => {
-    const matches = [];
-    (detectedMappings || []).forEach(mapping => {
-      (mapping?.columns || []).forEach(col => {
-        const sourceName = String(col?.source || '');
-        const targetName = String(col?.target || '');
-        const lower = `${sourceName} ${targetName}`.toLowerCase();
-        const matchedKeyword = sensitiveKeywords.find(keyword => lower.includes(keyword));
-        if (matchedKeyword) {
-          matches.push({
-            table: String(mapping?.source || mapping?.target || 'unknown'),
-            source: sourceName || '-',
-            target: targetName || '-',
-            keyword: matchedKeyword,
-          });
-        }
-      });
-    });
-    return matches;
-  }, [detectedMappings]);
 
-  const hasSecurityWarnings = sensitiveMatches.length > 0;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -1605,53 +1789,7 @@ function StepMappingOptions({
         </div>
       )}
 
-      <div style={{
-        borderRadius: 10,
-        border: hasSecurityWarnings ? '1.5px solid #dc2626' : '1px solid var(--border-main)',
-        padding: 16,
-        background: hasSecurityWarnings ? '#fef2f2' : 'var(--bg-surface)',
-      }}>
-        <h3 style={{
-          fontSize: 14,
-          fontWeight: 600,
-          margin: '0 0 10px',
-          color: hasSecurityWarnings ? '#991b1b' : 'var(--text-primary)',
-        }}>
-          Security Check
-        </h3>
-        {!hasSecurityWarnings && (
-          <p style={{ fontSize: 11, color: 'var(--color-success)', margin: 0 }}>
-            No sensitive column keywords detected in mapped fields.
-          </p>
-        )}
-        {hasSecurityWarnings && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <p style={{ fontSize: 11, color: '#991b1b', margin: 0 }}>
-              High-priority warning: sensitive keyword matches were found. Review and remove these fields from sync scope if they are not required.
-            </p>
-            {sensitiveMatches.slice(0, 8).map((match, idx) => (
-              <div
-                key={`${match.table}-${match.source}-${idx}`}
-                style={{
-                  fontSize: 11,
-                  color: '#7f1d1d',
-                  background: '#fee2e2',
-                  border: '1px solid #fecaca',
-                  borderRadius: 6,
-                  padding: '8px 10px',
-                }}
-              >
-                Table <strong>{match.table}</strong>: {match.source} → {match.target} (keyword: <strong>{match.keyword}</strong>)
-              </div>
-            ))}
-            {sensitiveMatches.length > 8 && (
-              <p style={{ fontSize: 10, color: '#991b1b', margin: 0 }}>
-                +{sensitiveMatches.length - 8} additional matches
-              </p>
-            )}
-          </div>
-        )}
-      </div>
+
 
       {/* RELATIONSHIPS SECTION */}
       {detectedRelationships.length > 0 && autoRelationships && (

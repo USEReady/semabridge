@@ -7,6 +7,8 @@ import { AuthProvider } from './context/AuthContext'
 import AppErrorBoundary from './components/common/AppErrorBoundary'
 import HydrationGuard from './components/common/HydrationGuard'
 import './index.css'
+
+import { SyncProvider } from './context/SyncContext';
 import App from './App'
 
 const queryClient = new QueryClient({
@@ -27,7 +29,9 @@ createRoot(document.getElementById('root')).render(
           <ThemeProvider>
             <AuthProvider>
               <HydrationGuard>
-                <App />
+                <SyncProvider>
+                  <App />
+                </SyncProvider>
               </HydrationGuard>
             </AuthProvider>
           </ThemeProvider>

@@ -32,9 +32,14 @@ export default function useProjectSync(projectId, initialStatus = 'draft') {
 
     const id = String(projectId);
     const backendStatus = projectStatusById[id] || String(initialStatus || 'draft').toLowerCase();
-    const status = optimisticStatus || backendStatus;
+    let status = optimisticStatus || backendStatus;
     const isCurrent = currentSyncId && String(currentSyncId) === id;
     const progress = isCurrent ? currentProgress : Number(projectProgressById[id] || 0);
+
+    // Fallback: if progress is 100 and backend status is success, force status to 'success'
+    if (progress === 100 && backendStatus === 'success') {
+      status = 'success';
+    }
 
     return {
       status,

@@ -206,6 +206,32 @@ class ModelVersionHistory(Base):
 # Version-Control Layer  (replaces raw DDL in DuckDBManager._init_db)
 # =============================================================================
 
+class Account(Base):
+    """Account definition for multi-session connections/vault.
+    Maps a user identity to a connector via OAuth tokens or credentials.
+    """
+
+    __tablename__ = "accounts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    connector_type: Mapped[str] = mapped_column(String(50), nullable=False)  # FABRIC, SNOWFLAKE, DATABRICKS
+    tag: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    identity_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    encrypted_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="Active")
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+
+    # Relationships
+    projects: Mapped[List["Project"]] = relationship(
+        back_populates="account", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Account(id={self.id!r}, tag={self.tag!r}, connector_type={self.connector_type!r})>"
+
+
 class Project(Base):
     """Registered semantic project.
 
@@ -216,12 +242,17 @@ class Project(Base):
 
     project_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    account_id: Mapped[Optional[str]] = mapped_column(ForeignKey("accounts.id"), nullable=True)
     workspace_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    warehouse: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    database: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    schema: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     adapter: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     source_connection: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     last_updated: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
 
     # Relationships
+    account: Mapped[Optional["Account"]] = relationship(back_populates="projects")
     snapshots: Mapped[List["SnapshotRow"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )

@@ -23,7 +23,7 @@ from pathlib import Path
 from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Dict, Any, List, Optional
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -44,8 +44,11 @@ from semabridge.utils.logger import setup_logging
 from semabridge.connectors.fabric_extractor import FabricExtractor
 from semabridge.api.repo_router import router as repo_router
 from semabridge.api.sync_router import router as sync_router
+from semabridge.api.account_router import router as account_router
 from semabridge.api.websocket_alerts import alert_router, install_websocket_alert_handler
 from semabridge.api.semantic_models import SemanticSyncRequest, SemanticRefreshRequest
+from sqlalchemy.orm import Session
+from semabridge.api.deps import get_db
 
 try:
     from semabridge.api.auth_router import router as auth_router
@@ -295,7 +298,11 @@ app.include_router(repo_router)
 app.include_router(sync_router)
 
 # Authentication endpoints (register, login, credentials)
-app.include_router(auth_router)
+if _AUTH_AVAILABLE and auth_router:
+    app.include_router(auth_router)
+
+# Account & Credentials Vault endpoints
+app.include_router(account_router)
 
 # WebSocket alert endpoints (real-time UI notifications)
 app.include_router(alert_router)
@@ -613,6 +620,17 @@ async def discover_snowflake():
     Falls back to a DDL-scan approach when ``SHOW SEMANTIC VIEWS`` is
     unavailable in the connected environment.
     """
+    import time
+    global _snowflake_discovery_cache
+    if '_snowflake_discovery_cache' not in globals():
+        _snowflake_discovery_cache = {}
+
+    cache_key = "views"
+    if cache_key in _snowflake_discovery_cache:
+        cached_data, cached_time = _snowflake_discovery_cache[cache_key]
+        if time.monotonic() - cached_time < 300: # 5 minutes TTL
+            return cached_data
+
     try:
         from pydantic import ValidationError
         from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
@@ -655,7 +673,11 @@ async def discover_snowflake():
         ]
 
         logger.info(f"Discovered {len(results)} Snowflake semantic view(s)")
-        return sorted(results, key=lambda x: x["name"])
+        
+        final_results = sorted(results, key=lambda x: x["name"])
+        import time
+        _snowflake_discovery_cache[cache_key] = (final_results, time.monotonic())
+        return final_results
 
     except HTTPException:
         raise
@@ -1915,40 +1937,125 @@ async def validate_live(payload: Dict[str, Any] = None):
     }
 
 
+
 # -------------------------------------------------------
-# Workspaces (Fabric)
+# Workspaces (Fabric) — DB-driven, no startup globals
 # -------------------------------------------------------
 
+
 @app.get("/api/workspaces")
-async def list_workspaces():
-    """List available Fabric workspaces."""
+async def list_workspaces(db: "Session" = Depends(get_db)):
+    """List available Fabric workspaces for the current Default account.
+
+    Identity is resolved fresh on every request from the DuckDB Account table
+    so that 'Set Default' changes in Settings are immediately reflected without
+    a server restart.
+    """
+    from sqlalchemy import select, text
+    from semabridge.repository.orm.models import Account
+    from semabridge.auth.encryption import decrypt_token
+    import httpx
+
+    access_token: str | None = None
+    account_tag: str | None = None
+
+    # --- Live DB lookup: find the default Fabric account ---
     try:
-        settings = get_settings()
-        # Return the configured workspace as the primary one
-        workspace_id = settings.fabric.workspace_id if settings.fabric else ""
-        workspaces = [
-            {"id": workspace_id, "name": "Primary Workspace"},
-        ]
-        # Attempt to discover additional workspaces via the Fabric API
-        try:
-            extractor = FabricExtractor(settings.fabric)
-            token = extractor._get_access_token()
-            import requests as req
-            resp = req.get(
-                "https://api.fabric.microsoft.com/v1/workspaces",
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=10,
+        default_account = db.execute(
+            select(Account).where(
+                Account.connector_type == "FABRIC",
+                Account.is_default == True,  # noqa: E712
             )
-            if resp.ok:
-                for ws in resp.json().get("value", []):
-                    if ws["id"] != workspace_id:
-                        workspaces.append({"id": ws["id"], "name": ws.get("displayName", ws["id"])})
-        except Exception:
-            pass  # Graceful degradation â€“ at minimum return the configured workspace
-        return workspaces
-    except Exception as e:
-        logger.warning(f"Failed to list workspaces: {e}")
-        return [{"id": "default", "name": "Default Workspace"}]
+        ).scalar_one_or_none()
+
+        if not default_account:
+            raise HTTPException(status_code=401, detail="token_missing")
+
+        if default_account.encrypted_token:
+            # Happy path: token already persisted in Account row
+            account_tag = default_account.tag
+            logger.info("list_workspaces: using default account '%s'", account_tag)
+            access_token = decrypt_token(default_account.encrypted_token)
+            if not access_token:
+                logger.warning("list_workspaces: token decrypt returned empty string")
+                raise HTTPException(status_code=401, detail="token_missing")
+        else:
+            # Fallback: account exists but no token row yet (pre-atomic-write accounts).
+            # Query Credential directly to avoid DuckDB DDL locking from CredentialManager.
+            from semabridge.repository.orm.models import Credential
+            from semabridge.auth.encryption import encrypt_token as _encrypt
+            import time
+
+            rows = db.execute(
+                select(Credential).where(Credential.service == "fabric_token")
+            ).scalars().all()
+            raw_token_data = {row.key: row.value for row in rows} if rows else {}
+            
+            raw_access_token = raw_token_data.get("access_token", "")
+            if not raw_access_token:
+                logger.warning("list_workspaces: no token in Account row nor Credential table")
+                raise HTTPException(status_code=401, detail="token_missing")
+                
+            try:
+                expires_at = int(raw_token_data.get("expires_at", "0"))
+                if time.time() >= expires_at - 60:
+                    logger.warning("list_workspaces: Credential table token is expired")
+                    raise HTTPException(status_code=401, detail="token_missing")
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=401, detail="token_missing")
+
+            # Backfill: write the token to the Account row so next request uses DB path
+            try:
+                default_account.encrypted_token = _encrypt(raw_access_token)
+                default_account.identity_email = raw_token_data.get(
+                    "account_username", default_account.identity_email
+                )
+                db.commit()
+                logger.info(
+                    "list_workspaces: backfilled encrypted_token for account '%s'",
+                    default_account.tag,
+                )
+            except Exception as bf_exc:
+                logger.warning("list_workspaces: backfill write failed (non-fatal): %s", bf_exc)
+                db.rollback()
+
+            account_tag = default_account.tag
+            access_token = raw_access_token
+            logger.info(
+                "list_workspaces: using CredentialManager fallback for account '%s'", account_tag
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("list_workspaces: unexpected DB error: %s", exc)
+        raise HTTPException(status_code=503, detail="Workspace discovery temporarily unavailable")
+
+    if not access_token:
+        logger.warning("list_workspaces: no valid default account token — returning 401")
+        raise HTTPException(status_code=401, detail="token_missing")
+
+    # --- Call Fabric API with the live token ---
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            resp = await client.get(
+                "https://api.fabric.microsoft.com/v1/workspaces",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+        if resp.status_code == 200:
+            return [
+                {"id": ws.get("id", ""), "name": ws.get("displayName", "")}
+                for ws in resp.json().get("value", [])
+                if ws.get("id")
+            ]
+        logger.warning(
+            "list_workspaces: Fabric API returned %s: %s",
+            resp.status_code, resp.text[:200],
+        )
+    except Exception as exc:
+        logger.warning("list_workspaces: Fabric API call failed: %s", exc)
+
+    return []
+
 
 
 # -------------------------------------------------------
@@ -2911,8 +3018,9 @@ async def get_project_runs_compat(project_id: str):
     return _compat_project_runs.get(project_id, [])
 
 
+
 @app.post("/api/projects/{project_id}/run")
-async def run_project_now_compat(project_id: str):
+async def run_project_now_compat(project_id: str, background_tasks: BackgroundTasks):
     _compat_ensure_loaded()
     if project_id not in _compat_projects:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -2930,39 +3038,32 @@ async def run_project_now_compat(project_id: str):
         "started_at": _compat_now_iso(),
     }
     _compat_project_runs.setdefault(project_id, []).insert(0, run)
-
     project_cfg = _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(_compat_projects[project_id])
 
-    try:
-        sync_result = await sync_models({"content": project_cfg})
-        elapsed_ms = int((_time.time() - started) * 1000)
-        run["duration_ms"] = elapsed_ms
-
-        overall = str((sync_result or {}).get("status") or "").lower()
-        if overall == "success":
-            run["status"] = "success"
-        elif overall == "partial":
-            run["status"] = "warning"
-        else:
+    def do_sync():
+        import asyncio
+        try:
+            sync_result = asyncio.run(sync_models({"content": project_cfg}))
+            elapsed_ms = int((_time.time() - started) * 1000)
+            run["duration_ms"] = elapsed_ms
+            overall = str((sync_result or {}).get("status") or "").lower()
+            if overall == "success":
+                run["status"] = "success"
+            elif overall == "partial":
+                run["status"] = "warning"
+            else:
+                run["status"] = "failed"
+            run["summary"] = (sync_result or {}).get("summary") or {}
+            run["results"] = (sync_result or {}).get("results") or []
+            run["models_synced"] = int((sync_result or {}).get("models_synced") or 0)
+            run["total_models"] = int((sync_result or {}).get("total_models") or 0)
+        except Exception as exc:
             run["status"] = "failed"
+            run["error"] = str(exc)
+        _compat_save_store()
 
-        run["summary"] = (sync_result or {}).get("summary") or {}
-        run["results"] = (sync_result or {}).get("results") or []
-        run["models_synced"] = int((sync_result or {}).get("models_synced") or 0)
-        run["total_models"] = int((sync_result or {}).get("total_models") or 0)
-    except HTTPException as exc:
-        elapsed_ms = int((_time.time() - started) * 1000)
-        run["duration_ms"] = elapsed_ms
-        run["status"] = "failed"
-        run["error"] = str(exc.detail)
-    except Exception as exc:
-        elapsed_ms = int((_time.time() - started) * 1000)
-        run["duration_ms"] = elapsed_ms
-        run["status"] = "failed"
-        run["error"] = str(exc)
-
-    _compat_save_store()
-    return run
+    background_tasks.add_task(do_sync)
+    return {"run_id": run_id, "status": "running", "message": "Sync started in background"}
 
 
 @app.get("/api/folders")
@@ -3821,6 +3922,21 @@ def _get_msal_app(authority: str):
     return _msal_app_cache[authority]
 
 
+def clear_msal_cache():
+    """Clear internal MSAL token caches and the app cache."""
+    for authority, app in list(_msal_app_cache.items()):
+        if hasattr(app, "token_cache"):
+            # msal Python TokenCache does not have a clear() method.
+            # We must create a new one, or re-instantiate the PCA.
+            # Easiest way is just wiping our cache of apps.
+            pass
+    _msal_app_cache.clear()
+    global _fabric_session_token, _fabric_session_token_expires_at
+    _fabric_session_token = None
+    _fabric_session_token_expires_at = 0.0
+
+
+
 def _run_background_msal_poll(app_msal: Any, flow: Dict[str, Any], tenant: str) -> None:
     """Run the blocking MSAL device-code poll in a background thread.
 
@@ -3945,6 +4061,16 @@ async def fabric_device_code_poll():
         _fabric_session_token = state["access_token"]
         _fabric_session_token_expires_at = _time.time() + int(state.get("expires_in", 3600))
         try:
+            from semabridge.repository.orm.session_factory import db_manager
+            from semabridge.repository.account_repository import AccountRepository
+
+            session = db_manager.get_session_factory()()
+            try:
+                repo = AccountRepository(session)
+                repo.upsert_account("FABRIC", state, _fabric_session_token_expires_at)
+            finally:
+                session.close()
+
             cm = CredentialManager()
             cm.save_msal_token(
                 access_token=state["access_token"],
@@ -3963,7 +4089,9 @@ async def fabric_device_code_poll():
             )
         except Exception as exc:
             logger.exception("Failed to persist MSAL token: %s", exc)
-            return {"status": "failed", "message": f"Login succeeded but token save failed: {exc}"}
+            if isinstance(exc, HTTPException):
+                raise exc
+            raise HTTPException(status_code=500, detail=f"Database write failed during token persistence: {exc}")
 
         logger.info("Fabric interactive login successful for %s", state.get("username"))
         return {
@@ -4203,79 +4331,80 @@ def _resolve_fabric_access_token(header_bearer_token: Optional[str]) -> str:
         logger.info("Using Fabric token from Authorization header")
         return header_bearer_token
 
-    # In-process token from recent device-code login success.
-    if _fabric_session_token and _time.time() < (_fabric_session_token_expires_at - 60):
-        logger.info("Using Fabric token from in-memory session cache")
-        return _fabric_session_token
-
+    # Look up the identity marked as 'Default' in the Settings > Connections tab
     try:
-        stored_token = _get_valid_fabric_token()
-        logger.info("Using Fabric token from stored MSAL credentials")
-        return stored_token
-    except HTTPException:
-        pass
+        from sqlalchemy import select
+        from semabridge.repository.orm.models import Account
+        from semabridge.auth.encryption import decrypt_token
+        from semabridge.repository.orm.session_factory import db_manager
 
-    # Legacy fallback: some flows persisted token under service='fabric'.
-    try:
-        from semabridge.repository.credential_manager import CredentialManager
-
-        cm = CredentialManager()
-        fabric_creds = cm.get_credentials("fabric", mask_secrets=False)
-        legacy_token = (fabric_creds.get("access_token") or "").strip()
-        if legacy_token:
-            logger.info("Using Fabric token from stored fabric credentials")
-            return legacy_token
-    except Exception as exc:
-        logger.warning("Legacy fabric token lookup failed: %s", exc)
-
-    env_token = os.environ.get("FABRIC_ACCESS_TOKEN", "").strip()
-    if env_token:
-        logger.info("Using Fabric token from FABRIC_ACCESS_TOKEN environment variable")
-        return env_token
-
-    # Service-principal fallback from configured Fabric settings.
-    try:
-        import msal
-
-        fabric_cfg = settings.fabric
-        client_secret = (
-            fabric_cfg.client_secret.get_secret_value().strip()
-            if fabric_cfg.client_secret is not None
-            else ""
-        )
-        if fabric_cfg.tenant_id and fabric_cfg.client_id and client_secret:
-            authority = f"https://login.microsoftonline.com/{fabric_cfg.tenant_id}"
-            sp_cache_key = f"{authority}|confidential"
-            app_msal = _msal_app_cache.get(sp_cache_key)
-            if app_msal is None:
-                app_msal = msal.ConfidentialClientApplication(
-                    client_id=fabric_cfg.client_id,
-                    authority=authority,
-                    client_credential=client_secret,
+        with db_manager.get_session() as session:
+            # Bypass cache
+            session.commit()
+            default_account = session.execute(
+                select(Account).where(
+                    Account.connector_type == "FABRIC",
+                    Account.is_default == True
                 )
-                _msal_app_cache[sp_cache_key] = app_msal
+            ).scalar_one_or_none()
 
-            result = app_msal.acquire_token_for_client(scopes=_FABRIC_SCOPES)
-            access_token = (result.get("access_token") or "").strip()
-            if access_token:
-                logger.info("Using Fabric token from service-principal credentials")
-                return access_token
+            if default_account:
+                logger.info(f"DEBUG: Attempting Fabric fetch for: {default_account.tag}")
 
-            logger.warning(
-                "Service-principal Fabric token acquisition failed: %s",
-                result.get("error_description", result.get("error", "unknown")),
-            )
+                if not default_account.encrypted_token:
+                    # Fallback: check Credential table directly
+                    from semabridge.repository.orm.models import Credential
+                    import time
+                    rows = session.execute(
+                        select(Credential).where(Credential.service == "fabric_token")
+                    ).scalars().all()
+                    raw_token_data = {row.key: row.value for row in rows} if rows else {}
+                    raw_access_token = raw_token_data.get("access_token", "")
+                    
+                    if not raw_access_token:
+                        from fastapi.responses import JSONResponse
+                        raise HTTPException(
+                            status_code=401,
+                            detail={"error": "reauth_required"}
+                        )
+                        
+                    try:
+                        expires_at = int(raw_token_data.get("expires_at", "0"))
+                        if time.time() >= expires_at - 60:
+                            raise HTTPException(status_code=401, detail={"error": "reauth_required"})
+                    except (ValueError, TypeError):
+                        raise HTTPException(status_code=401, detail={"error": "reauth_required"})
+                        
+                    # Backfill to Account row for future requests
+                    from semabridge.auth.encryption import encrypt_token as _encrypt
+                    try:
+                        default_account.encrypted_token = _encrypt(raw_access_token)
+                        default_account.identity_email = raw_token_data.get("account_username", default_account.identity_email)
+                        session.commit()
+                        logger.info("Backfilled access token from Credential fallback into default Account row")
+                    except Exception as bf_exc:
+                        session.rollback()
+                        logger.warning(f"Failed to backfill token (non-fatal): {bf_exc}")
+                        
+                    logger.info(f"Using fallback Credential table access token for Fabric account: {default_account.tag}")
+                    return raw_access_token
+
+                try:
+                    tok = decrypt_token(default_account.encrypted_token)
+                    logger.info(f"Using access token from default Fabric account: {default_account.tag}")
+                    return tok
+                except Exception as e:
+                    logger.warning(f"Failed to decrypt token for default account {default_account.tag}: {e}")
+    except HTTPException:
+        raise
     except Exception as exc:
-        logger.warning("Service-principal Fabric token lookup failed: %s", exc)
+        logger.warning(f"Failed to query default account token in DB: {exc}")
 
-    logger.warning("No valid Fabric access token available")
+    logger.warning("No valid Fabric access token available (bypassed .env fallback to respect UI state)")
+    from fastapi.responses import JSONResponse
     raise HTTPException(
         status_code=401,
-        detail=(
-            "No valid Fabric access token available. Provide Authorization: Bearer <token>, "
-            "sign in via Connections panel, set FABRIC_ACCESS_TOKEN, "
-            "or configure FABRIC_CLIENT_SECRET for service-principal auth."
-        ),
+        detail={"error": "reauth_required"}
     )
 
 
@@ -4348,6 +4477,122 @@ async def debug_token_header(
         "token_preview": f"{bearer_token[:8]}...",
         "message": "Bearer token parsed successfully",
     }
+
+
+@app.get("/api/connections/fabric/default-workspace")
+async def fabric_get_default_workspace(
+    bearer_token: Optional[str] = Depends(_extract_bearer_token),
+):
+    """Return the best-available default workspace for the project wizard from the Default account."""
+    from sqlalchemy import select
+    from semabridge.repository.orm.models import Account
+    from semabridge.auth.encryption import decrypt_token
+    import httpx
+
+    # --- Step 1: Identify Default Account ---
+    access_token = None
+    try:
+        session = db_manager._session()
+        try:
+            default_account = session.execute(
+                select(Account).where(
+                    Account.connector_type == "FABRIC",
+                    Account.is_default == True
+                )
+            ).scalar_one_or_none()
+
+            if default_account and default_account.encrypted_token:
+                try:
+                    access_token = decrypt_token(default_account.encrypted_token)
+                    logger.info(f"Using access token from default Fabric account: {default_account.tag}")
+                except Exception as e:
+                    logger.warning(f"Failed to decrypt token for default account {default_account.tag}: {e}")
+            elif default_account:
+                logger.warning(f"Default account {default_account.tag} has no encrypted_token")
+        finally:
+            session.close()
+    except Exception as exc:
+        logger.warning(f"Failed to query default account: {exc}")
+
+    # Fallback to _resolve_fabric_access_token if no valid default account token was found
+    if not access_token:
+        try:
+            access_token = _resolve_fabric_access_token(bearer_token)
+        except HTTPException:
+            pass
+
+    if not access_token:
+        return {
+            "workspace_id": "",
+            "workspace_name": "",
+            "configured": False,
+            "source": "none",
+            "all_workspaces": [],
+        }
+
+    # --- Step 2: Dynamic Fetching ---
+    _PROJECT_NAME = "semabridge"
+    normalized = []
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                "https://api.fabric.microsoft.com/v1/workspaces",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+
+        if resp.status_code == 200:
+            raw_workspaces = resp.json().get("value", [])
+            normalized = [
+                {
+                    "id": ws.get("id", ""),
+                    "name": ws.get("displayName", ""),
+                    "type": ws.get("type", ""),
+                }
+                for ws in raw_workspaces
+                if ws.get("id")
+            ]
+    except Exception as exc:
+        logger.debug("Fabric API workspace auto-detect failed: %s", exc)
+
+    # --- Step 3 & 4: UI Population and Default Selection ---
+    if normalized:
+        # Priority a: exact name match with project name (case-insensitive)
+        matched = next(
+            (ws for ws in normalized if ws["name"].lower() == _PROJECT_NAME.lower()),
+            None,
+        )
+        # Priority b: first non-Personal workspace
+        if matched is None:
+            matched = next(
+                (ws for ws in normalized if ws.get("type", "").lower() != "personal" and ws["name"] != "My workspace"),
+                None,
+            )
+        # Priority c: any workspace
+        if matched is None:
+            matched = normalized[0]
+
+        logger.info(
+            "Auto-detected Fabric workspace: %s (%s)",
+            matched["name"],
+            matched["id"],
+        )
+        return {
+            "workspace_id": matched["id"],
+            "workspace_name": matched["name"],
+            "configured": True,
+            "source": "auto",
+            "all_workspaces": normalized,
+        }
+
+    return {
+        "workspace_id": "",
+        "workspace_name": "",
+        "configured": False,
+        "source": "none",
+        "all_workspaces": [],
+    }
+
 
 
 @app.post("/api/connections/fabric/select-workspace")

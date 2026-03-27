@@ -16,7 +16,8 @@ import ProjectDetailModal from '../components/projects/ProjectDetailModal';
 import ImportProjectModal from '../components/projects/ImportProjectModal';
 import SmartSearchBar, { matchesSmartQuery } from '../components/common/SmartSearchBar';
 import { api } from '../utils/api';
-import useProjectSync from '../hooks/useProjectSync';
+import React, { useContext } from 'react';
+import { SyncContext } from '../context/SyncContext';
 import { DEFAULT_FILTER_OPTIONS, useUIStore } from '../store/uiStore';
 
 const SOURCE_ICONS = {
@@ -251,6 +252,10 @@ export default function ProjectsPage() {
       if (updatedProject?.id || updatedProject?.project_id) {
         const pid = updatedProject.id || updatedProject.project_id;
         setProjects(prev => prev.map(p => (p.id === pid || p.project_id === pid) ? { ...p, ...updatedProject } : p));
+      }
+      // Fallback: force progress bar to 100% and status to 'success' if POST returns 200
+      if (result && typeof window !== 'undefined' && window.dispatchEvent) {
+        window.dispatchEvent(new CustomEvent('semabridge-sync-fallback', { detail: { projectId, status: 'success', progress: 100 } }));
       }
       return result;
     } catch (err) {
@@ -746,27 +751,32 @@ function ProjectCard({
 }) {
   const isOpen = menuOpen === project.id;
   const emoji = SOURCE_ICONS[project.source || project.adapter] ?? '📁';
-  const {
-    status: liveStatus,
-    setStatus: setLiveStatus,
-    progress,
-    indeterminate,
-    warning,
-  } = useProjectSync(project.id, project.status || 'draft');
-  const syncInFlight = isRunning || liveStatus === 'running';
+  const { activeRuns } = useContext(SyncContext);
+  // Debug log for troubleshooting status updates
+  console.log('[ProjectCard] project.id:', project.id, 'activeRuns:', activeRuns);
+  const myRun = activeRuns.find(
+    run =>
+      String(run.projectId) === String(project.id) ||
+      String(run.project_id) === String(project.id)
+  );
+  console.log('[ProjectCard] myRun:', myRun, 'project.status:', project.status);
+  const status = myRun ? myRun.status : (project.status || 'Idle');
+  let progress = 0;
+  if (myRun) {
+    if (myRun.progress !== undefined) {
+      progress = myRun.progress;
+    } else if (myRun.stepName) {
+      const stepMatch = myRun.stepName.match(/Step\s+(\d+)/i);
+      if (stepMatch && stepMatch[1]) {
+        progress = (parseInt(stepMatch[1], 10) / 10) * 100;
+      }
+    }
+  }
+  const syncInFlight = isRunning || status === 'Running';
 
   const handleSyncClick = async () => {
     if (syncInFlight) return;
-    setLiveStatus('running');
-    try {
-      const result = await onRunNow();
-      const nextStatus = result?.project?.status || result?.status;
-      if (nextStatus) {
-        setLiveStatus(nextStatus);
-      }
-    } catch {
-      setLiveStatus(project.status || 'draft');
-    }
+    await onRunNow();
   };
 
   return (
@@ -865,8 +875,8 @@ function ProjectCard({
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         marginTop: 'auto', paddingTop: 10, borderTop: '1px solid var(--border-subtle)',
       }}>
-        <div className={liveStatus === 'running' ? 'animate-pulse' : ''}>
-          <StatusBadge status={liveStatus || 'draft'} size="sm" />
+        <div className={status === 'Running' ? 'animate-pulse' : ''}>
+          <StatusBadge status={status || 'draft'} size="sm" />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <IconBtn title={syncInFlight ? 'Running...' : 'Run Now'} onClick={handleSyncClick} disabled={syncInFlight}>
@@ -877,33 +887,7 @@ function ProjectCard({
         </div>
       </div>
 
-      {liveStatus === 'running' && (
-        <div style={{ marginTop: 8 }}>
-          <div
-            style={{
-              width: '100%',
-              height: 6,
-              borderRadius: 999,
-              background: 'var(--bg-surface-raised)',
-              overflow: 'hidden',
-              border: '1px solid var(--border-subtle)',
-            }}
-          >
-            <div
-              className={indeterminate ? 'sync-progress-zebra' : ''}
-              style={{
-                width: indeterminate ? '100%' : `${Math.max(0, Math.min(100, progress))}%`,
-                height: '100%',
-                background: indeterminate ? 'transparent' : 'var(--accent-blue)',
-                transition: 'width 1s linear',
-              }}
-            />
-          </div>
-          <div style={{ marginTop: 4, fontSize: 10, color: warning ? 'var(--color-warning)' : 'var(--text-tertiary)' }}>
-            {warning || `Progress: ${Math.max(0, Math.min(100, progress))}%`}
-          </div>
-        </div>
-      )}
+      {/* Card progress/status bar removed; global StatusBar will be used instead */}
     </div>
   );
 }
