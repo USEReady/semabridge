@@ -5,7 +5,9 @@ import { Database } from 'lucide-react';
  * TableNode — green source-table node for the dependency graph.
  */
 
+import { useState } from 'react';
 export default function TableNode({ data, selected }) {
+    const [hovered, setHovered] = useState(false);
     const isBroken = data.status === 'broken';
     const diffStatus = data.diffStatus;
     const compact = !!data.compactTableView;
@@ -22,28 +24,36 @@ export default function TableNode({ data, selected }) {
         diffStatus === 'added' ? '#4ade80'
             : diffStatus === 'removed' ? '#f87171'
                 : diffStatus === 'modified' ? '#eab308'
-                    : isBroken ? '#f87171' : selected ? '#6467f2' : '#334155';
+                    : isBroken ? '#f87171' : selected ? '#6467f2' : hovered ? '#22c55e' : '#334155';
     const headerBg = isBroken ? '#f87171' : '#18181b';
     const badgeBg = isBroken ? '#f87171' : '#22c55e';
     const badgeColor = isBroken ? '#fff' : '#22c55e';
-    const shadow = selected ? '0 0 24px 0 #6467f2aa' : '0 2px 16px 0 #0006';
+    const shadow = selected
+        ? '0 0 24px 0 #6467f2cc'
+        : hovered
+            ? '0 0 16px 0 #22c55e55'
+            : '0 2px 16px 0 #0006';
+    const scale = hovered ? 1.025 : 1;
 
     return (
         <div
             className="er-node"
             style={{
-                background: '#0f172a',
-                border: `2px solid ${borderColor}`,
-                borderRadius: 12,
+                background: 'linear-gradient(135deg, #134e2e 0%, #0f172a 100%)',
+                border: `2.5px solid ${borderColor}`,
+                borderRadius: 16,
                 minWidth: 240,
                 maxWidth: 270,
                 boxShadow: shadow,
-                transition: 'box-shadow .2s, border-color .2s',
+                transition: 'box-shadow .18s, border-color .18s, transform .18s',
                 opacity: diffStatus === 'removed' ? 0.78 : 1,
                 userSelect: 'none',
                 overflow: 'hidden',
                 fontFamily: 'Inter, sans-serif',
+                transform: `scale(${scale})`,
             }}
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
         >
             {/* Header */}
             <div style={{

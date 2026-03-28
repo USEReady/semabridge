@@ -117,37 +117,47 @@ export default function DetailPanel({ filePreview, selectedNode, onClose }) {
                 {/* ═══ HEADER: What You're Inspecting ═══ */}
                 <div style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '12px 14px',
-                    borderBottom: '2px solid var(--border-color)',
-                    background: 'linear-gradient(135deg, var(--bg-surface) 0%, var(--bg-app) 100%)',
+                    padding: '16px 18px',
+                    borderBottom: '2.5px solid var(--border-color)',
+                    background:
+                        nodeType === 'model'
+                            ? 'linear-gradient(135deg, #3b82f6 0%, #1E293B 100%)'
+                            : nodeType === 'table'
+                                ? 'linear-gradient(135deg, #134e2e 0%, #0f172a 100%)'
+                                : 'linear-gradient(135deg, #facc15 0%, #1E293B 100%)',
+                    borderTopLeftRadius: 18,
+                    borderTopRightRadius: 18,
+                    boxShadow: nodeType === 'model'
+                        ? '0 0 16px 0 #60a5fa33'
+                        : nodeType === 'table'
+                            ? '0 0 16px 0 #22c55e33'
+                            : '0 0 16px 0 #fde04733',
+                    transition: 'box-shadow .18s, border-color .18s',
                 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 14, flex: 1, minWidth: 0 }}>
                         <div style={{
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            width: 40, height: 40, borderRadius: 10,
-                            background: nodeType === 'model' ? 'rgba(59,130,246,.2)' :
-                                       nodeType === 'table' ? 'rgba(34,197,94,.2)' :
-                                       'rgba(234,179,8,.2)',
-                            border: nodeType === 'model' ? '1px solid rgba(59,130,246,.4)' :
-                                    nodeType === 'table' ? '1px solid rgba(34,197,94,.4)' :
-                                    '1px solid rgba(234,179,8,.4)',
+                            width: 44, height: 44, borderRadius: 14,
+                            background: nodeType === 'model' ? '#1e293b' : nodeType === 'table' ? '#0f172a' : '#1e293b',
+                            border: nodeType === 'model' ? '2.5px solid #3B82F6' : nodeType === 'table' ? '2.5px solid #22C55E' : '2.5px solid #EAB308',
+                            boxShadow: nodeType === 'model' ? '0 0 8px #3B82F6' : nodeType === 'table' ? '0 0 8px #22C55E' : '0 0 8px #EAB308',
                             flexShrink: 0,
                         }}>
-                            {nodeType === 'model' && <Box size={18} style={{ color: '#3B82F6' }} />}
-                            {nodeType === 'table' && <Database size={18} style={{ color: '#22C55E' }} />}
-                            {nodeType === 'measure' && <BarChart3 size={18} style={{ color: '#EAB308' }} />}
+                            {nodeType === 'model' && <Box size={22} style={{ color: '#60A5FA' }} />}
+                            {nodeType === 'table' && <Database size={22} style={{ color: '#4ADE80' }} />}
+                            {nodeType === 'measure' && <BarChart3 size={22} style={{ color: '#FDE047' }} />}
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-                            <span style={{ fontSize: 8.5, fontWeight: 800, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.12em' }}>
+                            <span style={{ fontSize: 9, fontWeight: 800, color: '#E0E7EF', textTransform: 'uppercase', letterSpacing: '.12em' }}>
                                 🔍 Inspecting Now
                             </span>
-                            <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)', wordBreak: 'break-word', lineHeight: 1.2 }}>
+                            <span style={{ fontSize: 16, fontWeight: 800, color: '#fff', wordBreak: 'break-word', lineHeight: 1.2, letterSpacing: '.01em' }}>
                                 {nodeTypeLabel}
                             </span>
                         </div>
                     </div>
                     <button onClick={onClose} style={closeBtnStyle}>
-                        <X size={16} />
+                        <X size={18} />
                     </button>
                 </div>
 

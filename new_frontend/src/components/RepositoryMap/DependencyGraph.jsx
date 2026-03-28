@@ -228,6 +228,8 @@ export default function DependencyGraph({
     isLoading = false,
     snapshotId = null,
     diffMode = false,
+    onRequestFullScreen,
+    showFullScreenButton = false,
 }) {
     const { getNodes } = useReactFlow?.() || {};
     const [nodes, setNodes, onNodesChange] = useNodesState([]);
@@ -895,35 +897,63 @@ export default function DependencyGraph({
                 {/* Legend */}
                 <Panel position="top-right">
                     <div style={{
-                        background: 'var(--bg-surface)',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: 8,
-                        padding: '10px 14px',
-                        fontSize: 11,
-                        display: 'flex', flexDirection: 'column', gap: 5,
+                        display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8,
                     }}>
-                        <span style={{ fontWeight: 700, fontSize: 10, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-tertiary)' }}>
-                            Legend
-                        </span>
-                        {[
-                            ...(erMode ? [] : [{ color: '#3B82F6', label: 'Semantic Model' }]),
-                            { color: '#22C55E', label: 'Source Table' },
-                            ...(erMode ? [{ color: '#818CF8', label: 'Relationship' }] : [{ color: '#EAB308', label: 'Metric / Measure' }]),
-                            { color: '#EF4444', label: 'Broken Reference' },
-                            ...(diffMode ? [
-                                { color: '#22C55E', label: 'Diff: Added (green)' },
-                                { color: '#EAB308', label: 'Diff: Modified (yellow)' },
-                                { color: '#EF4444', label: 'Diff: Removed (red/dotted)' },
-                            ] : []),
-                        ].map(item => (
-                            <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <span style={{
-                                    width: 10, height: 10, borderRadius: 3,
-                                    background: item.color, flexShrink: 0,
-                                }} />
-                                <span style={{ color: 'var(--text-secondary)' }}>{item.label}</span>
-                            </div>
-                        ))}
+                        {/* Full Screen Button above legend */}
+                        {showFullScreenButton && (
+                            <button
+                                onClick={onRequestFullScreen}
+                                title="Full Screen Relationship Diagram"
+                                style={{
+                                    width: 44, height: 44,
+                                    background: '#18181b', color: '#818CF8',
+                                    border: '2.5px solid #818CF8', borderRadius: '50%',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    fontSize: 24, fontWeight: 900,
+                                    boxShadow: '0 4px 16px rgba(0,0,0,.18)',
+                                    cursor: 'pointer',
+                                    opacity: 0.96,
+                                    transition: 'box-shadow .18s, border-color .18s, background .18s',
+                                    marginBottom: 2,
+                                }}
+                                onMouseOver={e => e.currentTarget.style.background = '#23234a'}
+                                onMouseOut={e => e.currentTarget.style.background = '#18181b'}
+                            >
+                                <span style={{fontSize: 24, lineHeight: 1}}>⛶</span>
+                            </button>
+                        )}
+                        <div style={{
+                            background: 'var(--bg-surface)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: 8,
+                            padding: '10px 14px',
+                            fontSize: 11,
+                            display: 'flex', flexDirection: 'column', gap: 5,
+                            minWidth: 140,
+                        }}>
+                            <span style={{ fontWeight: 700, fontSize: 10, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-tertiary)' }}>
+                                Legend
+                            </span>
+                            {[
+                                ...(erMode ? [] : [{ color: '#3B82F6', label: 'Semantic Model' }]),
+                                { color: '#22C55E', label: 'Source Table' },
+                                ...(erMode ? [{ color: '#818CF8', label: 'Relationship' }] : [{ color: '#EAB308', label: 'Metric / Measure' }]),
+                                { color: '#EF4444', label: 'Broken Reference' },
+                                ...(diffMode ? [
+                                    { color: '#22C55E', label: 'Diff: Added (green)' },
+                                    { color: '#EAB308', label: 'Diff: Modified (yellow)' },
+                                    { color: '#EF4444', label: 'Diff: Removed (red/dotted)' },
+                                ] : []),
+                            ].map(item => (
+                                <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <span style={{
+                                        width: 10, height: 10, borderRadius: 3,
+                                        background: item.color, flexShrink: 0,
+                                    }} />
+                                    <span style={{ color: 'var(--text-secondary)' }}>{item.label}</span>
+                                </div>
+                            ))}
+                        </div>
                     </div>
                 </Panel>
             </ReactFlow>

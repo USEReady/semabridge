@@ -919,27 +919,10 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                               diffMode={diffMode}
                               defaultEdgeOptions={{ type: 'step' }}
                               fullScreenMode={false}
+                              onRequestFullScreen={() => setFullScreen(true)}
+                              showFullScreenButton={(erMode || filterType === 'tables') && !fullScreen}
                           />
                         </ReactFlowProvider>
-                        {/* Full Screen Toggle Button (only in ER/Table view) */}
-                        {(erMode || filterType === 'tables') && (
-                            <button
-                                onClick={() => setFullScreen(true)}
-                                title="Full Screen Relationship Diagram"
-                                style={{
-                                    position: 'absolute',
-                                    top: 18, right: 18, zIndex: 100,
-                                    background: '#18181b', color: '#fff',
-                                    border: '1px solid #818CF8', borderRadius: 8,
-                                    padding: '7px 18px', fontWeight: 700, fontSize: 15,
-                                    boxShadow: '0 2px 8px rgba(0,0,0,.18)',
-                                    cursor: 'pointer',
-                                    opacity: 0.92,
-                                }}
-                            >
-                                ⛶ Full Screen
-                            </button>
-                        )}
                     </div>
                 ) : null}
 
