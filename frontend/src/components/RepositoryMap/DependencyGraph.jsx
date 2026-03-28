@@ -74,7 +74,6 @@ function applyDagreLayout(nodes, edges, direction = 'TB', opts = {}) {
         };
     });
 }
-
 // ────────────────────────────────────────────
 // Simple force-directed simulation (lightweight)
 // ────────────────────────────────────────────

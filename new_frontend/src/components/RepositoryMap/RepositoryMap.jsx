@@ -343,6 +343,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         { id: 'all', label: 'All' },
         { id: 'models', label: 'Models' },
         { id: 'tables', label: 'Tables' },
+        { id: 'metrics', label: 'Metrics' },
         { id: 'broken', label: 'Broken Refs' },
     ];
 
@@ -633,7 +634,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     <span style={{ fontSize: 11 }}>Explorer</span>
                 </button>
 
-                {(erMode || filterType === 'tables') && (
+                {(erMode || filterType === 'tables' || filterType === 'metrics') && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 8, flexShrink: 0 }}>
                         <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap' }}>
                             Model
@@ -659,26 +660,28 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                             ))}
                         </select>
 
-                        <select
-                            value={selectedTableId}
-                            onChange={(e) => setSelectedTableId(e.target.value)}
-                            style={{
-                                border: '1px solid var(--border-color)',
-                                borderRadius: 6,
-                                background: 'var(--bg-app)',
-                                color: 'var(--text-secondary)',
-                                fontSize: 11,
-                                padding: '4px 8px',
-                                maxWidth: 220,
-                                minWidth: 120,
-                            }}
-                            title="Choose table"
-                        >
-                            <option value="__all__">All tables</option>
-                            {tableOptions.map(t => (
-                                <option key={t.id} value={t.id}>{t.schema}.{t.name} · {t.model}</option>
-                            ))}
-                        </select>
+                        {filterType === 'metrics' ? null : (
+                            <select
+                                value={selectedTableId}
+                                onChange={(e) => setSelectedTableId(e.target.value)}
+                                style={{
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: 6,
+                                    background: 'var(--bg-app)',
+                                    color: 'var(--text-secondary)',
+                                    fontSize: 11,
+                                    padding: '4px 8px',
+                                    maxWidth: 220,
+                                    minWidth: 120,
+                                }}
+                                title="Choose table"
+                            >
+                                <option value="__all__">All tables</option>
+                                {tableOptions.map(t => (
+                                    <option key={t.id} value={t.id}>{t.schema}.{t.name} · {t.model}</option>
+                                ))}
+                            </select>
+                        )}
                     </div>
                 )}
 
@@ -903,26 +906,26 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                 {/* Normal (non-fullscreen) diagram */}
                 {!(erMode || filterType === 'tables') || !fullScreen ? (
                     <div style={{ flex: 1, position: 'relative' }}>
-                        <ReactFlowProvider>
-                          <DependencyGraph
-                              graphData={renderedGraphData}
-                              layout={layout}
-                              erMode={erMode}
-                              selectedModelId={selectedModelId}
-                              selectedTableId={selectedTableId}
-                              searchQuery={searchQuery}
-                              filterType={filterType}
-                              showVersionBadges={showVersionBadges}
-                              onNodeClick={handleNodeClick}
-                              isLoading={loading}
-                              snapshotId={snapshotId}
-                              diffMode={diffMode}
-                              defaultEdgeOptions={{ type: 'step' }}
-                              fullScreenMode={false}
-                              onRequestFullScreen={() => setFullScreen(true)}
-                              showFullScreenButton={(erMode || filterType === 'tables') && !fullScreen}
-                          />
-                        </ReactFlowProvider>
+                                                <ReactFlowProvider>
+                                                    <DependencyGraph
+                                                            graphData={renderedGraphData}
+                                                            layout={layout}
+                                                            erMode={erMode}
+                                                            selectedModelId={selectedModelId}
+                                                            selectedTableId={selectedTableId}
+                                                            searchQuery={searchQuery}
+                                                            filterType={filterType}
+                                                            showVersionBadges={showVersionBadges}
+                                                            onNodeClick={handleNodeClick}
+                                                            isLoading={loading}
+                                                            snapshotId={snapshotId}
+                                                            diffMode={diffMode}
+                                                            defaultEdgeOptions={{ type: 'step' }}
+                                                            fullScreenMode={false}
+                                                            onRequestFullScreen={() => setFullScreen(true)}
+                                                            showFullScreenButton={(erMode || filterType === 'tables' || filterType === 'metrics') && !fullScreen}
+                                                    />
+                                                </ReactFlowProvider>
                     </div>
                 ) : null}
 
