@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ReactFlow,
     MiniMap,
@@ -11,104 +11,107 @@ import {
 import { Loader2, Database } from 'lucide-react';
 import { useReactFlow } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import dagre from 'dagre';
 
-import ModelNode from './nodes/ModelNode';
-import TableNode from './nodes/TableNode';
-import MeasureNode from './nodes/MeasureNode';
-import { api } from '../../utils/api';
+export default function DependencyGraph(props) {
+    // ...existing code...
+    // (all hooks, state, and logic)
 
-// Custom node type registry
-const nodeTypes = {
-    modelNode: ModelNode,
-    tableNode: TableNode,
-    measureNode: MeasureNode,
-};
-
-const thStyle = {
-    textAlign: 'left',
-    padding: '10px 12px',
-    borderBottom: '1px solid var(--border-color)',
-    color: 'var(--text-tertiary)',
-    fontSize: 11,
-    textTransform: 'uppercase',
-    letterSpacing: '.04em',
-    background: 'var(--bg-app)',
-};
-
-const tdStyle = {
-    padding: '10px 12px',
-    borderBottom: '1px solid var(--border-color)',
-    color: 'var(--text-secondary)',
-    fontSize: 12,
-};
-
-// ────────────────────────────────────────────
-// Dagre hierarchical layout
-// ────────────────────────────────────────────
-function applyDagreLayout(nodes, edges, direction = 'LR', opts = {}) {
-    // Use LR (left-to-right) for ER/table view for Power BI/dbdiagram style
-    const {
-        nodeWidth = 260,
-        nodeHeight = 110,
-        nodeSep = 120,
-        rankSep = 180,
-    } = opts;
-    const g = new dagre.graphlib.Graph();
-    g.setDefaultEdgeLabel(() => ({}));
-    g.setGraph({ rankdir: direction, nodesep: nodeSep, ranksep: rankSep });
-
-    nodes.forEach(n => {
-        g.setNode(n.id, { width: nodeWidth, height: nodeHeight });
-    });
-
-    edges.forEach(e => {
-        g.setEdge(e.source, e.target);
-    });
-
-    dagre.layout(g);
-
-    return nodes.map(n => {
-        const pos = g.node(n.id);
-        return {
-            ...n,
-            position: { x: pos.x - (nodeWidth / 2), y: pos.y - (nodeHeight / 2) },
-        };
-    });
+    // Early return for table view (must be inside the function)
+    if (props.filterType === 'tables' && !props.erMode) {
+        // Table view: do not render the graph, just the table/mapping UI
+        return (
+            <>
+                <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'auto', background: 'var(--bg-app)' }}>
+                    <div style={{ padding: '10px 12px' }}>
+                        <div>{/* ...existing code... */}</div>
+                    </div>
+                    {props.isLoading && (
+                        <div style={{
+                            position: 'absolute',
+                            inset: 0,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            background: 'rgba(2, 6, 23, 0.55)',
+                            backdropFilter: 'blur(2px)',
+                            zIndex: 5,
+                        }}>
+                            <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 8,
+                                padding: '10px 14px',
+                                borderRadius: 10,
+                                background: 'var(--bg-surface)',
+                                border: '1px solid var(--border-color)',
+                                color: 'var(--text-secondary)',
+                                fontSize: 12,
+                            }}>
+                                <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: '#818CF8' }} />
+                                <span>Loading tables...</span>
+                            </div>
+                        </div>
+                    )}
+                    {/* ...mappingOpen block... */}
+                </div>
+            </>
+        );
+    }
+    // ...main graph return block follows...
 }
-
-// ────────────────────────────────────────────
-// Simple force-directed simulation (lightweight)
-// ────────────────────────────────────────────
-function applyForceLayout(nodes) {
-    // Place nodes in a roughly circular pattern
-    const cx = 500, cy = 400;
-    const radius = Math.max(250, nodes.length * 30);
-    return nodes.map((n, i) => {
-        const angle = (2 * Math.PI * i) / nodes.length;
-        return {
-            ...n,
-            position: {
-                x: cx + radius * Math.cos(angle),
-                y: cy + radius * Math.sin(angle),
-            },
-        };
-    });
-}
-
-// ────────────────────────────────────────────
-// Compact ER grid layout (Power BI-like readability)
-// ────────────────────────────────────────────
-function applyERGridLayout(nodes, edges) {
-    const degree = new Map();
-    nodes.forEach(n => degree.set(n.id, 0));
-    edges.forEach(e => {
-        degree.set(e.source, (degree.get(e.source) || 0) + 1);
-        degree.set(e.target, (degree.get(e.target) || 0) + 1);
-    });
-
-    const ordered = [...nodes].sort((a, b) => {
-        const d = (degree.get(b.id) || 0) - (degree.get(a.id) || 0);
+                                width: '96vw',
+                                height: '86vh',
+                                background: 'var(--bg-surface)',
+                                border: '1px solid var(--border-color)',
+                                borderRadius: 10,
+                                overflow: 'hidden',
+                                display: 'flex',
+                                flexDirection: 'column',
+                            }}>
+                                <div style={{
+                                    padding: '10px 12px',
+                                    borderBottom: '1px solid var(--border-color)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    background: 'var(--bg-app)',
+                                }}>
+                                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)' }}>Table Mapping View</span>
+                                    <button onClick={() => setMappingOpen(false)} style={{ border: 'none', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: 16 }}>✕</button>
+                                </div>
+                                <div style={{ overflow: 'auto', flex: 1 }}>
+                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                                        <thead>
+                                            <tr>
+                                                <th style={thStyle}>From</th>
+                                                <th style={thStyle}>From Column</th>
+                                                <th style={thStyle}>To</th>
+                                                <th style={thStyle}>To Column</th>
+                                                <th style={thStyle}>Cardinality</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {mappingRows.map((m) => (
+                                                <tr key={m.id}>
+                                                    <td style={tdStyle}>{m.fromSchema}.{m.fromTable}</td>
+                                                    <td style={tdStyle}>{m.fromColumn}</td>
+                                                    <td style={tdStyle}>{m.toSchema}.{m.toTable}</td>
+                                                    <td style={tdStyle}>{m.toColumn}</td>
+                                                    <td style={tdStyle}>{m.cardinality}</td>
+                                                </tr>
+                                            ))}
+                                            {mappingRows.length === 0 && (
+                                                <tr><td colSpan={5} style={{ ...tdStyle, textAlign: 'center', color: 'var(--text-tertiary)' }}>No relationships available for current selection.</td></tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </>
+        );
         if (d !== 0) return d;
         return String(a?.data?.label || a.id).localeCompare(String(b?.data?.label || b.id));
     });
@@ -234,6 +237,10 @@ export default function DependencyGraph({
     const { getNodes } = useReactFlow?.() || {};
     const [nodes, setNodes, onNodesChange] = useNodesState([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+    // Track manual node positions
+    const [nodePositions, setNodePositions] = useState({});
+    const [layoutApplied, setLayoutApplied] = useState(false);
+    const initialLayoutDone = useRef(false);
     const [versionCounts, setVersionCounts] = useState({});
     const [mappingOpen, setMappingOpen] = useState(false);
 
@@ -457,25 +464,43 @@ export default function DependencyGraph({
         const denseModelView = modelView && filteredNodes.length > 350;
         const denseTableView = tableView && filteredNodes.length > 260;
 
-        if (erMode || tableView) {
-            // Use LR dagre for ER/table view for best readability
-            filteredNodes = applyDagreLayout(
-                filteredNodes,
-                filteredEdges,
-                'LR',
-                { nodeWidth: 260, nodeHeight: 110, nodeSep: 120, rankSep: 180 }
-            );
-        } else if (modelView) {
-            filteredNodes = applyModelGridLayout(filteredNodes, denseModelView);
-        } else if (layout === 'hierarchical') {
-            filteredNodes = applyDagreLayout(
-                filteredNodes,
-                filteredEdges,
-                'TB',
-                { nodeWidth: 240, nodeHeight: 80, nodeSep: 60, rankSep: 100 }
-            );
+        // --- Layout logic ---
+        let newNodes = filteredNodes;
+        // Only apply auto-layout on first load or when reset
+        if (!layoutApplied) {
+            if (erMode || tableView) {
+                newNodes = applyDagreLayout(
+                    filteredNodes,
+                    filteredEdges,
+                    'LR',
+                    { nodeWidth: 260, nodeHeight: 110, nodeSep: 220, rankSep: 260, edgesep: 80 }
+                );
+            } else if (modelView) {
+                newNodes = applyModelGridLayout(filteredNodes, denseModelView);
+            } else if (layout === 'hierarchical') {
+                newNodes = applyDagreLayout(
+                    filteredNodes,
+                    filteredEdges,
+                    'TB',
+                    { nodeWidth: 240, nodeHeight: 80, nodeSep: 120, rankSep: 180, edgesep: 80 }
+                );
+            } else {
+                newNodes = applyForceLayout(filteredNodes);
+            }
+            // Save initial positions
+            const posMap = {};
+            newNodes.forEach(n => {
+                posMap[n.id] = { ...n.position };
+            });
+            setNodePositions(posMap);
+            setLayoutApplied(true);
+            initialLayoutDone.current = true;
         } else {
-            filteredNodes = applyForceLayout(filteredNodes);
+            // Use stored manual positions if available
+            newNodes = filteredNodes.map(n => {
+                const manual = nodePositions[n.id];
+                return manual ? { ...n, position: { ...manual } } : n;
+            });
         }
 
         const styledNodes = filteredNodes.map(n => {
@@ -515,20 +540,43 @@ export default function DependencyGraph({
         const styledEdges = filteredEdges.map(e => {
             const status = e?.data?.diffStatus;
             const isRelationship = String(e?.id || '').startsWith('rel-');
+            // Cardinality extraction
+            const cardinality = e?.data?.cardinality || '';
+            const fromCard = e?.data?.from_cardinality || '';
+            const toCard = e?.data?.to_cardinality || '';
+            let edgeLabel = '';
+            if (fromCard && toCard) {
+                edgeLabel = `${fromCard}..${toCard}`;
+            } else if (cardinality) {
+                edgeLabel = cardinality;
+            }
+            // Always use 'step' for relationship edges
+            const edgeType = isRelationship ? 'step' : (e.type || 'default');
             if (status === 'added') {
                 return {
                     ...e,
+                    type: edgeType,
                     animated: false,
                     style: {
                         ...(e.style || {}),
                         stroke: '#22C55E',
                         strokeWidth: 2.5,
                     },
+                    label: edgeLabel || undefined,
+                    labelStyle: edgeLabel ? {
+                        fill: '#22C55E', fontSize: 11, fontWeight: 700,
+                    } : undefined,
+                    labelBgStyle: edgeLabel ? {
+                        fill: 'rgba(34,197,94,0.13)',
+                    } : undefined,
+                    labelBgPadding: edgeLabel ? [4, 2] : undefined,
+                    labelBgBorderRadius: edgeLabel ? 4 : undefined,
                 };
             }
             if (status === 'removed') {
                 return {
                     ...e,
+                    type: edgeType,
                     animated: false,
                     style: {
                         ...(e.style || {}),
@@ -536,41 +584,63 @@ export default function DependencyGraph({
                         strokeDasharray: '6 4',
                         strokeWidth: 2,
                     },
+                    label: edgeLabel || undefined,
+                    labelStyle: edgeLabel ? {
+                        fill: '#EF4444', fontSize: 11, fontWeight: 700,
+                    } : undefined,
+                    labelBgStyle: edgeLabel ? {
+                        fill: 'rgba(239,68,68,0.13)',
+                    } : undefined,
+                    labelBgPadding: edgeLabel ? [4, 2] : undefined,
+                    labelBgBorderRadius: edgeLabel ? 4 : undefined,
                 };
             }
             if (status === 'modified') {
                 return {
                     ...e,
+                    type: edgeType,
                     animated: false,
                     style: {
                         ...(e.style || {}),
                         stroke: '#EAB308',
                         strokeWidth: 2.5,
                     },
+                    label: edgeLabel || undefined,
+                    labelStyle: edgeLabel ? {
+                        fill: '#EAB308', fontSize: 11, fontWeight: 700,
+                    } : undefined,
+                    labelBgStyle: edgeLabel ? {
+                        fill: 'rgba(234,179,8,0.13)',
+                    } : undefined,
+                    labelBgPadding: edgeLabel ? [4, 2] : undefined,
+                    labelBgBorderRadius: edgeLabel ? 4 : undefined,
                 };
             }
             if (isRelationship) {
                 return {
                     ...e,
+                    type: 'step',
                     animated: false,
                     style: {
                         ...(e.style || {}),
                         stroke: (e.style && e.style.stroke) || '#818CF8',
                         strokeWidth: 1.8,
                     },
-                    labelStyle: {
-                        fill: '#A5B4FC',
-                        fontSize: 10,
-                        fontWeight: 700,
-                    },
-                    labelBgStyle: {
+                    label: edgeLabel || undefined,
+                    labelStyle: edgeLabel ? {
+                        fill: '#A5B4FC', fontSize: 11, fontWeight: 700,
+                    } : undefined,
+                    labelBgStyle: edgeLabel ? {
                         fill: 'rgba(15,23,42,0.88)',
-                    },
-                    labelBgPadding: [4, 2],
-                    labelBgBorderRadius: 4,
+                    } : undefined,
+                    labelBgPadding: edgeLabel ? [4, 2] : undefined,
+                    labelBgBorderRadius: edgeLabel ? 4 : undefined,
                 };
             }
-            return e;
+            return {
+                ...e,
+                type: e.type || 'default',
+            };
         });
 
         setNodes(styledNodes);
@@ -581,6 +651,26 @@ export default function DependencyGraph({
     const handleNodeClick = useCallback((_, node) => {
         onNodeClick?.({ ...(node?.data || {}), id: node?.id });
     }, [onNodeClick]);
+
+    // ── Node drag handler: persist manual positions ──
+    const handleNodesChange = useCallback((changes) => {
+        let changed = false;
+        const newPositions = { ...nodePositions };
+        changes.forEach(change => {
+            if (change.type === 'position' && change.position && change.id) {
+                newPositions[change.id] = { ...change.position };
+                changed = true;
+            }
+        });
+        if (changed) setNodePositions(newPositions);
+        onNodesChange(changes);
+    }, [nodePositions, onNodesChange]);
+
+    // ── Reset Layout: reapply auto-layout and clear manual positions ──
+    const handleResetLayout = () => {
+        setLayoutApplied(false);
+        setNodePositions({});
+    };
 
     if (filterType === 'tables' && !erMode) {
         return (
@@ -625,24 +715,44 @@ export default function DependencyGraph({
 
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                             <thead>
-                                <tr>
-                                    <th style={thStyle}>Table</th>
-                                    <th style={thStyle}>Model</th>
-                                    <th style={thStyle}>Schema</th>
-                                    <th style={thStyle}>Columns</th>
-                                    <th style={thStyle}>Rows</th>
-                                    <th style={thStyle}>Details</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {tableRows.map((n) => {
-                                    const d = n.data || {};
-                                    const columns = Array.isArray(d.columns) ? d.columns : [];
-                                    const rowCount = d.row_count || '-';
-                                    return (
-                                        <tr key={n.id}>
-                                            <td style={tdStyle}>{d.label}</td>
-                                            <td style={tdStyle}>{d.model_label || d.model_name || d.model_id || '-'}</td>
+                                // Main graph view
+                                return (
+                                    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+                                        {/* Reset Layout Button */}
+                                        <button
+                                            onClick={handleResetLayout}
+                                            style={{
+                                                position: 'absolute',
+                                                top: 18, left: 18, zIndex: 200,
+                                                background: '#fff', color: '#818CF8', border: '1.5px solid #818CF8',
+                                                borderRadius: 8, padding: '6px 16px', fontWeight: 700, fontSize: 13,
+                                                boxShadow: '0 2px 8px rgba(0,0,0,.10)', cursor: 'pointer',
+                                                opacity: 0.96, transition: 'box-shadow .18s, border-color .18s, background .18s',
+                                            }}
+                                            title="Reset layout to auto-arrange"
+                                        >
+                                            Reset Layout
+                                        </button>
+                                        <ReactFlow
+                                            nodes={nodes}
+                                            edges={edges}
+                                            onNodesChange={handleNodesChange}
+                                            onEdgesChange={onEdgesChange}
+                                            onNodeClick={handleNodeClick}
+                                            nodeTypes={nodeTypes}
+                                            fitView={shouldAutoFitView}
+                                            minZoom={0.02}
+                                            maxZoom={2}
+                                            nodesDraggable={true}
+                                            elementsSelectable={true}
+                                            snapToGrid={true}
+                                            snapGrid={[20, 20]}
+                                            defaultEdgeOptions={{
+                                                type: 'smoothstep',
+                                                animated: !erMode,
+                                            }}
+                                            style={{ background: 'var(--bg-app)' }}
+                                        >
                                             <td style={tdStyle}>{d.schema || 'PUBLIC'}</td>
                                             <td style={tdStyle}>{columns.length}</td>
                                             <td style={tdStyle}>{rowCount}</td>
