@@ -240,9 +240,8 @@ class CredentialManager:
     def get_connection_status(self) -> Dict[str, Any]:
         """Get the configuration status for all supported services.
 
-        Returns a dict per service with ``configured``, ``missing_fields``,
-        and service-specific flags (``auth_method`` / ``has_auth`` for Fabric,
-        ``auth_type`` for Snowflake) so the UI can show accurate status.
+        Returns a dict per service with standardized 'status' field ("connected"/"disconnected"),
+        plus existing details for UI display.
         """
         status: Dict[str, Any] = {}
         for service in _ENV_MAP:
@@ -252,8 +251,10 @@ class CredentialManager:
             required = self._get_required_keys(service, raw)
             missing = [k for k in required if k not in stored]
 
+            is_configured = len(missing) == 0 and len(stored) > 0
+
             svc_status: Dict[str, Any] = {
-                "configured": len(missing) == 0 and len(stored) > 0,
+                "configured": is_configured,
                 "fields_stored": len(stored),
                 "fields_required": len(required),
                 "missing_fields": missing,
@@ -266,13 +267,15 @@ class CredentialManager:
                 svc_status["auth_method"] = auth_method
                 svc_status["has_auth"] = auth_method != "none"
                 # Only truly configured if workspace + auth both exist
-                svc_status["configured"] = (
-                    svc_status["configured"] and auth_method != "none"
-                )
+                is_configured = is_configured and auth_method != "none"
+                svc_status["configured"] = is_configured
 
             # Snowflake-specific: include auth_type in response
             if service == "snowflake":
                 svc_status["auth_type"] = stored.get("auth_type", "password")
+
+            # Add standardized status field
+            svc_status["status"] = "connected" if is_configured else "disconnected"
 
             status[service] = svc_status
         return status

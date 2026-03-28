@@ -1,19 +1,39 @@
-project_name: f
+project_name: hi
 source:
   type: fabric
-  workspace_id: semabridge-local
-  workspace: SemaBridge Workspace
+  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
+  workspace: semabridge
   models:
-    - Device
-target:
-  type: snowflake
+    - continent
+targets:
+  - type: snowflake
+mappings:
+  - source: continent
+    target: continent_mapped
+    type: table
+    columns:
+      - source: id
+        target: id
+        type: INT
+        primary_key: true
+      - source: name
+        target: name
+        type: VARCHAR(255)
+      - source: created_at
+        target: created_at
+        type: TIMESTAMP
+      - source: updated_at
+        target: updated_at
+        type: TIMESTAMP
 ui:
-  output_format: osi
+  intermediate_format: osi
   editor_mode: form
+  output_format: osi
 selection:
   model_ids:
-    - 974e7d48-4a76-4518-99d7-6ea751e37ce8
+    - d32e8900-31cc-4647-872d-08a7e62bf03b
 options:
   auto_relationships: true
-  include_hidden_fields: false
   generate_descriptions: true
+target:
+  type: snowflake

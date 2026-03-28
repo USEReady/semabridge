@@ -224,10 +224,7 @@ function FabricLoginCard() {
             <div className="flex items-center justify-between px-4 py-3 border-b"
                 style={{ borderColor: 'var(--border-main)' }}>
                 <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg flex items-center justify-center"
-                        style={{ background: 'rgba(99,102,241,0.1)' }}>
-                        <Cloud size={16} style={{ color: '#6366f1' }} />
-                    </div>
+                    {/* Cloud icon removed as requested */}
                     <div>
                         <h3 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
                             Microsoft Fabric

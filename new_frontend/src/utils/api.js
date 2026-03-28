@@ -1,3 +1,5 @@
+// ...existing code...
+// (Removed duplicate export of api. Only export once at the end of the file, with getDatabricksSources included as a method.)
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
 const TOKEN_KEY = 'semabridge-token';
 
@@ -111,7 +113,15 @@ async function handleResponse(res) {
  * Authorization header when a token is stored.
  */
 async function authFetch(url, options = {}) {
+    // Inject X-Fabric-Context header if workspace ID is available
+    let workspaceId = null;
+    try {
+        workspaceId = localStorage.getItem('FABRIC_WORKSPACE_ID');
+    } catch (e) {}
     const headers = { ...getAuthHeaders(), ...options.headers };
+    if (workspaceId) {
+        headers['X-Fabric-Context'] = workspaceId;
+    }
     return fetch(url, { ...options, headers });
 }
 

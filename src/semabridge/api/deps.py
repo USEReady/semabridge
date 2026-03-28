@@ -1,3 +1,14 @@
+
+from __future__ import annotations
+from fastapi import Request, HTTPException, Header, Depends
+
+# Dependency to extract Fabric Workspace Context from header
+def get_fabric_context(request: Request):
+    context_header = request.headers.get("X-Fabric-Context")
+    if not context_header:
+        raise HTTPException(status_code=401, detail="No Fabric context provided")
+    return context_header
+
 """
 Shared FastAPI Dependency Injection utilities.
 
@@ -30,7 +41,6 @@ Available dependencies
             return repo.list_versions()
 """
 
-from __future__ import annotations
 
 from typing import TYPE_CHECKING, Generator
 

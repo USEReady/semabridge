@@ -103,7 +103,15 @@ async function handleResponse(res) {
  * Authorization header when a token is stored.
  */
 async function authFetch(url, options = {}) {
+    // Inject X-Fabric-Context header if workspace ID is available
+    let workspaceId = null;
+    try {
+        workspaceId = localStorage.getItem('FABRIC_WORKSPACE_ID');
+    } catch (e) {}
     const headers = { ...getAuthHeaders(), ...options.headers };
+    if (workspaceId) {
+        headers['X-Fabric-Context'] = workspaceId;
+    }
     return fetch(url, { ...options, headers });
 }
 

@@ -683,7 +683,6 @@ function FormEditor({ value, onChange }) {
       <div>
         <label style={LABEL}>Intermediate Format</label>
         <select value={value.output_format} onChange={e => patch('output_format', e.target.value)} style={{ ...INPUT, cursor: 'pointer' }}>
-          <option value="atscale">AtScale</option>
           <option value="osi">OSI (Open Semantic Interchange)</option>
           <option value="sml">SML</option>
         </select>

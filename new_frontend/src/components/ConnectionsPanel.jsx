@@ -1,4 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+        // Utility for case-insensitive status check
+        const isConnected = (statusObj) =>
+            typeof statusObj?.status === 'string' && statusObj.status.toLowerCase() === 'connected';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
     Settings,
     Cloud,
@@ -1139,18 +1142,63 @@ export default function ConnectionsPanel({ isOpen, onClose, selectedConnector })
     const [databricksStatus, setDatabricksStatus] = useState(null);
     const [loading, setLoading] = useState(true);
 
+
+    // Polling state
+    const pollRef = useRef(null);
+    const pollTimeout = 3000; // 3 seconds
+    const pollMaxAttempts = 20; // ~1 minute
+    const [polling, setPolling] = useState(false);
+    const pollAttempts = useRef(0);
+
+    const fetchAndSetStatus = useCallback(async () => {
+        setLoading(true);
+        try {
+            const data = await withTimeout(api.getConnectionsStatus(), 4000, null);
+            setSnowflakeStatus(data?.snowflake ?? null);
+            setDatabricksStatus(data?.databricks ?? null);
+            // Add more providers as needed
+            return data;
+        } catch {
+            return null;
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    // Polling logic
+    const pollStatus = useCallback(async () => {
+        setPolling(true);
+        pollAttempts.current = 0;
+        const poll = async () => {
+            pollAttempts.current += 1;
+            const data = await fetchAndSetStatus();
+            const allConnected = ['snowflake', 'databricks'].every(
+                key => typeof data?.[key]?.status === 'string' && data[key].status.toLowerCase() === 'connected'
+            );
+            if (allConnected || pollAttempts.current >= pollMaxAttempts) {
+                setPolling(false);
+                return;
+            }
+            pollRef.current = setTimeout(poll, pollTimeout);
+        };
+        poll();
+    }, [fetchAndSetStatus]);
+
+    // Initial fetch on open
     useEffect(() => {
         if (isOpen) {
-            setLoading(true);
-            withTimeout(api.getConnectionsStatus(), 4000, null)
-                .then(data => {
-                    setSnowflakeStatus(data?.snowflake ?? null);
-                    setDatabricksStatus(data?.databricks ?? null);
-                })
-                .catch(() => { })
-                .finally(() => setLoading(false));
+            fetchAndSetStatus();
         }
-    }, [isOpen]);
+        return () => { if (pollRef.current) clearTimeout(pollRef.current); };
+    }, [isOpen, fetchAndSetStatus]);
+
+    // Call this after any connect/save action for any provider
+    const handleAfterConnect = useCallback(() => {
+        fetchAndSetStatus();
+        pollStatus();
+    }, [fetchAndSetStatus, pollStatus]);
+
+    // Pass handleAfterConnect to child components (ConnectionManager, etc.) as needed
 
     if (!isOpen) return null;
 

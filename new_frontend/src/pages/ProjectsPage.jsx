@@ -273,12 +273,13 @@ export default function ProjectsPage() {
 
   /* ── Render ── */
   return (
-    <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: 'row-reverse', height: '100%', overflow: 'hidden' }}>
 
       {/* ── Folder/Adapter Sidebar ── */}
       <aside style={{
         width: 220, flexShrink: 0,
-        borderRight: '1px solid var(--border-main)',
+        borderLeft: '1px solid var(--border-main)',
+        borderRight: 'none',
         display: 'flex', flexDirection: 'column',
         padding: '16px 0',
         overflowY: 'auto',

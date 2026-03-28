@@ -615,6 +615,34 @@
       "status": "draft",
       "created_at": "2026-03-27T16:40:20.092803",
       "updated_at": "2026-03-27T16:40:20.092803"
+    },
+    "proj-1774730388846": {
+      "id": "proj-1774730388846",
+      "project_id": "proj-1774730388846",
+      "name": "hi",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "d875c0c3-59e9-4d55-a7f0-99595b756718",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-28T20:39:48.846508",
+      "updated_at": "2026-03-28T20:40:00.062765"
+    },
+    "proj-1774730389171": {
+      "id": "proj-1774730389171",
+      "project_id": "proj-1774730389171",
+      "name": "hi_snowflake_to_fabric",
+      "description": "",
+      "source": "snowflake",
+      "adapter": "snowflake",
+      "workspace_id": "",
+      "target_type": "fabric",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-03-28T20:39:49.171305",
+      "updated_at": "2026-03-28T20:39:49.171305"
     }
   },
   "project_configs": {
@@ -660,7 +688,9 @@
     "proj-1774520646971": "project_name: FB-SF-1\nsource:\n  type: fabric\n  workspace_id: semabridge-local\n  workspace: SemaBridge Workspace\n  models:\n    - CONTINENT_SEMANTIC\ntargets:\n  - type: snowflake\nmappings:\n  - source: CONTINENT_SEMANTIC\n    target: continent_semantic_mapped\n    type: table\n    columns:\n      - source: id\n        target: id\n        type: INT\n        primary_key: true\n      - source: name\n        target: name\n        type: VARCHAR(255)\n      - source: created_at\n        target: created_at\n        type: TIMESTAMP\n      - source: updated_at\n        target: updated_at\n        type: TIMESTAMP\nui:\n  intermediate_format: osi\n  editor_mode: form\n  output_format: osi\nselection:\n  model_ids:\n    - 34277c5f-657d-4d29-bb7d-3d4496aac6c4\noptions:\n  auto_relationships: true\n  generate_descriptions: true\ntarget:\n  type: snowflake",
     "proj-1774622788474": "project_name: g\nsource:\n  type: fabric\n  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718\n  workspace: semabridge\n  models:\n    - Device\ntargets:\n  - type: databricks\nmappings:\n  - source: Device\n    target: device_mapped\n    type: table\n    columns:\n      - source: id\n        target: id\n        type: INT\n        primary_key: true\n      - source: name\n        target: name\n        type: VARCHAR(255)\n      - source: created_at\n        target: created_at\n        type: TIMESTAMP\n      - source: updated_at\n        target: updated_at\n        type: TIMESTAMP\nui:\n  intermediate_format: osi\n  editor_mode: form\n  output_format: osi\nselection:\n  model_ids:\n    - 974e7d48-4a76-4518-99d7-6ea751e37ce8\noptions:\n  auto_relationships: true\n  generate_descriptions: true\ntarget:\n  type: databricks",
     "proj-1774628902620": "project_name: \"gi\"\nsource:\n  type: fabric\n  workspace_id: \"d875c0c3-59e9-4d55-a7f0-99595b756718\"\n  workspace: \"semabridge\"\n  models:\n    - \"Customer Profitability\"\ntargets:\n  - type: databricks\nmappings:\n  - source: \"Customer Profitability\"\n    target: \"customer profitability_mapped\"\n    type: table\n    columns:\n      - source: \"id\"\n        target: \"id\"\n        type: INT\n        primary_key: true\n      - source: \"name\"\n        target: \"name\"\n        type: VARCHAR(255)\n      - source: \"created_at\"\n        target: \"created_at\"\n        type: TIMESTAMP\n      - source: \"updated_at\"\n        target: \"updated_at\"\n        type: TIMESTAMP\nui:\n  intermediate_format: \"osi\"\n  editor_mode: \"form\"\nselection:\n  model_ids:\n    - \"83686c9b-2320-466a-a7a8-c3975d6998e7\"\noptions:\n  auto_relationships: true\n  generate_descriptions: true",
-    "proj-1774629620092": "project_name: \"hh\"\nsource:\n  type: fabric\n  workspace_id: \"d875c0c3-59e9-4d55-a7f0-99595b756718\"\n  workspace: \"semabridge\"\n  models:\n    - \"demo Table\"\ntargets:\n  - type: databricks\nmappings:\n  - source: \"demo Table\"\n    target: \"demo table_mapped\"\n    type: table\n    columns:\n      - source: \"id\"\n        target: \"id\"\n        type: INT\n        primary_key: true\n      - source: \"name\"\n        target: \"name\"\n        type: VARCHAR(255)\n      - source: \"created_at\"\n        target: \"created_at\"\n        type: TIMESTAMP\n      - source: \"updated_at\"\n        target: \"updated_at\"\n        type: TIMESTAMP\nui:\n  intermediate_format: \"osi\"\n  editor_mode: \"form\"\nselection:\n  model_ids:\n    - \"9c4b4093-97b3-40d1-94c1-0b2edb26dc93\"\noptions:\n  auto_relationships: true\n  generate_descriptions: true"
+    "proj-1774629620092": "project_name: \"hh\"\nsource:\n  type: fabric\n  workspace_id: \"d875c0c3-59e9-4d55-a7f0-99595b756718\"\n  workspace: \"semabridge\"\n  models:\n    - \"demo Table\"\ntargets:\n  - type: databricks\nmappings:\n  - source: \"demo Table\"\n    target: \"demo table_mapped\"\n    type: table\n    columns:\n      - source: \"id\"\n        target: \"id\"\n        type: INT\n        primary_key: true\n      - source: \"name\"\n        target: \"name\"\n        type: VARCHAR(255)\n      - source: \"created_at\"\n        target: \"created_at\"\n        type: TIMESTAMP\n      - source: \"updated_at\"\n        target: \"updated_at\"\n        type: TIMESTAMP\nui:\n  intermediate_format: \"osi\"\n  editor_mode: \"form\"\nselection:\n  model_ids:\n    - \"9c4b4093-97b3-40d1-94c1-0b2edb26dc93\"\noptions:\n  auto_relationships: true\n  generate_descriptions: true",
+    "proj-1774730388846": "project_name: hi\nsource:\n  type: fabric\n  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718\n  workspace: semabridge\n  models:\n    - continent\ntargets:\n  - type: snowflake\nmappings:\n  - source: continent\n    target: continent_mapped\n    type: table\n    columns:\n      - source: id\n        target: id\n        type: INT\n        primary_key: true\n      - source: name\n        target: name\n        type: VARCHAR(255)\n      - source: created_at\n        target: created_at\n        type: TIMESTAMP\n      - source: updated_at\n        target: updated_at\n        type: TIMESTAMP\nui:\n  intermediate_format: osi\n  editor_mode: form\n  output_format: osi\nselection:\n  model_ids:\n    - d32e8900-31cc-4647-872d-08a7e62bf03b\noptions:\n  auto_relationships: true\n  generate_descriptions: true\ntarget:\n  type: snowflake",
+    "proj-1774730389171": "project_name: \"hi_snowflake_to_fabric\"\nsource:\n  type: snowflake\ntargets:\n  - type: fabric\nmappings:\n  - source: \"continent\"\n    target: \"continent_mapped\"\n    type: table\n    columns:\n      - source: \"id\"\n        target: \"id\"\n        type: INT\n        primary_key: true\n      - source: \"name\"\n        target: \"name\"\n        type: VARCHAR(255)\n      - source: \"created_at\"\n        target: \"created_at\"\n        type: TIMESTAMP\n      - source: \"updated_at\"\n        target: \"updated_at\"\n        type: TIMESTAMP\nui:\n  intermediate_format: \"osi\"\n  editor_mode: \"form\"\nselection:\n  model_ids:\n    - \"d32e8900-31cc-4647-872d-08a7e62bf03b\"\noptions:\n  auto_relationships: true\n  generate_descriptions: true"
   },
   "project_runs": {
     "e1f19d58-85c3-4c90-a6a0-57c9db6f348b": [],
@@ -12482,6 +12512,1228 @@
       }
     ],
     "proj-1773915308718": [
+      {
+        "run_id": "run-1774726783082",
+        "id": "run-1774726783082",
+        "project_id": "proj-1773915308718",
+        "project_name": "f",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 52394,
+        "started_at": "2026-03-28T19:39:43.082819",
+        "summary": {
+          "project_id": "Device",
+          "run_id": "044f1042-fb2d-4c97-b8e5-f3f607a13da9",
+          "status": "SUCCESS",
+          "started_at": "2026-03-28T19:39:43.185087",
+          "completed_at": "2026-03-28T19:40:35.402632",
+          "duration_ms": 52217,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:39:43.185087",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:39:43.343011",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:13.592909",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:13.595182",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:13.627838",
+              "duration_ms": null,
+              "message": "2 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:13.713953",
+              "duration_ms": null,
+              "message": "Snapshot 4e765afe... committed",
+              "artifact_ids": [
+                "4e765afe-72f3-400d-b6af-f7ba7f88ceea",
+                "15c10cc2-ab46-4cf9-af56-a32e8fc2307b"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:13.764277",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:14.657499",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:14.660504",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:14.665073",
+              "duration_ms": null,
+              "message": "2 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:14.728750",
+              "duration_ms": null,
+              "message": "Snapshot 3f3a7ec4... committed",
+              "artifact_ids": [
+                "3f3a7ec4-12a9-4a56-b923-4f2539884ff4",
+                "9dca9ae5-8e40-4774-a412-a31a19842325"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:14.745116",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:35.399145",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:35.402632",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "9dca9ae5-8e40-4774-a412-a31a19842325",
+          "sml_snapshot_id": "3f3a7ec4-12a9-4a56-b923-4f2539884ff4",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Device",
+            "status": "success",
+            "summary": {
+              "project_id": "Device",
+              "run_id": "044f1042-fb2d-4c97-b8e5-f3f607a13da9",
+              "status": "SUCCESS",
+              "started_at": "2026-03-28T19:39:43.185087",
+              "completed_at": "2026-03-28T19:40:35.402632",
+              "duration_ms": 52217,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:39:43.185087",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:39:43.343011",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:13.592909",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:13.595182",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:13.627838",
+                  "duration_ms": null,
+                  "message": "2 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:13.713953",
+                  "duration_ms": null,
+                  "message": "Snapshot 4e765afe... committed",
+                  "artifact_ids": [
+                    "4e765afe-72f3-400d-b6af-f7ba7f88ceea",
+                    "15c10cc2-ab46-4cf9-af56-a32e8fc2307b"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:13.764277",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:14.657499",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:14.660504",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:14.665073",
+                  "duration_ms": null,
+                  "message": "2 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:14.728750",
+                  "duration_ms": null,
+                  "message": "Snapshot 3f3a7ec4... committed",
+                  "artifact_ids": [
+                    "3f3a7ec4-12a9-4a56-b923-4f2539884ff4",
+                    "9dca9ae5-8e40-4774-a412-a31a19842325"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:14.745116",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:35.399145",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:35.402632",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "9dca9ae5-8e40-4774-a412-a31a19842325",
+              "sml_snapshot_id": "3f3a7ec4-12a9-4a56-b923-4f2539884ff4",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774726781588",
+        "id": "run-1774726781588",
+        "project_id": "proj-1773915308718",
+        "project_name": "f",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 54235,
+        "started_at": "2026-03-28T19:39:41.588547",
+        "summary": {
+          "project_id": "Device",
+          "run_id": "044f1042-fb2d-4c97-b8e5-f3f607a13da9",
+          "status": "SUCCESS",
+          "started_at": "2026-03-28T19:39:43.185087",
+          "completed_at": "2026-03-28T19:40:35.798619",
+          "duration_ms": 52613,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:39:43.185087",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:39:43.343011",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:13.592909",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:13.595182",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:13.627838",
+              "duration_ms": null,
+              "message": "2 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:13.713953",
+              "duration_ms": null,
+              "message": "Snapshot 4e765afe... committed",
+              "artifact_ids": [
+                "4e765afe-72f3-400d-b6af-f7ba7f88ceea",
+                "15c10cc2-ab46-4cf9-af56-a32e8fc2307b"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:13.764277",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:14.657499",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:14.660504",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:14.665073",
+              "duration_ms": null,
+              "message": "2 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:14.728750",
+              "duration_ms": null,
+              "message": "Snapshot 3f3a7ec4... committed",
+              "artifact_ids": [
+                "3f3a7ec4-12a9-4a56-b923-4f2539884ff4",
+                "9dca9ae5-8e40-4774-a412-a31a19842325"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:14.745116",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:35.399145",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:35.402632",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:35.796099",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:40:35.798619",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "15c10cc2-ab46-4cf9-af56-a32e8fc2307b",
+          "sml_snapshot_id": "4e765afe-72f3-400d-b6af-f7ba7f88ceea",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Device",
+            "status": "success",
+            "summary": {
+              "project_id": "Device",
+              "run_id": "044f1042-fb2d-4c97-b8e5-f3f607a13da9",
+              "status": "SUCCESS",
+              "started_at": "2026-03-28T19:39:43.185087",
+              "completed_at": "2026-03-28T19:40:35.798619",
+              "duration_ms": 52613,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:39:43.185087",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:39:43.343011",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:13.592909",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:13.595182",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:13.627838",
+                  "duration_ms": null,
+                  "message": "2 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:13.713953",
+                  "duration_ms": null,
+                  "message": "Snapshot 4e765afe... committed",
+                  "artifact_ids": [
+                    "4e765afe-72f3-400d-b6af-f7ba7f88ceea",
+                    "15c10cc2-ab46-4cf9-af56-a32e8fc2307b"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:13.764277",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:14.657499",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:14.660504",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:14.665073",
+                  "duration_ms": null,
+                  "message": "2 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:14.728750",
+                  "duration_ms": null,
+                  "message": "Snapshot 3f3a7ec4... committed",
+                  "artifact_ids": [
+                    "3f3a7ec4-12a9-4a56-b923-4f2539884ff4",
+                    "9dca9ae5-8e40-4774-a412-a31a19842325"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:14.745116",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:35.399145",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:35.402632",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:35.796099",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:40:35.798619",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "15c10cc2-ab46-4cf9-af56-a32e8fc2307b",
+              "sml_snapshot_id": "4e765afe-72f3-400d-b6af-f7ba7f88ceea",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774726055703",
+        "id": "run-1774726055703",
+        "project_id": "proj-1773915308718",
+        "project_name": "f",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 2336,
+        "started_at": "2026-03-28T19:27:35.703905",
+        "summary": {
+          "project_id": "Device",
+          "run_id": "96723c9d-df62-422f-864b-914c8ccf8682",
+          "status": "FAILED",
+          "started_at": "2026-03-28T19:27:35.817348",
+          "completed_at": "2026-03-28T19:27:37.860654",
+          "duration_ms": 2043,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:27:35.817348",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:27:36.141072",
+              "duration_ms": null,
+              "message": "Authentication resolved from ENV",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:27:37.770860",
+              "duration_ms": null,
+              "message": "Failed to list semantic models: 401 Client Error: Unauthorized for url: https://api.fabric.microsoft.com/v1/workspaces/d875c0c3-59e9-4d55-a7f0-99595b756718/semanticModels",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:27:37.859653",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "error_type": "ExtractionError",
+              "message": "Extraction failed: Failed to list semantic models: 401 Client Error: Unauthorized for url: https://api.fabric.microsoft.com/v1/workspaces/d875c0c3-59e9-4d55-a7f0-99595b756718/semanticModels",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 95, in list_semantic_models\n    response.raise_for_status()\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\requests\\models.py\", line 1026, in raise_for_status\n    raise HTTPError(http_error_msg, response=self)\nrequests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: https://api.fabric.microsoft.com/v1/workspaces/d875c0c3-59e9-4d55-a7f0-99595b756718/semanticModels\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 641, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1002, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 130, in resolve_model_id\n    models = self.list_semantic_models()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 110, in list_semantic_models\n    raise FabricExtractionError(f\"Failed to list semantic models: {e}\")\nsemabridge.connectors.fabric_extractor.FabricExtractionError: Failed to list semantic models: 401 Client Error: Unauthorized for url: https://api.fabric.microsoft.com/v1/workspaces/d875c0c3-59e9-4d55-a7f0-99595b756718/semanticModels\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 288, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 649, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: Failed to list semantic models: 401 Client Error: Unauthorized for url: https://api.fabric.microsoft.com/v1/workspaces/d875c0c3-59e9-4d55-a7f0-99595b756718/semanticModels\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Device",
+            "status": "failed",
+            "summary": {
+              "project_id": "Device",
+              "run_id": "96723c9d-df62-422f-864b-914c8ccf8682",
+              "status": "FAILED",
+              "started_at": "2026-03-28T19:27:35.817348",
+              "completed_at": "2026-03-28T19:27:37.860654",
+              "duration_ms": 2043,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:27:35.817348",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:27:36.141072",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from ENV",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:27:37.770860",
+                  "duration_ms": null,
+                  "message": "Failed to list semantic models: 401 Client Error: Unauthorized for url: https://api.fabric.microsoft.com/v1/workspaces/d875c0c3-59e9-4d55-a7f0-99595b756718/semanticModels",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:27:37.859653",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "error_type": "ExtractionError",
+                  "message": "Extraction failed: Failed to list semantic models: 401 Client Error: Unauthorized for url: https://api.fabric.microsoft.com/v1/workspaces/d875c0c3-59e9-4d55-a7f0-99595b756718/semanticModels",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 95, in list_semantic_models\n    response.raise_for_status()\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\requests\\models.py\", line 1026, in raise_for_status\n    raise HTTPError(http_error_msg, response=self)\nrequests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: https://api.fabric.microsoft.com/v1/workspaces/d875c0c3-59e9-4d55-a7f0-99595b756718/semanticModels\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 641, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1002, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 130, in resolve_model_id\n    models = self.list_semantic_models()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 110, in list_semantic_models\n    raise FabricExtractionError(f\"Failed to list semantic models: {e}\")\nsemabridge.connectors.fabric_extractor.FabricExtractionError: Failed to list semantic models: 401 Client Error: Unauthorized for url: https://api.fabric.microsoft.com/v1/workspaces/d875c0c3-59e9-4d55-a7f0-99595b756718/semanticModels\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 288, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 649, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: Failed to list semantic models: 401 Client Error: Unauthorized for url: https://api.fabric.microsoft.com/v1/workspaces/d875c0c3-59e9-4d55-a7f0-99595b756718/semanticModels\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774725997106",
+        "id": "run-1774725997106",
+        "project_id": "proj-1773915308718",
+        "project_name": "f",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 34962,
+        "started_at": "2026-03-28T19:26:37.106509",
+        "summary": {
+          "project_id": "Device",
+          "run_id": "76bfcf6b-cfb8-40a4-a1ed-95da9fd31082",
+          "status": "FAILED",
+          "started_at": "2026-03-28T19:26:37.242673",
+          "completed_at": "2026-03-28T19:27:12.064251",
+          "duration_ms": 34821,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:26:37.242673",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:26:37.441540",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:27:11.657622",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:27:11.661659",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:27:12.016599",
+              "duration_ms": null,
+              "message": "2 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:27:12.029088",
+              "duration_ms": null,
+              "message": "(_duckdb.BinderException) Binder Error: Table \"projects\" does not have a column named \"account_id\"\n\nCandidate bindings: : \"project_id\"\n\nLINE 1: ... AS projects_project_id, projects.name AS projects_name, projects.account_id AS projects_account_id, projects.worksp...\n                                                                    ^\n[SQL: SELECT projects.project_id AS projects_project_id, projects.name AS projects_name, projects.account_id AS projects_account_id, projects.workspace_id AS projects_workspace_id, projects.warehouse AS projects_warehouse, projects.database AS projects_database, projects.schema AS projects_schema, projects.adapter AS projects_adapter, projects.source_connection AS projects_source_connection, projects.last_updated AS projects_last_updated \nFROM projects \nWHERE projects.project_id = $1]\n[parameters: ('Device',)]\n(Background on this error at: https://sqlalche.me/e/20/f405)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:27:12.064251",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "error_type": "PersistenceError",
+              "message": "Artifact persistence failed: (_duckdb.BinderException) Binder Error: Table \"projects\" does not have a column named \"account_id\"\n\nCandidate bindings: : \"project_id\"\n\nLINE 1: ... AS projects_project_id, projects.name AS projects_name, projects.account_id AS projects_account_id, projects.worksp...\n                                                                    ^\n[SQL: SELECT projects.project_id AS projects_project_id, projects.name AS projects_name, projects.account_id AS projects_account_id, projects.workspace_id AS projects_workspace_id, projects.warehouse AS projects_warehouse, projects.database AS projects_database, projects.schema AS projects_schema, projects.adapter AS projects_adapter, projects.source_connection AS projects_source_connection, projects.last_updated AS projects_last_updated \nFROM projects \nWHERE projects.project_id = $1]\n[parameters: ('Device',)]\n(Background on this error at: https://sqlalche.me/e/20/f405)",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\engine\\base.py\", line 1967, in _exec_single_context\n    self.dialect.do_execute(\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\engine\\default.py\", line 952, in do_execute\n    cursor.execute(statement, parameters)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\duckdb_engine\\__init__.py\", line 150, in execute\n    self.__c.execute(statement, parameters)\n_duckdb.BinderException: Binder Error: Table \"projects\" does not have a column named \"account_id\"\n\nCandidate bindings: : \"project_id\"\n\nLINE 1: ... AS projects_project_id, projects.name AS projects_name, projects.account_id AS projects_account_id, projects.worksp...\n                                                                    ^\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1718, in _step7_persist_artifacts\n    self.db_manager.ensure_project(\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\repository\\model_repository.py\", line 188, in ensure_project\n    existing = session.get(Project, project_id)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\orm\\session.py\", line 3680, in get\n    return self._get_impl(\n           ^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\orm\\session.py\", line 3859, in _get_impl\n    return db_load_fn(\n           ^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\orm\\loading.py\", line 695, in load_on_pk_identity\n    session.execute(\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\orm\\session.py\", line 2351, in execute\n    return self._execute_internal(\n           ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\orm\\session.py\", line 2249, in _execute_internal\n    result: Result[Any] = compile_state_cls.orm_execute_statement(\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\orm\\context.py\", line 306, in orm_execute_statement\n    result = conn.execute(\n             ^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\engine\\base.py\", line 1419, in execute\n    return meth(\n           ^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\sql\\elements.py\", line 527, in _execute_on_connection\n    return connection._execute_clauseelement(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\engine\\base.py\", line 1641, in _execute_clauseelement\n    ret = self._execute_context(\n          ^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\engine\\base.py\", line 1846, in _execute_context\n    return self._exec_single_context(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\engine\\base.py\", line 1986, in _exec_single_context\n    self._handle_dbapi_exception(\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\engine\\base.py\", line 2363, in _handle_dbapi_exception\n    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\engine\\base.py\", line 1967, in _exec_single_context\n    self.dialect.do_execute(\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\engine\\default.py\", line 952, in do_execute\n    cursor.execute(statement, parameters)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\duckdb_engine\\__init__.py\", line 150, in execute\n    self.__c.execute(statement, parameters)\nsqlalchemy.exc.ProgrammingError: (_duckdb.BinderException) Binder Error: Table \"projects\" does not have a column named \"account_id\"\n\nCandidate bindings: : \"project_id\"\n\nLINE 1: ... AS projects_project_id, projects.name AS projects_name, projects.account_id AS projects_account_id, projects.worksp...\n                                                                    ^\n[SQL: SELECT projects.project_id AS projects_project_id, projects.name AS projects_name, projects.account_id AS projects_account_id, projects.workspace_id AS projects_workspace_id, projects.warehouse AS projects_warehouse, projects.database AS projects_database, projects.schema AS projects_schema, projects.adapter AS projects_adapter, projects.source_connection AS projects_source_connection, projects.last_updated AS projects_last_updated \nFROM projects \nWHERE projects.project_id = $1]\n[parameters: ('Device',)]\n(Background on this error at: https://sqlalche.me/e/20/f405)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 301, in execute\n    self._step7_persist_artifacts(context, tag)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1776, in _step7_persist_artifacts\n    raise PersistenceError(f\"Artifact persistence failed: {e}\") from e\nsemabridge.core.execution_engine.PersistenceError: Artifact persistence failed: (_duckdb.BinderException) Binder Error: Table \"projects\" does not have a column named \"account_id\"\n\nCandidate bindings: : \"project_id\"\n\nLINE 1: ... AS projects_project_id, projects.name AS projects_name, projects.account_id AS projects_account_id, projects.worksp...\n                                                                    ^\n[SQL: SELECT projects.project_id AS projects_project_id, projects.name AS projects_name, projects.account_id AS projects_account_id, projects.workspace_id AS projects_workspace_id, projects.warehouse AS projects_warehouse, projects.database AS projects_database, projects.schema AS projects_schema, projects.adapter AS projects_adapter, projects.source_connection AS projects_source_connection, projects.last_updated AS projects_last_updated \nFROM projects \nWHERE projects.project_id = $1]\n[parameters: ('Device',)]\n(Background on this error at: https://sqlalche.me/e/20/f405)\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Device",
+            "status": "failed",
+            "summary": {
+              "project_id": "Device",
+              "run_id": "76bfcf6b-cfb8-40a4-a1ed-95da9fd31082",
+              "status": "FAILED",
+              "started_at": "2026-03-28T19:26:37.242673",
+              "completed_at": "2026-03-28T19:27:12.064251",
+              "duration_ms": 34821,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:26:37.242673",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:26:37.441540",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:27:11.657622",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:27:11.661659",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:27:12.016599",
+                  "duration_ms": null,
+                  "message": "2 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:27:12.029088",
+                  "duration_ms": null,
+                  "message": "(_duckdb.BinderException) Binder Error: Table \"projects\" does not have a column named \"account_id\"\n\nCandidate bindings: : \"project_id\"\n\nLINE 1: ... AS projects_project_id, projects.name AS projects_name, projects.account_id AS projects_account_id, projects.worksp...\n                                                                    ^\n[SQL: SELECT projects.project_id AS projects_project_id, projects.name AS projects_name, projects.account_id AS projects_account_id, projects.workspace_id AS projects_workspace_id, projects.warehouse AS projects_warehouse, projects.database AS projects_database, projects.schema AS projects_schema, projects.adapter AS projects_adapter, projects.source_connection AS projects_source_connection, projects.last_updated AS projects_last_updated \nFROM projects \nWHERE projects.project_id = $1]\n[parameters: ('Device',)]\n(Background on this error at: https://sqlalche.me/e/20/f405)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:27:12.064251",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "error_type": "PersistenceError",
+                  "message": "Artifact persistence failed: (_duckdb.BinderException) Binder Error: Table \"projects\" does not have a column named \"account_id\"\n\nCandidate bindings: : \"project_id\"\n\nLINE 1: ... AS projects_project_id, projects.name AS projects_name, projects.account_id AS projects_account_id, projects.worksp...\n                                                                    ^\n[SQL: SELECT projects.project_id AS projects_project_id, projects.name AS projects_name, projects.account_id AS projects_account_id, projects.workspace_id AS projects_workspace_id, projects.warehouse AS projects_warehouse, projects.database AS projects_database, projects.schema AS projects_schema, projects.adapter AS projects_adapter, projects.source_connection AS projects_source_connection, projects.last_updated AS projects_last_updated \nFROM projects \nWHERE projects.project_id = $1]\n[parameters: ('Device',)]\n(Background on this error at: https://sqlalche.me/e/20/f405)",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\engine\\base.py\", line 1967, in _exec_single_context\n    self.dialect.do_execute(\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\engine\\default.py\", line 952, in do_execute\n    cursor.execute(statement, parameters)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\duckdb_engine\\__init__.py\", line 150, in execute\n    self.__c.execute(statement, parameters)\n_duckdb.BinderException: Binder Error: Table \"projects\" does not have a column named \"account_id\"\n\nCandidate bindings: : \"project_id\"\n\nLINE 1: ... AS projects_project_id, projects.name AS projects_name, projects.account_id AS projects_account_id, projects.worksp...\n                                                                    ^\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1718, in _step7_persist_artifacts\n    self.db_manager.ensure_project(\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\repository\\model_repository.py\", line 188, in ensure_project\n    existing = session.get(Project, project_id)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\orm\\session.py\", line 3680, in get\n    return self._get_impl(\n           ^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\orm\\session.py\", line 3859, in _get_impl\n    return db_load_fn(\n           ^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\orm\\loading.py\", line 695, in load_on_pk_identity\n    session.execute(\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\orm\\session.py\", line 2351, in execute\n    return self._execute_internal(\n           ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\orm\\session.py\", line 2249, in _execute_internal\n    result: Result[Any] = compile_state_cls.orm_execute_statement(\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\orm\\context.py\", line 306, in orm_execute_statement\n    result = conn.execute(\n             ^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\engine\\base.py\", line 1419, in execute\n    return meth(\n           ^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\sql\\elements.py\", line 527, in _execute_on_connection\n    return connection._execute_clauseelement(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\engine\\base.py\", line 1641, in _execute_clauseelement\n    ret = self._execute_context(\n          ^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\engine\\base.py\", line 1846, in _execute_context\n    return self._exec_single_context(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\engine\\base.py\", line 1986, in _exec_single_context\n    self._handle_dbapi_exception(\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\engine\\base.py\", line 2363, in _handle_dbapi_exception\n    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\engine\\base.py\", line 1967, in _exec_single_context\n    self.dialect.do_execute(\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\sqlalchemy\\engine\\default.py\", line 952, in do_execute\n    cursor.execute(statement, parameters)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\.venv\\Lib\\site-packages\\duckdb_engine\\__init__.py\", line 150, in execute\n    self.__c.execute(statement, parameters)\nsqlalchemy.exc.ProgrammingError: (_duckdb.BinderException) Binder Error: Table \"projects\" does not have a column named \"account_id\"\n\nCandidate bindings: : \"project_id\"\n\nLINE 1: ... AS projects_project_id, projects.name AS projects_name, projects.account_id AS projects_account_id, projects.worksp...\n                                                                    ^\n[SQL: SELECT projects.project_id AS projects_project_id, projects.name AS projects_name, projects.account_id AS projects_account_id, projects.workspace_id AS projects_workspace_id, projects.warehouse AS projects_warehouse, projects.database AS projects_database, projects.schema AS projects_schema, projects.adapter AS projects_adapter, projects.source_connection AS projects_source_connection, projects.last_updated AS projects_last_updated \nFROM projects \nWHERE projects.project_id = $1]\n[parameters: ('Device',)]\n(Background on this error at: https://sqlalche.me/e/20/f405)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 301, in execute\n    self._step7_persist_artifacts(context, tag)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1776, in _step7_persist_artifacts\n    raise PersistenceError(f\"Artifact persistence failed: {e}\") from e\nsemabridge.core.execution_engine.PersistenceError: Artifact persistence failed: (_duckdb.BinderException) Binder Error: Table \"projects\" does not have a column named \"account_id\"\n\nCandidate bindings: : \"project_id\"\n\nLINE 1: ... AS projects_project_id, projects.name AS projects_name, projects.account_id AS projects_account_id, projects.worksp...\n                                                                    ^\n[SQL: SELECT projects.project_id AS projects_project_id, projects.name AS projects_name, projects.account_id AS projects_account_id, projects.workspace_id AS projects_workspace_id, projects.warehouse AS projects_warehouse, projects.database AS projects_database, projects.schema AS projects_schema, projects.adapter AS projects_adapter, projects.source_connection AS projects_source_connection, projects.last_updated AS projects_last_updated \nFROM projects \nWHERE projects.project_id = $1]\n[parameters: ('Device',)]\n(Background on this error at: https://sqlalche.me/e/20/f405)\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1774725796095",
+        "id": "run-1774725796095",
+        "project_id": "proj-1773915308718",
+        "project_name": "f",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 1687,
+        "started_at": "2026-03-28T19:23:16.095254",
+        "summary": {
+          "project_id": "Device",
+          "run_id": "4045de39-940a-44ee-9571-415f525e6e48",
+          "status": "FAILED",
+          "started_at": "2026-03-28T19:23:16.245274",
+          "completed_at": "2026-03-28T19:23:16.426104",
+          "duration_ms": 180,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:23:16.246272",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:23:16.415894",
+              "duration_ms": null,
+              "message": "Missing authentication: Fabric credentials (FABRIC_*)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T19:23:16.426104",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "error_type": "AuthenticationError",
+              "message": "Missing authentication: Fabric credentials (FABRIC_*)",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 285, in execute\n    self._step3_resolve_auth(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 597, in _step3_resolve_auth\n    raise AuthenticationError(msg)\nsemabridge.core.execution_engine.AuthenticationError: Missing authentication: Fabric credentials (FABRIC_*)\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Device",
+            "status": "failed",
+            "summary": {
+              "project_id": "Device",
+              "run_id": "4045de39-940a-44ee-9571-415f525e6e48",
+              "status": "FAILED",
+              "started_at": "2026-03-28T19:23:16.245274",
+              "completed_at": "2026-03-28T19:23:16.426104",
+              "duration_ms": 180,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:23:16.246272",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:23:16.415894",
+                  "duration_ms": null,
+                  "message": "Missing authentication: Fabric credentials (FABRIC_*)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T19:23:16.426104",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "error_type": "AuthenticationError",
+                  "message": "Missing authentication: Fabric credentials (FABRIC_*)",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 285, in execute\n    self._step3_resolve_auth(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\New folder (2)\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 597, in _step3_resolve_auth\n    raise AuthenticationError(msg)\nsemabridge.core.execution_engine.AuthenticationError: Missing authentication: Fabric credentials (FABRIC_*)\n"
+                }
+              ]
+            }
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
       {
         "run_id": "run-1774632074569",
         "id": "run-1774632074569",
@@ -34901,7 +36153,273 @@
       }
     ],
     "proj-1774628902620": [],
-    "proj-1774629620092": []
+    "proj-1774629620092": [],
+    "proj-1774730388846": [
+      {
+        "run_id": "run-1774730438768",
+        "id": "run-1774730438768",
+        "project_id": "proj-1774730388846",
+        "project_name": "hi",
+        "schedule": "Manual",
+        "status": "success",
+        "duration_ms": 63813,
+        "started_at": "2026-03-28T20:40:38.768931",
+        "summary": {
+          "project_id": "continent",
+          "run_id": "d937d900-c99b-4ae5-a45d-1f0feb280b3e",
+          "status": "SUCCESS",
+          "started_at": "2026-03-28T20:40:38.929590",
+          "completed_at": "2026-03-28T20:41:42.526483",
+          "duration_ms": 63596,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T20:40:38.930584",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T20:40:39.085435",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T20:41:11.181305",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T20:41:11.183312",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T20:41:26.181664",
+              "duration_ms": null,
+              "message": "2 datasets, 2 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T20:41:26.295229",
+              "duration_ms": null,
+              "message": "Snapshot 4f7ec50d... committed",
+              "artifact_ids": [
+                "4f7ec50d-f133-43aa-83bd-a87b7ed7ba3b",
+                "8e7ef576-7887-4de3-97f9-73f388b8fcec"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T20:41:26.314334",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T20:41:42.520330",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-03-28T20:41:42.526483",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "8e7ef576-7887-4de3-97f9-73f388b8fcec",
+          "sml_snapshot_id": "4f7ec50d-f133-43aa-83bd-a87b7ed7ba3b",
+          "target_artifact_path": "output\\reverse\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "continent",
+            "status": "success",
+            "summary": {
+              "project_id": "continent",
+              "run_id": "d937d900-c99b-4ae5-a45d-1f0feb280b3e",
+              "status": "SUCCESS",
+              "started_at": "2026-03-28T20:40:38.929590",
+              "completed_at": "2026-03-28T20:41:42.526483",
+              "duration_ms": 63596,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T20:40:38.930584",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T20:40:39.085435",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T20:41:11.181305",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T20:41:11.183312",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T20:41:26.181664",
+                  "duration_ms": null,
+                  "message": "2 datasets, 2 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T20:41:26.295229",
+                  "duration_ms": null,
+                  "message": "Snapshot 4f7ec50d... committed",
+                  "artifact_ids": [
+                    "4f7ec50d-f133-43aa-83bd-a87b7ed7ba3b",
+                    "8e7ef576-7887-4de3-97f9-73f388b8fcec"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T20:41:26.314334",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T20:41:42.520330",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-03-28T20:41:42.526483",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "8e7ef576-7887-4de3-97f9-73f388b8fcec",
+              "sml_snapshot_id": "4f7ec50d-f133-43aa-83bd-a87b7ed7ba3b",
+              "target_artifact_path": "output\\reverse\\semantic_view.sql",
+              "errors": []
+            }
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      }
+    ],
+    "proj-1774730389171": [
+      {
+        "run_id": "run-1774730418914",
+        "id": "run-1774730418914",
+        "project_id": "proj-1774730389171",
+        "project_name": "hi_snowflake_to_fabric",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 0,
+        "started_at": "2026-03-28T20:40:18.914307",
+        "error": "400: No models specified for Snowflake source. Add source.models: [...] or set model_name in semabridge.yaml."
+      },
+      {
+        "run_id": "run-1774730416846",
+        "id": "run-1774730416846",
+        "project_id": "proj-1774730389171",
+        "project_name": "hi_snowflake_to_fabric",
+        "schedule": "Manual",
+        "status": "failed",
+        "duration_ms": 0,
+        "started_at": "2026-03-28T20:40:16.846434",
+        "error": "400: No models specified for Snowflake source. Add source.models: [...] or set model_name in semabridge.yaml."
+      }
+    ]
   },
   "folders": {
     "folder-1773909693465": {

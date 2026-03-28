@@ -40,7 +40,6 @@ const TARGET_CONNECTOR_TYPES = [
 ];
 
 const INTERMEDIATE_FORMAT_TYPES = [
-  { value: 'atscale', label: 'AtScale' },
   { value: 'osi', label: 'OSI (Open Semantic Interchange)' },
   { value: 'sml', label: 'SML' },
 ];
@@ -105,6 +104,22 @@ export default function CreateProjectPage() {
   const [wsModels, setWsModels] = useState({}); // wsid → [{id, name}]
   const [selectedModels, setSelectedModels] = useState(new Set());
   const [selectedModelNameByKey, setSelectedModelNameByKey] = useState({});
+  // Databricks Step 3 state
+  const [databricksObjects, setDatabricksObjects] = useState([]); // [{catalog, schema, table}]
+  const [databricksLoading, setDatabricksLoading] = useState(false);
+  const [selectedDatabricksTables, setSelectedDatabricksTables] = useState(new Set());
+  const [databricksQuery, setDatabricksQuery] = useState('');
+  // Fetch Databricks sources when selected in Step 3
+  useEffect(() => {
+    if (step !== 3 || sourceConnector !== 'databricks') return;
+    setDatabricksLoading(true);
+    api.getDatabricksSources()
+      .then(data => {
+        setDatabricksObjects(Array.isArray(data) ? data : []);
+      })
+      .catch(() => setDatabricksObjects([]))
+      .finally(() => setDatabricksLoading(false));
+  }, [step, sourceConnector]);
 
   // Step 4
   const [autoRelationships, setAutoRelationships] = useState(true);
@@ -1428,20 +1443,159 @@ function StepSourceBrowser({
   modelQuery, setModelQuery,
   modelQueryRegex, setModelQueryRegex,
   modelResults, snowflakeResults,
+  // Databricks props
+  databricksObjects = [],
+  databricksLoading = false,
+  selectedDatabricksTables = new Set(),
+  setSelectedDatabricksTables = () => {},
+  databricksQuery = '',
+  setDatabricksQuery = () => {},
 }) {
-  if (sourceConnector !== 'fabric' && sourceConnector !== 'snowflake') {
+
+  if (sourceConnector === 'databricks') {
+    // Flatten all tables for search
+    const allTables = (databricksObjects || []).flatMap(obj =>
+      (obj.tables || []).map(tbl => ({
+        catalog: obj.catalog,
+        schema: obj.schema,
+        table: tbl,
+        key: `${obj.catalog}.${obj.schema}.${tbl}`
+      }))
+    );
+    const filteredTables = databricksQuery
+      ? allTables.filter(t => t.table.toLowerCase().includes(databricksQuery.toLowerCase()) || t.schema.toLowerCase().includes(databricksQuery.toLowerCase()) || t.catalog.toLowerCase().includes(databricksQuery.toLowerCase()))
+      : allTables;
+
     return (
-      <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-        Source browsing is currently available for Microsoft Fabric and Snowflake.<br />
-        All available objects will be included automatically.
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div>
+          <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Select Databricks Tables</h2>
+          <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
+            Choose which Databricks tables to include. Leave all unchecked to include everything.
+          </p>
+        </div>
+        <SmartSearchBar
+          value={databricksQuery}
+          onChange={setDatabricksQuery}
+          placeholder="Search Databricks tables"
+        />
+        {selectedDatabricksTables.size > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--accent-blue)', padding: '4px 0' }}>
+            {selectedDatabricksTables.size} table{selectedDatabricksTables.size !== 1 ? 's' : ''} selected
+            <button onClick={() => setSelectedDatabricksTables(new Set())} style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 11 }}>
+              Clear
+            </button>
+          </div>
+        )}
+        <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
+          {databricksLoading ? (
+            <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
+              <Loader2 size={18} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 8px', display: 'block' }} />
+              Discovering Databricks tables…
+            </div>
+          ) : filteredTables.length === 0 ? (
+            <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
+              No Databricks tables found. Check connector setup in Settings.
+            </div>
+          ) : (
+            filteredTables.map(t => (
+              <div
+                key={t.key}
+                onClick={() => {
+                  setSelectedDatabricksTables(prev => {
+                    const s = new Set(prev);
+                    s.has(t.key) ? s.delete(t.key) : s.add(t.key);
+                    return s;
+                  });
+                }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '7px 12px', cursor: 'pointer', userSelect: 'none',
+                  background: selectedDatabricksTables.has(t.key) ? 'var(--accent-blue)0a' : 'transparent',
+                  borderBottom: '1px solid var(--border-subtle)'
+                }}
+                onMouseEnter={e => { if (!selectedDatabricksTables.has(t.key)) e.currentTarget.style.background = 'var(--bg-surface-hover)'; }}
+                onMouseLeave={e => { if (!selectedDatabricksTables.has(t.key)) e.currentTarget.style.background = 'transparent'; }}
+              >
+                {selectedDatabricksTables.has(t.key)
+                  ? <CheckSquare size={14} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />
+                  : <Square size={14} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />}
+                <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>{t.table}</span>
+                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', marginLeft: 'auto' }}>{t.catalog}.{t.schema}</span>
+              </div>
+            ))
+          )}
+        </div>
       </div>
     );
   }
 
-  if (sourceConnector === 'fabric' && !selectedWorkspace) {
+  if (sourceConnector === 'fabric') {
+    if (!selectedWorkspace) {
+      return (
+        <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+          Choose a Fabric workspace in Connector Config before selecting models.
+        </div>
+      );
+    }
+
+    // Fabric: show models for selected workspace
+    const fabricModels = wsModels[selectedWorkspace.id] || [];
+    const displayModels = modelQuery
+      ? fabricModels.filter(m => (m.name || '').toLowerCase().includes(modelQuery.toLowerCase()))
+      : fabricModels.map(m => ({ ...m, _id: m.id }));
+
     return (
-      <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-        Choose a Fabric workspace in Connector Config before selecting models.
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div>
+          <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Select Models</h2>
+          <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
+            Choose which Fabric semantic models to include from {selectedWorkspace.name}. Leave all unchecked to include everything in this workspace.
+          </p>
+        </div>
+
+        {/* Search */}
+        <SmartSearchBar
+          value={modelQuery}
+          onChange={setModelQuery}
+          useRegex={modelQueryRegex}
+          onToggleRegex={setModelQueryRegex}
+          placeholder={`Search models in ${selectedWorkspace.name}`}
+        />
+
+        {selectedModels.size > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--accent-blue)', padding: '4px 0' }}>
+            {selectedModels.size} model{selectedModels.size !== 1 ? 's' : ''} selected
+            <button onClick={clearSelectedModels} style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 11 }}>
+              Clear
+            </button>
+          </div>
+        )}
+
+        <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
+          {wsLoading ? (
+            <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
+              <Loader2 size={18} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 8px', display: 'block' }} />
+              Discovering Fabric semantic models…
+            </div>
+          ) : displayModels.length === 0 ? (
+            <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
+              No Fabric semantic models found. Check connector setup in Settings.
+            </div>
+          ) : (
+            displayModels.map(m => {
+              const modelId = m._id || m.id;
+              return (
+                <ModelRow
+                  key={modelId}
+                  model={{ ...m, _id: modelId }}
+                  selected={selectedModels.has(modelId)}
+                  onToggle={() => toggleModel(modelId, m.name || m.id)}
+                />
+              );
+            })
+          )}
+        </div>
       </div>
     );
   }

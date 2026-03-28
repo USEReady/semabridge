@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   PlugZap, RefreshCw, CheckCircle2, AlertCircle, Clock,
   Settings2, Snowflake, Cloud, Plus, ExternalLink, Database, ChevronDown,
@@ -36,116 +36,118 @@ export default function SettingsPage() {
     setManageOpen(true);
   };
 
-  // Load connection status
-  useEffect(() => {
-    (async () => {
-      try {
-        const [healthData, statusData] = await Promise.allSettled([
-          api.getHealth(),
-          api.getConnectionsStatus(),
-        ]);
+  // Utility for case-insensitive status check
+  const normalizeStatus = (status) => typeof status === 'string' ? status.toLowerCase() : status;
 
-        const health = healthData.status === 'fulfilled' ? healthData.value : null;
-        const status = statusData.status === 'fulfilled' ? statusData.value : null;
+  // Load connection status (and allow refresh)
+  const refreshConnectors = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [healthData, statusData] = await Promise.allSettled([
+        api.getHealth(),
+        api.getConnectionsStatus(),
+      ]);
 
-        const rows = [];
+      const health = healthData.status === 'fulfilled' ? healthData.value : null;
+      const status = statusData.status === 'fulfilled' ? statusData.value : null;
 
-        // Fabric connector
-        // Backend returns { configured, has_auth, auth_method, credentials, missing_fields }
-        const fabricConn = status?.fabric;
-        const fabricConfigured = fabricConn?.configured === true;
-        const fabricHasAuth = fabricConn?.has_auth === true;
-        const fabricHasWorkspace = !!fabricConn?.credentials?.workspace_id;
-        // 3-state: connected (workspace + auth), configured (workspace only), disconnected
-        const fabricStatus = fabricConfigured
-          ? 'connected'
-          : fabricHasWorkspace
-            ? 'configured'
-            : 'disconnected';
-        rows.push({
-          id: 'fabric',
-          name: 'Microsoft Fabric',
-          type: 'Analytics Platform',
-          icon: '🔷',
-          status: fabricStatus,
-          last_sync: null,
-          detail: fabricStatus === 'connected'
-            ? `Workspace: ${fabricConn.credentials.workspace_id}`
-            : fabricStatus === 'configured'
-              ? `Workspace set · ${fabricHasAuth ? '' : 'Auth required'}`
-              : 'Not configured',
-          tags: ['production', 'analytics'],
-        });
+      const rows = [];
 
-        // Snowflake connector
-        // Backend returns { configured, auth_type, credentials, missing_fields }
-        const snowConn = status?.snowflake;
-        const snowConfigured = snowConn?.configured === true;
-        const snowHasFields = (snowConn?.fields_stored ?? 0) > 0;
-        const snowAuthType = snowConn?.credentials?.auth_type ?? '';
-        const snowAccount  = snowConn?.credentials?.account ?? '';
-        const snowMissing  = snowConn?.missing_fields ?? [];
-        // 3-state: connected (all required), configured (partial), disconnected
-        const snowStatus = snowConfigured
-          ? 'connected'
-          : snowHasFields
-            ? 'configured'
-            : 'disconnected';
-        rows.push({
-          id: 'snowflake',
-          name: 'Snowflake',
-          type: 'Data Warehouse',
-          icon: '❄️',
-          status: snowStatus,
-          last_sync: null,
-          detail: snowStatus === 'connected'
-            ? `${snowAccount}${snowAuthType ? ` · ${snowAuthType}` : ''}`
-            : snowStatus === 'configured'
-              ? `Missing: ${snowMissing.join(', ')}`
-              : 'Not configured',
-          tags: ['warehouse', 'target'],
-        });
+      // Fabric connector
+      const fabricConn = status?.fabric;
+      const fabricConfigured = fabricConn?.configured === true;
+      const fabricHasAuth = fabricConn?.has_auth === true;
+      const fabricHasWorkspace = !!fabricConn?.credentials?.workspace_id;
+      const fabricStatus = fabricConfigured
+        ? 'connected'
+        : fabricHasWorkspace
+          ? 'configured'
+          : 'disconnected';
+      rows.push({
+        id: 'fabric',
+        name: 'Microsoft Fabric',
+        type: 'Analytics Platform',
+        icon: '🔷',
+        status: normalizeStatus(fabricStatus),
+        last_sync: null,
+        detail: fabricStatus === 'connected'
+          ? `Workspace: ${fabricConn.credentials.workspace_id}`
+          : fabricStatus === 'configured'
+            ? `Workspace set · ${fabricHasAuth ? '' : 'Auth required'}`
+            : 'Not configured',
+        tags: ['production', 'analytics'],
+      });
 
-        // Databricks connector
-        const dbConn = status?.databricks;
-        const dbConfigured = dbConn?.configured === true;
-        const dbStatus = dbConfigured ? 'connected' : 'disconnected';
-        rows.push({
-          id: 'databricks',
-          name: 'Databricks',
-          type: 'Data Intelligence Platform',
-          icon: '🧱',
-          status: dbStatus,
-          last_sync: null,
-          detail: dbConfigured ? 'Configured' : 'Not configured',
-          tags: ['warehouse', 'target'],
-        });
+      // Snowflake connector
+      const snowConn = status?.snowflake;
+      const snowConfigured = snowConn?.configured === true;
+      const snowHasFields = (snowConn?.fields_stored ?? 0) > 0;
+      const snowAuthType = snowConn?.credentials?.auth_type ?? '';
+      const snowAccount  = snowConn?.credentials?.account ?? '';
+      const snowMissing  = snowConn?.missing_fields ?? [];
+      const snowStatus = snowConfigured
+        ? 'connected'
+        : snowHasFields
+          ? 'configured'
+          : 'disconnected';
+      rows.push({
+        id: 'snowflake',
+        name: 'Snowflake',
+        type: 'Data Warehouse',
+        icon: '❄️',
+        status: normalizeStatus(snowStatus),
+        last_sync: null,
+        detail: snowStatus === 'connected'
+          ? `${snowAccount}${snowAuthType ? ` · ${snowAuthType}` : ''}`
+          : snowStatus === 'configured'
+            ? `Missing: ${snowMissing.join(', ')}`
+            : 'Not configured',
+        tags: ['warehouse', 'target'],
+      });
 
-        // API health as a meta-connector
-        rows.push({
-          id: 'semabridge_api',
-          name: 'SemaBridge API',
-          type: 'Backend Service',
-          icon: '⚡',
-          status: health?.status === 'ok' || health?.status === 'healthy' ? 'connected' : 'error',
-          last_sync: null,
-          detail: health ? `v${health.version ?? '—'} · port 8000` : 'Unreachable',
-          tags: ['backend'],
-        });
+      // Databricks connector
+      const dbConn = status?.databricks;
+      const dbConfigured = dbConn?.configured === true;
+      const dbStatus = dbConfigured ? 'connected' : 'disconnected';
+      rows.push({
+        id: 'databricks',
+        name: 'Databricks',
+        type: 'Data Intelligence Platform',
+        icon: '🧱',
+        status: normalizeStatus(dbStatus),
+        last_sync: null,
+        detail: dbConfigured ? 'Configured' : 'Not configured',
+        tags: ['warehouse', 'target'],
+      });
 
-        setConnectors(rows);
-      } catch {
-        setConnectors([
-          { id: 'fabric',        name: 'Microsoft Fabric', type: 'Analytics Platform', icon: '🔷', status: 'disconnected', last_sync: null, detail: 'Not configured', tags: ['production'] },
-          { id: 'snowflake',     name: 'Snowflake',        type: 'Data Warehouse',     icon: '❄️', status: 'disconnected', last_sync: null, detail: 'Not configured', tags: ['warehouse'] },
-          { id: 'databricks',    name: 'Databricks',       type: 'Data Intelligence Platform', icon: '🧱', status: 'disconnected', last_sync: null, detail: 'Not configured', tags: ['warehouse'] },
-          { id: 'semabridge_api', name: 'SemaBridge API',  type: 'Backend Service',    icon: '⚡', status: 'error',        last_sync: null, detail: 'Unreachable', tags: ['backend'] },
-        ]);
-      } finally {
-        setLoading(false);
-      }
-    })();
+      // API health as a meta-connector
+      rows.push({
+        id: 'semabridge_api',
+        name: 'SemaBridge API',
+        type: 'Backend Service',
+        icon: '⚡',
+        status: normalizeStatus(health?.status === 'ok' || health?.status === 'healthy' ? 'connected' : 'error'),
+        last_sync: null,
+        detail: health ? `v${health.version ?? '—'} · port 8000` : 'Unreachable',
+        tags: ['backend'],
+      });
+
+      setConnectors(rows);
+    } catch {
+      setConnectors([
+        { id: 'fabric',        name: 'Microsoft Fabric', type: 'Analytics Platform', icon: '🔷', status: 'disconnected', last_sync: null, detail: 'Not configured', tags: ['production'] },
+        { id: 'snowflake',     name: 'Snowflake',        type: 'Data Warehouse',     icon: '❄️', status: 'disconnected', last_sync: null, detail: 'Not configured', tags: ['warehouse'] },
+        { id: 'databricks',    name: 'Databricks',       type: 'Data Intelligence Platform', icon: '🧱', status: 'disconnected', last_sync: null, detail: 'Not configured', tags: ['warehouse'] },
+        { id: 'semabridge_api', name: 'SemaBridge API',  type: 'Backend Service',    icon: '⚡', status: 'error',        last_sync: null, detail: 'Unreachable', tags: ['backend'] },
+      ]);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => { refreshConnectors(); }, [refreshConnectors]);
+
+  // Pass refreshConnectors to child components and call after Connect
 
   
   return (
@@ -161,32 +163,6 @@ export default function SettingsPage() {
         }}
       />
 
-      {/* Environment toggle */}
-      <div className="flex items-center gap-3 mb-8">
-        <span className="text-secondary text-sm font-semibold">Environment:</span>
-        <div
-          className="flex rounded-lg overflow-hidden"
-          style={{ border: '1px solid var(--border-main)', background: 'var(--bg-surface)' }}
-        >
-          {ENVIRONMENTS.map(e => (
-            <button
-              key={e}
-              onClick={() => setEnv(e)}
-              className="text-sm font-medium px-4 py-1.5 theme-transition"
-              style={{
-                background: env === e ? 'var(--accent-blue)' : 'transparent',
-                color: env === e ? '#fff' : 'var(--text-secondary)',
-                border: 'none',
-                cursor: 'pointer',
-                boxShadow: env === e ? 'var(--shadow-focus)' : 'none',
-              }}
-            >
-              {e}
-            </button>
-          ))}
-        </div>
-        <span className="text-tertiary text-xs">({env} environment active)</span>
-      </div>
 
       {/* Configuration Syncing Dual-View */}
       <div className="mb-8">
@@ -196,8 +172,17 @@ export default function SettingsPage() {
 
       {/* Connector Configuration (Flattened) */}
       <div className="mb-8">
-        <h2 className="text-primary font-semibold mb-4" style={{ fontSize: 15, margin: '0 0 16px' }}>Connector Configuration</h2>
-        
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}>
+          <h2 className="text-primary font-semibold mb-4" style={{ fontSize: 15, margin: 0 }}>Connector Configuration</h2>
+          <button
+            aria-label="Refresh Connectors"
+            onClick={refreshConnectors}
+            style={{ marginLeft: 10, background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center' }}
+            disabled={loading}
+          >
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} style={{ color: 'var(--accent-blue)' }} />
+          </button>
+        </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {connectors.filter(c => c.id !== 'semabridge_api').map(conn => (
             <div key={conn.id} style={{ padding: '16px', background: 'var(--bg-surface)', border: '1px solid var(--border-main)', borderRadius: 8 }}>
@@ -281,7 +266,11 @@ export default function SettingsPage() {
 
       <ConnectionsPanel
         isOpen={manageOpen}
-        onClose={() => setManageOpen(false)}
+        onClose={() => {
+          setManageOpen(false);
+          // Always refresh connectors after closing the modal
+          refreshConnectors();
+        }}
         selectedConnector={selectedConnectorId}
       />
       </div>
