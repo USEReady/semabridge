@@ -351,6 +351,41 @@ export default function DetailPanel({ filePreview, selectedNode, onClose }) {
                                     <EmptyHint text="No columns are available for this table in the current snapshot." />
                                 </div>
                             )}
+
+                            {/* Measures/Metrics for Table */}
+                            {selectedNode.measures?.length > 0 && (
+                                <CollapsibleSection
+                                    title="Measures / Metrics"
+                                    subtitle="All metrics/measures for this table"
+                                    icon={<BarChart3 size={14} />}
+                                    expanded={expandedSections.measures !== false}
+                                    onToggle={() => toggleSection('measures')}
+                                >
+                                    <Section title="Measures / Metrics">
+                                        {selectedNode.measures.map((m, i) => (
+                                            <div key={i} style={tableCardStyle}>
+                                                <BarChart3 size={12} style={{ color: '#EAB308', flexShrink: 0 }} />
+                                                <div style={{ flex: 1, minWidth: 0 }}>
+                                                    <div style={{ fontWeight: 600, fontSize: 12 }}>{m.name || m.label}</div>
+                                                    {m.parent_model && (
+                                                        <div style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>
+                                                            Model: {m.parent_model}
+                                                        </div>
+                                                    )}
+                                                    {m.expression && (
+                                                        <code style={{ fontSize: 10, color: '#D4A017', wordBreak: 'break-word' }}>
+                                                            {m.expression}
+                                                        </code>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </Section>
+                                </CollapsibleSection>
+                            )}
+                            {(!selectedNode.measures || selectedNode.measures.length === 0) && (
+                                <EmptyHint text="No measures/metrics are attached to this table yet." />
+                            )}
                         </>
                     )}
 
