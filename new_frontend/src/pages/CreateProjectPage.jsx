@@ -304,12 +304,13 @@ export default function CreateProjectPage() {
             setRunWarning('No semantic models found for this workspace. Check Fabric permissions or workspace contents.');
           }
           setWsModels({ [fabricWorkspaceId]: data ?? [] });
+          setWsLoading(false); // Set loading to false immediately after 200 OK
         })
         .catch((err) => {
           setRunWarning('Failed to load semantic models: ' + (err?.message || 'Unknown error'));
           setWsModels({ [fabricWorkspaceId]: [] });
-        })
-        .finally(() => setWsLoading(false));
+          setWsLoading(false); // Also set loading to false on error
+        });
       return;
     }
 
@@ -1531,6 +1532,7 @@ function StepSourceBrowser({
   }
 
   if (sourceConnector === 'fabric') {
+    // Conditional rendering for Fabric step
     if (!selectedWorkspace) {
       return (
         <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
@@ -1539,51 +1541,50 @@ function StepSourceBrowser({
       );
     }
 
-    // Fabric: show models for selected workspace
     const fabricModels = wsModels[selectedWorkspace.id] || [];
     const displayModels = modelQuery
       ? fabricModels.filter(m => (m.name || '').toLowerCase().includes(modelQuery.toLowerCase()))
       : fabricModels.map(m => ({ ...m, _id: m.id }));
 
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div>
-          <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Select Models</h2>
-          <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
-            Choose which Fabric semantic models to include from {selectedWorkspace.name}. Leave all unchecked to include everything in this workspace.
-          </p>
-        </div>
-
-        {/* Search */}
-        <SmartSearchBar
-          value={modelQuery}
-          onChange={setModelQuery}
-          useRegex={modelQueryRegex}
-          onToggleRegex={setModelQueryRegex}
-          placeholder={`Search models in ${selectedWorkspace.name}`}
-        />
-
-        {selectedModels.size > 0 && (
-          <div style={{ fontSize: 11, color: 'var(--accent-blue)', padding: '4px 0' }}>
-            {selectedModels.size} model{selectedModels.size !== 1 ? 's' : ''} selected
-            <button onClick={clearSelectedModels} style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 11 }}>
-              Clear
-            </button>
-          </div>
-        )}
-
+    // Show loader if loading
+    if (wsLoading) {
+      return (
         <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
-          {wsLoading ? (
-            <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
-              <Loader2 size={18} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 8px', display: 'block' }} />
-              Discovering Fabric semantic models…
+          <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
+            <Loader2 size={18} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 8px', display: 'block' }} />
+            Discovering Fabric semantic models…
+          </div>
+        </div>
+      );
+    }
+
+    // Show models if available
+    if (displayModels.length > 0) {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div>
+            <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Select Models</h2>
+            <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
+              Choose which Fabric semantic models to include from {selectedWorkspace.name}. Leave all unchecked to include everything in this workspace.
+            </p>
+          </div>
+          <SmartSearchBar
+            value={modelQuery}
+            onChange={setModelQuery}
+            useRegex={modelQueryRegex}
+            onToggleRegex={setModelQueryRegex}
+            placeholder={`Search models in ${selectedWorkspace.name}`}
+          />
+          {selectedModels.size > 0 && (
+            <div style={{ fontSize: 11, color: 'var(--accent-blue)', padding: '4px 0' }}>
+              {selectedModels.size} model{selectedModels.size !== 1 ? 's' : ''} selected
+              <button onClick={clearSelectedModels} style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 11 }}>
+                Clear
+              </button>
             </div>
-          ) : displayModels.length === 0 ? (
-            <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
-              No Fabric semantic models found. Check connector setup in Settings.
-            </div>
-          ) : (
-            displayModels.map(m => {
+          )}
+          <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
+            {displayModels.map(m => {
               const modelId = m._id || m.id;
               return (
                 <ModelRow
@@ -1593,8 +1594,17 @@ function StepSourceBrowser({
                   onToggle={() => toggleModel(modelId, m.name || m.id)}
                 />
               );
-            })
-          )}
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    // Show no models found placeholder
+    return (
+      <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
+        <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
+          No Fabric semantic models found. Check connector setup in Settings.
         </div>
       </div>
     );

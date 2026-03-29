@@ -251,25 +251,61 @@ function TreeItem({
     );
 }
 
-export default function SourceBrowser({ selectedItems, onSelectItems, onOpenModel, onSourceTypeChange, onTargetTypeChange, onPbixPathChange, onPbixImported }) {
-    const [sourceType, setSourceType] = useState('fabric');
-    const [targetType, setTargetType] = useState('snowflake');
-    const [pattern, setPattern] = useState('*');
-    const [pbixPath, setPbixPath] = useState('');
-    const [isPbixPathSaved, setIsPbixPathSaved] = useState(false);
-    const filter = '';
-    const [isDiscovering, setIsDiscovering] = useState(false);
-    const [expandedItems, setExpandedItems] = useState(['root-fabric', 'root-snowflake', 'root-repository', 'root-semantic-fabric', 'root-semantic-snowflake']);
-    const [highlightedItem, setHighlightedItem] = useState(null);
-    const [discoveredFromApi, setDiscoveredFromApi] = useState(null);
-    const [discoveryError, setDiscoveryError] = useState(null);
-    // Semantic-sync state
-    const [semanticDirection, setSemanticDirection] = useState('fabric_to_snowflake');
-    const [isSyncingSemantics, setIsSyncingSemantics] = useState(false);
-    const [semanticSyncResult, setSemanticSyncResult] = useState(null);
+export default function SourceBrowser({ workspaceId }) {
+    // Direct state for models and loading
+    const [models, setModels] = useState([]);
+    const [loading, setLoading] = useState(false);
 
-    const { activeWorkspaceId } = useWorkspace();
-    const { addLog } = useLogs();
+    useEffect(() => {
+        if (!workspaceId) {
+            setModels([]);
+            return;
+        }
+        setLoading(true);
+        api.discoverFabricModels(workspaceId)
+            .then(data => setModels(Array.isArray(data) ? data : []))
+            .catch(() => setModels([]))
+            .finally(() => setLoading(false));
+    }, [workspaceId]);
+
+    // UI rendering logic
+    if (loading) {
+        return (
+            <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+                <Loader2 size={24} className="animate-spin text-accent-blue mb-2" />
+                Loading models...
+            </div>
+        );
+    }
+
+    if (!workspaceId) {
+        return (
+            <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+                Choose a Fabric workspace before selecting models.
+            </div>
+        );
+    }
+
+    if (models.length > 0) {
+        return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Select Models</h2>
+                <ul style={{ listStyle: 'none', padding: 0 }}>
+                    {models.map(model => (
+                        <li key={model.id} style={{ padding: '8px 0', borderBottom: '1px solid #eee' }}>
+                            {model.name || model.id}
+                        </li>
+                    ))}
+                </ul>
+            </div>
+        );
+    }
+
+    return (
+        <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+            No models found in this workspace.
+        </div>
+    );
 
     // Auto-discovery on mount or source type change
     // Debounce avoids firing on rapid type switches; AbortController cancels stale requests
