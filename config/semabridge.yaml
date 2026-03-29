@@ -1,15 +1,15 @@
-project_name: hi
+project_name: mama
 source:
   type: fabric
   workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
   workspace: semabridge
   models:
-    - continent
+    - CLIENT_DATA_SEMANTIC
 targets:
   - type: snowflake
 mappings:
-  - source: continent
-    target: continent_mapped
+  - source: CLIENT_DATA_SEMANTIC
+    target: client_data_semantic_mapped
     type: table
     columns:
       - source: id
@@ -31,7 +31,7 @@ ui:
   output_format: osi
 selection:
   model_ids:
-    - d32e8900-31cc-4647-872d-08a7e62bf03b
+    - d68b7670-5f6c-47ac-8c2a-32f5885a3e75
 options:
   auto_relationships: true
   generate_descriptions: true

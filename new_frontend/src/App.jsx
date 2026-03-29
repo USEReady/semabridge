@@ -45,7 +45,7 @@ export default function App() {
           <SyncStatusProvider>
             <Routes>
               <Route element={<DashboardLayout />}>
-                <Route index element={<Navigate to="/explore" replace />} />
+                <Route index element={<Navigate to="/projects" replace />} />
                 <Route path="/explore"       element={<ExplorePage />} />
                 <Route path="/projects"      element={<ProjectsPage />} />
                 <Route path="/projects/new"  element={<CreateProjectPage />} />

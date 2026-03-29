@@ -18,9 +18,10 @@ import { useNavigate } from 'react-router-dom';
 import { useUIStore } from '../store/uiStore';
 
 const NAV_ITEMS = [
-  { to: '/explore',       label: 'Explore',         icon: Map },
+
   { to: '/projects',      label: 'Projects',        icon: FolderOpen },
   { to: '/jobs',          label: 'Runs',            icon: PlayCircle },
+    { to: '/explore',       label: 'Explore',         icon: Map },
   { to: '/model-mapping', label: 'Model Mapping',   icon: GitBranch },
   { to: '/settings',      label: 'Settings',        icon: Settings },
 ];
