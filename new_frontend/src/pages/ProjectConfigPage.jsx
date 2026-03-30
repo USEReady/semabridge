@@ -11,7 +11,10 @@ import SearchableSelect from '../components/common/SearchableSelect';
 import { useTheme } from '../context/ThemeProvider';
 import { useLogs } from '../context/LogsContext';
 import { api } from '../utils/api';
+import { buildMockRunLogs, saveRunLogs } from '../utils/runLogs';
 import { useUIStore } from '../store/uiStore';
+
+import Modal from '../components/common/Modal';
 
 const INPUT = {
   display: 'block', width: '100%',
@@ -26,6 +29,13 @@ const LABEL = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--t
  * ProjectConfigPage — dedicated full page /projects/:id/config
  */
 export default function ProjectConfigPage() {
+    // --- Scheduler State (must be at top-level of component) ---
+    const [schedulerOpen, setSchedulerOpen] = useState(false);
+    const [scheduleType, setScheduleType] = useState('manual');
+    const [cronValue, setCronValue] = useState('0 0 * * *');
+    const [scheduleDate, setScheduleDate] = useState('');
+    const [timeValue, setTimeValue] = useState('12:00');
+    const [timezoneValue, setTimezoneValue] = useState('UTC');
   const navigate = useNavigate();
   const { id } = useParams();
   const [searchParams] = useSearchParams();
@@ -75,6 +85,15 @@ export default function ProjectConfigPage() {
   });
 
   const [globalOpen, setGlobalOpen] = useState(false);
+  const timezoneOptions = useMemo(() => ([
+    'UTC',
+    'Asia/Kolkata',
+    'America/New_York',
+    'America/Chicago',
+    'America/Denver',
+    'America/Los_Angeles',
+    'Europe/London',
+  ]), []);
 
   useEffect(() => {
     const modeFromUrl = searchParams.get('mode');
@@ -442,6 +461,9 @@ export default function ProjectConfigPage() {
 
       const run = await api.runProjectNow(id);
       const status = String(run?.status || '').toLowerCase();
+      if (run?.id) {
+        saveRunLogs(run.id, buildMockRunLogs(run));
+      }
 
       if (status === 'running') {
         addLog('info', 'Sync', 'Sync started. You can continue using other screens while it runs.');
@@ -475,6 +497,26 @@ export default function ProjectConfigPage() {
     navigate('/jobs');
   };
 
+  const handleScheduleSave = () => {
+    const payload = {
+      scheduleType,
+      cron: scheduleType === 'cron' ? cronValue : '',
+      date: scheduleType === 'time' ? scheduleDate : '',
+      time: scheduleType === 'time' ? timeValue : '',
+      timezone: timezoneValue,
+    };
+
+    console.log('Mock schedule saved:', payload);
+    setSaveInfo(
+      scheduleType === 'manual'
+        ? 'Schedule saved in manual mode. Trigger remains on-demand.'
+        : scheduleType === 'cron'
+          ? `Mock schedule saved with cron "${cronValue}" (${timezoneValue}).`
+          : `Mock schedule saved for ${scheduleDate || 'selected date'} at ${timeValue} (${timezoneValue}).`
+    );
+    setSchedulerOpen(false);
+  };
+
   const handleViewModeChange = (nextMode) => {
     if (nextMode === viewMode) return;
 
@@ -500,16 +542,6 @@ export default function ProjectConfigPage() {
     setViewMode(nextMode);
   };
 
-  const effectiveYaml = viewMode === 'yaml' ? yamlText : buildYamlFromForm();
-  const effectiveConfig = useMemo(() => {
-    try {
-      const parsed = parseYaml(effectiveYaml || '');
-      return parsed && typeof parsed === 'object' ? parsed : {};
-    } catch {
-      return {};
-    }
-  }, [effectiveYaml]);
-
   if (loading) {
     return (
       <div style={{ padding: 36, color: 'var(--text-tertiary)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -531,8 +563,8 @@ export default function ProjectConfigPage() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      <div style={{ padding: '18px 28px', borderBottom: '1px solid var(--border-main)', display: 'flex', alignItems: 'center', gap: 12 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', minHeight: 0 }}>
+      <div style={{ padding: '18px 28px', borderBottom: '1px solid var(--border-main)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <button
           onClick={() => navigate('/projects')}
           style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}
@@ -562,9 +594,9 @@ export default function ProjectConfigPage() {
         </div>
       )}
 
-      <div style={{ flex: 1, overflow: 'hidden', display: 'flex' }}>
-        <div style={{ width: '58%', minWidth: 420, borderRight: '1px solid var(--border-main)', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: 18, borderBottom: '1px solid var(--border-main)' }}>
+      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', minHeight: 0 }}>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <div style={{ padding: '18px 20px', borderBottom: '1px solid var(--border-main)', background: 'var(--bg-surface)' }}>
             <label style={LABEL}>Copy Presets from Another Project</label>
             <SearchableSelect
               items={allProjects}
@@ -578,15 +610,15 @@ export default function ProjectConfigPage() {
             />
           </div>
 
-          <div style={{ flex: 1, overflow: 'auto' }}>
+          <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 16 }}>
             {viewMode === 'form' ? (
               <FormEditor value={configForm} onChange={setConfigForm} />
             ) : (
-              <div style={{ padding: 12, height: '100%' }}>
-                <div style={{ height: '100%', border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg-input)', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ height: '100%', minHeight: 420 }}>
+                <div style={{ height: '100%', border: '1px solid var(--border-main)', borderRadius: 12, overflow: 'hidden', background: 'var(--bg-input)', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 24px rgba(0, 0, 0, 0.08)' }}>
                   <div style={{
                     display: 'flex', alignItems: 'center', gap: 8,
-                    padding: '8px 10px',
+                    padding: '10px 12px',
                     borderBottom: '1px solid var(--border-main)',
                     background: 'var(--bg-surface)',
                     fontSize: 12,
@@ -620,26 +652,16 @@ export default function ProjectConfigPage() {
           </div>
         </div>
 
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-main)' }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Effective YAML Preview</div>
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 3 }}>Includes current project-level configuration.</div>
-          </div>
-          <pre style={{
-            margin: 0, padding: 18, flex: 1, overflow: 'auto', fontSize: 12, lineHeight: 1.55,
-            color: 'var(--text-primary)', background: 'var(--bg-surface)',
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-          }}>
-            {effectiveYaml || '# Empty configuration'}
-          </pre>
-        </div>
       </div>
 
-      <div style={{ padding: '14px 28px', borderTop: '1px solid var(--border-main)' }}>
+      <div style={{ padding: '10px 28px', borderTop: '1px solid var(--border-main)', background: 'var(--bg-surface)' }} />
 
-      </div>
 
-      <div style={{ padding: '14px 28px', borderTop: '1px solid var(--border-main)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+      {/* Action Buttons */}
+      <div style={{ padding: '14px 28px', borderTop: '1px solid var(--border-main)', display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap', background: 'var(--bg-surface)', position: 'sticky', bottom: 0, zIndex: 2 }}>
+        <button onClick={() => setSchedulerOpen(true)} style={secondaryBtn}>
+          <CalendarClock size={13} /> Schedule
+        </button>
         <button onClick={handleCreateJob} style={secondaryBtn}>
           <CalendarClock size={13} /> Create Job for Later
         </button>
@@ -652,6 +674,77 @@ export default function ProjectConfigPage() {
         </button>
       </div>
 
+      {/* Scheduler Modal */}
+      <Modal open={schedulerOpen} onClose={() => setSchedulerOpen(false)} title="Schedule Job" size="md">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          <div>
+            <label style={{ fontWeight: 600, fontSize: 13, display: 'block', marginBottom: 10 }}>Schedule Type</label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+              <ScheduleOptionCard
+                active={scheduleType === 'manual'}
+                title="Manual Trigger"
+                description="Run only when someone starts it."
+                onClick={() => setScheduleType('manual')}
+              />
+              <ScheduleOptionCard
+                active={scheduleType === 'cron'}
+                title="Cron Expression"
+                description="Use cron syntax for recurring runs."
+                onClick={() => setScheduleType('cron')}
+              />
+              <ScheduleOptionCard
+                active={scheduleType === 'time'}
+                title="Time Picker"
+                description="Choose a date, time, and timezone."
+                onClick={() => setScheduleType('time')}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label style={{ fontWeight: 500, fontSize: 12, display: 'block', marginBottom: 6 }}>Timezone</label>
+            <select value={timezoneValue} onChange={e => setTimezoneValue(e.target.value)} style={modalInputStyle}>
+              {timezoneOptions.map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          </div>
+
+          {scheduleType === 'manual' && (
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', padding: 12, borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
+              Manual mode selected. The project stays unscheduled and can be triggered whenever needed.
+            </div>
+          )}
+
+          {scheduleType === 'cron' && (
+            <div>
+              <label style={{ fontWeight: 500, fontSize: 12 }}>Cron Expression</label>
+              <input value={cronValue} onChange={e => setCronValue(e.target.value)} style={modalInputStyle} placeholder="0 0 * * *" />
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>e.g. 0 0 * * * (every day at midnight)</div>
+            </div>
+          )}
+          {scheduleType === 'time' && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <label style={{ fontWeight: 500, fontSize: 12, display: 'block', marginBottom: 6 }}>Pick Date</label>
+                <input type="date" value={scheduleDate} onChange={e => setScheduleDate(e.target.value)} style={modalInputStyle} />
+              </div>
+              <div>
+                <label style={{ fontWeight: 500, fontSize: 12, display: 'block', marginBottom: 6 }}>Pick Time</label>
+                <input type="time" value={timeValue} onChange={e => setTimeValue(e.target.value)} style={modalInputStyle} />
+              </div>
+            </div>
+          )}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 24 }}>
+          <button onClick={() => setSchedulerOpen(false)} style={secondaryBtn}>Cancel</button>
+          <button onClick={handleScheduleSave} style={primaryBtn}>Save</button>
+        </div>
+      </Modal>
+
+
+
+
       <GlobalConfigModal open={globalOpen} onClose={() => setGlobalOpen(false)} />
     </div>
   );
@@ -661,7 +754,7 @@ function FormEditor({ value, onChange }) {
   const patch = (k, v) => onChange(prev => ({ ...prev, [k]: v }));
 
   return (
-    <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div style={{ maxWidth: 1080, margin: '0 auto', padding: 4, display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <div>
           <label style={LABEL}>Source Type</label>
@@ -773,6 +866,37 @@ function ModeButton({ active, onClick, icon, label }) {
     </button>
   );
 }
+
+function ScheduleOptionCard({ active, title, description, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        border: `1px solid ${active ? 'var(--accent-blue)' : 'var(--border-main)'}`,
+        borderRadius: 10,
+        padding: 12,
+        background: active ? 'rgba(59, 130, 246, 0.1)' : 'var(--bg-surface)',
+        color: 'var(--text-primary)',
+        cursor: 'pointer',
+        textAlign: 'left',
+      }}
+    >
+      <div style={{ fontSize: 12, fontWeight: 700 }}>{title}</div>
+      <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4, lineHeight: 1.45 }}>{description}</div>
+    </button>
+  );
+}
+
+const modalInputStyle = {
+  width: '100%',
+  padding: 8,
+  borderRadius: 6,
+  border: '1px solid var(--border-main)',
+  fontSize: 13,
+  background: 'var(--bg-input)',
+  color: 'var(--text-primary)',
+  boxSizing: 'border-box',
+};
 
 const primaryBtn = {
   display: 'inline-flex', alignItems: 'center', gap: 6,
