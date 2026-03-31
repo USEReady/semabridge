@@ -58,13 +58,17 @@ class FabricPublisher:
         self._resolved_workspace_id: Optional[str] = None
     
     def _get_access_token(self, force_refresh: bool = False) -> str:
-        """Get a valid access token, refreshing if needed."""
+        """Get a valid access token, refreshing if needed.
+
+        Supports automatic retry: if the cached token is rejected by Microsoft
+        with 401, callers can set force_refresh=True to acquire a brand-new one.
+        """
         current_time = time.time()
-        
+
         if not force_refresh and self._access_token and current_time < self._token_expiry - 300:
             return self._access_token
-        
-        logger.debug("Acquiring new access token...")
+
+        logger.debug("Acquiring new access token for Fabric API...")
 
         # --- Pre-issued token from environment variable (CI / automation) ---
         import os
@@ -79,7 +83,7 @@ class FabricPublisher:
         if self.config.client_secret is None:
             token = self._get_access_token_from_credential_manager()
             self._access_token = token
-            self._token_expiry = current_time + 600  # conservative TTL
+            self._token_expiry = current_time + 3000  # ~50 min (tokens last ~60 min)
             return self._access_token
 
         app = msal.ConfidentialClientApplication(
@@ -87,75 +91,135 @@ class FabricPublisher:
             client_credential=self.config.client_secret.get_secret_value(),
             authority=f"https://login.microsoftonline.com/{self.config.tenant_id}",
         )
-        
+
         result = app.acquire_token_for_client(scopes=[self.FABRIC_SCOPE])
-        
+
         if "access_token" not in result:
             error = result.get("error_description", "Unknown authentication error")
             raise PublishError(f"Failed to acquire access token: {error}")
-        
+
         self._access_token = result["access_token"]
         self._token_expiry = current_time + result.get("expires_in", 3600)
-        
-        logger.debug("Access token acquired successfully")
+
+        logger.debug("Access token acquired successfully (service principal)")
         return self._access_token
 
     def _get_access_token_from_credential_manager(self) -> str:
-        """Return the stored device-code / delegated-flow access token.
+        """Acquire a Fabric-scoped access token via the stored refresh_token.
 
-        Falls back to a silent refresh via refresh_token when expired.
-        Raises PublishError if no valid token is available.
+        IMPORTANT: This always performs a silent refresh using the Fabric API
+        scope (``https://api.fabric.microsoft.com/.default``).  It does NOT
+        trust ``has_valid_token()`` because the stored access token may have
+        been refreshed by the API layer with the Power BI scope, whose
+        audience the Fabric REST API rejects as "TokenExpired".
+
+        If the refresh_token is expired or revoked, this method raises
+        immediately with an actionable error — it does NOT fall back to a
+        stored expired access token (which would always cause a 401).
+
+        Raises:
+            PublishError: If no valid token can be acquired.
         """
         try:
             from semabridge.repository.credential_manager import CredentialManager
 
             cm = CredentialManager()
-            if cm.has_valid_token():
-                token_data = cm.get_msal_token()
-                logger.debug("FabricPublisher: using stored device-code token")
-                return token_data["access_token"]
-
             token_data = cm.get_msal_token()
-            if token_data and token_data.get("refresh_token"):
-                import msal
-                tenant_id = token_data.get("tenant_id", "organizations")
-                app = msal.PublicClientApplication(
-                    client_id="04b07795-8ddb-461a-bbee-02f9e1bf7b46",
-                    authority=f"https://login.microsoftonline.com/{tenant_id}",
-                )
-                result = app.acquire_token_by_refresh_token(
-                    token_data["refresh_token"],
-                    scopes=["https://api.fabric.microsoft.com/.default"],
-                )
-                if "access_token" in result:
-                    cm.save_msal_token(
-                        access_token=result["access_token"],
-                        refresh_token=result.get("refresh_token", token_data["refresh_token"]),
-                        account_username=token_data.get("account_username", "unknown"),
-                        tenant_id=tenant_id,
-                        expires_in=result.get("expires_in", 3600),
-                    )
-                    logger.debug("FabricPublisher: device-code token refreshed silently")
-                    return result["access_token"]
-                else:
-                    logger.warning(
-                        "FabricPublisher: silent token refresh failed: %s",
-                        result.get("error_description", result.get("error", "unknown")),
-                    )
-        except Exception as exc:
-            logger.warning("FabricPublisher: device-code token lookup failed: %s", exc)
 
-        logger.warning(
-            "No valid Fabric access token found. "
-            "Options: (1) sign in via the Connections panel, "
-            "(2) set FABRIC_ACCESS_TOKEN env var with a pre-issued token, or "
-            "(3) configure FABRIC_CLIENT_SECRET for service-principal auth."
-        )
-        raise PublishError(
-            "No valid Fabric access token available. "
-            "Sign in via the Connections panel or configure FABRIC_CLIENT_SECRET."
-        )
-    
+            if not token_data:
+                raise PublishError(
+                    "No stored MSAL token found. "
+                    "Please sign in via Settings → Connections → Fabric → Sign In."
+                )
+
+            refresh_token = token_data.get("refresh_token")
+            stored_access = token_data.get("access_token", "")
+            logger.info(
+                "FabricPublisher: token_data has refresh_token=%s, "
+                "access_token_tail=...%s",
+                bool(refresh_token),
+                stored_access[-8:] if stored_access else "(empty)",
+            )
+
+            if not refresh_token:
+                # No refresh token at all — check if stored access token is still valid
+                import time as _t
+                try:
+                    expires_at = int(token_data.get("expires_at", "0"))
+                    remaining = expires_at - _t.time()
+                    if remaining > 60:
+                        logger.warning(
+                            "No refresh_token available; using stored access token "
+                            "(expires in %.0f seconds)", remaining,
+                        )
+                        return stored_access
+                except (ValueError, TypeError):
+                    pass
+
+                raise PublishError(
+                    "No refresh_token stored and access token is expired. "
+                    "Please re-authenticate: Settings → Connections → Fabric → Sign In."
+                )
+
+            # Always acquire a FRESH token with the Fabric API scope.
+            tenant_id = token_data.get("tenant_id", "organizations")
+            logger.info(
+                "FabricPublisher: refreshing token with scope=%s tenant=%s",
+                self.FABRIC_SCOPE, tenant_id,
+            )
+
+            app = msal.PublicClientApplication(
+                client_id="04b07795-8ddb-461a-bbee-02f9e1bf7b46",
+                authority=f"https://login.microsoftonline.com/{tenant_id}",
+            )
+            result = app.acquire_token_by_refresh_token(
+                refresh_token,
+                scopes=[self.FABRIC_SCOPE],
+            )
+
+            if "access_token" in result:
+                new_token = result["access_token"]
+                new_refresh = result.get("refresh_token", refresh_token)
+                expires_in = result.get("expires_in", 3600)
+
+                logger.info(
+                    "FabricPublisher: ✅ acquired fresh Fabric-scoped token "
+                    "(expires_in=%ds, tail=...%s)",
+                    expires_in, new_token[-8:],
+                )
+
+                # Persist refreshed tokens back to credential store.
+                cm.save_msal_token(
+                    access_token=new_token,
+                    refresh_token=new_refresh,
+                    account_username=token_data.get("account_username", "unknown"),
+                    tenant_id=tenant_id,
+                    expires_in=expires_in,
+                )
+                return new_token
+            else:
+                # Refresh FAILED — extract the actual error from MSAL
+                error_code = result.get("error", "unknown_error")
+                error_desc = result.get("error_description", "No description provided")
+                logger.error(
+                    "FabricPublisher: ❌ token refresh FAILED: "
+                    "error=%s description=%s",
+                    error_code, error_desc,
+                )
+                raise PublishError(
+                    f"Fabric token refresh failed: {error_code} — {error_desc}. "
+                    "Please re-authenticate: Settings → Connections → Fabric → Sign In."
+                )
+
+        except PublishError:
+            raise
+        except Exception as exc:
+            logger.error("FabricPublisher: token acquisition exception: %s", exc)
+            raise PublishError(
+                f"Fabric token acquisition failed: {exc}. "
+                "Please re-authenticate: Settings → Connections → Fabric → Sign In."
+            )
+
     def _get_headers(self) -> dict[str, str]:
         """Get request headers with auth token."""
         return {
@@ -198,9 +262,32 @@ class FabricPublisher:
         return raw
 
     def _workspace_id(self) -> str:
-        """Get resolved workspace ID (cached)."""
+        """Get resolved workspace ID with secure fallback chain.
+
+        Resolution order (most recent user action wins):
+        1. Credential store (DuckDB) — set by the UI's select-workspace action.
+        2. os.environ['FABRIC_WORKSPACE_ID'] — injected at startup or by select-workspace.
+        3. FabricConfig.workspace_id — static .env fallback.
+
+        The result is cached for the lifetime of this publisher instance.
+        """
         if not self._resolved_workspace_id:
-            self._resolved_workspace_id = self.resolve_workspace_id(self.config.workspace_id)
+            stored_ws: str = ""
+            try:
+                from semabridge.repository.credential_manager import CredentialManager
+                cm = CredentialManager()
+                creds = cm.get_credentials("fabric", mask_secrets=False)
+                stored_ws = (creds.get("workspace_id") or "").strip()
+            except Exception as exc:
+                logger.debug("Could not read workspace from credential store: %s", exc)
+
+            raw_ws = stored_ws or self.config.workspace_id
+            self._resolved_workspace_id = self.resolve_workspace_id(raw_ws)
+            if stored_ws and stored_ws != self.config.workspace_id:
+                logger.info(
+                    "Using UI-selected workspace %s (overrides .env value %s)",
+                    self._resolved_workspace_id, self.config.workspace_id,
+                )
         return self._resolved_workspace_id
     
     def publish(
@@ -315,62 +402,72 @@ class FabricPublisher:
         return result
     
     def _create_model(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Create a new semantic model."""
+        """Create a new semantic model with 401 auto-retry."""
         workspace_id = self._workspace_id()
         url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/semanticModels"
-        
-        logger.debug(f"Creating semantic model: {payload['displayName']}")
-        
-        with httpx.Client(timeout=60) as client:
-            response = client.post(url, headers=self._get_headers(), json=payload)
-            
-            if response.status_code == 202:
-                # Long-running operation
-                return self._poll_operation(response)
-            elif response.status_code == 201:
-                # Immediate success
-                result = response.json()
-                logger.info(f"Created semantic model: {result.get('displayName')} (ID: {result.get('id')})")
-                return result
-            else:
-                error_text = response.text
-                logger.error(
-                    "Create failed: workspace=%s status=%s body=%s",
-                    workspace_id,
-                    response.status_code,
-                    error_text,
-                )
-                raise PublishError(f"Failed to create model: {response.status_code} - {error_text}")
+
+        logger.info(f"Creating semantic model '{payload['displayName']}' in workspace {workspace_id}")
+
+        for attempt in range(2):  # 1 normal + 1 retry on 401
+            with httpx.Client(timeout=60) as client:
+                response = client.post(url, headers=self._get_headers(), json=payload)
+
+                if response.status_code == 202:
+                    return self._poll_operation(response)
+                elif response.status_code == 201:
+                    result = response.json()
+                    logger.info(f"Created semantic model: {result.get('displayName')} (ID: {result.get('id')})")
+                    return result
+                elif response.status_code == 401 and attempt == 0:
+                    logger.warning("Create got 401 — refreshing token and retrying...")
+                    self._access_token = None  # force re-acquire
+                    self._token_expiry = 0
+                    self._get_access_token(force_refresh=True)
+                    continue
+                else:
+                    error_text = response.text
+                    logger.error(
+                        "Create failed: workspace=%s status=%s body=%s",
+                        workspace_id, response.status_code, error_text,
+                    )
+                    raise PublishError(f"Failed to create model: {response.status_code} - {error_text}")
+
+        raise PublishError("Failed to create model after 401 retry")
     
     def _update_model(
         self,
         model_id: str,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
-        """Update an existing semantic model."""
+        """Update an existing semantic model with 401 auto-retry."""
         workspace_id = self._workspace_id()
         url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/semanticModels/{model_id}/updateDefinition"
-        
-        logger.debug(f"Updating semantic model: {model_id}")
-        
-        # Update only needs the definition part
-        update_payload = {
-            "definition": payload["definition"]
-        }
-        
-        with httpx.Client(timeout=60) as client:
-            response = client.post(url, headers=self._get_headers(), json=update_payload)
-            
-            if response.status_code == 202:
-                # Long-running operation
-                return self._poll_operation(response)
-            elif response.status_code == 200:
-                logger.info(f"Updated semantic model: {payload['displayName']} (ID: {model_id})")
-                return {"id": model_id, "displayName": payload["displayName"], "status": "updated"}
-            else:
-                error_text = response.text
-                logger.error(f"Update failed: {response.status_code} - {error_text}")
-                raise PublishError(f"Failed to update model: {response.status_code} - {error_text}")
+
+        logger.info(f"Updating semantic model {model_id} in workspace {workspace_id}")
+
+        update_payload = {"definition": payload["definition"]}
+
+        for attempt in range(2):
+            with httpx.Client(timeout=60) as client:
+                response = client.post(url, headers=self._get_headers(), json=update_payload)
+
+                if response.status_code == 202:
+                    return self._poll_operation(response)
+                elif response.status_code == 200:
+                    logger.info(f"Updated semantic model: {payload['displayName']} (ID: {model_id})")
+                    return {"id": model_id, "displayName": payload["displayName"], "status": "updated"}
+                elif response.status_code == 401 and attempt == 0:
+                    logger.warning("Update got 401 — refreshing token and retrying...")
+                    self._access_token = None
+                    self._token_expiry = 0
+                    self._get_access_token(force_refresh=True)
+                    continue
+                else:
+                    error_text = response.text
+                    logger.error(f"Update failed: {response.status_code} - {error_text}")
+                    raise PublishError(f"Failed to update model: {response.status_code} - {error_text}")
+
+        raise PublishError("Failed to update model after 401 retry")
 
     def _validate_full_definition_payload(self, payload: dict[str, Any]) -> dict[str, int]:
         """Validate model.bim relationships before sending an overwrite payload.

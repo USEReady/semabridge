@@ -50,6 +50,8 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
     // Pre-fetched device code — ready before user clicks "Sign in"
     const prefetchedCode = useRef(null);
     const prefetchInFlight = useRef(false);
+    // Per-session flow_id for multi-user isolation.
+    const flowIdRef = useRef(null);
     const { addLog } = useLogs();
 
     // Workspace discovery state
@@ -99,6 +101,7 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
         if (prefetchedCode.current) {
             const result = prefetchedCode.current;
             prefetchedCode.current = null;
+            flowIdRef.current = result.flow_id;
             setDeviceCode(result);
             setLoginPhase('code_shown');
             addLog('info', 'Fabric Auth', `Device code: ${result.user_code}`);
@@ -119,6 +122,7 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
         setLoginPhase('requesting');
         try {
             const result = await api.fabricLogin();
+            flowIdRef.current = result.flow_id;
             setDeviceCode(result);
             setLoginPhase('code_shown');
             addLog('info', 'Fabric Auth', `Device code: ${result.user_code}`);
@@ -141,7 +145,7 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
         setLoginPhase('polling');
         pollTimer.current = setTimeout(async () => {
             try {
-                const result = await api.fabricPoll();
+                const result = await api.fabricPoll(flowIdRef.current);
                 if (result.status === 'success') {
                     setLoginPhase('success');
                     setAuthStatus({

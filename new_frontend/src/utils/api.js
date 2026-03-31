@@ -2,6 +2,8 @@
 // (Removed duplicate export of api. Only export once at the end of the file, with getDatabricksSources included as a method.)
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
 const TOKEN_KEY = 'semabridge-token';
+const FABRIC_TOKEN_KEY = 'semabridge-fabric-token';
+const FABRIC_TOKEN_EXPIRES_KEY = 'semabridge-fabric-token-expires';
 
 function normalizeProject(project) {
     if (!project || typeof project !== 'object') return project;
@@ -84,6 +86,23 @@ function normalizeWorkspace(workspace) {
 function getAuthHeaders() {
     const token = localStorage.getItem(TOKEN_KEY);
     if (token) return { Authorization: `Bearer ${token}` };
+    return {};
+}
+
+/**
+ * Return the stored Fabric MSAL access token as a Bearer header if valid.
+ * This is injected on Fabric-specific API calls so the backend resolves
+ * the correct per-user token instead of falling back to the shared DB row.
+ */
+function getFabricAuthHeaders() {
+    const token = localStorage.getItem(FABRIC_TOKEN_KEY);
+    const expiresAt = parseInt(localStorage.getItem(FABRIC_TOKEN_EXPIRES_KEY) || '0', 10);
+    if (token && Date.now() < expiresAt) {
+        return { Authorization: `Bearer ${token}` };
+    }
+    // Token expired or missing — clean up stale values.
+    localStorage.removeItem(FABRIC_TOKEN_KEY);
+    localStorage.removeItem(FABRIC_TOKEN_EXPIRES_KEY);
     return {};
 }
 
@@ -441,14 +460,26 @@ export const api = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(tenantId ? { tenant_id: tenantId } : {}),
         });
-        return handleResponse(res);
+        const data = await handleResponse(res);
+        // data now contains { flow_id, user_code, verification_uri, ... }
+        return data;
     },
 
-    async fabricPoll() {
+    async fabricPoll(flowId) {
         const res = await authFetch(`${API_BASE_URL}/connections/fabric/poll`, {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ flow_id: flowId }),
         });
-        return handleResponse(res);
+        const data = await handleResponse(res);
+
+        // On success, store the MSAL token in localStorage for Bearer passthrough.
+        if (data.status === 'success' && data.access_token) {
+            localStorage.setItem(FABRIC_TOKEN_KEY, data.access_token);
+            const expiresAt = Date.now() + (data.expires_in || 3600) * 1000;
+            localStorage.setItem(FABRIC_TOKEN_EXPIRES_KEY, String(expiresAt));
+        }
+        return data;
     },
 
     async fabricAuthStatus() {
@@ -464,6 +495,8 @@ export const api = {
     },
 
     async fabricLogout() {
+        localStorage.removeItem(FABRIC_TOKEN_KEY);
+        localStorage.removeItem(FABRIC_TOKEN_EXPIRES_KEY);
         const res = await authFetch(`${API_BASE_URL}/connections/fabric/logout`, {
             method: 'POST',
         });
@@ -472,7 +505,9 @@ export const api = {
 
     // â”€â”€ Fabric Workspace Discovery â”€â”€â”€â”€â”€â”€
     async fabricListWorkspaces() {
-        const res = await authFetch(`${API_BASE_URL}/connections/fabric/workspaces`);
+        const res = await fetch(`${API_BASE_URL}/connections/fabric/workspaces`, {
+            headers: { ...getAuthHeaders(), ...getFabricAuthHeaders() },
+        });
         return handleResponse(res);
     },
 
@@ -806,7 +841,9 @@ export const api = {
     // ── Discovery ─────────────────────────────────────────────────────────
 
     async discoverFabricWorkspaces() {
-        const res = await authFetch(`${API_BASE_URL}/connections/fabric/workspaces`);
+        const res = await fetch(`${API_BASE_URL}/connections/fabric/workspaces`, {
+            headers: { ...getAuthHeaders(), ...getFabricAuthHeaders() },
+        });
         const data = await handleResponse(res);
         return (data.workspaces || data || []).map(normalizeWorkspace);
     },

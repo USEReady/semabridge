@@ -1,12 +1,11 @@
-project_name: mama
+project_name: mma
 source:
-  type: fabric
-  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
-  workspace: semabridge
-  models:
-    - CLIENT_DATA_SEMANTIC
+  type: snowflake
+  database: ""
+  schema: ""
+  model: CLIENT_DATA_SEMANTIC
 targets:
-  - type: snowflake
+  - type: fabric
 mappings:
   - source: CLIENT_DATA_SEMANTIC
     target: client_data_semantic_mapped
@@ -31,9 +30,9 @@ ui:
   output_format: osi
 selection:
   model_ids:
-    - d68b7670-5f6c-47ac-8c2a-32f5885a3e75
+    - CLIENT_DATA_SEMANTIC
 options:
   auto_relationships: true
   generate_descriptions: true
 target:
-  type: snowflake
+  type: fabric

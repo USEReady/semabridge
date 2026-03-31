@@ -265,18 +265,42 @@ class DatabaseManager:
 
         try:
             if dialect in _IN_PROCESS_DIALECTS:
-                # In-process databases: StaticPool — pooling and pre-ping
-                # are not applicable.
-                connect_args: dict = (
-                    {"check_same_thread": False} if dialect == "sqlite" else {}
-                )
-                engine = create_engine(
-                    url,
-                    echo=echo,
-                    future=True,
-                    connect_args=connect_args,
-                    poolclass=StaticPool,
-                )
+                # SQLite: must use StaticPool (single-thread file locking).
+                # DuckDB: use NullPool — each session gets its own connection.
+                #   DuckDB (>=0.8) supports concurrent in-process connections
+                #   via its internal WAL; StaticPool forces all threads onto
+                #   ONE connection, causing "cannot start a transaction within
+                #   a transaction" under FastAPI concurrency.
+                if dialect == "sqlite":
+                    connect_args: dict = {"check_same_thread": False}
+                    engine = create_engine(
+                        url,
+                        echo=echo,
+                        future=True,
+                        connect_args=connect_args,
+                        poolclass=StaticPool,
+                    )
+                else:
+                    # DuckDB on Windows: exclusive file locking prevents
+                    # multiple simultaneous connections (NullPool fails).
+                    # StaticPool shares ONE connection across all threads,
+                    # causing "transaction within transaction" crashes.
+                    #
+                    # QueuePool(pool_size=1, max_overflow=0) keeps exactly
+                    # one persistent connection and threads queue up to use
+                    # it serially — no file-lock conflicts, no shared-state
+                    # transaction collisions.
+                    from sqlalchemy.pool import QueuePool
+                    engine = create_engine(
+                        url,
+                        echo=echo,
+                        future=True,
+                        poolclass=QueuePool,
+                        pool_size=1,
+                        max_overflow=0,
+                        pool_timeout=30,
+                        pool_pre_ping=True,
+                    )
             else:
                 # Build SSL connect_args for server dialects
                 connect_args = _build_ssl_connect_args(dialect, ssl_mode, ssl_ca)

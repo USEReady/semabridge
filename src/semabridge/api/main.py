@@ -42,6 +42,7 @@ from semabridge.repository.model_repository import ModelRepository
 from semabridge.core.execution_engine import ExecutionEngine
 from semabridge.utils.logger import setup_logging
 from semabridge.connectors.fabric_extractor import FabricExtractor
+from semabridge.auth.fabric_validator import fabric_validator
 from semabridge.api.repo_router import router as repo_router
 from semabridge.api.sync_router import router as sync_router
 from semabridge.api.account_router import router as account_router
@@ -195,6 +196,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # type: ignore[
         await _create_orm_tables_with_retry()
     except Exception as _e:
         logger.error("ORM table setup failed: %s", _e)
+
+    # Auto-provision the default FABRIC account row if the database is fresh.
+    # This guarantees upsert_account() always finds a row to mutate after MSAL login.
+    try:
+        from sqlalchemy import select as _select
+        from semabridge.repository.orm.models import Account as _Account
+        from semabridge.repository.orm.session_factory import db_manager as _dm
+        import uuid as _uuid
+
+        with _dm.get_session() as _sess:
+            existing = _sess.execute(
+                _select(_Account).where(_Account.connector_type == "FABRIC")
+            ).scalars().first()
+            if not existing:
+                _sess.add(_Account(
+                    id=str(_uuid.uuid4()),
+                    connector_type="FABRIC",
+                    tag="default",
+                    is_default=True,
+                ))
+                _sess.commit()
+                logger.debug("Auto-provisioned default FABRIC account row on startup.")
+    except Exception as _e:
+        logger.warning("FABRIC account auto-provisioning skipped: %s", _e)
 
     # 2. MSAL warm-up (background thread -- never blocks startup)
     def _prime_msal() -> None:
@@ -3892,15 +3917,30 @@ async def snowflake_sso_login():
 
 # Azure CLI public client (multi-tenant, preauthorized for most MS APIs)
 _FABRIC_PUBLIC_CLIENT_ID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
-_FABRIC_SCOPES = ["https://api.fabric.microsoft.com/.default"]
+_FABRIC_SCOPES = ["https://analysis.windows.net/powerbi/api/.default"]
 
-# Background poll state for device-code flow
+# Background poll state for device-code flow — per-session isolation.
+# Each /login call issues a UUID flow_id. Background threads write results
+# to _poll_sessions[flow_id].  This prevents concurrent logins from
+# different users/tabs from overwriting each other.
 import threading as _threading
-# _poll_state: idle | polling | success | failed
-_poll_state: Dict[str, Any] = {"status": "idle"}
-_poll_thread: Any = None
+import uuid as _uuid
+_poll_sessions: Dict[str, Dict[str, Any]] = {}
+_poll_sessions_lock = _threading.Lock()
+_last_poll_time: Dict[str, float] = {}
+
+def _get_client_ip(request: Request) -> str:
+    """Extract client IP, preferring X-Forwarded-For to handle reverse proxies."""
+    x_forward = request.headers.get("X-Forwarded-For")
+    if x_forward:
+        return x_forward.split(",")[0].strip()
+    return request.client.host if request.client else "127.0.0.1"
+
+# Legacy single-value kept ONLY for CLI/background-sync fallback.
 _fabric_session_token: Optional[str] = None
 _fabric_session_token_expires_at: float = 0.0
+# TTL for cleaning up abandoned poll sessions (15 minutes).
+_POLL_SESSION_TTL = 900
 
 # Module-level MSAL app instance cache (keyed by authority URL)
 _msal_app_cache: Dict[str, Any] = {}
@@ -3926,27 +3966,34 @@ def clear_msal_cache():
     """Clear internal MSAL token caches and the app cache."""
     for authority, app in list(_msal_app_cache.items()):
         if hasattr(app, "token_cache"):
-            # msal Python TokenCache does not have a clear() method.
-            # We must create a new one, or re-instantiate the PCA.
-            # Easiest way is just wiping our cache of apps.
             pass
     _msal_app_cache.clear()
     global _fabric_session_token, _fabric_session_token_expires_at
     _fabric_session_token = None
     _fabric_session_token_expires_at = 0.0
+    with _poll_sessions_lock:
+        _poll_sessions.clear()
+
+
+def _cleanup_stale_poll_sessions() -> None:
+    """Remove poll sessions older than their explicit expires_at timestamp."""
+    now = _time.time()
+    with _poll_sessions_lock:
+        stale = [fid for fid, s in _poll_sessions.items() if s.get("expires_at", 0) < now]
+        for fid in stale:
+            del _poll_sessions[fid]
+            _last_poll_time.pop(fid, None)
 
 
 
-def _run_background_msal_poll(app_msal: Any, flow: Dict[str, Any], tenant: str) -> None:
+def _run_background_msal_poll(
+    app_msal: Any, flow: Dict[str, Any], tenant: str, flow_id: str
+) -> None:
     """Run the blocking MSAL device-code poll in a background thread.
 
-    MSAL 1.x does not support an ``exit_condition`` parameter, so
-    ``acquire_token_by_device_flow`` blocks until the user authenticates
-    or the code expires (~15 min).  Running it in a daemon thread lets
-    the event loop stay free while still delivering instant status
-    responses to the frontend ``/poll`` endpoint.
+    Each invocation writes its result to ``_poll_sessions[flow_id]`` so
+    that concurrent logins from different users/tabs are fully isolated.
     """
-    global _poll_state
     try:
         result: Dict[str, Any] = app_msal.acquire_token_by_device_flow(flow)
 
@@ -3961,34 +4008,47 @@ def _run_background_msal_poll(app_msal: Any, flow: Dict[str, Any], tenant: str) 
             if claims.get("tid"):
                 actual_tenant = claims["tid"]
 
-            _poll_state = {
-                "status": "success",
-                "username": account_username,
-                "tenant_id": actual_tenant,
-                "access_token": result["access_token"],
-                "refresh_token": result.get("refresh_token", ""),
-                "expires_in": result.get("expires_in", 3600),
-            }
+            with _poll_sessions_lock:
+                if flow_id in _poll_sessions:
+                    _poll_sessions[flow_id].update({
+                        "status": "success",
+                        "username": account_username,
+                        "tenant_id": actual_tenant,
+                        "access_token": result["access_token"],
+                        "refresh_token": result.get("refresh_token", ""),
+                        "expires_in": result.get("expires_in", 3600),
+                    })
         else:
             error = result.get("error", "unknown_error")
             error_desc = result.get("error_description", "")
-            _poll_state = {"status": "failed", "message": f"{error}: {error_desc}"}
+            with _poll_sessions_lock:
+                if flow_id in _poll_sessions:
+                    _poll_sessions[flow_id].update({
+                        "status": "failed",
+                        "message": f"{error}: {error_desc}",
+                    })
     except Exception as exc:
-        logger.exception("Background MSAL poll failed: %s", exc)
-        _poll_state = {"status": "failed", "message": str(exc)}
+        logger.exception("Background MSAL poll failed for flow %s: %s", flow_id, exc)
+        with _poll_sessions_lock:
+            if flow_id in _poll_sessions:
+                _poll_sessions[flow_id].update({
+                    "status": "failed",
+                    "message": str(exc),
+                })
 
 
 @app.post("/api/connections/fabric/login")
-async def fabric_device_code_login(payload: Dict[str, Any] = None):
+async def fabric_device_code_login(request: Request, payload: Dict[str, Any] = None):
     """Initiate MSAL Device Code flow for Fabric interactive login.
 
-    Returns the user_code and verification_uri for the user to authenticate
-    via their browser.  A background daemon thread starts the blocking MSAL
-    poll immediately so the ``/poll`` endpoint can return instant status
-    responses without blocking the event loop.
+    Returns a unique ``flow_id`` along with the device code.  The frontend
+    must pass this ``flow_id`` to ``/poll`` to retrieve the result for
+    *this specific* login attempt — enabling multiple concurrent logins.
     """
     import asyncio
-    global _poll_state, _poll_thread
+
+    # Housekeeping: purge stale sessions before creating a new one.
+    _cleanup_stale_poll_sessions()
 
     tenant = "organizations"
     if payload and payload.get("tenant_id"):
@@ -4011,18 +4071,28 @@ async def fabric_device_code_login(payload: Dict[str, Any] = None):
                 detail=f"Failed to initiate device flow: {flow.get('error_description', 'Unknown error')}"
             )
 
-        # Reset state and start background poll thread
-        _poll_state = {"status": "polling"}
-        _poll_thread = _threading.Thread(
+        # Issue a unique flow_id for this login session.
+        flow_id = str(_uuid.uuid4())
+        user_ip = _get_client_ip(request)
+        
+        with _poll_sessions_lock:
+            _poll_sessions[flow_id] = {
+                "status": "polling",
+                "expires_at": _time.time() + _POLL_SESSION_TTL,
+                "user_ip": user_ip,
+            }
+
+        poll_thread = _threading.Thread(
             target=_run_background_msal_poll,
-            args=(app_msal, flow, tenant),
+            args=(app_msal, flow, tenant, flow_id),
             daemon=True,
         )
-        _poll_thread.start()
+        poll_thread.start()
 
-        logger.info("Device code flow initiated - code: %s", flow["user_code"])
+        logger.info("[FlowID=%s] Fabric login started from IP: %s", flow_id, user_ip)
 
         return {
+            "flow_id": flow_id,
             "user_code": flow["user_code"],
             "verification_uri": flow["verification_uri"],
             "message": flow.get("message", ""),
@@ -4037,29 +4107,61 @@ async def fabric_device_code_login(payload: Dict[str, Any] = None):
 
 
 @app.post("/api/connections/fabric/poll")
-async def fabric_device_code_poll():
-    """Return the current device-code flow status.
+async def fabric_device_code_poll(request: Request, payload: Dict[str, Any] = None):
+    """Return the device-code flow status for a specific ``flow_id``.
 
-    The actual MSAL poll runs in a background thread started by
-    ``/fabric/login``.  This endpoint just reads a shared dict so it
-    responds instantly without blocking the event loop.
+    The frontend must pass the ``flow_id`` received from ``/login``.
+    On success, ``access_token`` is returned so the frontend can store
+    it and send it as a Bearer header on subsequent Fabric API calls.
     """
     from semabridge.repository.credential_manager import CredentialManager
-    global _poll_state, _fabric_session_token, _fabric_session_token_expires_at
+    global _fabric_session_token, _fabric_session_token_expires_at
 
-    state = _poll_state.copy()
+    flow_id = (payload or {}).get("flow_id", "")
+    if not flow_id:
+        raise HTTPException(status_code=400, detail={"status": "error", "message": "Missing flow_id."})
 
-    if state["status"] == "idle":
-        raise HTTPException(status_code=400, detail="No active device code flow. Call /fabric/login first.")
+    # Rate Limiting: max 1 poll per second per flow_id
+    now = _time.time()
+    if now - _last_poll_time.get(flow_id, 0) < 1.0:
+        # Soft delay or throttle
+        raise HTTPException(status_code=429, detail={"status": "too_many_requests", "message": "Slow down polling."})
+    _last_poll_time[flow_id] = now
+
+    with _poll_sessions_lock:
+        state = _poll_sessions.get(flow_id, {}).copy()
+
+    if not state:
+        raise HTTPException(status_code=400, detail={"status": "expired", "message": "Unknown or expired flow_id. Please login again."})
+
+    # CSRF/IP Validation: Soft reject (log only) to support VPN/cellular hops
+    user_ip = _get_client_ip(request)
+    session_ip = state.get("user_ip")
+    if session_ip and session_ip != user_ip:
+        logger.warning(f"[FlowID={flow_id}] IP Mismatch! Login originated from {session_ip}, but poll is from {user_ip}")
+
+    # Enforce strict TTL
+    if now > state.get("expires_at", 0):
+        with _poll_sessions_lock:
+            _poll_sessions.pop(flow_id, None)
+            _last_poll_time.pop(flow_id, None)
+        raise HTTPException(status_code=401, detail={"status": "expired", "message": "Login session expired. Please login again."})
 
     if state["status"] == "polling":
         return {"status": "pending", "message": "Waiting for user to authenticate..."}
 
     if state["status"] == "success":
-        # Persist token now (only once — reset state so duplicate poll calls are safe)
-        _poll_state = {"status": "idle"}
+        # Consume the session so duplicate polls are safe, Replay Protection
+        logger.info(f"[FlowID={flow_id}] Fabric login success via MSAL for user: {state.get('username')}")
+        with _poll_sessions_lock:
+            _poll_sessions.pop(flow_id, None)
+            _last_poll_time.pop(flow_id, None)
+
+        # Keep legacy in-memory token for CLI/background-sync fallback.
         _fabric_session_token = state["access_token"]
         _fabric_session_token_expires_at = _time.time() + int(state.get("expires_in", 3600))
+
+        # Persist to DB (Account + Credential tables)
         try:
             from semabridge.repository.orm.session_factory import db_manager
             from semabridge.repository.account_repository import AccountRepository
@@ -4079,7 +4181,6 @@ async def fabric_device_code_poll():
                 tenant_id=state.get("tenant_id", "organizations"),
                 expires_in=state.get("expires_in", 3600),
             )
-            # Backward-compatible mirror for flows that still read fabric credentials.
             cm.save_credentials(
                 "fabric",
                 {
@@ -4093,16 +4194,19 @@ async def fabric_device_code_poll():
                 raise exc
             raise HTTPException(status_code=500, detail=f"Database write failed during token persistence: {exc}")
 
-        logger.info("Fabric interactive login successful for %s", state.get("username"))
+        logger.info("Fabric interactive login successful for %s (flow_id=%s)", state.get("username"), flow_id)
         return {
             "status": "success",
             "username": state.get("username", "unknown"),
             "tenant_id": state.get("tenant_id", ""),
+            "access_token": state["access_token"],
+            "expires_in": state.get("expires_in", 3600),
             "message": f"Signed in as {state.get('username', 'unknown')}",
         }
 
     # status == "failed"
-    _poll_state = {"status": "idle"}
+    with _poll_sessions_lock:
+        _poll_sessions.pop(flow_id, None)
     return {"status": "failed", "message": state.get("message", "Unknown error")}
 
 
@@ -4325,87 +4429,167 @@ def _resolve_fabric_access_token(header_bearer_token: Optional[str]) -> str:
     Precedence:
     1. Authorization header bearer token from current request.
     2. Stored MSAL token from interactive Connections login flow.
+       - If expired, silently refresh using the stored refresh_token.
     3. FABRIC_ACCESS_TOKEN environment variable (dev/CI fallback).
-    """
-    if header_bearer_token:
-        logger.info("Using Fabric token from Authorization header")
-        return header_bearer_token
 
-    # Look up the identity marked as 'Default' in the Settings > Connections tab
+    IMPORTANT: This function uses a two-phase approach to avoid DuckDB
+    QueuePool(1) deadlocks — all DB reads happen in Phase 1 (session is
+    closed), then token refresh happens in Phase 2 (can open its own session).
+    """
+    # ── Phase 0: Header token (no DB needed) ─────────────────────────────
+    if header_bearer_token:
+        try:
+            fabric_validator.validate_msal_token(header_bearer_token)
+            logger.info("Using and validated Fabric token from Authorization header")
+            return header_bearer_token
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Fabric token validation error: {e}")
+            raise HTTPException(status_code=401, detail={"status": "invalid_token", "message": "Signature or claim validation failed."})
+
+    # ── Phase 1: Read everything we need from DB in ONE session ──────────
+    # Variables populated by Phase 1:
+    encrypted_token: Optional[str] = None
+    account_tag: Optional[str] = None
+    credential_token_data: dict = {}      # from Credential table fallback
+    has_account_row: bool = False
+
     try:
         from sqlalchemy import select
-        from semabridge.repository.orm.models import Account
-        from semabridge.auth.encryption import decrypt_token
+        from semabridge.repository.orm.models import Account, Credential
         from semabridge.repository.orm.session_factory import db_manager
 
         with db_manager.get_session() as session:
-            # Bypass cache
-            session.commit()
+            session.expire_all()
+
             default_account = session.execute(
-                select(Account).where(
-                    Account.connector_type == "FABRIC",
-                    Account.is_default == True
-                )
-            ).scalar_one_or_none()
+                select(Account).where(Account.connector_type == "FABRIC")
+            ).scalars().first()
 
             if default_account:
-                logger.info(f"DEBUG: Attempting Fabric fetch for: {default_account.tag}")
+                has_account_row = True
+                account_tag = default_account.tag
+                encrypted_token = default_account.encrypted_token
 
-                if not default_account.encrypted_token:
-                    # Fallback: check Credential table directly
-                    from semabridge.repository.orm.models import Credential
-                    import time
+                if not encrypted_token:
+                    # Fallback: read from Credential table
                     rows = session.execute(
                         select(Credential).where(Credential.service == "fabric_token")
                     ).scalars().all()
-                    raw_token_data = {row.key: row.value for row in rows} if rows else {}
-                    raw_access_token = raw_token_data.get("access_token", "")
-                    
-                    if not raw_access_token:
-                        from fastapi.responses import JSONResponse
-                        raise HTTPException(
-                            status_code=401,
-                            detail={"error": "reauth_required"}
-                        )
-                        
-                    try:
-                        expires_at = int(raw_token_data.get("expires_at", "0"))
-                        if time.time() >= expires_at - 60:
-                            raise HTTPException(status_code=401, detail={"error": "reauth_required"})
-                    except (ValueError, TypeError):
-                        raise HTTPException(status_code=401, detail={"error": "reauth_required"})
-                        
-                    # Backfill to Account row for future requests
-                    from semabridge.auth.encryption import encrypt_token as _encrypt
-                    try:
-                        default_account.encrypted_token = _encrypt(raw_access_token)
-                        default_account.identity_email = raw_token_data.get("account_username", default_account.identity_email)
-                        session.commit()
-                        logger.info("Backfilled access token from Credential fallback into default Account row")
-                    except Exception as bf_exc:
-                        session.rollback()
-                        logger.warning(f"Failed to backfill token (non-fatal): {bf_exc}")
-                        
-                    logger.info(f"Using fallback Credential table access token for Fabric account: {default_account.tag}")
-                    return raw_access_token
+                    credential_token_data = {row.key: row.value for row in rows} if rows else {}
+        # ── Session is now CLOSED — connection returned to pool ──────────
 
-                try:
-                    tok = decrypt_token(default_account.encrypted_token)
-                    logger.info(f"Using access token from default Fabric account: {default_account.tag}")
-                    return tok
-                except Exception as e:
-                    logger.warning(f"Failed to decrypt token for default account {default_account.tag}: {e}")
     except HTTPException:
         raise
     except Exception as exc:
         logger.warning(f"Failed to query default account token in DB: {exc}")
 
+    # ── Phase 2: Validate / refresh tokens (no session held) ─────────────
+    if has_account_row:
+        logger.debug(f"Attempting Fabric token resolution for: {account_tag}")
+
+        # Path A: Credential table fallback (no encrypted_token on Account)
+        if not encrypted_token and credential_token_data:
+            import time as _time
+            raw_access_token = credential_token_data.get("access_token", "")
+
+            if not raw_access_token:
+                raise HTTPException(status_code=401, detail={"error": "reauth_required"})
+
+            try:
+                expires_at = int(credential_token_data.get("expires_at", "0"))
+                if _time.time() >= expires_at - 60:
+                    logger.warning("Credential-table Fabric token expired. Attempting silent refresh...")
+                    refreshed = _try_silent_refresh()
+                    if refreshed:
+                        return refreshed
+                    raise HTTPException(status_code=401, detail={"error": "reauth_required"})
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=401, detail={"error": "reauth_required"})
+
+            logger.info(f"Using fallback Credential table access token for Fabric account: {account_tag}")
+            return raw_access_token
+
+        # Path B: Decrypted token from Account row
+        if encrypted_token:
+            try:
+                from semabridge.auth.encryption import decrypt_token
+                tok = decrypt_token(encrypted_token)
+                try:
+                    fabric_validator.validate_msal_token(tok)
+                except HTTPException:
+                    logger.warning("Decrypted Fabric token from DB is expired. Attempting silent refresh...")
+                    refreshed = _try_silent_refresh()
+                    if refreshed:
+                        return refreshed
+                    logger.warning("Silent refresh failed. Forcing reauthentication.")
+                    raise HTTPException(status_code=401, detail={"error": "reauth_required"})
+
+                logger.info(f"Using access token from default Fabric account: {account_tag}")
+                return tok
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.warning(f"Failed to decrypt token for account {account_tag}: {e}")
+
+        # Path C: Account row exists but has neither token source
+        if not encrypted_token and not credential_token_data:
+            raise HTTPException(status_code=401, detail={"error": "reauth_required"})
+
     logger.warning("No valid Fabric access token available (bypassed .env fallback to respect UI state)")
-    from fastapi.responses import JSONResponse
     raise HTTPException(
         status_code=401,
         detail={"error": "reauth_required"}
     )
+
+
+def _try_silent_refresh() -> Optional[str]:
+    """Attempt to silently acquire a fresh access token using the
+    stored refresh_token.  Returns the new access_token on success,
+    or None on failure.
+
+    This function opens its own short-lived DB sessions internally,
+    so it must NEVER be called while a caller is holding an open session
+    (QueuePool(1) deadlock).
+    """
+    try:
+        from semabridge.repository.credential_manager import CredentialManager
+        import msal
+
+        cm = CredentialManager()
+        token_data = cm.get_msal_token()
+        if not token_data or not token_data.get("refresh_token"):
+            return None
+
+        tenant_id = token_data.get("tenant_id", "organizations")
+        app_msal = msal.PublicClientApplication(
+            client_id="04b07795-8ddb-461a-bbee-02f9e1bf7b46",
+            authority=f"https://login.microsoftonline.com/{tenant_id}",
+        )
+        result = app_msal.acquire_token_by_refresh_token(
+            token_data["refresh_token"],
+            scopes=["https://analysis.windows.net/powerbi/api/.default"],
+        )
+        if "access_token" in result:
+            cm.save_msal_token(
+                access_token=result["access_token"],
+                refresh_token=result.get("refresh_token", token_data["refresh_token"]),
+                account_username=token_data.get("account_username", "unknown"),
+                tenant_id=tenant_id,
+                expires_in=result.get("expires_in", 3600),
+            )
+            logger.info("Silently refreshed Fabric access token via MSAL refresh_token")
+            return result["access_token"]
+        else:
+            logger.warning(
+                "Silent token refresh failed: %s",
+                result.get("error_description", result.get("error", "unknown")),
+            )
+            return None
+    except Exception as exc:
+        logger.warning("Silent token refresh exception: %s", exc)
+        return None
 
 
 @app.get("/api/connections/fabric/workspaces")
@@ -4420,7 +4604,8 @@ async def fabric_list_workspaces(
     """
     import httpx
 
-    access_token = _resolve_fabric_access_token(bearer_token)
+    import anyio
+    access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token)
     logger.info("Calling Fabric workspaces API with resolved access token")
 
     try:
@@ -4431,7 +4616,8 @@ async def fabric_list_workspaces(
             )
 
         if resp.status_code == 401:
-            raise HTTPException(status_code=401, detail="Token expired or invalid. Please sign in again.")
+            logger.error(f"Microsoft Fabric API rejected the token with 401: {resp.text}")
+            raise HTTPException(status_code=401, detail={"status": "expired", "message": "Token rejected by Microsoft. Please sign in again."})
 
         if resp.status_code != 200:
             raise HTTPException(
@@ -4491,35 +4677,11 @@ async def fabric_get_default_workspace(
 
     # --- Step 1: Identify Default Account ---
     access_token = None
+    import anyio
     try:
-        session = db_manager._session()
-        try:
-            default_account = session.execute(
-                select(Account).where(
-                    Account.connector_type == "FABRIC",
-                    Account.is_default == True
-                )
-            ).scalar_one_or_none()
-
-            if default_account and default_account.encrypted_token:
-                try:
-                    access_token = decrypt_token(default_account.encrypted_token)
-                    logger.info(f"Using access token from default Fabric account: {default_account.tag}")
-                except Exception as e:
-                    logger.warning(f"Failed to decrypt token for default account {default_account.tag}: {e}")
-            elif default_account:
-                logger.warning(f"Default account {default_account.tag} has no encrypted_token")
-        finally:
-            session.close()
-    except Exception as exc:
-        logger.warning(f"Failed to query default account: {exc}")
-
-    # Fallback to _resolve_fabric_access_token if no valid default account token was found
-    if not access_token:
-        try:
-            access_token = _resolve_fabric_access_token(bearer_token)
-        except HTTPException:
-            pass
+        access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token)
+    except HTTPException:
+        pass
 
     if not access_token:
         return {
@@ -4610,15 +4772,25 @@ async def fabric_select_workspace(payload: Dict[str, str]):
     if not workspace_id:
         raise HTTPException(status_code=400, detail="workspace_id is required")
 
-    # Save to DuckDB credentials
+    # Save to DuckDB credentials (single source of truth)
     cm = CredentialManager()
     cm.save_credentials("fabric", {
         "workspace_id": workspace_id,
         "workspace_name": workspace_name,
     })
 
-    # Sync to config.yaml
+    # Sync to config.yaml for CLI/offline compatibility
     _sync_workspace_to_config(workspace_id, workspace_name)
+
+    # Inject into live process environment so FabricConfig picks it up
+    # without requiring a server restart. This is safe because env vars
+    # are process-scoped and never persisted to disk.
+    os.environ["FABRIC_WORKSPACE_ID"] = workspace_id
+
+    # Clear the cached Settings singleton so the next FabricConfig()
+    # instantiation reads the freshly injected env var.
+    from semabridge.core.settings import get_settings
+    get_settings.cache_clear()
 
     logger.info(f"Set active Fabric workspace: {workspace_name} ({workspace_id})")
     return {
