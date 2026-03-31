@@ -1904,12 +1904,39 @@ class ExecutionEngine:
             raise DeploymentError(f"Deployment failed: {e}") from e
     
     def _deploy_to_fabric(self, context: RunContext) -> None:
-        """Deploy to Fabric."""
+        """Deploy to Fabric.
+
+        Re-injects credentials from the credential store into the live
+        process environment before creating the publisher.  This guarantees
+        the publisher sees the latest UI-selected workspace_id even when
+        the user changed it after the backend started.
+        """
         from semabridge.connectors.fabric_publisher import FabricPublisher
-        
-        config = context.config
+
+        # Re-inject stored credentials so FABRIC_WORKSPACE_ID reflects
+        # the latest UI selection (not just the .env value at boot time).
+        try:
+            from semabridge.repository.credential_manager import CredentialManager
+            cm = CredentialManager()
+            cm.inject_credentials_to_env("fabric")
+            injected_ws = os.environ.get("FABRIC_WORKSPACE_ID", "")
+            logger.info("Fabric deploy: FABRIC_WORKSPACE_ID env=%s", injected_ws or "(not set)")
+        except Exception as _inj_exc:
+            logger.debug("Credential re-injection before Fabric deploy skipped: %s", _inj_exc)
+
+        # CRITICAL: Remove any stale FABRIC_ACCESS_TOKEN from env.
+        # If present (from .env or a prior injection), FabricPublisher
+        # treats it as a "pre-issued CI token" and uses it without refresh.
+        os.environ.pop("FABRIC_ACCESS_TOKEN", None)
+        os.environ.pop("FABRIC_REFRESH_TOKEN", None)
+
+        # Clear cached Settings so FabricConfig() reads the fresh env vars.
+        get_settings.cache_clear()
+        config = get_settings()
+        logger.info("Fabric deploy: config.fabric.workspace_id=%s", config.fabric.workspace_id)
+
         publisher = FabricPublisher(config.fabric)
-        
+
         publisher.publish(
             sml_model=context.sml_model,
             model_name=context.project_id,

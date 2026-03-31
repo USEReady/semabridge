@@ -53,6 +53,13 @@ _ENV_MAP: Dict[str, Dict[str, str]] = {
         "schema_name": "SNOWFLAKE_SCHEMA",
         "role": "SNOWFLAKE_ROLE",
     },
+    "databricks": {
+        "host": "DATABRICKS_HOST",
+        "token": "DATABRICKS_TOKEN",
+        "warehouse_id": "DATABRICKS_WAREHOUSE_ID",
+        "catalog": "DATABRICKS_CATALOG",
+        "schema_name": "DATABRICKS_SCHEMA",
+    },
 }
 
 # Keys that are exclusive to each auth mode — used to purge stale
@@ -103,9 +110,7 @@ class CredentialManager:
 
             engine = get_engine()
             # For Snowflake, skip table creation (should exist in production)
-            # For other databases, create tables as needed
-            if engine.dialect.name != "snowflake":
-                Base.metadata.create_all(engine)
+            # For other databases, table creation is handled globally during FastAPI startup_event.
             self._SessionLocal = get_session_factory()
 
     # ------------------------------------------------------------------
@@ -214,28 +219,49 @@ class CredentialManager:
     ) -> Dict[str, str]:
         """Retrieve stored credentials for a service.
 
+        Reads from the database first.  If the database has no rows for this
+        service, falls back to os.environ (populated from .env at startup) so
+        that credentials configured only in .env are still surfaced in the UI.
+
         Args:
-            service: Service name ('fabric' or 'snowflake').
-            mask_secrets: If True, secret values are replaced with 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢'.
+            service: Service name ('fabric', 'snowflake', 'databricks').
+            mask_secrets: If True, secret values are replaced with '••••••••'.
 
         Returns:
             Dictionary of credential key-value pairs.
         """
+        secret_keys = self._get_secret_keys(service)
+        env_map = _ENV_MAP.get(service, {})
+        result: Dict[str, str] = {}
+
+        # --- Step 1: Read from database ---
         try:
             with self._session() as session:
                 rows = session.execute(
                     select(Credential).where(Credential.service == service)
                 ).scalars().all()
-
-                result: Dict[str, str] = {}
                 for row in rows:
                     if mask_secrets and row.is_secret:
-                        result[row.key] = "â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+                        result[row.key] = "••••••••"
                     else:
                         result[row.key] = row.value
-                return result
         except Exception:
-            return {}
+            pass
+
+        # --- Step 2: Supplement from os.environ for any keys NOT already in DB.
+        # This ensures credentials set only in .env are always surfaced in the UI,
+        # and that required fields like workspace_id are not hidden when the DB
+        # only has the MSAL tokens (access_token / refresh_token).
+        for cred_key, env_var in env_map.items():
+            if cred_key not in result:
+                value = os.environ.get(env_var, "")
+                if value:
+                    if mask_secrets and cred_key in secret_keys:
+                        result[cred_key] = "••••••••"
+                    else:
+                        result[cred_key] = value
+
+        return result
 
     def get_connection_status(self) -> Dict[str, Any]:
         """Get the configuration status for all supported services.
@@ -305,11 +331,18 @@ class CredentialManager:
 
         skip_keys: set = set()
         if service == "fabric":
+            # NEVER inject ephemeral tokens into env vars.  They are
+            # short-lived and must only flow through the CredentialManager's
+            # managed refresh path.  If FABRIC_ACCESS_TOKEN lands in
+            # os.environ, FabricPublisher treats it as a pre-issued CI token
+            # and uses it without refresh — guaranteed 401 after expiry.
+            skip_keys = {"access_token", "refresh_token"}
+
             has_service_principal = bool(
                 credentials.get("client_id") and credentials.get("client_secret")
             )
             if not has_service_principal:
-                skip_keys = {"tenant_id", "client_id", "client_secret"}
+                skip_keys.update({"tenant_id", "client_id", "client_secret"})
 
         for key, value in credentials.items():
             if key in skip_keys:
@@ -345,6 +378,7 @@ class CredentialManager:
             "fabric": {"client_secret", "access_token", "refresh_token"},
             "snowflake": {"password", "private_key", "private_key_passphrase"},
             "fabric_token": {"access_token", "refresh_token"},
+            "databricks": {"token"},
         }
         return secret_map.get(service, set())
 
@@ -372,6 +406,9 @@ class CredentialManager:
                 return base  # SSO needs no extra stored credential
             else:
                 return base + ["password"]
+
+        if service == "databricks":
+            return ["host", "token", "warehouse_id"]
 
         return []
 
