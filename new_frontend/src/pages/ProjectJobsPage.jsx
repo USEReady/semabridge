@@ -315,7 +315,7 @@ export default function ProjectJobsPage() {
                       </div>
 
                       <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>
-                        Sync Log For Selected Run
+                        Execution Stages For Selected Run
                       </div>
                       <div
                         style={{

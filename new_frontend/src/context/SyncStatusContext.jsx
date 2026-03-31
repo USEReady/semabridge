@@ -60,9 +60,34 @@ export function SyncStatusProvider({ children }) {
     // Listen for fallback event from sync POST
     function handleFallback(e) {
       const { projectId, status, progress } = e.detail || {};
-      if (projectId && (status === 'success' || progress === 100)) {
+      const normalizedProjectId = String(projectId || '');
+      const normalizedStatus = normalizeStatus(status);
+      const normalizedProgress = Number(progress);
+
+      if (normalizedProjectId) {
+        setCurrentSyncId(normalizedProjectId);
+      }
+
+      if (normalizedStatus === 'running') {
+        setCurrentSyncStatus('running');
+        setCurrentProgress((prev) => (prev > 5 ? prev : 5));
+        setIndeterminate(false);
+        setWarning('');
+        lastRealChangeAtRef.current = Date.now();
+        return;
+      }
+
+      if (normalizedStatus === 'success' || normalizedProgress === 100) {
         setCurrentProgress(100);
         setCurrentSyncStatus('success');
+        setIndeterminate(false);
+        setWarning('');
+        lastRealChangeAtRef.current = Date.now();
+      } else if (normalizedStatus === 'failed') {
+        setCurrentSyncStatus('failed');
+        setIndeterminate(false);
+        setWarning('');
+        lastRealChangeAtRef.current = Date.now();
       }
     }
     window.addEventListener('semabridge-sync-fallback', handleFallback);

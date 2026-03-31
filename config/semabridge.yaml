@@ -1,14 +1,15 @@
-project_name: mma
+project_name: aa
 source:
-  type: snowflake
-  database: ""
-  schema: ""
-  model: CLIENT_DATA_SEMANTIC
+  type: fabric
+  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
+  workspace: semabridge
+  models:
+    - Device
 targets:
-  - type: fabric
+  - type: databricks
 mappings:
-  - source: CLIENT_DATA_SEMANTIC
-    target: client_data_semantic_mapped
+  - source: Device
+    target: device_mapped
     type: table
     columns:
       - source: id
@@ -30,9 +31,9 @@ ui:
   output_format: osi
 selection:
   model_ids:
-    - CLIENT_DATA_SEMANTIC
+    - 974e7d48-4a76-4518-99d7-6ea751e37ce8
 options:
   auto_relationships: true
   generate_descriptions: true
 target:
-  type: fabric
+  type: databricks

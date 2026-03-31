@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Save, Play, CalendarClock, Settings2, FileCode2, SlidersHorizontal, Loader2 } from 'lucide-react';
+import { ArrowLeft, Save, Play, CalendarClock, Settings2, FileCode2, SlidersHorizontal, Loader2, CheckCircle2 } from 'lucide-react';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import CodeMirror from '@uiw/react-codemirror';
 import { yaml as yamlLang } from '@codemirror/lang-yaml';
@@ -10,6 +10,7 @@ import GlobalConfigModal from '../components/projects/GlobalConfigModal';
 import SearchableSelect from '../components/common/SearchableSelect';
 import { useTheme } from '../context/ThemeProvider';
 import { useLogs } from '../context/LogsContext';
+import { useSyncStatusStore } from '../context/SyncStatusContext';
 import { api } from '../utils/api';
 import { buildMockRunLogs, saveRunLogs } from '../utils/runLogs';
 import { useUIStore } from '../store/uiStore';
@@ -41,6 +42,8 @@ export default function ProjectConfigPage() {
   const [searchParams] = useSearchParams();
   const { theme } = useTheme();
   const { addLog } = useLogs();
+  const { runs, currentSyncId, currentSyncStatus, projectStatusById, projectProgressById } = useSyncStatusStore();
+  const lastToastStatusRef = useRef('');
   const setActiveProjectId = useUIStore(state => state.setActiveProjectId);
   const hasHydrated = useUIStore(state => state.hasHydrated);
   const projectConfigDrafts = useUIStore(state => state.projectConfigDrafts);
@@ -94,6 +97,46 @@ export default function ProjectConfigPage() {
     'America/Los_Angeles',
     'Europe/London',
   ]), []);
+  const normalizedProjectId = String(project?.id || project?.project_id || id || '');
+  const latestProjectRun = useMemo(
+    () => runs.find((run) => String(run?.project_id || '') === normalizedProjectId) || null,
+    [runs, normalizedProjectId]
+  );
+  const projectSyncStatus = String(
+    (normalizedProjectId && projectStatusById?.[normalizedProjectId])
+      || latestProjectRun?.status
+      || (String(currentSyncId || '') === normalizedProjectId ? currentSyncStatus : '')
+      || ''
+  ).toLowerCase();
+  const projectSyncProgress = Number(
+    (normalizedProjectId && projectProgressById?.[normalizedProjectId])
+      ?? latestProjectRun?.progress_pct
+      ?? 0
+  );
+  const isProjectSyncing = projectSyncStatus === 'running'
+    || (String(currentSyncId || '') === normalizedProjectId && currentSyncStatus === 'running');
+  const isProjectSynced = !isProjectSyncing && projectSyncStatus === 'success';
+
+  useEffect(() => {
+    if (!normalizedProjectId) return;
+
+    if (projectSyncStatus === 'running') {
+      lastToastStatusRef.current = 'running';
+      return;
+    }
+
+    if (lastToastStatusRef.current === 'running' && projectSyncStatus === 'success') {
+      addLog('success', 'Sync', `${project?.name || 'Project'} sync completed successfully.`);
+      setSaveInfo('Sync completed successfully.');
+      lastToastStatusRef.current = 'success';
+      return;
+    }
+
+    if (lastToastStatusRef.current === 'running' && (projectSyncStatus === 'failed' || projectSyncStatus === 'warning')) {
+      addLog('error', 'Sync', `${project?.name || 'Project'} sync failed. Check logs for details.`);
+      lastToastStatusRef.current = projectSyncStatus;
+    }
+  }, [addLog, normalizedProjectId, project?.name, projectSyncStatus]);
 
   useEffect(() => {
     const modeFromUrl = searchParams.get('mode');
@@ -465,6 +508,16 @@ export default function ProjectConfigPage() {
         saveRunLogs(run.id, buildMockRunLogs(run));
       }
 
+      if (typeof window !== 'undefined' && window.dispatchEvent) {
+        window.dispatchEvent(new CustomEvent('semabridge-sync-fallback', {
+          detail: {
+            projectId: id,
+            status: status || 'running',
+            progress: 5,
+          },
+        }));
+      }
+
       if (status === 'running') {
         addLog('info', 'Sync', 'Sync started. You can continue using other screens while it runs.');
         setSaveInfo('Sync started. Progress is shown in the bottom status bar.');
@@ -541,6 +594,19 @@ export default function ProjectConfigPage() {
     localStorage.setItem(`project_${id}_viewMode`, nextMode);
     setViewMode(nextMode);
   };
+
+  const syncButtonStyle = {
+    ...primaryBtn,
+    opacity: (saving || syncing || isProjectSyncing) ? 0.85 : 1,
+    cursor: (saving || syncing || isProjectSyncing) ? 'not-allowed' : 'pointer',
+    background: isProjectSynced ? 'var(--color-success)' : primaryBtn.background,
+  };
+
+  const syncButtonLabel = isProjectSyncing
+    ? `Syncing${projectSyncProgress > 0 ? ` ${projectSyncProgress}%` : '...'}`
+    : isProjectSynced
+      ? 'Sync Successful'
+      : 'Sync Now';
 
   if (loading) {
     return (
@@ -665,12 +731,18 @@ export default function ProjectConfigPage() {
         <button onClick={handleCreateJob} style={secondaryBtn}>
           <CalendarClock size={13} /> Create Job for Later
         </button>
-        <button onClick={handleSave} disabled={saving || syncing} style={secondaryBtn}>
+        <button onClick={handleSave} disabled={saving || syncing || isProjectSyncing} style={secondaryBtn}>
           {saving ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Save size={13} />}
           Save Config
         </button>
-        <button onClick={handleRunNow} disabled={saving || syncing} style={{ ...primaryBtn, opacity: (saving || syncing) ? 0.7 : 1, cursor: (saving || syncing) ? 'not-allowed' : 'pointer' }}>
-          {syncing ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={13} />} {syncing ? 'Syncing…' : 'Sync Now'}
+        <button onClick={handleRunNow} disabled={saving || syncing || isProjectSyncing} style={syncButtonStyle}>
+          {isProjectSyncing || syncing ? (
+            <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
+          ) : isProjectSynced ? (
+            <CheckCircle2 size={13} />
+          ) : (
+            <Play size={13} />
+          )} {syncButtonLabel}
         </button>
       </div>
 

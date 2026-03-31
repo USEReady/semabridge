@@ -28,9 +28,69 @@ function timestampFromIso(iso) {
   return `${hh}:${mm}:${ss}`;
 }
 
+function normalizeStatus(status) {
+  return String(status || '').trim().toLowerCase();
+}
+
+function levelFromStatus(status) {
+  const normalized = normalizeStatus(status);
+  if (normalized === 'failed') return 'ERROR';
+  if (normalized === 'skipped') return 'SKIP';
+  if (normalized === 'running') return 'LIVE';
+  if (normalized === 'success') return 'SUCCESS';
+  return 'INFO';
+}
+
+function collectStepLogs(summary, prefix = '') {
+  const steps = Array.isArray(summary?.steps_completed) ? summary.steps_completed : [];
+  const errors = Array.isArray(summary?.errors) ? summary.errors : [];
+  const lines = [];
+
+  steps.forEach((step) => {
+    const timestamp = timestampFromIso(step?.completed_at || step?.started_at || summary?.started_at);
+    const level = levelFromStatus(step?.status);
+    const scope = prefix ? `${prefix} ` : '';
+    const detail = step?.message ? ` - ${step.message}` : '';
+    lines.push(
+      `${level} ${timestamp} ${scope}Stage ${step?.step_number ?? '?'}: ${step?.step_name || 'Unknown'}${detail}`
+    );
+  });
+
+  errors.forEach((error) => {
+    const timestamp = timestampFromIso(summary?.completed_at || summary?.started_at);
+    const scope = prefix ? `${prefix} ` : '';
+    const stepPart = error?.step_number ? `Stage ${error.step_number}` : 'Run';
+    const stepName = error?.step_name ? ` (${error.step_name})` : '';
+    const message = error?.message || 'Unknown error';
+    lines.push(`ERROR ${timestamp} ${scope}${stepPart}${stepName} - ${message}`);
+  });
+
+  return lines;
+}
+
+function buildSummaryRunLogs(run = {}) {
+  const lines = [];
+  const topLevelSummaryLines = collectStepLogs(run.summary);
+  if (topLevelSummaryLines.length) {
+    lines.push(...topLevelSummaryLines);
+  }
+
+  const results = Array.isArray(run.results) ? run.results : [];
+  results.forEach((result) => {
+    const modelName = result?.model ? `[${result.model}]` : '[Model]';
+    lines.push(...collectStepLogs(result?.summary, modelName));
+  });
+
+  if (lines.length) {
+    return lines;
+  }
+
+  return [];
+}
+
 export function buildMockRunLogs(run = {}) {
   const startedAt = timestampFromIso(run.started_at);
-  const normalizedStatus = String(run.status || '').toLowerCase();
+  const normalizedStatus = normalizeStatus(run.status);
   const lines = [
     `INFO ${startedAt} Validating source format...`,
     `INFO ${startedAt} Converting metadata to SML...`,
@@ -60,6 +120,8 @@ export function saveRunLogs(runId, logs) {
 
 export function getRunLogs(run) {
   if (!run) return [];
+  const summaryLogs = buildSummaryRunLogs(run);
+  if (summaryLogs.length) return summaryLogs;
   const store = readStore();
   const stored = store[String(run.id)];
   if (Array.isArray(stored) && stored.length) return stored;
