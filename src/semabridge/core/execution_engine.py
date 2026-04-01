@@ -438,11 +438,6 @@ class ExecutionEngine:
                     f"Supported: {self.SUPPORTED_TARGETS - {None}}"
                 )
 
-            if target == "databricks" and source != "fabric":
-                raise ConfigValidationError(
-                    "Databricks target is currently supported only for fabric source runs"
-                )
-            
             self._record_step(1, StepStatus.SUCCESS, "Configuration validated")
             return config
             
