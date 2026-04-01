@@ -81,6 +81,8 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
     const [rollbackTarget, setRollbackTarget] = useState(null);
     const [deleteConfirm, setDeleteConfirm] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
+    const [isRollingBack, setIsRollingBack] = useState(false);
+    const [rollbackError, setRollbackError] = useState('');
     const [objectTypeFilter, setObjectTypeFilter] = useState('All');
     const [changeTypeFilter, setChangeTypeFilter] = useState('All');
     const [activeVersionId, setActiveVersionId] = useState(null);
@@ -152,6 +154,8 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
     };
 
     const handleRollback = async (versionId) => {
+        setIsRollingBack(true);
+        setRollbackError('');
         try {
             const v = versions.find(ver => ver.version_id === versionId);
             if (v?.can_rollback === false) {
@@ -169,8 +173,10 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
             loadVersions();
         } catch (err) {
             console.error('Rollback failed:', err);
+            setRollbackError(err.message || 'Rollback failed');
             addLog('error', 'Version Control', `Rollback failed: ${err.message}`);
-            alert(`Rollback failed: ${err.message}`);
+        } finally {
+            setIsRollingBack(false);
         }
     };
 
@@ -524,7 +530,9 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                                                         <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
-                                                                canRollback && setRollbackTarget(v);
+                                                                if (!canRollback) return;
+                                                                setRollbackError('');
+                                                                setRollbackTarget(v);
                                                             }}
                                                             disabled={!canRollback}
                                                             className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold transition-colors ${
@@ -639,18 +647,29 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                                 <p>• The local model file will be overwritten with the restored content.</p>
                                 <p>• All existing version history will be <strong>preserved</strong>.</p>
                             </div>
+                            {rollbackError && (
+                                <div className="mb-4 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">
+                                    {rollbackError}
+                                </div>
+                            )}
                             <div className="flex justify-end gap-3">
                                 <button
-                                    onClick={() => setRollbackTarget(null)}
+                                    onClick={() => {
+                                        setRollbackTarget(null);
+                                        setRollbackError('');
+                                    }}
+                                    disabled={isRollingBack}
                                     className="px-4 py-2 rounded-lg text-xs font-bold text-secondary border border-main hover:bg-surface-hover"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     onClick={() => handleRollback(rollbackTarget.version_id)}
-                                    className="px-4 py-2 rounded-lg text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 shadow-lg"
+                                    disabled={isRollingBack}
+                                    className="px-4 py-2 rounded-lg text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 shadow-lg disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
                                 >
-                                    Rollback to this version
+                                    {isRollingBack ? <Loader2 size={12} className="animate-spin" /> : null}
+                                    {isRollingBack ? 'Rolling back...' : 'Rollback to this version'}
                                 </button>
                             </div>
                         </div>

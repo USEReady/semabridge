@@ -49,6 +49,7 @@ from semabridge.api.account_router import router as account_router
 from semabridge.api.websocket_alerts import alert_router, install_websocket_alert_handler
 from semabridge.api.semantic_models import SemanticSyncRequest, SemanticRefreshRequest
 from semabridge.api.services.scheduler_service import SchedulerService
+from semabridge.api.services.version_control_service import VersionControlService
 from sqlalchemy.orm import Session
 from semabridge.api.deps import get_db
 
@@ -77,6 +78,7 @@ engine = ExecutionEngine(db_manager=db_manager)
 
 settings = get_settings()
 scheduler_service = SchedulerService()
+version_control_service: Optional[VersionControlService] = None
 
 # Content hash tracker -- avoids duplicate versions for unchanged files
 _last_snapshot_hash: dict[str, str] = {}
@@ -450,6 +452,13 @@ def _snapshot_model_if_changed(
     )
     _last_snapshot_hash[model_id] = content_hash
     return version_id
+
+
+version_control_service = VersionControlService(
+    db_manager=db_manager,
+    models_path_resolver=_resolve_models_path,
+    hash_tracker=_last_snapshot_hash,
+)
 
 
 # -------------------------------------------------------
@@ -3451,48 +3460,11 @@ async def list_model_versions(
     for ALL models found in DuckDB.
     """
     try:
-        all_versions: list[dict] = []
-
-        # 1) DuckDB model_versions rows (works for filtered and unfiltered modes)
-        if model_id:
-            all_versions.extend(
-                db_manager.list_model_versions(
-                    model_id=model_id,
-                    workspace_id=workspace_id or None,
-                    limit=limit,
-                )
-            )
-        else:
-            try:
-                conn = db_manager._get_connection()
-                try:
-                    model_ids = [
-                        row[0]
-                        for row in conn.execute(
-                            "SELECT DISTINCT model_id FROM model_versions"
-                        ).fetchall()
-                    ]
-                finally:
-                    conn.close()
-            except Exception:
-                model_ids = []
-
-            # Also add any local model files not yet in the DB
-            models_path = _resolve_models_path()
-            if models_path.exists():
-                for f in sorted(models_path.iterdir()):
-                    if f.is_file() and f.suffix.lower() in (".yaml", ".yml", ".json"):
-                        mid = f.stem
-                        if mid not in model_ids:
-                            model_ids.append(mid)
-
-            for mid in model_ids:
-                vs = db_manager.list_model_versions(
-                    model_id=mid,
-                    workspace_id=workspace_id or None,
-                    limit=limit,
-                )
-                all_versions.extend(vs)
+        all_versions = version_control_service.list_versions(
+            model_id=model_id,
+            workspace_id=workspace_id,
+            limit=limit,
+        )
 
         # Mark capability flags for DuckDB-backed entries
         for item in all_versions:
@@ -3545,7 +3517,7 @@ async def list_model_versions(
 async def compare_model_versions(v1: str = "", v2: str = ""):
     """Compare two model versions and return tabular diff."""
     try:
-        diffs = db_manager.compare_model_versions_tabular(v1, v2)
+        diffs = version_control_service.compare_versions(v1, v2)
         return {"changes": diffs}
     except Exception as e:
         logger.warning(f"compare_model_versions failed: {e}")
@@ -3561,9 +3533,9 @@ async def delete_model_versions(
     if not model_id:
         raise HTTPException(status_code=400, detail="model_id is required")
     try:
-        deleted = db_manager.delete_model_versions(
+        deleted = version_control_service.delete_versions(
             model_id=model_id,
-            workspace_id=workspace_id or None,
+            workspace_id=workspace_id,
         )
         # Invalidate discovery cache entries for this model so stale data isn't served
         keys_to_clear = [k for k in _discovery_cache if model_id in k]
@@ -3582,7 +3554,7 @@ async def get_version_snapshot(version_id: str = ""):
     if not version_id:
         raise HTTPException(status_code=400, detail="version_id is required")
     try:
-        snapshot = db_manager.get_model_version_snapshot(version_id)
+        snapshot = version_control_service.get_snapshot(version_id)
         if snapshot is None:
             raise HTTPException(status_code=404, detail=f"Version '{version_id}' not found")
         return {"version_id": version_id, "snapshot": snapshot}
@@ -3608,49 +3580,12 @@ async def rollback_model_version(payload: Dict[str, Any]):
     if not version_id:
         raise HTTPException(status_code=400, detail="version_id is required")
     try:
-        # 1. Create new version row in DuckDB (flagged as rollback)
-        new_id = db_manager.rollback_model_version(
+        return version_control_service.rollback_version(
+            version_id=version_id,
             model_id=model_id,
-            target_version_id=version_id,
             workspace_id=workspace_id,
             author="ui",
         )
-
-        # 2. Write the snapshot back to the YAML file on disk
-        snapshot = db_manager.get_model_version_snapshot(new_id)
-        if snapshot and model_id != "default":
-            models_path = _resolve_models_path()
-            target_file = None
-            for ext in (".yaml", ".yml", ".json"):
-                candidate = models_path / f"{model_id}{ext}"
-                if candidate.exists():
-                    target_file = candidate
-                    break
-            if target_file is None:
-                target_file = models_path / f"{model_id}.yaml"
-
-            rolled_back_content = yaml.dump(
-                snapshot, default_flow_style=False, sort_keys=False, allow_unicode=True,
-            )
-            target_file.write_text(rolled_back_content, encoding="utf-8")
-
-            # Update hash tracker so next discovery doesn't double-snapshot
-            _last_snapshot_hash[model_id] = hashlib.sha256(
-                rolled_back_content.encode("utf-8")
-            ).hexdigest()
-
-            logger.info(
-                f"ROLLBACK: model={model_id} restored to version {version_id[:8]}... "
-                f"new_version={new_id[:8]}... file={target_file}"
-            )
-
-        return {
-            "status": "success",
-            "new_version_id": new_id,
-            "model_id": model_id,
-            "rolled_back_from": version_id,
-            "is_rollback": True,
-        }
     except Exception as e:
         logger.exception(f"rollback_model_version failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

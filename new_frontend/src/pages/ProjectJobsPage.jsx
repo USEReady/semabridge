@@ -10,6 +10,7 @@ const TIMEZONES = ['UTC', 'US/Eastern (EST)', 'US/Pacific (PST)', 'Europe/London
 const SCHEDULE_TYPES = ['Manual Trigger Only', 'Cron Expression', 'Time Picker'];
 
 const DEFAULT_CONFIG = { schedule_type: 'Manual Trigger Only', cron: '0 0 * * *', timezone: 'UTC' };
+const REFRESH_INTERVAL_MS = 4000;
 
 function formatDuration(ms) {
   if (!ms) return '—';
@@ -37,35 +38,50 @@ export default function ProjectJobsPage() {
   const [expandedRunId, setExpandedRunId] = useState(null);
 
   useEffect(() => {
-    (async () => {
+    let cancelled = false;
+
+    const loadPageData = async ({ includeConfig = false } = {}) => {
       try {
-        const [runsData, jobConfig] = await Promise.allSettled([
-          api.listJobRuns(),
-          api.getJobConfig(),
+        const [runsData, schedulesData, jobConfig] = await Promise.all([
+          api.listJobRuns().catch(() => []),
+          api.listJobSchedules().catch(() => []),
+          includeConfig ? api.getJobConfig().catch(() => null) : Promise.resolve(null),
         ]);
-        const schedulesData = await api.listJobSchedules().catch(() => []);
 
-        if (runsData.status === 'fulfilled') {
-          const nextRuns = (runsData.value ?? []).map((run) => {
-            if (run?.id) {
-              saveRunLogs(run.id, getRunLogs(run));
-            }
-            return run;
-          });
-          setRuns(nextRuns);
-        }
+        if (cancelled) return;
 
-        if (jobConfig.status === 'fulfilled' && jobConfig.value) {
-          setConfig(prev => ({ ...prev, ...jobConfig.value }));
-        }
+        const nextRuns = (Array.isArray(runsData) ? runsData : []).map((run) => {
+          if (run?.id) {
+            saveRunLogs(run.id, getRunLogs(run));
+          }
+          return run;
+        });
+        setRuns(nextRuns);
         setSchedules(Array.isArray(schedulesData) ? schedulesData : []);
+
+        if (includeConfig && jobConfig) {
+          setConfig(prev => ({ ...prev, ...jobConfig }));
+        }
       } catch {
+        if (cancelled) return;
         setRuns([]);
         setSchedules([]);
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
-    })();
+    };
+
+    loadPageData({ includeConfig: true });
+    const intervalId = window.setInterval(() => {
+      loadPageData({ includeConfig: false });
+    }, REFRESH_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
   }, []);
 
   const handleRunNow = async () => {
@@ -91,6 +107,8 @@ export default function ProjectJobsPage() {
     setConfigSaving(true);
     try {
       await api.updateJobConfig(config);
+      const refreshedSchedules = await api.listJobSchedules().catch(() => []);
+      setSchedules(Array.isArray(refreshedSchedules) ? refreshedSchedules : []);
     } catch (err) {
       console.error('Save config failed:', err);
     } finally {
@@ -115,7 +133,7 @@ export default function ProjectJobsPage() {
     const matchSearch = !search
       || String(run.id || '').includes(search)
       || String(run.project_name || '').toLowerCase().includes(search.toLowerCase());
-    const matchStatus = statusFilter === 'all' || run.status === statusFilter;
+    const matchStatus = statusFilter === 'all' || String(run.status || '').toLowerCase() === statusFilter;
     return matchSearch && matchStatus;
   });
 
