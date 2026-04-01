@@ -104,10 +104,23 @@ export default function ProjectConfigPage() {
     'Europe/London',
   ]), []);
   const normalizedProjectId = String(project?.id || project?.project_id || id || '');
-  const latestProjectRun = useMemo(
-    () => runs.find((run) => String(run?.project_id || '') === normalizedProjectId) || null,
-    [runs, normalizedProjectId]
-  );
+  const latestProjectRun = useMemo(() => {
+    const projectRuns = runs.filter((run) => String(run?.project_id || '') === normalizedProjectId);
+    if (!projectRuns.length) return null;
+
+    const getRunTs = (run) => {
+      const started = run?.started_at ? Date.parse(run.started_at) : NaN;
+      if (!Number.isNaN(started) && started > 0) return started;
+      const updated = run?.updated_at ? Date.parse(run.updated_at) : NaN;
+      if (!Number.isNaN(updated) && updated > 0) return updated;
+      const created = run?.created_at ? Date.parse(run.created_at) : NaN;
+      if (!Number.isNaN(created) && created > 0) return created;
+      const numericId = Number(run?.id || run?.run_id || 0);
+      return Number.isNaN(numericId) ? 0 : numericId;
+    };
+
+    return projectRuns.sort((a, b) => getRunTs(b) - getRunTs(a))[0] || null;
+  }, [runs, normalizedProjectId]);
   const projectSyncStatus = String(
     (normalizedProjectId && projectStatusById?.[normalizedProjectId])
       || latestProjectRun?.status
