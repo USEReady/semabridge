@@ -635,6 +635,14 @@ export const api = {
         return handleResponse(res);
     },
 
+    async listJobSchedules() {
+        const res = await authFetch(`${API_BASE_URL}/jobs/schedules`);
+        if (res.status === 404) {
+            return [];
+        }
+        return handleResponse(res);
+    },
+
     async getJobConfig(projectId) {
         const url = projectId
             ? `${API_BASE_URL}/jobs/config?project_id=${projectId}`
@@ -725,6 +733,45 @@ export const api = {
     },
 
     // ── Project Runs ──────────────────────────────────────────────────────
+
+    async getProjectSchedule(projectId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/schedule`);
+        if (res.status === 404) {
+            return { project_id: projectId, schedule_type: 'manual', enabled: false };
+        }
+        return handleResponse(res);
+    },
+
+    async saveProjectSchedule(projectId, data) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/schedule`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (res.status === 404) {
+            return {
+                project_id: projectId,
+                schedule_type: data?.schedule_type || 'manual',
+                cron: data?.cron || '',
+                date: data?.date || '',
+                time: data?.time || '',
+                timezone: data?.timezone || 'UTC',
+                enabled: data?.schedule_type && data.schedule_type !== 'manual',
+                message: 'Scheduler API is not available yet on the backend.',
+            };
+        }
+        return handleResponse(res);
+    },
+
+    async deleteProjectSchedule(projectId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/schedule`, {
+            method: 'DELETE',
+        });
+        if (res.status === 404) {
+            return { status: 'deleted', project_id: projectId, schedule_type: 'manual', enabled: false };
+        }
+        return handleResponse(res);
+    },
 
     async getProjectRuns(projectId) {
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/runs`);

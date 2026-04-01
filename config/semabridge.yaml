@@ -1,33 +1,13 @@
-project_name: aa
+project_name: f
 source:
   type: fabric
   workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
   workspace: semabridge
   models:
     - Device
-targets:
-  - type: databricks
-mappings:
-  - source: Device
-    target: device_mapped
-    type: table
-    columns:
-      - source: id
-        target: id
-        type: INT
-        primary_key: true
-      - source: name
-        target: name
-        type: VARCHAR(255)
-      - source: created_at
-        target: created_at
-        type: TIMESTAMP
-      - source: updated_at
-        target: updated_at
-        type: TIMESTAMP
+target:
+  type: snowflake
 ui:
-  intermediate_format: osi
-  editor_mode: form
   output_format: osi
 selection:
   model_ids:
@@ -36,4 +16,4 @@ options:
   auto_relationships: true
   generate_descriptions: true
 target:
-  type: databricks
+  type: snowflake

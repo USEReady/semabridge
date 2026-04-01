@@ -48,6 +48,7 @@ from semabridge.api.sync_router import router as sync_router
 from semabridge.api.account_router import router as account_router
 from semabridge.api.websocket_alerts import alert_router, install_websocket_alert_handler
 from semabridge.api.semantic_models import SemanticSyncRequest, SemanticRefreshRequest
+from semabridge.api.services.scheduler_service import SchedulerService
 from sqlalchemy.orm import Session
 from semabridge.api.deps import get_db
 
@@ -75,6 +76,7 @@ db_manager = ModelRepository()
 engine = ExecutionEngine(db_manager=db_manager)
 
 settings = get_settings()
+scheduler_service = SchedulerService()
 
 # Content hash tracker -- avoids duplicate versions for unchanged files
 _last_snapshot_hash: dict[str, str] = {}
@@ -246,11 +248,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # type: ignore[
     except Exception as _e:
         logger.warning("Startup credential injection skipped: %s", _e)
 
+    try:
+        scheduler_service.configure(_execute_project_run, _compat_clear_project_schedule)
+        scheduler_service.start()
+        _compat_ensure_loaded()
+        for project_id, schedule_payload in list(_compat_project_schedules.items()):
+            try:
+                scheduler_service.save_project_schedule(project_id, schedule_payload)
+            except Exception as schedule_exc:
+                logger.warning("Failed to restore project schedule %s: %s", project_id, schedule_exc)
+    except Exception as _e:
+        logger.error("Scheduler startup failed: %s", _e)
+
     yield  # ------- APPLICATION IS RUNNING -----------------------------------
 
     # ------ SHUTDOWN ---------------------------------------------------------
 
     from semabridge.repository.orm.session_factory import db_manager as _orm_db_manager
+    scheduler_service.shutdown()
     _orm_db_manager.dispose()
     logger.debug("Database engine disposed on shutdown")
 
@@ -2092,6 +2107,7 @@ _compat_project_configs: Dict[str, str] = {}
 _compat_project_runs: Dict[str, List[Dict[str, Any]]] = {}
 _compat_folders: Dict[str, Dict[str, Any]] = {}
 _compat_mappings: Dict[str, Dict[str, Any]] = {}
+_compat_project_schedules: Dict[str, Dict[str, Any]] = {}
 _compat_job_config: Dict[str, Any] = {
     "schedule_type": "Manual Trigger Only",
     "cron": "0 0 * * *",
@@ -2123,12 +2139,18 @@ def _compat_save_store() -> None:
         "project_runs": _compat_project_runs,
         "folders": _compat_folders,
         "mappings": _compat_mappings,
+        "project_schedules": _compat_project_schedules,
         "job_config": _compat_job_config,
     }
     try:
         _compat_store_path().write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception as exc:
         logger.warning("Failed to persist compat store: %s", exc)
+
+
+def _compat_clear_project_schedule(project_id: str) -> None:
+    _compat_project_schedules.pop(str(project_id), None)
+    _compat_save_store()
 
 
 def _compat_load_store() -> None:
@@ -2153,6 +2175,8 @@ def _compat_load_store() -> None:
             _compat_folders.update(data.get("folders") or {})
         if isinstance(data.get("mappings"), dict):
             _compat_mappings.update(data.get("mappings") or {})
+        if isinstance(data.get("project_schedules"), dict):
+            _compat_project_schedules.update(data.get("project_schedules") or {})
         if isinstance(data.get("job_config"), dict):
             _compat_job_config.update(data.get("job_config") or {})
     except Exception as exc:
@@ -3043,9 +3067,7 @@ async def get_project_runs_compat(project_id: str):
     return _compat_project_runs.get(project_id, [])
 
 
-
-@app.post("/api/projects/{project_id}/run")
-async def run_project_now_compat(project_id: str, background_tasks: BackgroundTasks):
+def _create_project_run(project_id: str, schedule_label: str = "Manual") -> tuple[dict, str, float]:
     _compat_ensure_loaded()
     if project_id not in _compat_projects:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -3057,38 +3079,57 @@ async def run_project_now_compat(project_id: str, background_tasks: BackgroundTa
         "id": run_id,
         "project_id": project_id,
         "project_name": _compat_projects[project_id].get("name", project_id),
-        "schedule": "Manual",
+        "schedule": schedule_label,
         "status": "running",
         "duration_ms": 0,
         "started_at": _compat_now_iso(),
     }
     _compat_project_runs.setdefault(project_id, []).insert(0, run)
+    _compat_save_store()
     project_cfg = _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(_compat_projects[project_id])
+    return run, project_cfg, started
 
-    def do_sync():
-        import asyncio
-        try:
-            sync_result = asyncio.run(sync_models({"content": project_cfg}))
-            elapsed_ms = int((_time.time() - started) * 1000)
-            run["duration_ms"] = elapsed_ms
-            overall = str((sync_result or {}).get("status") or "").lower()
-            if overall == "success":
-                run["status"] = "success"
-            elif overall == "partial":
-                run["status"] = "warning"
-            else:
-                run["status"] = "failed"
-            run["summary"] = (sync_result or {}).get("summary") or {}
-            run["results"] = (sync_result or {}).get("results") or []
-            run["models_synced"] = int((sync_result or {}).get("models_synced") or 0)
-            run["total_models"] = int((sync_result or {}).get("total_models") or 0)
-        except Exception as exc:
+
+async def _perform_project_run(run: dict, project_cfg: str, started: float) -> dict:
+    try:
+        sync_result = await sync_models({"content": project_cfg})
+        elapsed_ms = int((_time.time() - started) * 1000)
+        run["duration_ms"] = elapsed_ms
+        overall = str((sync_result or {}).get("status") or "").lower()
+        if overall == "success":
+            run["status"] = "success"
+        elif overall == "partial":
+            run["status"] = "warning"
+        else:
             run["status"] = "failed"
-            run["error"] = str(exc)
-        _compat_save_store()
+        run["summary"] = (sync_result or {}).get("summary") or {}
+        run["results"] = (sync_result or {}).get("results") or []
+        run["models_synced"] = int((sync_result or {}).get("models_synced") or 0)
+        run["total_models"] = int((sync_result or {}).get("total_models") or 0)
+    except Exception as exc:
+        run["status"] = "failed"
+        run["error"] = str(exc)
+    _compat_save_store()
+    return run
 
-    background_tasks.add_task(do_sync)
-    return {"run_id": run_id, "status": "running", "message": "Sync started in background"}
+
+async def _execute_project_run(project_id: str, schedule_label: str = "Manual") -> dict:
+    run, project_cfg, started = _create_project_run(project_id, schedule_label)
+    return await _perform_project_run(run, project_cfg, started)
+
+
+def _run_project_background(run: dict, project_cfg: str, started: float) -> None:
+    import asyncio
+
+    asyncio.run(_perform_project_run(run, project_cfg, started))
+
+
+
+@app.post("/api/projects/{project_id}/run")
+async def run_project_now_compat(project_id: str, background_tasks: BackgroundTasks):
+    run, project_cfg, started = _create_project_run(project_id, "Manual")
+    background_tasks.add_task(_run_project_background, run, project_cfg, started)
+    return {"run_id": run["id"], "status": "running", "message": "Sync started in background"}
 
 
 @app.get("/api/folders")
@@ -3163,32 +3204,117 @@ async def get_jobs_config_compat():
     return _compat_job_config
 
 
+@app.get("/api/jobs/schedules")
+async def list_job_schedules_compat():
+    _compat_ensure_loaded()
+    items: List[Dict[str, Any]] = []
+    for project_id, schedule in _compat_project_schedules.items():
+        project = _compat_projects.get(project_id) or {}
+        items.append({
+            **schedule,
+            "project_id": project_id,
+            "project_name": project.get("name") or project_id,
+        })
+    items.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+    return items
+
+
+@app.get("/api/projects/{project_id}/schedule")
+async def get_project_schedule_compat(project_id: str):
+    _compat_ensure_loaded()
+    if project_id not in _compat_projects:
+        raise HTTPException(status_code=404, detail="Project not found")
+    schedule = scheduler_service.get_project_schedule(project_id) or _compat_project_schedules.get(project_id)
+    if schedule:
+        return schedule
+    return {
+        "project_id": project_id,
+        "schedule_type": "manual",
+        "enabled": False,
+    }
+
+
+@app.post("/api/projects/{project_id}/schedule")
+async def save_project_schedule_compat(project_id: str, payload: dict):
+    _compat_ensure_loaded()
+    if project_id not in _compat_projects:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    try:
+        schedule = scheduler_service.save_project_schedule(project_id, payload or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if str(schedule.get("schedule_type") or "manual") == "manual":
+        _compat_project_schedules.pop(project_id, None)
+    else:
+        _compat_project_schedules[project_id] = {
+            "project_id": project_id,
+            "schedule_type": schedule.get("schedule_type"),
+            "cron": schedule.get("cron") or "",
+            "date": schedule.get("date") or "",
+            "time": schedule.get("time") or "",
+            "timezone": schedule.get("timezone") or "UTC",
+            "enabled": bool(schedule.get("enabled")),
+            "next_run_at": schedule.get("next_run_at"),
+            "created_at": schedule.get("created_at") or _compat_now_iso(),
+        }
+
+    _compat_job_config.update({
+        "project_id": project_id,
+        "schedule_type": str(schedule.get("schedule_type") or "manual"),
+        "cron": schedule.get("cron") or "",
+        "timezone": schedule.get("timezone") or "UTC",
+        "enabled": bool(schedule.get("enabled")),
+        "date": schedule.get("date") or "",
+        "time": schedule.get("time") or "",
+    })
+    _compat_save_store()
+    return schedule
+
+
+@app.delete("/api/projects/{project_id}/schedule")
+async def delete_project_schedule_compat(project_id: str):
+    _compat_ensure_loaded()
+    if project_id not in _compat_projects:
+        raise HTTPException(status_code=404, detail="Project not found")
+    removed = scheduler_service.delete_project_schedule(project_id)
+    _compat_project_schedules.pop(project_id, None)
+    if not removed:
+        _compat_save_store()
+        return {"status": "deleted", "project_id": project_id, "schedule_type": "manual", "enabled": False}
+    _compat_save_store()
+    return {"status": "deleted", **removed}
+
+
 @app.put("/api/jobs/config")
 async def update_jobs_config_compat(payload: dict):
     """Compatibility: accept schedule config updates without failing."""
     merged = {**_compat_job_config, **(payload or {})}
     _compat_job_config.update(merged)
+    project_id = str((payload or {}).get("project_id") or "").strip()
+    schedule_type = str((payload or {}).get("schedule_type") or "").strip()
+    if project_id and schedule_type and project_id in _compat_projects:
+        try:
+            scheduler_service.save_project_schedule(project_id, payload or {})
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _compat_save_store()
     return {"status": "saved", **merged}
 
 
 @app.post("/api/jobs/trigger")
-async def trigger_job_compat(payload: dict):
-    """Compatibility: acknowledge trigger requests without 404."""
-    run_id = f"run-{int(_time.time() * 1000)}"
-    project_id = str((payload or {}).get("project_id") or "default")
-    project_name = _compat_projects.get(project_id, {}).get("name") or project_id
-    run = {
-        "id": run_id,
-        "run_id": run_id,
-        "project_id": project_id,
-        "project_name": project_name,
-        "schedule": "Manual",
-        "status": "running",
-        "duration_ms": 0,
-        "started_at": _compat_now_iso(),
-        "message": "Job trigger accepted (compat mode).",
-    }
-    _compat_project_runs.setdefault(project_id, []).insert(0, run)
+async def trigger_job_compat(payload: dict, background_tasks: BackgroundTasks):
+    """Compatibility: trigger a project job using the shared execution flow."""
+    _compat_ensure_loaded()
+    project_id = str((payload or {}).get("project_id") or "").strip()
+    if not project_id and _compat_projects:
+        project_id = next(iter(_compat_projects.keys()))
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+    run, project_cfg, started = _create_project_run(project_id, "Manual")
+    run["message"] = "Job trigger accepted."
+    background_tasks.add_task(_run_project_background, run, project_cfg, started)
     return run
 
 

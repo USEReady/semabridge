@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Play, RefreshCw, Clock, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
+import { Play, RefreshCw, Clock, CalendarClock, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
 import SearchInput from '../components/common/SearchInput';
@@ -26,10 +26,12 @@ function formatDate(iso) {
 
 export default function ProjectJobsPage() {
   const [runs, setRuns] = useState([]);
+  const [schedules, setSchedules] = useState([]);
   const [loading, setLoading] = useState(true);
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [configSaving, setConfigSaving] = useState(false);
   const [running, setRunning] = useState(false);
+  const [scheduleDeletingId, setScheduleDeletingId] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [expandedRunId, setExpandedRunId] = useState(null);
@@ -41,6 +43,7 @@ export default function ProjectJobsPage() {
           api.listJobRuns(),
           api.getJobConfig(),
         ]);
+        const schedulesData = await api.listJobSchedules().catch(() => []);
 
         if (runsData.status === 'fulfilled') {
           const nextRuns = (runsData.value ?? []).map((run) => {
@@ -55,8 +58,10 @@ export default function ProjectJobsPage() {
         if (jobConfig.status === 'fulfilled' && jobConfig.value) {
           setConfig(prev => ({ ...prev, ...jobConfig.value }));
         }
+        setSchedules(Array.isArray(schedulesData) ? schedulesData : []);
       } catch {
         setRuns([]);
+        setSchedules([]);
       } finally {
         setLoading(false);
       }
@@ -90,6 +95,19 @@ export default function ProjectJobsPage() {
       console.error('Save config failed:', err);
     } finally {
       setConfigSaving(false);
+    }
+  };
+
+  const handleDeleteSchedule = async (projectId) => {
+    if (!projectId) return;
+    setScheduleDeletingId(String(projectId));
+    try {
+      await api.deleteProjectSchedule(projectId);
+      setSchedules(prev => prev.filter(item => String(item.project_id) !== String(projectId)));
+    } catch (err) {
+      console.error('Delete schedule failed:', err);
+    } finally {
+      setScheduleDeletingId('');
     }
   };
 
@@ -222,6 +240,76 @@ export default function ProjectJobsPage() {
             {configSaving ? 'Saving…' : 'Update Configuration'}
           </button>
         </div>
+      </div>
+
+      <div
+        className="rounded-xl mb-6"
+        style={{
+          background: 'var(--bg-surface)',
+          border: '1px solid var(--border-main)',
+          padding: 24,
+        }}
+      >
+        <div className="flex items-center gap-2 mb-4">
+          <CalendarClock size={16} style={{ color: 'var(--accent-blue)' }} />
+          <h2 className="text-primary font-semibold" style={{ fontSize: 14, margin: 0 }}>Scheduled Jobs</h2>
+        </div>
+
+        {schedules.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+            No saved schedules yet. Use the Schedule action from Edit Config to create one.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {schedules.map((schedule) => (
+              <div
+                key={schedule.id || schedule.project_id}
+                style={{
+                  border: '1px solid var(--border-main)',
+                  borderRadius: 10,
+                  padding: 14,
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(0, 1.2fr) minmax(120px, 0.9fr) minmax(180px, 1fr) auto',
+                  gap: 12,
+                  alignItems: 'center',
+                  background: 'var(--bg-surface-raised)',
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+                    {schedule.project_name || schedule.project_id}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                    {schedule.schedule_type === 'cron'
+                      ? `Cron: ${schedule.cron || 'N/A'}`
+                      : `One-time: ${schedule.date || 'N/A'} ${schedule.time || ''}`.trim()}
+                  </div>
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  {String(schedule.schedule_type || 'manual').toUpperCase()}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  Next run: {formatDate(schedule.next_run_at)}
+                </div>
+                <button
+                  onClick={() => handleDeleteSchedule(schedule.project_id)}
+                  disabled={scheduleDeletingId === String(schedule.project_id)}
+                  style={{
+                    border: '1px solid var(--border-main)',
+                    background: 'transparent',
+                    color: 'var(--text-secondary)',
+                    borderRadius: 8,
+                    padding: '8px 12px',
+                    cursor: scheduleDeletingId === String(schedule.project_id) ? 'not-allowed' : 'pointer',
+                    opacity: scheduleDeletingId === String(schedule.project_id) ? 0.6 : 1,
+                  }}
+                >
+                  {scheduleDeletingId === String(schedule.project_id) ? 'Cancelling…' : 'Cancel'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div>

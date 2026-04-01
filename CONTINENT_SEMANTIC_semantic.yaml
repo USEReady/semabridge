@@ -1,0 +1,6460 @@
+unique_name: CONTINENT_SEMANTIC_semantic
+object_type: model
+label: Continent Semantic Semantic
+description: ''
+version: 1.0.0
+datasets:
+- unique_name: ACCOUNT
+  object_type: dataset
+  label: Account
+  description: ''
+  source_table: ACCOUNT
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: ACCOUNT
+    label: Account
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: REGION
+    label: Region
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: SEGMENT
+    label: Segment
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: ACCOUNT_ID
+    label: Account Id
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: STATE
+    label: State
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COL_ACCOUNT
+    label: Col Account
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: ACCOUNTS
+  object_type: dataset
+  label: Accounts
+  description: ''
+  source_table: ACCOUNTS
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: ACCOUNT_NAME
+    label: Account Name
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: STATE_OR_PROVINCE
+    label: State Or Province
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COUNTRY
+    label: Country
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: ACCOUNTID
+    label: Accountid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: ACCOUNTSEQ
+    label: Accountseq
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: INDUSTRYSEQ
+    label: Industryseq
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: ACCOUNTOWNERSEQ
+    label: Accountownerseq
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: ACCOUNT_NUMBER
+    label: Account Number
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: TERRITORYSEQ
+    label: Territoryseq
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: AGEGROUP
+  object_type: dataset
+  label: Agegroup
+  description: ''
+  source_table: AGEGROUP
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: AGEGROUPID
+    label: Agegroupid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: AGEGROUP
+    label: Agegroup
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: BU
+  object_type: dataset
+  label: Bu
+  description: ''
+  source_table: BU
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: BU_KEY
+    label: Bu Key
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: BU
+    label: Bu
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: DIVISION
+    label: Division
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: EXECUTIVE_ID
+    label: Executive Id
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: BUSINESS_AREA
+  object_type: dataset
+  label: Business Area
+  description: ''
+  source_table: BUSINESS_AREA
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: BUSINESS_AREA
+    label: Business Area
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: BUSINESS_AREA_ID
+    label: Business Area Id
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: CALENDAR
+  object_type: dataset
+  label: Calendar
+  description: ''
+  source_table: CALENDAR
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: YEARPERIOD
+    label: Yearperiod
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: YEAR
+    label: Year
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: PERIOD
+    label: Period
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COL_DATE
+    label: Col Date
+    data_type: date
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: MONTH
+    label: Month
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: QTRID
+    label: Qtrid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: QTR
+    label: Qtr
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: CAMPAIGNS
+  object_type: dataset
+  label: Campaigns
+  description: ''
+  source_table: CAMPAIGNS
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: CAMPAIGNSEQ
+    label: Campaignseq
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: CAMPAIGN_TYPE
+    label: Campaign Type
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: CAMPAIGN
+    label: Campaign
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: CATEGORY
+  object_type: dataset
+  label: Category
+  description: ''
+  source_table: CATEGORY
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: CATEGORY
+    label: Category
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: CHANNEL
+    label: Channel
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: SORT
+    label: Sort
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: CONTACTS
+  object_type: dataset
+  label: Contacts
+  description: ''
+  source_table: CONTACTS
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: CONTACT
+    label: Contact
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: JOB_TITLE
+    label: Job Title
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: CONTACTSEQ
+    label: Contactseq
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: ACCOUNTSEQ
+    label: Accountseq
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: CONTINENT_1
+  object_type: dataset
+  label: Continent 1
+  description: ''
+  source_table: CONTINENT_1
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: COLUMN1
+    label: Column1
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COLUMN
+    label: Column
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COL_COLUMN
+    label: Col Column
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: COST_ELEMENT
+  object_type: dataset
+  label: Cost Element
+  description: ''
+  source_table: COST_ELEMENT
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: COST_ELEMENT_NAME
+    label: Cost Element Name
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COST_ELEMENT_GROUP
+    label: Cost Element Group
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COST_ELEMENT_SUB_GROUP
+    label: Cost Element Sub Group
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COST_ELEMENT_ID
+    label: Cost Element Id
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: COUNTRY_REGION
+  object_type: dataset
+  label: Country Region
+  description: ''
+  source_table: COUNTRY_REGION
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: SALES_REGION
+    label: Sales Region
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COUNTRY_REGION
+    label: Country Region
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COUNTRY_REGION_ID
+    label: Country Region Id
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: CUSTOMER
+  object_type: dataset
+  label: Customer
+  description: ''
+  source_table: CUSTOMER
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: CUSTOMER
+    label: Customer
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: NAME
+    label: Name
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: CITY
+    label: City
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: POSTAL_CODE
+    label: Postal Code
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: STATE
+    label: State
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: INDUSTRY_ID
+    label: Industry Id
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COUNTRY_REGION
+    label: Country Region
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: CUSTOMERS
+  object_type: dataset
+  label: Customers
+  description: ''
+  source_table: CUSTOMERS
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: CUSTOMERID
+    label: Customerid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: CUSTOMERNAME
+    label: Customername
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: EMAIL
+    label: Email
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COUNTRY
+    label: Country
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: REGION
+    label: Region
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: SEGMENT
+    label: Segment
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: DATE
+  object_type: dataset
+  label: Date
+  description: ''
+  source_table: DATE
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: COL_DATE
+    label: Col Date
+    data_type: date
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: YEAR
+    label: Year
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: PERIOD
+    label: Period
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: MONTH
+    label: Month
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: DATEDIM
+  object_type: dataset
+  label: Datedim
+  description: ''
+  source_table: DATEDIM
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: DATEKEY
+    label: Datekey
+    data_type: date
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: YEAR
+    label: Year
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: QUARTER
+    label: Quarter
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: MONTH
+    label: Month
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: MONTHNUMBER
+    label: Monthnumber
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: DAYOFWEEK
+    label: Dayofweek
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: DEPARTMENT
+  object_type: dataset
+  label: Department
+  description: ''
+  source_table: DEPARTMENT
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: VP
+    label: Vp
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: DEPARTMENT
+    label: Department
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: DEVICE_INVENTORY
+  object_type: dataset
+  label: Device Inventory
+  description: ''
+  source_table: DEVICE_INVENTORY
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: ITEMID
+    label: Itemid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: ITEMNAME
+    label: Itemname
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: CATEGORY
+    label: Category
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COL_WAREHOUSE
+    label: Col Warehouse
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: STOCKQTY
+    label: Stockqty
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: REORDERLEVEL
+    label: Reorderlevel
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: UNITCOST
+    label: Unitcost
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: TOTALVALUE
+    label: Totalvalue
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: DIM_DATE
+  object_type: dataset
+  label: Dim Date
+  description: ''
+  source_table: DIM_DATE
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: COL_DATE
+    label: Col Date
+    data_type: date
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: YEAR
+    label: Year
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: QUARTER
+    label: Quarter
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: MONTH
+    label: Month
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: MONTHNAME
+    label: Monthname
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: DAYOFWEEK
+    label: Dayofweek
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: DAYNAME
+    label: Dayname
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: EMPLOYEE
+  object_type: dataset
+  label: Employee
+  description: ''
+  source_table: EMPLOYEE
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: COL_DATE
+    label: Col Date
+    data_type: date
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: EMPLID
+    label: Emplid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: GENDER
+    label: Gender
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: AGE
+    label: Age
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: ETHNICGROUP
+    label: Ethnicgroup
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: FP
+    label: Fp
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: TERMDATE
+    label: Termdate
+    data_type: date
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: BU
+    label: Bu
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: HIREDATE
+    label: Hiredate
+    data_type: date
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: PAYTYPEID
+    label: Paytypeid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: TERMREASON
+    label: Termreason
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: ETHNICITY
+  object_type: dataset
+  label: Ethnicity
+  description: ''
+  source_table: ETHNICITY
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: ETHNIC_GROUP
+    label: Ethnic Group
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: ETHNICITY
+    label: Ethnicity
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: EXECUTIVE
+  object_type: dataset
+  label: Executive
+  description: ''
+  source_table: EXECUTIVE
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: ID
+    label: Id
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: NAME
+    label: Name
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: FABRICMODEL_DATA
+  object_type: dataset
+  label: Fabricmodel Data
+  description: ''
+  source_table: FABRICMODEL_DATA
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: ORDERID
+    label: Orderid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: ORDERDATE
+    label: Orderdate
+    data_type: date
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: CUSTOMERNAME
+    label: Customername
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: CITY
+    label: City
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: PRODUCT
+    label: Product
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: CATEGORY
+    label: Category
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: QUANTITY
+    label: Quantity
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: UNITPRICE
+    label: Unitprice
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COLUMN9
+    label: Column9
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COLUMN10
+    label: Column10
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: EMPLOYEENAME
+    label: Employeename
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: HOURSWORKED
+    label: Hoursworked
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: TOTALCOST
+    label: Totalcost
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: PROJECT
+    label: Project
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: ENDDATE
+    label: Enddate
+    data_type: date
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: HOURLYRATE
+    label: Hourlyrate
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: EMPID
+    label: Empid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: DEPARTMENT
+    label: Department
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: STARTDATE
+    label: Startdate
+    data_type: date
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COL_ROLE
+    label: Col Role
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: PERFORMANCERATING
+    label: Performancerating
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: ID
+    label: Id
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: PRICE
+    label: Price
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: QTY
+    label: Qty
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COL_DATE
+    label: Col Date
+    data_type: date
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: CUSTOMER
+    label: Customer
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: AMOUNT
+    label: Amount
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: FACT
+  object_type: dataset
+  label: Fact
+  description: ''
+  source_table: FACT
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: COL_DATE
+    label: Col Date
+    data_type: date
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: VALUE
+    label: Value
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: DEPARTMENT
+    label: Department
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COST_ELEMENT_ID
+    label: Cost Element Id
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COUNTRY_REGION_ID
+    label: Country Region Id
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: BUSINESS_AREA_ID
+    label: Business Area Id
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: IT_SUB_AREA_ID
+    label: It Sub Area Id
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: SCENARIO_ID
+    label: Scenario Id
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: FP
+  object_type: dataset
+  label: Fp
+  description: ''
+  source_table: FP
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: FP
+    label: Fp
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: FPDESC
+    label: Fpdesc
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: GENDER
+  object_type: dataset
+  label: Gender
+  description: ''
+  source_table: GENDER
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: ID
+    label: Id
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: GENDER
+    label: Gender
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: SORT
+    label: Sort
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: GEO
+  object_type: dataset
+  label: Geo
+  description: ''
+  source_table: GEO
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: ZIP
+    label: Zip
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: CITY
+    label: City
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: STATE
+    label: State
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: REGION
+    label: Region
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: DISTRICT
+    label: District
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: INDICATORS
+  object_type: dataset
+  label: Indicators
+  description: ''
+  source_table: INDICATORS
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: SORT
+    label: Sort
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: STATUS
+    label: Status
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: IMAGE
+    label: Image
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: INDUSTRIES
+  object_type: dataset
+  label: Industries
+  description: ''
+  source_table: INDUSTRIES
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: INDUSTRY
+    label: Industry
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: INDUSTRYSEQ
+    label: Industryseq
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: INDUSTRY
+  object_type: dataset
+  label: Industry
+  description: ''
+  source_table: INDUSTRY
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: ID
+    label: Id
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: INDUSTRY
+    label: Industry
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: INDUSTRY_1
+  object_type: dataset
+  label: Industry 1
+  description: ''
+  source_table: INDUSTRY_1
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: COLUMN1
+    label: Column1
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: IT_AREA
+  object_type: dataset
+  label: It Area
+  description: ''
+  source_table: IT_AREA
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: IT_AREA
+    label: It Area
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: IT_SUB_AREA
+    label: It Sub Area
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: IT_SUB_AREA_ID
+    label: It Sub Area Id
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: KPI
+  object_type: dataset
+  label: Kpi
+  description: ''
+  source_table: KPI
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: KPI
+    label: Kpi
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: CATEGORY
+    label: Category
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: LOCALDATETABLE_39C22DDB_27F3_4E6C_8A44_A3380850FCB4
+  object_type: dataset
+  label: Localdatetable 39C22Ddb 27F3 4E6C 8A44 A3380850Fcb4
+  description: ''
+  source_table: LOCALDATETABLE_39C22DDB_27F3_4E6C_8A44_A3380850FCB4
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: COL_DATE
+    label: Col Date
+    data_type: date
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: YEAR
+    label: Year
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: MONTHNO
+    label: Monthno
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: MONTH
+    label: Month
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: QUARTERNO
+    label: Quarterno
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: QUARTER
+    label: Quarter
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: DAY
+    label: Day
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: LOCALDATETABLE_4DBBBE50_57FF_44C2_90C5_265B16FEFBE6
+  object_type: dataset
+  label: Localdatetable 4Dbbbe50 57Ff 44C2 90C5 265B16Fefbe6
+  description: ''
+  source_table: LOCALDATETABLE_4DBBBE50_57FF_44C2_90C5_265B16FEFBE6
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: COL_DATE
+    label: Col Date
+    data_type: date
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: YEAR
+    label: Year
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: MONTHNO
+    label: Monthno
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: MONTH
+    label: Month
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: QUARTERNO
+    label: Quarterno
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: QUARTER
+    label: Quarter
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: DAY
+    label: Day
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: MANUFACTURER
+  object_type: dataset
+  label: Manufacturer
+  description: ''
+  source_table: MANUFACTURER
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: MANUFACTURERID
+    label: Manufacturerid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: MANUFACTURER
+    label: Manufacturer
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: MFGISVANARSDEL
+    label: Mfgisvanarsdel
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: OPPORTUNITIES
+  object_type: dataset
+  label: Opportunities
+  description: ''
+  source_table: OPPORTUNITIES
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: PURCHASE_PROCESS
+    label: Purchase Process
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: DECISION_MAKER_IDENTIFIED
+    label: Decision Maker Identified
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: STATUS
+    label: Status
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: SALES_STAGE
+    label: Sales Stage
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: VALUE
+    label: Value
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: DAYSTOCLOSE
+    label: Daystoclose
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: DISCOUNT
+    label: Discount
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: PROBABILITY
+    label: Probability
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: RATING
+    label: Rating
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: ACCOUNTSEQ
+    label: Accountseq
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: OPPORTUNITYSEQ
+    label: Opportunityseq
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: PRODUCTSEQ
+    label: Productseq
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: SYSTEMUSERSEQ
+    label: Systemuserseq
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: CAMPAIGNSEQ
+    label: Campaignseq
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: OPPORTUNITY_CREATED_ON
+    label: Opportunity Created On
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: CLOSEDATE
+    label: Closedate
+    data_type: date
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: OPPORTUNITY_CALENDAR
+  object_type: dataset
+  label: Opportunity Calendar
+  description: ''
+  source_table: OPPORTUNITY_CALENDAR
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: COL_DATE
+    label: Col Date
+    data_type: date
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: DAY
+    label: Day
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: DAYSEQ
+    label: Dayseq
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: YEAR
+    label: Year
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: MONTH_NUMBER
+    label: Month Number
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: MONTH
+    label: Month
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: YEAR_MONTH_NUMBER
+    label: Year Month Number
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: YEAR_MONTH
+    label: Year Month
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: YEAR_WEEK
+    label: Year Week
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: WEEK
+    label: Week
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: RELATIVE_WEEK
+    label: Relative Week
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: RELATIVE_DAY
+    label: Relative Day
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: RELATIVE_07_DAY_PERIOD
+    label: Relative 07 Day Period
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: RELATIVE_30_DAY_PERIOD
+    label: Relative 30 Day Period
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: RELATIVE_MONTH
+    label: Relative Month
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: ID
+    label: Id
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: OPPORTUNITY_FORECAST_ADJUSTMENT
+  object_type: dataset
+  label: Opportunity Forecast Adjustment
+  description: ''
+  source_table: OPPORTUNITY_FORECAST_ADJUSTMENT
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: FORECAST_ADJUSTMENT
+    label: Forecast Adjustment
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: ID
+    label: Id
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: ORDERS
+  object_type: dataset
+  label: Orders
+  description: ''
+  source_table: ORDERS
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: ORDERID
+    label: Orderid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: CUSTOMERID
+    label: Customerid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: PRODUCTID
+    label: Productid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: ORDERDATE
+    label: Orderdate
+    data_type: date
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: QUANTITY
+    label: Quantity
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: TOTALAMOUNT
+    label: Totalamount
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: DISCOUNT
+    label: Discount
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: OWNERS
+  object_type: dataset
+  label: Owners
+  description: ''
+  source_table: OWNERS
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: OWNER
+    label: Owner
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: MANAGER
+    label: Manager
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: SYSTEMUSERSEQ
+    label: Systemuserseq
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: SYSTEMUSERID
+    label: Systemuserid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: PAYTYPE
+  object_type: dataset
+  label: Paytype
+  description: ''
+  source_table: PAYTYPE
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: PAYTYPEID
+    label: Paytypeid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: PAYTYPE
+    label: Paytype
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: PROBABILITY_1
+  object_type: dataset
+  label: Probability 1
+  description: ''
+  source_table: PROBABILITY_1
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: COLUMN1
+    label: Column1
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: PRODUCT
+  object_type: dataset
+  label: Product
+  description: ''
+  source_table: PRODUCT
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: PRODUCT_KEY
+    label: Product Key
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: PRODUCT
+    label: Product
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: PRODUCTS
+  object_type: dataset
+  label: Products
+  description: ''
+  source_table: PRODUCTS
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: PRODUCTID
+    label: Productid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: PRODUCTNAME
+    label: Productname
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: CATEGORY
+    label: Category
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: UNITPRICE
+    label: Unitprice
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: NEWPROMOCODE
+    label: Newpromocode
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: PROMO_TIER
+    label: Promo Tier
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: TEST_COL_130931
+    label: Test Col 130931
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: DISCOUNT_PERCENT
+    label: Discount Percent
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: PRODUCT
+    label: Product
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: PRODUCTSEQ
+    label: Productseq
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: PRODUCT_CATEGORY
+    label: Product Category
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: PRODUCT_KEY
+    label: Product Key
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: RANGE
+  object_type: dataset
+  label: Range
+  description: ''
+  source_table: RANGE
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: WWW_OBVIENCE_COM
+    label: Www Obvience Com
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: SALESFACT
+  object_type: dataset
+  label: Salesfact
+  description: ''
+  source_table: SALESFACT
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: PRODUCTID
+    label: Productid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COL_DATE
+    label: Col Date
+    data_type: date
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: ZIP
+    label: Zip
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: UNITS
+    label: Units
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: REVENUE
+    label: Revenue
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: DATE
+    label: Date
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: SCENARIO
+  object_type: dataset
+  label: Scenario
+  description: ''
+  source_table: SCENARIO
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: SCENARIO
+    label: Scenario
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: SCENARIO_ID
+    label: Scenario Id
+    data_type: integer
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: SCENARIODESCRIPTION
+    label: Scenariodescription
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: SENTIMENT
+  object_type: dataset
+  label: Sentiment
+  description: ''
+  source_table: SENTIMENT
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: DATEID
+    label: Dateid
+    data_type: date
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: STATEID
+    label: Stateid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: MANUFACTURERID
+    label: Manufacturerid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: SCORE
+    label: Score
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: MANUFACTURER
+    label: Manufacturer
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COL_DATE
+    label: Col Date
+    data_type: date
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: STATE
+    label: State
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: ZIP
+    label: Zip
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: PRODUCTID
+    label: Productid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: DATE
+    label: Date
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: SEPARATIONREASON
+  object_type: dataset
+  label: Separationreason
+  description: ''
+  source_table: SEPARATIONREASON
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: SEPARATIONTYPEID
+    label: Separationtypeid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: SEPARATIONREASON
+    label: Separationreason
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: SEPARATION_REASONS
+  object_type: dataset
+  label: Separation Reasons
+  description: ''
+  source_table: SEPARATION_REASONS
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: SEPARATIONTYPEID
+    label: Separationtypeid
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: SEPARATIONREASON
+    label: Separationreason
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: SORT
+    label: Sort
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: STATE
+  object_type: dataset
+  label: State
+  description: ''
+  source_table: STATE
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: STATECODE
+    label: Statecode
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: STATE
+    label: State
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: REGION
+    label: Region
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+- unique_name: TERRITORIES
+  object_type: dataset
+  label: Territories
+  description: ''
+  source_table: TERRITORIES
+  source_schema: ''
+  source_database: ''
+  columns:
+  - unique_name: REGION
+    label: Region
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: true
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: TERRITORY
+    label: Territory
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: COUNTRY
+    label: Country
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: TERRITORYSEQ
+    label: Territoryseq
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  - unique_name: STATE_OR_PROVINCE
+    label: State Or Province
+    data_type: string
+    source_type: ''
+    description: ''
+    is_hidden: false
+    is_key: false
+    is_measure_candidate: false
+    format_string: null
+    folder: null
+    synonyms: []
+    is_enum: false
+    cortex_search_service: null
+    sample_values: []
+  is_hidden: false
+  is_fact: false
+  row_count: null
+dimensions:
+- unique_name: ACCOUNT_dim
+  object_type: dimension
+  label: Account
+  description: ''
+  dataset: ACCOUNT
+  attributes:
+  - unique_name: ACCOUNT.ACCOUNT
+    label: L Account.
+    dataset: ACCOUNT
+    dataset_column: ACCOUNT
+    description: ''
+    is_hidden: false
+  - unique_name: ACCOUNT.REGION
+    label: L Account.
+    dataset: ACCOUNT
+    dataset_column: REGION
+    description: ''
+    is_hidden: false
+  - unique_name: ACCOUNT.SEGMENT
+    label: L Account.
+    dataset: ACCOUNT
+    dataset_column: SEGMENT
+    description: ''
+    is_hidden: false
+  - unique_name: ACCOUNT.ACCOUNT_ID
+    label: L Account.
+    dataset: ACCOUNT
+    dataset_column: ACCOUNT_ID
+    description: ''
+    is_hidden: false
+  - unique_name: ACCOUNT.STATE
+    label: L Account.
+    dataset: ACCOUNT
+    dataset_column: STATE
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: ACCOUNTS_dim
+  object_type: dimension
+  label: Accounts
+  description: ''
+  dataset: ACCOUNTS
+  attributes:
+  - unique_name: ACCOUNTS.ACCOUNT_NAME
+    label: Accounts.
+    dataset: ACCOUNTS
+    dataset_column: ACCOUNT_NAME
+    description: ''
+    is_hidden: false
+  - unique_name: ACCOUNTS.STATE_OR_PROVINCE
+    label: Accounts.
+    dataset: ACCOUNTS
+    dataset_column: STATE_OR_PROVINCE
+    description: ''
+    is_hidden: false
+  - unique_name: ACCOUNTS.COUNTRY
+    label: Accounts.
+    dataset: ACCOUNTS
+    dataset_column: COUNTRY
+    description: ''
+    is_hidden: false
+  - unique_name: ACCOUNTS.ACCOUNTID
+    label: Accounts.
+    dataset: ACCOUNTS
+    dataset_column: ACCOUNTID
+    description: ''
+    is_hidden: false
+  - unique_name: ACCOUNTS.ACCOUNTSEQ
+    label: Accounts.
+    dataset: ACCOUNTS
+    dataset_column: ACCOUNTSEQ
+    description: ''
+    is_hidden: false
+  - unique_name: ACCOUNTS.INDUSTRYSEQ
+    label: Accounts.
+    dataset: ACCOUNTS
+    dataset_column: INDUSTRYSEQ
+    description: ''
+    is_hidden: false
+  - unique_name: ACCOUNTS.ACCOUNTOWNERSEQ
+    label: Accounts.
+    dataset: ACCOUNTS
+    dataset_column: ACCOUNTOWNERSEQ
+    description: ''
+    is_hidden: false
+  - unique_name: ACCOUNTS.ACCOUNT_NUMBER
+    label: Accounts.
+    dataset: ACCOUNTS
+    dataset_column: ACCOUNT_NUMBER
+    description: ''
+    is_hidden: false
+  - unique_name: ACCOUNTS.TERRITORYSEQ
+    label: Accounts.
+    dataset: ACCOUNTS
+    dataset_column: TERRITORYSEQ
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: AGEGROUP_dim
+  object_type: dimension
+  label: Agegroup
+  description: ''
+  dataset: AGEGROUP
+  attributes:
+  - unique_name: AGEGROUP.AGEGROUPID
+    label: Agegroup.
+    dataset: AGEGROUP
+    dataset_column: AGEGROUPID
+    description: ''
+    is_hidden: false
+  - unique_name: AGEGROUP.AGEGROUP
+    label: Agegroup.
+    dataset: AGEGROUP
+    dataset_column: AGEGROUP
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: BU_dim
+  object_type: dimension
+  label: Bu
+  description: ''
+  dataset: BU
+  attributes:
+  - unique_name: BU.BU_KEY
+    label: Bu.
+    dataset: BU
+    dataset_column: BU_KEY
+    description: ''
+    is_hidden: false
+  - unique_name: BU.BU
+    label: Bu.
+    dataset: BU
+    dataset_column: BU
+    description: ''
+    is_hidden: false
+  - unique_name: BU.DIVISION
+    label: Bu.
+    dataset: BU
+    dataset_column: DIVISION
+    description: ''
+    is_hidden: false
+  - unique_name: BU.EXECUTIVE_ID
+    label: Bu.
+    dataset: BU
+    dataset_column: EXECUTIVE_ID
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: BUSINESS_AREA_dim
+  object_type: dimension
+  label: Business Area
+  description: ''
+  dataset: BUSINESS_AREA
+  attributes:
+  - unique_name: BUSINESS_AREA.BUSINESS_AREA
+    label: Business Area.
+    dataset: BUSINESS_AREA
+    dataset_column: BUSINESS_AREA
+    description: ''
+    is_hidden: false
+  - unique_name: BUSINESS_AREA.BUSINESS_AREA_ID
+    label: Business Area.
+    dataset: BUSINESS_AREA
+    dataset_column: BUSINESS_AREA_ID
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: CALENDAR_dim
+  object_type: dimension
+  label: Calendar
+  description: ''
+  dataset: CALENDAR
+  attributes:
+  - unique_name: CALENDAR.YEARPERIOD
+    label: Calendar.
+    dataset: CALENDAR
+    dataset_column: YEARPERIOD
+    description: ''
+    is_hidden: false
+  - unique_name: CALENDAR.YEAR
+    label: Calendar.
+    dataset: CALENDAR
+    dataset_column: YEAR
+    description: ''
+    is_hidden: false
+  - unique_name: CALENDAR.PERIOD
+    label: Calendar.
+    dataset: CALENDAR
+    dataset_column: PERIOD
+    description: ''
+    is_hidden: false
+  - unique_name: CALENDAR.DATE
+    label: Calendar.
+    dataset: CALENDAR
+    dataset_column: DATE
+    description: ''
+    is_hidden: false
+  - unique_name: CALENDAR.MONTH
+    label: Calendar.
+    dataset: CALENDAR
+    dataset_column: MONTH
+    description: ''
+    is_hidden: false
+  - unique_name: CALENDAR.QTRID
+    label: Calendar.
+    dataset: CALENDAR
+    dataset_column: QTRID
+    description: ''
+    is_hidden: false
+  - unique_name: CALENDAR.QTR
+    label: Calendar.
+    dataset: CALENDAR
+    dataset_column: QTR
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: CAMPAIGNS_dim
+  object_type: dimension
+  label: Campaigns
+  description: ''
+  dataset: CAMPAIGNS
+  attributes:
+  - unique_name: CAMPAIGNS.CAMPAIGNSEQ
+    label: Campaigns.
+    dataset: CAMPAIGNS
+    dataset_column: CAMPAIGNSEQ
+    description: ''
+    is_hidden: false
+  - unique_name: CAMPAIGNS.CAMPAIGN_TYPE
+    label: Campaigns.
+    dataset: CAMPAIGNS
+    dataset_column: CAMPAIGN_TYPE
+    description: ''
+    is_hidden: false
+  - unique_name: CAMPAIGNS.CAMPAIGN
+    label: Campaigns.
+    dataset: CAMPAIGNS
+    dataset_column: CAMPAIGN
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: CATEGORY_dim
+  object_type: dimension
+  label: Category
+  description: ''
+  dataset: CATEGORY
+  attributes:
+  - unique_name: CATEGORY.CATEGORY
+    label: Category.
+    dataset: CATEGORY
+    dataset_column: CATEGORY
+    description: ''
+    is_hidden: false
+  - unique_name: CATEGORY.CHANNEL
+    label: Category.
+    dataset: CATEGORY
+    dataset_column: CHANNEL
+    description: ''
+    is_hidden: false
+  - unique_name: CATEGORY.SORT
+    label: Category.
+    dataset: CATEGORY
+    dataset_column: SORT
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: CONTACTS_dim
+  object_type: dimension
+  label: Contacts
+  description: ''
+  dataset: CONTACTS
+  attributes:
+  - unique_name: CONTACTS.CONTACT
+    label: Contacts.
+    dataset: CONTACTS
+    dataset_column: CONTACT
+    description: ''
+    is_hidden: false
+  - unique_name: CONTACTS.JOB_TITLE
+    label: Contacts.
+    dataset: CONTACTS
+    dataset_column: JOB_TITLE
+    description: ''
+    is_hidden: false
+  - unique_name: CONTACTS.CONTACTSEQ
+    label: Contacts.
+    dataset: CONTACTS
+    dataset_column: CONTACTSEQ
+    description: ''
+    is_hidden: false
+  - unique_name: CONTACTS.ACCOUNTSEQ
+    label: Contacts.
+    dataset: CONTACTS
+    dataset_column: ACCOUNTSEQ
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: CONTINENT_1_dim
+  object_type: dimension
+  label: Continent 1
+  description: ''
+  dataset: CONTINENT_1
+  attributes:
+  - unique_name: CONTINENT_1.COLUMN1
+    label: Continent 1.
+    dataset: CONTINENT_1
+    dataset_column: COLUMN1
+    description: ''
+    is_hidden: false
+  - unique_name: CONTINENT_1.COLUMN
+    label: Continent 1.
+    dataset: CONTINENT_1
+    dataset_column: COLUMN
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: COST_ELEMENT_dim
+  object_type: dimension
+  label: Cost Element
+  description: ''
+  dataset: COST_ELEMENT
+  attributes:
+  - unique_name: COST_ELEMENT.COST_ELEMENT_NAME
+    label: Cost Element.
+    dataset: COST_ELEMENT
+    dataset_column: COST_ELEMENT_NAME
+    description: ''
+    is_hidden: false
+  - unique_name: COST_ELEMENT.COST_ELEMENT_GROUP
+    label: Cost Element.
+    dataset: COST_ELEMENT
+    dataset_column: COST_ELEMENT_GROUP
+    description: ''
+    is_hidden: false
+  - unique_name: COST_ELEMENT.COST_ELEMENT_SUB_GROUP
+    label: Cost Element.
+    dataset: COST_ELEMENT
+    dataset_column: COST_ELEMENT_SUB_GROUP
+    description: ''
+    is_hidden: false
+  - unique_name: COST_ELEMENT.COST_ELEMENT_ID
+    label: Cost Element.
+    dataset: COST_ELEMENT
+    dataset_column: COST_ELEMENT_ID
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: COUNTRY_REGION_dim
+  object_type: dimension
+  label: Country Region
+  description: ''
+  dataset: COUNTRY_REGION
+  attributes:
+  - unique_name: COUNTRY_REGION.SALES_REGION
+    label: Country Region.
+    dataset: COUNTRY_REGION
+    dataset_column: SALES_REGION
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: CUSTOMER_dim
+  object_type: dimension
+  label: Customer
+  description: ''
+  dataset: CUSTOMER
+  attributes:
+  - unique_name: CUSTOMER.CUSTOMER
+    label: Customer.
+    dataset: CUSTOMER
+    dataset_column: CUSTOMER
+    description: ''
+    is_hidden: false
+  - unique_name: CUSTOMER.NAME
+    label: Customer.
+    dataset: CUSTOMER
+    dataset_column: NAME
+    description: ''
+    is_hidden: false
+  - unique_name: CUSTOMER.CITY
+    label: Customer.
+    dataset: CUSTOMER
+    dataset_column: CITY
+    description: ''
+    is_hidden: false
+  - unique_name: CUSTOMER.POSTAL_CODE
+    label: Customer.
+    dataset: CUSTOMER
+    dataset_column: POSTAL_CODE
+    description: ''
+    is_hidden: false
+  - unique_name: CUSTOMER.STATE
+    label: Customer.
+    dataset: CUSTOMER
+    dataset_column: STATE
+    description: ''
+    is_hidden: false
+  - unique_name: CUSTOMER.INDUSTRY_ID
+    label: Customer.
+    dataset: CUSTOMER
+    dataset_column: INDUSTRY_ID
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: CUSTOMERS_dim
+  object_type: dimension
+  label: Customers
+  description: ''
+  dataset: CUSTOMERS
+  attributes:
+  - unique_name: CUSTOMERS.CUSTOMERID
+    label: Customers.
+    dataset: CUSTOMERS
+    dataset_column: CUSTOMERID
+    description: ''
+    is_hidden: false
+  - unique_name: CUSTOMERS.CUSTOMERNAME
+    label: Customers.
+    dataset: CUSTOMERS
+    dataset_column: CUSTOMERNAME
+    description: ''
+    is_hidden: false
+  - unique_name: CUSTOMERS.EMAIL
+    label: Customers.
+    dataset: CUSTOMERS
+    dataset_column: EMAIL
+    description: ''
+    is_hidden: false
+  - unique_name: CUSTOMERS.COUNTRY
+    label: Customers.
+    dataset: CUSTOMERS
+    dataset_column: COUNTRY
+    description: ''
+    is_hidden: false
+  - unique_name: CUSTOMERS.REGION
+    label: Customers.
+    dataset: CUSTOMERS
+    dataset_column: REGION
+    description: ''
+    is_hidden: false
+  - unique_name: CUSTOMERS.SEGMENT
+    label: Customers.
+    dataset: CUSTOMERS
+    dataset_column: SEGMENT
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: DATE_dim
+  object_type: dimension
+  label: Date
+  description: ''
+  dataset: DATE
+  attributes:
+  - unique_name: DATE.DATE
+    label: L Date.
+    dataset: DATE
+    dataset_column: DATE
+    description: ''
+    is_hidden: false
+  - unique_name: DATE.MONTHNO
+    label: L Date.
+    dataset: DATE
+    dataset_column: MONTHNO
+    description: ''
+    is_hidden: false
+  - unique_name: DATE.MONTHNAME
+    label: L Date.
+    dataset: DATE
+    dataset_column: MONTHNAME
+    description: ''
+    is_hidden: false
+  - unique_name: DATE.MONTHID
+    label: L Date.
+    dataset: DATE
+    dataset_column: MONTHID
+    description: ''
+    is_hidden: false
+  - unique_name: DATE.MONTH
+    label: L Date.
+    dataset: DATE
+    dataset_column: MONTH
+    description: ''
+    is_hidden: false
+  - unique_name: DATE.QUARTER
+    label: L Date.
+    dataset: DATE
+    dataset_column: QUARTER
+    description: ''
+    is_hidden: false
+  - unique_name: DATE.YEAR
+    label: L Date.
+    dataset: DATE
+    dataset_column: YEAR
+    description: ''
+    is_hidden: false
+  - unique_name: DATE.PERIOD
+    label: L Date.
+    dataset: DATE
+    dataset_column: PERIOD
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: DATEDIM_dim
+  object_type: dimension
+  label: Datedim
+  description: ''
+  dataset: DATEDIM
+  attributes:
+  - unique_name: DATEDIM.DATEKEY
+    label: Datedim.
+    dataset: DATEDIM
+    dataset_column: DATEKEY
+    description: ''
+    is_hidden: false
+  - unique_name: DATEDIM.YEAR
+    label: Datedim.
+    dataset: DATEDIM
+    dataset_column: YEAR
+    description: ''
+    is_hidden: false
+  - unique_name: DATEDIM.QUARTER
+    label: Datedim.
+    dataset: DATEDIM
+    dataset_column: QUARTER
+    description: ''
+    is_hidden: false
+  - unique_name: DATEDIM.MONTH
+    label: Datedim.
+    dataset: DATEDIM
+    dataset_column: MONTH
+    description: ''
+    is_hidden: false
+  - unique_name: DATEDIM.MONTHNUMBER
+    label: Datedim.
+    dataset: DATEDIM
+    dataset_column: MONTHNUMBER
+    description: ''
+    is_hidden: false
+  - unique_name: DATEDIM.DAYOFWEEK
+    label: Datedim.
+    dataset: DATEDIM
+    dataset_column: DAYOFWEEK
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: DEPARTMENT_dim
+  object_type: dimension
+  label: Department
+  description: ''
+  dataset: DEPARTMENT
+  attributes:
+  - unique_name: DEPARTMENT.VP
+    label: Department.
+    dataset: DEPARTMENT
+    dataset_column: VP
+    description: ''
+    is_hidden: false
+  - unique_name: DEPARTMENT.DEPARTMENT
+    label: Department.
+    dataset: DEPARTMENT
+    dataset_column: DEPARTMENT
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: DEVICE_INVENTORY_dim
+  object_type: dimension
+  label: Device Inventory
+  description: ''
+  dataset: DEVICE_INVENTORY
+  attributes:
+  - unique_name: DEVICE_INVENTORY.ITEMID
+    label: Device Inventory.
+    dataset: DEVICE_INVENTORY
+    dataset_column: ITEMID
+    description: ''
+    is_hidden: false
+  - unique_name: DEVICE_INVENTORY.ITEMNAME
+    label: Device Inventory.
+    dataset: DEVICE_INVENTORY
+    dataset_column: ITEMNAME
+    description: ''
+    is_hidden: false
+  - unique_name: DEVICE_INVENTORY.CATEGORY
+    label: Device Inventory.
+    dataset: DEVICE_INVENTORY
+    dataset_column: CATEGORY
+    description: ''
+    is_hidden: false
+  - unique_name: DEVICE_INVENTORY.WAREHOUSE
+    label: Device Inventory.
+    dataset: DEVICE_INVENTORY
+    dataset_column: WAREHOUSE
+    description: ''
+    is_hidden: false
+  - unique_name: DEVICE_INVENTORY.STOCKQTY
+    label: Device Inventory.
+    dataset: DEVICE_INVENTORY
+    dataset_column: STOCKQTY
+    description: ''
+    is_hidden: false
+  - unique_name: DEVICE_INVENTORY.REORDERLEVEL
+    label: Device Inventory.
+    dataset: DEVICE_INVENTORY
+    dataset_column: REORDERLEVEL
+    description: ''
+    is_hidden: false
+  - unique_name: DEVICE_INVENTORY.UNITCOST
+    label: Device Inventory.
+    dataset: DEVICE_INVENTORY
+    dataset_column: UNITCOST
+    description: ''
+    is_hidden: false
+  - unique_name: DEVICE_INVENTORY.TOTALVALUE
+    label: Device Inventory.
+    dataset: DEVICE_INVENTORY
+    dataset_column: TOTALVALUE
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: DIM_DATE_dim
+  object_type: dimension
+  label: Dim Date
+  description: ''
+  dataset: DIM_DATE
+  attributes:
+  - unique_name: DIM_DATE.DATE
+    label: Dim Date.
+    dataset: DIM_DATE
+    dataset_column: DATE
+    description: ''
+    is_hidden: false
+  - unique_name: DIM_DATE.YEAR
+    label: Dim Date.
+    dataset: DIM_DATE
+    dataset_column: YEAR
+    description: ''
+    is_hidden: false
+  - unique_name: DIM_DATE.QUARTER
+    label: Dim Date.
+    dataset: DIM_DATE
+    dataset_column: QUARTER
+    description: ''
+    is_hidden: false
+  - unique_name: DIM_DATE.MONTH
+    label: Dim Date.
+    dataset: DIM_DATE
+    dataset_column: MONTH
+    description: ''
+    is_hidden: false
+  - unique_name: DIM_DATE.MONTHNAME
+    label: Dim Date.
+    dataset: DIM_DATE
+    dataset_column: MONTHNAME
+    description: ''
+    is_hidden: false
+  - unique_name: DIM_DATE.DAYOFWEEK
+    label: Dim Date.
+    dataset: DIM_DATE
+    dataset_column: DAYOFWEEK
+    description: ''
+    is_hidden: false
+  - unique_name: DIM_DATE.DAYNAME
+    label: Dim Date.
+    dataset: DIM_DATE
+    dataset_column: DAYNAME
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: EMPLOYEE_dim
+  object_type: dimension
+  label: Employee
+  description: ''
+  dataset: EMPLOYEE
+  attributes:
+  - unique_name: EMPLOYEE.DATE
+    label: Employee.
+    dataset: EMPLOYEE
+    dataset_column: DATE
+    description: ''
+    is_hidden: false
+  - unique_name: EMPLOYEE.EMPLID
+    label: Employee.
+    dataset: EMPLOYEE
+    dataset_column: EMPLID
+    description: ''
+    is_hidden: false
+  - unique_name: EMPLOYEE.GENDER
+    label: Employee.
+    dataset: EMPLOYEE
+    dataset_column: GENDER
+    description: ''
+    is_hidden: false
+  - unique_name: EMPLOYEE.AGE
+    label: Employee.
+    dataset: EMPLOYEE
+    dataset_column: AGE
+    description: ''
+    is_hidden: false
+  - unique_name: EMPLOYEE.ETHNICGROUP
+    label: Employee.
+    dataset: EMPLOYEE
+    dataset_column: ETHNICGROUP
+    description: ''
+    is_hidden: false
+  - unique_name: EMPLOYEE.FP
+    label: Employee.
+    dataset: EMPLOYEE
+    dataset_column: FP
+    description: ''
+    is_hidden: false
+  - unique_name: EMPLOYEE.TERMDATE
+    label: Employee.
+    dataset: EMPLOYEE
+    dataset_column: TERMDATE
+    description: ''
+    is_hidden: false
+  - unique_name: EMPLOYEE.BU
+    label: Employee.
+    dataset: EMPLOYEE
+    dataset_column: BU
+    description: ''
+    is_hidden: false
+  - unique_name: EMPLOYEE.HIREDATE
+    label: Employee.
+    dataset: EMPLOYEE
+    dataset_column: HIREDATE
+    description: ''
+    is_hidden: false
+  - unique_name: EMPLOYEE.PAYTYPEID
+    label: Employee.
+    dataset: EMPLOYEE
+    dataset_column: PAYTYPEID
+    description: ''
+    is_hidden: false
+  - unique_name: EMPLOYEE.TERMREASON
+    label: Employee.
+    dataset: EMPLOYEE
+    dataset_column: TERMREASON
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: ETHNICITY_dim
+  object_type: dimension
+  label: Ethnicity
+  description: ''
+  dataset: ETHNICITY
+  attributes:
+  - unique_name: ETHNICITY.ETHNIC_GROUP
+    label: Ethnicity.
+    dataset: ETHNICITY
+    dataset_column: ETHNIC_GROUP
+    description: ''
+    is_hidden: false
+  - unique_name: ETHNICITY.ETHNICITY
+    label: Ethnicity.
+    dataset: ETHNICITY
+    dataset_column: ETHNICITY
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: EXECUTIVE_dim
+  object_type: dimension
+  label: Executive
+  description: ''
+  dataset: EXECUTIVE
+  attributes:
+  - unique_name: EXECUTIVE.ID
+    label: Executive.
+    dataset: EXECUTIVE
+    dataset_column: ID
+    description: ''
+    is_hidden: false
+  - unique_name: EXECUTIVE.NAME
+    label: Executive.
+    dataset: EXECUTIVE
+    dataset_column: NAME
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: FABRICMODEL_DATA_dim
+  object_type: dimension
+  label: Fabricmodel Data
+  description: ''
+  dataset: FABRICMODEL_DATA
+  attributes:
+  - unique_name: FABRICMODEL_DATA.ID
+    label: Fabricmodel Data.
+    dataset: FABRICMODEL_DATA
+    dataset_column: ID
+    description: ''
+    is_hidden: false
+  - unique_name: FABRICMODEL_DATA.DATE
+    label: Fabricmodel Data.
+    dataset: FABRICMODEL_DATA
+    dataset_column: DATE
+    description: ''
+    is_hidden: false
+  - unique_name: FABRICMODEL_DATA.CUSTOMER
+    label: Fabricmodel Data.
+    dataset: FABRICMODEL_DATA
+    dataset_column: CUSTOMER
+    description: ''
+    is_hidden: false
+  - unique_name: FABRICMODEL_DATA.CITY
+    label: Fabricmodel Data.
+    dataset: FABRICMODEL_DATA
+    dataset_column: CITY
+    description: ''
+    is_hidden: false
+  - unique_name: FABRICMODEL_DATA.PRODUCT
+    label: Fabricmodel Data.
+    dataset: FABRICMODEL_DATA
+    dataset_column: PRODUCT
+    description: ''
+    is_hidden: false
+  - unique_name: FABRICMODEL_DATA.QTY
+    label: Fabricmodel Data.
+    dataset: FABRICMODEL_DATA
+    dataset_column: QTY
+    description: ''
+    is_hidden: false
+  - unique_name: FABRICMODEL_DATA.PRICE
+    label: Fabricmodel Data.
+    dataset: FABRICMODEL_DATA
+    dataset_column: PRICE
+    description: ''
+    is_hidden: false
+  - unique_name: FABRICMODEL_DATA.AMOUNT
+    label: Fabricmodel Data.
+    dataset: FABRICMODEL_DATA
+    dataset_column: AMOUNT
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: FACT_dim
+  object_type: dimension
+  label: Fact
+  description: ''
+  dataset: FACT
+  attributes:
+  - unique_name: FACT.DATE
+    label: Fact.
+    dataset: FACT
+    dataset_column: DATE
+    description: ''
+    is_hidden: false
+  - unique_name: FACT.VALUE
+    label: Fact.
+    dataset: FACT
+    dataset_column: VALUE
+    description: ''
+    is_hidden: false
+  - unique_name: FACT.DEPARTMENT
+    label: Fact.
+    dataset: FACT
+    dataset_column: DEPARTMENT
+    description: ''
+    is_hidden: false
+  - unique_name: FACT.COST_ELEMENT_ID
+    label: Fact.
+    dataset: FACT
+    dataset_column: COST_ELEMENT_ID
+    description: ''
+    is_hidden: false
+  - unique_name: FACT.BUSINESS_AREA_ID
+    label: Fact.
+    dataset: FACT
+    dataset_column: BUSINESS_AREA_ID
+    description: ''
+    is_hidden: false
+  - unique_name: FACT.IT_SUB_AREA_ID
+    label: Fact.
+    dataset: FACT
+    dataset_column: IT_SUB_AREA_ID
+    description: ''
+    is_hidden: false
+  - unique_name: FACT.SCENARIO_ID
+    label: Fact.
+    dataset: FACT
+    dataset_column: SCENARIO_ID
+    description: ''
+    is_hidden: false
+  - unique_name: FACT.MATERIAL_COSTS
+    label: Fact.
+    dataset: FACT
+    dataset_column: MATERIAL_COSTS
+    description: ''
+    is_hidden: false
+  - unique_name: FACT.COST_THIRD_PARTY
+    label: Fact.
+    dataset: FACT
+    dataset_column: COST_THIRD_PARTY
+    description: ''
+    is_hidden: false
+  - unique_name: FACT.REVENUE
+    label: Fact.
+    dataset: FACT
+    dataset_column: REVENUE
+    description: ''
+    is_hidden: false
+  - unique_name: FACT.TRAVEL_EXPENSES
+    label: Fact.
+    dataset: FACT
+    dataset_column: TRAVEL_EXPENSES
+    description: ''
+    is_hidden: false
+  - unique_name: FACT.CUSTOMER_KEY
+    label: Fact.
+    dataset: FACT
+    dataset_column: CUSTOMER_KEY
+    description: ''
+    is_hidden: false
+  - unique_name: FACT.BU_KEY
+    label: Fact.
+    dataset: FACT
+    dataset_column: BU_KEY
+    description: ''
+    is_hidden: false
+  - unique_name: FACT.YEARPERIOD
+    label: Fact.
+    dataset: FACT
+    dataset_column: YEARPERIOD
+    description: ''
+    is_hidden: false
+  - unique_name: FACT.SCENARIO_KEY
+    label: Fact.
+    dataset: FACT
+    dataset_column: SCENARIO_KEY
+    description: ''
+    is_hidden: false
+  - unique_name: FACT.PRODUCT_KEY
+    label: Fact.
+    dataset: FACT
+    dataset_column: PRODUCT_KEY
+    description: ''
+    is_hidden: false
+  - unique_name: FACT.REV_FOR_EXP_TRAVEL
+    label: Fact.
+    dataset: FACT
+    dataset_column: REV_FOR_EXP_TRAVEL
+    description: ''
+    is_hidden: false
+  - unique_name: FACT.TAXES
+    label: Fact.
+    dataset: FACT
+    dataset_column: TAXES
+    description: ''
+    is_hidden: false
+  - unique_name: FACT.SUBSCRIPTION_REVENUE
+    label: Fact.
+    dataset: FACT
+    dataset_column: SUBSCRIPTION_REVENUE
+    description: ''
+    is_hidden: false
+  - unique_name: FACT.LABOR_COSTS_VARIABLE
+    label: Fact.
+    dataset: FACT
+    dataset_column: LABOR_COSTS_VARIABLE
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: FP_dim
+  object_type: dimension
+  label: Fp
+  description: ''
+  dataset: FP
+  attributes:
+  - unique_name: FP.FP
+    label: Fp.
+    dataset: FP
+    dataset_column: FP
+    description: ''
+    is_hidden: false
+  - unique_name: FP.FPDESC
+    label: Fp.
+    dataset: FP
+    dataset_column: FPDESC
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: GENDER_dim
+  object_type: dimension
+  label: Gender
+  description: ''
+  dataset: GENDER
+  attributes:
+  - unique_name: GENDER.ID
+    label: Gender.
+    dataset: GENDER
+    dataset_column: ID
+    description: ''
+    is_hidden: false
+  - unique_name: GENDER.GENDER
+    label: Gender.
+    dataset: GENDER
+    dataset_column: GENDER
+    description: ''
+    is_hidden: false
+  - unique_name: GENDER.SORT
+    label: Gender.
+    dataset: GENDER
+    dataset_column: SORT
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: GEO_dim
+  object_type: dimension
+  label: Geo
+  description: ''
+  dataset: GEO
+  attributes:
+  - unique_name: GEO.ZIP
+    label: Geo.
+    dataset: GEO
+    dataset_column: ZIP
+    description: ''
+    is_hidden: false
+  - unique_name: GEO.CITY
+    label: Geo.
+    dataset: GEO
+    dataset_column: CITY
+    description: ''
+    is_hidden: false
+  - unique_name: GEO.STATE
+    label: Geo.
+    dataset: GEO
+    dataset_column: STATE
+    description: ''
+    is_hidden: false
+  - unique_name: GEO.REGION
+    label: Geo.
+    dataset: GEO
+    dataset_column: REGION
+    description: ''
+    is_hidden: false
+  - unique_name: GEO.DISTRICT
+    label: Geo.
+    dataset: GEO
+    dataset_column: DISTRICT
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: INDICATORS_dim
+  object_type: dimension
+  label: Indicators
+  description: ''
+  dataset: INDICATORS
+  attributes:
+  - unique_name: INDICATORS.SORT
+    label: Indicators.
+    dataset: INDICATORS
+    dataset_column: SORT
+    description: ''
+    is_hidden: false
+  - unique_name: INDICATORS.STATUS
+    label: Indicators.
+    dataset: INDICATORS
+    dataset_column: STATUS
+    description: ''
+    is_hidden: false
+  - unique_name: INDICATORS.IMAGE
+    label: Indicators.
+    dataset: INDICATORS
+    dataset_column: IMAGE
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: INDUSTRIES_dim
+  object_type: dimension
+  label: Industries
+  description: ''
+  dataset: INDUSTRIES
+  attributes:
+  - unique_name: INDUSTRIES.INDUSTRY
+    label: Industries.
+    dataset: INDUSTRIES
+    dataset_column: INDUSTRY
+    description: ''
+    is_hidden: false
+  - unique_name: INDUSTRIES.INDUSTRYSEQ
+    label: Industries.
+    dataset: INDUSTRIES
+    dataset_column: INDUSTRYSEQ
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: INDUSTRY_dim
+  object_type: dimension
+  label: Industry
+  description: ''
+  dataset: INDUSTRY
+  attributes:
+  - unique_name: INDUSTRY.ID
+    label: Industry.
+    dataset: INDUSTRY
+    dataset_column: ID
+    description: ''
+    is_hidden: false
+  - unique_name: INDUSTRY.INDUSTRY
+    label: Industry.
+    dataset: INDUSTRY
+    dataset_column: INDUSTRY
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: INDUSTRY_1_dim
+  object_type: dimension
+  label: Industry 1
+  description: ''
+  dataset: INDUSTRY_1
+  attributes:
+  - unique_name: INDUSTRY_1.COLUMN1
+    label: Industry 1.
+    dataset: INDUSTRY_1
+    dataset_column: COLUMN1
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: IT_AREA_dim
+  object_type: dimension
+  label: It Area
+  description: ''
+  dataset: IT_AREA
+  attributes:
+  - unique_name: IT_AREA.IT_AREA
+    label: It Area.
+    dataset: IT_AREA
+    dataset_column: IT_AREA
+    description: ''
+    is_hidden: false
+  - unique_name: IT_AREA.IT_SUB_AREA
+    label: It Area.
+    dataset: IT_AREA
+    dataset_column: IT_SUB_AREA
+    description: ''
+    is_hidden: false
+  - unique_name: IT_AREA.IT_SUB_AREA_ID
+    label: It Area.
+    dataset: IT_AREA
+    dataset_column: IT_SUB_AREA_ID
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: KPI_dim
+  object_type: dimension
+  label: Kpi
+  description: ''
+  dataset: KPI
+  attributes:
+  - unique_name: KPI.KPI
+    label: Kpi.
+    dataset: KPI
+    dataset_column: KPI
+    description: ''
+    is_hidden: false
+  - unique_name: KPI.CATEGORY
+    label: Kpi.
+    dataset: KPI
+    dataset_column: CATEGORY
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: LOCALDATETABLE_39C22DDB_27F3_4E6C_8A44_A3380850FCB4_dim
+  object_type: dimension
+  label: Localdatetable 39C22Ddb 27F3 4E6C 8A44 A3380850Fcb4
+  description: ''
+  dataset: LOCALDATETABLE_39C22DDB_27F3_4E6C_8A44_A3380850FCB4
+  attributes:
+  - unique_name: LOCALDATETABLE_39C22DDB_27F3_4E6C_8A44_A3380850FCB4.DATE
+    label: Localdatetable 39C22Ddb 27F3 4E6C 8A44 A3380850Fcb4.
+    dataset: LOCALDATETABLE_39C22DDB_27F3_4E6C_8A44_A3380850FCB4
+    dataset_column: DATE
+    description: ''
+    is_hidden: false
+  - unique_name: LOCALDATETABLE_39C22DDB_27F3_4E6C_8A44_A3380850FCB4.YEAR
+    label: Localdatetable 39C22Ddb 27F3 4E6C 8A44 A3380850Fcb4.
+    dataset: LOCALDATETABLE_39C22DDB_27F3_4E6C_8A44_A3380850FCB4
+    dataset_column: YEAR
+    description: ''
+    is_hidden: false
+  - unique_name: LOCALDATETABLE_39C22DDB_27F3_4E6C_8A44_A3380850FCB4.MONTHNO
+    label: Localdatetable 39C22Ddb 27F3 4E6C 8A44 A3380850Fcb4.
+    dataset: LOCALDATETABLE_39C22DDB_27F3_4E6C_8A44_A3380850FCB4
+    dataset_column: MONTHNO
+    description: ''
+    is_hidden: false
+  - unique_name: LOCALDATETABLE_39C22DDB_27F3_4E6C_8A44_A3380850FCB4.MONTH
+    label: Localdatetable 39C22Ddb 27F3 4E6C 8A44 A3380850Fcb4.
+    dataset: LOCALDATETABLE_39C22DDB_27F3_4E6C_8A44_A3380850FCB4
+    dataset_column: MONTH
+    description: ''
+    is_hidden: false
+  - unique_name: LOCALDATETABLE_39C22DDB_27F3_4E6C_8A44_A3380850FCB4.QUARTERNO
+    label: Localdatetable 39C22Ddb 27F3 4E6C 8A44 A3380850Fcb4.
+    dataset: LOCALDATETABLE_39C22DDB_27F3_4E6C_8A44_A3380850FCB4
+    dataset_column: QUARTERNO
+    description: ''
+    is_hidden: false
+  - unique_name: LOCALDATETABLE_39C22DDB_27F3_4E6C_8A44_A3380850FCB4.QUARTER
+    label: Localdatetable 39C22Ddb 27F3 4E6C 8A44 A3380850Fcb4.
+    dataset: LOCALDATETABLE_39C22DDB_27F3_4E6C_8A44_A3380850FCB4
+    dataset_column: QUARTER
+    description: ''
+    is_hidden: false
+  - unique_name: LOCALDATETABLE_39C22DDB_27F3_4E6C_8A44_A3380850FCB4.DAY
+    label: Localdatetable 39C22Ddb 27F3 4E6C 8A44 A3380850Fcb4.
+    dataset: LOCALDATETABLE_39C22DDB_27F3_4E6C_8A44_A3380850FCB4
+    dataset_column: DAY
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: LOCALDATETABLE_4DBBBE50_57FF_44C2_90C5_265B16FEFBE6_dim
+  object_type: dimension
+  label: Localdatetable 4Dbbbe50 57Ff 44C2 90C5 265B16Fefbe6
+  description: ''
+  dataset: LOCALDATETABLE_4DBBBE50_57FF_44C2_90C5_265B16FEFBE6
+  attributes:
+  - unique_name: LOCALDATETABLE_4DBBBE50_57FF_44C2_90C5_265B16FEFBE6.DATE
+    label: Localdatetable 4Dbbbe50 57Ff 44C2 90C5 265B16Fefbe6.
+    dataset: LOCALDATETABLE_4DBBBE50_57FF_44C2_90C5_265B16FEFBE6
+    dataset_column: DATE
+    description: ''
+    is_hidden: false
+  - unique_name: LOCALDATETABLE_4DBBBE50_57FF_44C2_90C5_265B16FEFBE6.YEAR
+    label: Localdatetable 4Dbbbe50 57Ff 44C2 90C5 265B16Fefbe6.
+    dataset: LOCALDATETABLE_4DBBBE50_57FF_44C2_90C5_265B16FEFBE6
+    dataset_column: YEAR
+    description: ''
+    is_hidden: false
+  - unique_name: LOCALDATETABLE_4DBBBE50_57FF_44C2_90C5_265B16FEFBE6.MONTHNO
+    label: Localdatetable 4Dbbbe50 57Ff 44C2 90C5 265B16Fefbe6.
+    dataset: LOCALDATETABLE_4DBBBE50_57FF_44C2_90C5_265B16FEFBE6
+    dataset_column: MONTHNO
+    description: ''
+    is_hidden: false
+  - unique_name: LOCALDATETABLE_4DBBBE50_57FF_44C2_90C5_265B16FEFBE6.MONTH
+    label: Localdatetable 4Dbbbe50 57Ff 44C2 90C5 265B16Fefbe6.
+    dataset: LOCALDATETABLE_4DBBBE50_57FF_44C2_90C5_265B16FEFBE6
+    dataset_column: MONTH
+    description: ''
+    is_hidden: false
+  - unique_name: LOCALDATETABLE_4DBBBE50_57FF_44C2_90C5_265B16FEFBE6.QUARTERNO
+    label: Localdatetable 4Dbbbe50 57Ff 44C2 90C5 265B16Fefbe6.
+    dataset: LOCALDATETABLE_4DBBBE50_57FF_44C2_90C5_265B16FEFBE6
+    dataset_column: QUARTERNO
+    description: ''
+    is_hidden: false
+  - unique_name: LOCALDATETABLE_4DBBBE50_57FF_44C2_90C5_265B16FEFBE6.QUARTER
+    label: Localdatetable 4Dbbbe50 57Ff 44C2 90C5 265B16Fefbe6.
+    dataset: LOCALDATETABLE_4DBBBE50_57FF_44C2_90C5_265B16FEFBE6
+    dataset_column: QUARTER
+    description: ''
+    is_hidden: false
+  - unique_name: LOCALDATETABLE_4DBBBE50_57FF_44C2_90C5_265B16FEFBE6.DAY
+    label: Localdatetable 4Dbbbe50 57Ff 44C2 90C5 265B16Fefbe6.
+    dataset: LOCALDATETABLE_4DBBBE50_57FF_44C2_90C5_265B16FEFBE6
+    dataset_column: DAY
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: MANUFACTURER_dim
+  object_type: dimension
+  label: Manufacturer
+  description: ''
+  dataset: MANUFACTURER
+  attributes:
+  - unique_name: MANUFACTURER.MANUFACTURERID
+    label: Manufacturer.
+    dataset: MANUFACTURER
+    dataset_column: MANUFACTURERID
+    description: ''
+    is_hidden: false
+  - unique_name: MANUFACTURER.MANUFACTURER
+    label: Manufacturer.
+    dataset: MANUFACTURER
+    dataset_column: MANUFACTURER
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: OPPORTUNITIES_dim
+  object_type: dimension
+  label: Opportunities
+  description: ''
+  dataset: OPPORTUNITIES
+  attributes:
+  - unique_name: OPPORTUNITIES.PURCHASE_PROCESS
+    label: Opportunities.
+    dataset: OPPORTUNITIES
+    dataset_column: PURCHASE_PROCESS
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITIES.DECISION_MAKER_IDENTIFIED
+    label: Opportunities.
+    dataset: OPPORTUNITIES
+    dataset_column: DECISION_MAKER_IDENTIFIED
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITIES.STATUS
+    label: Opportunities.
+    dataset: OPPORTUNITIES
+    dataset_column: STATUS
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITIES.SALES_STAGE
+    label: Opportunities.
+    dataset: OPPORTUNITIES
+    dataset_column: SALES_STAGE
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITIES.VALUE
+    label: Opportunities.
+    dataset: OPPORTUNITIES
+    dataset_column: VALUE
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITIES.DAYSTOCLOSE
+    label: Opportunities.
+    dataset: OPPORTUNITIES
+    dataset_column: DAYSTOCLOSE
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITIES.DISCOUNT
+    label: Opportunities.
+    dataset: OPPORTUNITIES
+    dataset_column: DISCOUNT
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITIES.PROBABILITY
+    label: Opportunities.
+    dataset: OPPORTUNITIES
+    dataset_column: PROBABILITY
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITIES.RATING
+    label: Opportunities.
+    dataset: OPPORTUNITIES
+    dataset_column: RATING
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITIES.ACCOUNTSEQ
+    label: Opportunities.
+    dataset: OPPORTUNITIES
+    dataset_column: ACCOUNTSEQ
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITIES.OPPORTUNITYSEQ
+    label: Opportunities.
+    dataset: OPPORTUNITIES
+    dataset_column: OPPORTUNITYSEQ
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITIES.PRODUCTSEQ
+    label: Opportunities.
+    dataset: OPPORTUNITIES
+    dataset_column: PRODUCTSEQ
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITIES.SYSTEMUSERSEQ
+    label: Opportunities.
+    dataset: OPPORTUNITIES
+    dataset_column: SYSTEMUSERSEQ
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITIES.CAMPAIGNSEQ
+    label: Opportunities.
+    dataset: OPPORTUNITIES
+    dataset_column: CAMPAIGNSEQ
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITIES.OPPORTUNITY_CREATED_ON
+    label: Opportunities.
+    dataset: OPPORTUNITIES
+    dataset_column: OPPORTUNITY_CREATED_ON
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITIES.CLOSEDATE
+    label: Opportunities.
+    dataset: OPPORTUNITIES
+    dataset_column: CLOSEDATE
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: OPPORTUNITY_CALENDAR_dim
+  object_type: dimension
+  label: Opportunity Calendar
+  description: ''
+  dataset: OPPORTUNITY_CALENDAR
+  attributes:
+  - unique_name: OPPORTUNITY_CALENDAR.DATE
+    label: Opportunity Calendar.
+    dataset: OPPORTUNITY_CALENDAR
+    dataset_column: DATE
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITY_CALENDAR.DAY
+    label: Opportunity Calendar.
+    dataset: OPPORTUNITY_CALENDAR
+    dataset_column: DAY
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITY_CALENDAR.DAYSEQ
+    label: Opportunity Calendar.
+    dataset: OPPORTUNITY_CALENDAR
+    dataset_column: DAYSEQ
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITY_CALENDAR.YEAR
+    label: Opportunity Calendar.
+    dataset: OPPORTUNITY_CALENDAR
+    dataset_column: YEAR
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITY_CALENDAR.MONTH_NUMBER
+    label: Opportunity Calendar.
+    dataset: OPPORTUNITY_CALENDAR
+    dataset_column: MONTH_NUMBER
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITY_CALENDAR.MONTH
+    label: Opportunity Calendar.
+    dataset: OPPORTUNITY_CALENDAR
+    dataset_column: MONTH
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITY_CALENDAR.YEAR_MONTH_NUMBER
+    label: Opportunity Calendar.
+    dataset: OPPORTUNITY_CALENDAR
+    dataset_column: YEAR_MONTH_NUMBER
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITY_CALENDAR.YEAR_MONTH
+    label: Opportunity Calendar.
+    dataset: OPPORTUNITY_CALENDAR
+    dataset_column: YEAR_MONTH
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITY_CALENDAR.YEAR_WEEK
+    label: Opportunity Calendar.
+    dataset: OPPORTUNITY_CALENDAR
+    dataset_column: YEAR_WEEK
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITY_CALENDAR.WEEK
+    label: Opportunity Calendar.
+    dataset: OPPORTUNITY_CALENDAR
+    dataset_column: WEEK
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITY_CALENDAR.RELATIVE_WEEK
+    label: Opportunity Calendar.
+    dataset: OPPORTUNITY_CALENDAR
+    dataset_column: RELATIVE_WEEK
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITY_CALENDAR.RELATIVE_DAY
+    label: Opportunity Calendar.
+    dataset: OPPORTUNITY_CALENDAR
+    dataset_column: RELATIVE_DAY
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITY_CALENDAR.RELATIVE_07_DAY_PERIOD
+    label: Opportunity Calendar.
+    dataset: OPPORTUNITY_CALENDAR
+    dataset_column: RELATIVE_07_DAY_PERIOD
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITY_CALENDAR.RELATIVE_30_DAY_PERIOD
+    label: Opportunity Calendar.
+    dataset: OPPORTUNITY_CALENDAR
+    dataset_column: RELATIVE_30_DAY_PERIOD
+    description: ''
+    is_hidden: false
+  - unique_name: OPPORTUNITY_CALENDAR.RELATIVE_MONTH
+    label: Opportunity Calendar.
+    dataset: OPPORTUNITY_CALENDAR
+    dataset_column: RELATIVE_MONTH
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: OPPORTUNITY_FORECAST_ADJUSTMENT_dim
+  object_type: dimension
+  label: Opportunity Forecast Adjustment
+  description: ''
+  dataset: OPPORTUNITY_FORECAST_ADJUSTMENT
+  attributes:
+  - unique_name: OPPORTUNITY_FORECAST_ADJUSTMENT.FORECAST_ADJUSTMENT
+    label: Opportunity Forecast Adjustment.
+    dataset: OPPORTUNITY_FORECAST_ADJUSTMENT
+    dataset_column: FORECAST_ADJUSTMENT
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: ORDERS_dim
+  object_type: dimension
+  label: Orders
+  description: ''
+  dataset: ORDERS
+  attributes:
+  - unique_name: ORDERS.ORDERID
+    label: Orders.
+    dataset: ORDERS
+    dataset_column: ORDERID
+    description: ''
+    is_hidden: false
+  - unique_name: ORDERS.CUSTOMERID
+    label: Orders.
+    dataset: ORDERS
+    dataset_column: CUSTOMERID
+    description: ''
+    is_hidden: false
+  - unique_name: ORDERS.PRODUCTID
+    label: Orders.
+    dataset: ORDERS
+    dataset_column: PRODUCTID
+    description: ''
+    is_hidden: false
+  - unique_name: ORDERS.ORDERDATE
+    label: Orders.
+    dataset: ORDERS
+    dataset_column: ORDERDATE
+    description: ''
+    is_hidden: false
+  - unique_name: ORDERS.QUANTITY
+    label: Orders.
+    dataset: ORDERS
+    dataset_column: QUANTITY
+    description: ''
+    is_hidden: false
+  - unique_name: ORDERS.TOTALAMOUNT
+    label: Orders.
+    dataset: ORDERS
+    dataset_column: TOTALAMOUNT
+    description: ''
+    is_hidden: false
+  - unique_name: ORDERS.DISCOUNT
+    label: Orders.
+    dataset: ORDERS
+    dataset_column: DISCOUNT
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: OWNERS_dim
+  object_type: dimension
+  label: Owners
+  description: ''
+  dataset: OWNERS
+  attributes:
+  - unique_name: OWNERS.OWNER
+    label: Owners.
+    dataset: OWNERS
+    dataset_column: OWNER
+    description: ''
+    is_hidden: false
+  - unique_name: OWNERS.MANAGER
+    label: Owners.
+    dataset: OWNERS
+    dataset_column: MANAGER
+    description: ''
+    is_hidden: false
+  - unique_name: OWNERS.SYSTEMUSERSEQ
+    label: Owners.
+    dataset: OWNERS
+    dataset_column: SYSTEMUSERSEQ
+    description: ''
+    is_hidden: false
+  - unique_name: OWNERS.SYSTEMUSERID
+    label: Owners.
+    dataset: OWNERS
+    dataset_column: SYSTEMUSERID
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: PAYTYPE_dim
+  object_type: dimension
+  label: Paytype
+  description: ''
+  dataset: PAYTYPE
+  attributes:
+  - unique_name: PAYTYPE.PAYTYPEID
+    label: Paytype.
+    dataset: PAYTYPE
+    dataset_column: PAYTYPEID
+    description: ''
+    is_hidden: false
+  - unique_name: PAYTYPE.PAYTYPE
+    label: Paytype.
+    dataset: PAYTYPE
+    dataset_column: PAYTYPE
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: PROBABILITY_1_dim
+  object_type: dimension
+  label: Probability 1
+  description: ''
+  dataset: PROBABILITY_1
+  attributes:
+  - unique_name: PROBABILITY_1.COLUMN1
+    label: Probability 1.
+    dataset: PROBABILITY_1
+    dataset_column: COLUMN1
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: PRODUCT_dim
+  object_type: dimension
+  label: Product
+  description: ''
+  dataset: PRODUCT
+  attributes:
+  - unique_name: PRODUCT.MANUFACTURER
+    label: Product.
+    dataset: PRODUCT
+    dataset_column: MANUFACTURER
+    description: ''
+    is_hidden: false
+  - unique_name: PRODUCT.CATEGORY
+    label: Product.
+    dataset: PRODUCT
+    dataset_column: CATEGORY
+    description: ''
+    is_hidden: false
+  - unique_name: PRODUCT.SEGMENT
+    label: Product.
+    dataset: PRODUCT
+    dataset_column: SEGMENT
+    description: ''
+    is_hidden: false
+  - unique_name: PRODUCT.PRODUCT
+    label: Product.
+    dataset: PRODUCT
+    dataset_column: PRODUCT
+    description: ''
+    is_hidden: false
+  - unique_name: PRODUCT.PRODUCTID
+    label: Product.
+    dataset: PRODUCT
+    dataset_column: PRODUCTID
+    description: ''
+    is_hidden: false
+  - unique_name: PRODUCT.ISCOMPETEHIDE
+    label: Product.
+    dataset: PRODUCT
+    dataset_column: ISCOMPETEHIDE
+    description: ''
+    is_hidden: false
+  - unique_name: PRODUCT.MANUFACTURERID
+    label: Product.
+    dataset: PRODUCT
+    dataset_column: MANUFACTURERID
+    description: ''
+    is_hidden: false
+  - unique_name: PRODUCT.PRODUCT_KEY
+    label: Product.
+    dataset: PRODUCT
+    dataset_column: PRODUCT_KEY
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: PRODUCTS_dim
+  object_type: dimension
+  label: Products
+  description: ''
+  dataset: PRODUCTS
+  attributes:
+  - unique_name: PRODUCTS.PRODUCTID
+    label: Products.
+    dataset: PRODUCTS
+    dataset_column: PRODUCTID
+    description: ''
+    is_hidden: false
+  - unique_name: PRODUCTS.PRODUCTNAME
+    label: Products.
+    dataset: PRODUCTS
+    dataset_column: PRODUCTNAME
+    description: ''
+    is_hidden: false
+  - unique_name: PRODUCTS.CATEGORY
+    label: Products.
+    dataset: PRODUCTS
+    dataset_column: CATEGORY
+    description: ''
+    is_hidden: false
+  - unique_name: PRODUCTS.UNITPRICE
+    label: Products.
+    dataset: PRODUCTS
+    dataset_column: UNITPRICE
+    description: ''
+    is_hidden: false
+  - unique_name: PRODUCTS.NEWPROMOCODE
+    label: Products.
+    dataset: PRODUCTS
+    dataset_column: NEWPROMOCODE
+    description: ''
+    is_hidden: false
+  - unique_name: PRODUCTS.PROMO_TIER
+    label: Products.
+    dataset: PRODUCTS
+    dataset_column: PROMO_TIER
+    description: ''
+    is_hidden: false
+  - unique_name: PRODUCTS.TEST_COL_130931
+    label: Products.
+    dataset: PRODUCTS
+    dataset_column: TEST_COL_130931
+    description: ''
+    is_hidden: false
+  - unique_name: PRODUCTS.DISCOUNT_PERCENT
+    label: Products.
+    dataset: PRODUCTS
+    dataset_column: DISCOUNT_PERCENT
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: RANGE_dim
+  object_type: dimension
+  label: Range
+  description: ''
+  dataset: RANGE
+  attributes:
+  - unique_name: RANGE.WWW_OBVIENCE_COM
+    label: L Range.
+    dataset: RANGE
+    dataset_column: WWW_OBVIENCE_COM
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: SALESFACT_dim
+  object_type: dimension
+  label: Salesfact
+  description: ''
+  dataset: SALESFACT
+  attributes:
+  - unique_name: SALESFACT.PRODUCTID
+    label: Salesfact.
+    dataset: SALESFACT
+    dataset_column: PRODUCTID
+    description: ''
+    is_hidden: false
+  - unique_name: SALESFACT.DATE
+    label: Salesfact.
+    dataset: SALESFACT
+    dataset_column: DATE
+    description: ''
+    is_hidden: false
+  - unique_name: SALESFACT.ZIP
+    label: Salesfact.
+    dataset: SALESFACT
+    dataset_column: ZIP
+    description: ''
+    is_hidden: false
+  - unique_name: SALESFACT.UNITS
+    label: Salesfact.
+    dataset: SALESFACT
+    dataset_column: UNITS
+    description: ''
+    is_hidden: false
+  - unique_name: SALESFACT.REVENUE
+    label: Salesfact.
+    dataset: SALESFACT
+    dataset_column: REVENUE
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: SCENARIO_dim
+  object_type: dimension
+  label: Scenario
+  description: ''
+  dataset: SCENARIO
+  attributes:
+  - unique_name: SCENARIO.SCENARIO
+    label: Scenario.
+    dataset: SCENARIO
+    dataset_column: SCENARIO
+    description: ''
+    is_hidden: false
+  - unique_name: SCENARIO.SCENARIO_ID
+    label: Scenario.
+    dataset: SCENARIO
+    dataset_column: SCENARIO_ID
+    description: ''
+    is_hidden: false
+  - unique_name: SCENARIO.SCENARIODESCRIPTION
+    label: Scenario.
+    dataset: SCENARIO
+    dataset_column: SCENARIODESCRIPTION
+    description: ''
+    is_hidden: false
+  - unique_name: SCENARIO.SCENARIO_KEY
+    label: Scenario.
+    dataset: SCENARIO
+    dataset_column: SCENARIO_KEY
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: SENTIMENT_dim
+  object_type: dimension
+  label: Sentiment
+  description: ''
+  dataset: SENTIMENT
+  attributes:
+  - unique_name: SENTIMENT.DATEID
+    label: Sentiment.
+    dataset: SENTIMENT
+    dataset_column: DATEID
+    description: ''
+    is_hidden: false
+  - unique_name: SENTIMENT.STATEID
+    label: Sentiment.
+    dataset: SENTIMENT
+    dataset_column: STATEID
+    description: ''
+    is_hidden: false
+  - unique_name: SENTIMENT.MANUFACTURERID
+    label: Sentiment.
+    dataset: SENTIMENT
+    dataset_column: MANUFACTURERID
+    description: ''
+    is_hidden: false
+  - unique_name: SENTIMENT.SCORE
+    label: Sentiment.
+    dataset: SENTIMENT
+    dataset_column: SCORE
+    description: ''
+    is_hidden: false
+  - unique_name: SENTIMENT.MANUFACTURER
+    label: Sentiment.
+    dataset: SENTIMENT
+    dataset_column: MANUFACTURER
+    description: ''
+    is_hidden: false
+  - unique_name: SENTIMENT.DATE
+    label: Sentiment.
+    dataset: SENTIMENT
+    dataset_column: DATE
+    description: ''
+    is_hidden: false
+  - unique_name: SENTIMENT.STATE
+    label: Sentiment.
+    dataset: SENTIMENT
+    dataset_column: STATE
+    description: ''
+    is_hidden: false
+  - unique_name: SENTIMENT.ZIP
+    label: Sentiment.
+    dataset: SENTIMENT
+    dataset_column: ZIP
+    description: ''
+    is_hidden: false
+  - unique_name: SENTIMENT.PRODUCTID
+    label: Sentiment.
+    dataset: SENTIMENT
+    dataset_column: PRODUCTID
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: SEPARATIONREASON_dim
+  object_type: dimension
+  label: Separationreason
+  description: ''
+  dataset: SEPARATIONREASON
+  attributes:
+  - unique_name: SEPARATIONREASON.SEPARATIONTYPEID
+    label: Separationreason.
+    dataset: SEPARATIONREASON
+    dataset_column: SEPARATIONTYPEID
+    description: ''
+    is_hidden: false
+  - unique_name: SEPARATIONREASON.SEPARATIONREASON
+    label: Separationreason.
+    dataset: SEPARATIONREASON
+    dataset_column: SEPARATIONREASON
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: SEPARATION_REASONS_dim
+  object_type: dimension
+  label: Separation Reasons
+  description: ''
+  dataset: SEPARATION_REASONS
+  attributes:
+  - unique_name: SEPARATION_REASONS.SEPARATIONTYPEID
+    label: Separation Reasons.
+    dataset: SEPARATION_REASONS
+    dataset_column: SEPARATIONTYPEID
+    description: ''
+    is_hidden: false
+  - unique_name: SEPARATION_REASONS.SEPARATIONREASON
+    label: Separation Reasons.
+    dataset: SEPARATION_REASONS
+    dataset_column: SEPARATIONREASON
+    description: ''
+    is_hidden: false
+  - unique_name: SEPARATION_REASONS.SORT
+    label: Separation Reasons.
+    dataset: SEPARATION_REASONS
+    dataset_column: SORT
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: STATE_dim
+  object_type: dimension
+  label: State
+  description: ''
+  dataset: STATE
+  attributes:
+  - unique_name: STATE.STATECODE
+    label: State.
+    dataset: STATE
+    dataset_column: STATECODE
+    description: ''
+    is_hidden: false
+  - unique_name: STATE.STATE
+    label: State.
+    dataset: STATE
+    dataset_column: STATE
+    description: ''
+    is_hidden: false
+  - unique_name: STATE.REGION
+    label: State.
+    dataset: STATE
+    dataset_column: REGION
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+- unique_name: TERRITORIES_dim
+  object_type: dimension
+  label: Territories
+  description: ''
+  dataset: TERRITORIES
+  attributes:
+  - unique_name: TERRITORIES.REGION
+    label: Territories.
+    dataset: TERRITORIES
+    dataset_column: REGION
+    description: ''
+    is_hidden: false
+  - unique_name: TERRITORIES.TERRITORY
+    label: Territories.
+    dataset: TERRITORIES
+    dataset_column: TERRITORY
+    description: ''
+    is_hidden: false
+  - unique_name: TERRITORIES.COUNTRY
+    label: Territories.
+    dataset: TERRITORIES
+    dataset_column: COUNTRY
+    description: ''
+    is_hidden: false
+  - unique_name: TERRITORIES.TERRITORYSEQ
+    label: Territories.
+    dataset: TERRITORIES
+    dataset_column: TERRITORYSEQ
+    description: ''
+    is_hidden: false
+  - unique_name: TERRITORIES.STATE_OR_PROVINCE
+    label: Territories.
+    dataset: TERRITORIES
+    dataset_column: STATE_OR_PROVINCE
+    description: ''
+    is_hidden: false
+  hierarchies: []
+  is_hidden: false
+metrics: []
+relationships: []
+source_system: snowflake_semantic_view
+source_platform: snowflake
+created_at: '2026-04-01T05:49:29.272879'
+modified_at: null

@@ -172,6 +172,27 @@ export default function ProjectConfigPage() {
         setAllProjects(all.filter(x => String(x.id) !== String(id)));
         setActiveProjectId(p?.id || p?.project_id || id);
         try {
+          const schedule = await api.getProjectSchedule(id);
+          const nextScheduleType = String(schedule?.schedule_type || 'manual').toLowerCase();
+          if (nextScheduleType === 'cron' || nextScheduleType === 'time' || nextScheduleType === 'manual') {
+            setScheduleType(nextScheduleType);
+          }
+          if (typeof schedule?.cron === 'string' && schedule.cron) {
+            setCronValue(schedule.cron);
+          }
+          if (typeof schedule?.date === 'string' && schedule.date) {
+            setScheduleDate(schedule.date);
+          }
+          if (typeof schedule?.time === 'string' && schedule.time) {
+            setTimeValue(schedule.time);
+          }
+          if (typeof schedule?.timezone === 'string' && schedule.timezone) {
+            setTimezoneValue(schedule.timezone);
+          }
+        } catch {
+          // Schedule is optional; keep default frontend state if fetch fails.
+        }
+        try {
           hydrateFormFromYaml(cfg?.config_yaml || '', p);
 
           const draft = useUIStore.getState().projectConfigDrafts?.[String(id)] || null;
@@ -552,24 +573,29 @@ export default function ProjectConfigPage() {
     navigate('/jobs');
   };
 
-  const handleScheduleSave = () => {
+  const handleScheduleSave = async () => {
     const payload = {
-      scheduleType,
+      schedule_type: scheduleType,
       cron: scheduleType === 'cron' ? cronValue : '',
-      date: scheduleType === 'time' ? scheduleDate : '',
-      time: scheduleType === 'time' ? timeValue : '',
+      date: scheduleDate || '',
+      time: timeValue || '',
       timezone: timezoneValue,
     };
 
-    console.log('Mock schedule saved:', payload);
-    setSaveInfo(
-      scheduleType === 'manual'
-        ? 'Schedule saved in manual mode. Trigger remains on-demand.'
-        : scheduleType === 'cron'
-          ? `Mock schedule saved with cron "${cronValue}" (${timezoneValue}).`
-          : `Mock schedule saved for ${scheduleDate || 'selected date'} at ${timeValue} (${timezoneValue}).`
-    );
-    setSchedulerOpen(false);
+    try {
+      const response = await api.saveProjectSchedule(id, payload);
+      setSaveInfo(
+        scheduleType === 'manual'
+          ? (response?.message || 'Schedule cleared. Trigger remains on-demand.')
+          : scheduleType === 'cron'
+            ? `Schedule saved with cron "${cronValue}" (${timezoneValue}).`
+            : `Schedule saved for ${scheduleDate || 'selected date'} at ${timeValue} (${timezoneValue}).`
+      );
+      setSchedulerOpen(false);
+    } catch (err) {
+      setSaveInfo(`Failed to save schedule: ${err?.message || 'Unknown error'}`);
+      addLog('error', 'Scheduler', `Schedule save failed: ${err?.message || 'Unknown error'}`);
+    }
   };
 
   const scheduleTimingLabel = scheduleType === 'manual'

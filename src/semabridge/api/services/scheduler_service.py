@@ -1,0 +1,199 @@
+from __future__ import annotations
+
+import logging
+from datetime import datetime
+from threading import RLock
+from typing import Any, Awaitable, Callable, Dict, Optional
+from zoneinfo import ZoneInfo
+
+try:
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from apscheduler.triggers.cron import CronTrigger
+    from apscheduler.triggers.date import DateTrigger
+    _APSCHEDULER_IMPORT_ERROR = None
+except ModuleNotFoundError as exc:
+    AsyncIOScheduler = None  # type: ignore[assignment]
+    CronTrigger = None  # type: ignore[assignment]
+    DateTrigger = None  # type: ignore[assignment]
+    _APSCHEDULER_IMPORT_ERROR = exc
+
+logger = logging.getLogger("semabridge.api.scheduler")
+
+ProjectRunCallback = Callable[[str, str], Awaitable[Dict[str, Any]]]
+ScheduleClearedCallback = Callable[[str], None]
+
+
+class SchedulerService:
+    """In-memory project scheduler built on top of APScheduler."""
+
+    def __init__(self) -> None:
+        self._available = AsyncIOScheduler is not None
+        self._scheduler = AsyncIOScheduler(timezone="UTC") if AsyncIOScheduler is not None else None
+        self._run_project_callback: Optional[ProjectRunCallback] = None
+        self._schedule_cleared_callback: Optional[ScheduleClearedCallback] = None
+        self._schedules: Dict[str, Dict[str, Any]] = {}
+        self._lock = RLock()
+
+    def start(self) -> None:
+        if not self._available or self._scheduler is None:
+            logger.warning("Project scheduler disabled because APScheduler is not installed")
+            return
+        if self._scheduler.running:
+            return
+        self._scheduler.start()
+        logger.info("Project scheduler started")
+
+    def shutdown(self) -> None:
+        if not self._available or self._scheduler is None:
+            return
+        if not self._scheduler.running:
+            return
+        self._scheduler.shutdown(wait=False)
+        logger.info("Project scheduler stopped")
+
+    def configure(
+        self,
+        run_project_callback: ProjectRunCallback,
+        schedule_cleared_callback: Optional[ScheduleClearedCallback] = None,
+    ) -> None:
+        self._run_project_callback = run_project_callback
+        self._schedule_cleared_callback = schedule_cleared_callback
+
+    def get_project_schedule(self, project_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            schedule = self._schedules.get(str(project_id))
+            if not schedule:
+                return None
+            return self._with_live_next_run(dict(schedule))
+
+    def list_schedules(self) -> list[Dict[str, Any]]:
+        with self._lock:
+            return [self._with_live_next_run(dict(item)) for item in self._schedules.values()]
+
+    def delete_project_schedule(self, project_id: str) -> Optional[Dict[str, Any]]:
+        job_id = self._job_id(project_id)
+        with self._lock:
+            removed = self._schedules.pop(str(project_id), None)
+        if self._scheduler is not None and self._scheduler.get_job(job_id):
+            self._scheduler.remove_job(job_id)
+        if removed and self._schedule_cleared_callback:
+            self._schedule_cleared_callback(str(project_id))
+        return dict(removed) if removed else None
+
+    def save_project_schedule(self, project_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._available or self._scheduler is None or CronTrigger is None or DateTrigger is None:
+            raise ValueError(
+                "Scheduler backend is unavailable because APScheduler is not installed. "
+                "Install apscheduler>=3.10.4 and restart the API."
+            )
+
+        project_id = str(project_id)
+        schedule_type = str((payload or {}).get("schedule_type") or "").strip().lower() or "manual"
+        timezone_name = str((payload or {}).get("timezone") or "UTC").strip() or "UTC"
+        cron = str((payload or {}).get("cron") or "").strip()
+        date_value = str((payload or {}).get("date") or "").strip()
+        time_value = str((payload or {}).get("time") or "").strip()
+        enabled = bool((payload or {}).get("enabled", True))
+        timezone = self._parse_timezone(timezone_name)
+
+        if schedule_type == "manual":
+            self.delete_project_schedule(project_id)
+            return {
+                "project_id": project_id,
+                "schedule_type": "manual",
+                "enabled": False,
+                "message": "Manual trigger selected. No background schedule is active.",
+            }
+
+        job_id = self._job_id(project_id)
+        trigger: Any
+        next_run_at: Optional[datetime] = None
+
+        if schedule_type == "cron":
+            if not cron:
+                raise ValueError("Cron expression is required.")
+            try:
+                trigger = CronTrigger.from_crontab(cron, timezone=timezone)
+            except ValueError as exc:
+                raise ValueError(f"Invalid cron expression: {exc}") from exc
+            next_run_at = trigger.get_next_fire_time(None, datetime.now(timezone))
+        elif schedule_type == "time":
+            if not date_value or not time_value:
+                raise ValueError("Schedule date and time are required.")
+            run_date = self._parse_run_date(date_value, time_value, timezone)
+            if run_date <= datetime.now(timezone):
+                raise ValueError("Scheduled time must be in the future.")
+            trigger = DateTrigger(run_date=run_date, timezone=timezone)
+            next_run_at = run_date
+        else:
+            raise ValueError("Unsupported schedule type. Use manual, cron, or time.")
+
+        job = self._scheduler.add_job(
+            self._run_scheduled_project,
+            trigger=trigger,
+            id=job_id,
+            replace_existing=True,
+            kwargs={
+                "project_id": project_id,
+                "schedule_type": schedule_type,
+            },
+        )
+
+        schedule = {
+            "id": job.id,
+            "project_id": project_id,
+            "schedule_type": schedule_type,
+            "cron": cron if schedule_type == "cron" else "",
+            "date": date_value if schedule_type == "time" else "",
+            "time": time_value if schedule_type == "time" else "",
+            "timezone": timezone_name,
+            "enabled": enabled,
+            "next_run_at": next_run_at.isoformat() if next_run_at else None,
+            "created_at": datetime.utcnow().isoformat(),
+        }
+
+        with self._lock:
+            self._schedules[project_id] = schedule
+
+        return dict(schedule)
+
+    async def _run_scheduled_project(self, project_id: str, schedule_type: str) -> None:
+        if not self._run_project_callback:
+            logger.warning("Scheduled run skipped because no run callback is configured")
+            return
+
+        schedule_label = "Scheduled" if schedule_type == "time" else "Cron"
+        try:
+            await self._run_project_callback(project_id, schedule_label)
+        finally:
+            if schedule_type == "time":
+                self.delete_project_schedule(project_id)
+
+    @staticmethod
+    def _job_id(project_id: str) -> str:
+        return f"project-schedule:{project_id}"
+
+    @staticmethod
+    def _parse_timezone(timezone_name: str) -> ZoneInfo:
+        try:
+            return ZoneInfo(timezone_name)
+        except Exception as exc:
+            raise ValueError(f"Unsupported timezone: {timezone_name}") from exc
+
+    @staticmethod
+    def _parse_run_date(date_value: str, time_value: str, timezone: ZoneInfo) -> datetime:
+        try:
+            return datetime.fromisoformat(f"{date_value}T{time_value}:00").replace(tzinfo=timezone)
+        except ValueError as exc:
+            raise ValueError("Invalid schedule date or time.") from exc
+
+    def _with_live_next_run(self, schedule: Dict[str, Any]) -> Dict[str, Any]:
+        project_id = str(schedule.get("project_id") or "")
+        if not project_id or self._scheduler is None:
+            return schedule
+        job = self._scheduler.get_job(self._job_id(project_id))
+        if job and getattr(job, "next_run_time", None):
+            schedule["next_run_at"] = job.next_run_time.isoformat()
+        elif schedule.get("schedule_type") == "time":
+            schedule["next_run_at"] = None
+        return schedule

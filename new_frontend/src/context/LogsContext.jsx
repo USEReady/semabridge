@@ -2,7 +2,22 @@ import { createContext, useContext, useState, useCallback, useEffect, useRef } f
 
 const LogsContext = createContext(null);
 
-const WS_URL = 'ws://127.0.0.1:8000/ws/alerts';
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
+const WS_URL = (() => {
+    const explicit = import.meta.env.VITE_WS_ALERTS_URL;
+    if (explicit) return explicit;
+
+    if (/^https?:\/\//.test(API_BASE_URL)) {
+        return `${API_BASE_URL.replace(/^http/, 'ws').replace(/\/api$/, '')}/ws/alerts`;
+    }
+
+    if (import.meta.env.DEV) {
+        return 'ws://127.0.0.1:8001/ws/alerts';
+    }
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.host}/ws/alerts`;
+})();
 const RECONNECT_STEPS_MS = [5000, 10000, 30000];
 const TOAST_DURATION_MS = 6000;
 
