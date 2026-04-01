@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Save, Play, CalendarClock, Settings2, FileCode2, SlidersHorizontal, Loader2, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, Save, Play, CalendarClock, CalendarDays, Settings2, FileCode2, SlidersHorizontal, Loader2, CheckCircle2 } from 'lucide-react';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import CodeMirror from '@uiw/react-codemirror';
 import { yaml as yamlLang } from '@codemirror/lang-yaml';
@@ -34,9 +34,11 @@ export default function ProjectConfigPage() {
     const [schedulerOpen, setSchedulerOpen] = useState(false);
     const [scheduleType, setScheduleType] = useState('manual');
     const [cronValue, setCronValue] = useState('0 0 * * *');
-    const [scheduleDate, setScheduleDate] = useState('');
+    const [scheduleDate, setScheduleDate] = useState(() => new Date().toISOString().slice(0, 10));
     const [timeValue, setTimeValue] = useState('12:00');
     const [timezoneValue, setTimezoneValue] = useState('UTC');
+  const scheduleDateInputRef = useRef(null);
+  const scheduleTimeInputRef = useRef(null);
   const navigate = useNavigate();
   const { id } = useParams();
   const [searchParams] = useSearchParams();
@@ -570,6 +572,18 @@ export default function ProjectConfigPage() {
     setSchedulerOpen(false);
   };
 
+  const scheduleTimingLabel = scheduleType === 'manual'
+    ? 'Optional Planned Time'
+    : scheduleType === 'cron'
+      ? 'Default Run Time'
+      : 'Schedule Time';
+
+  const scheduleTimingHelper = scheduleType === 'manual'
+    ? 'Optionally choose a date and time for planning purposes in this frontend mock.'
+    : scheduleType === 'cron'
+      ? 'Choose the preferred time window that goes with your cron schedule.'
+      : 'Choose the exact date and time for the scheduled run.';
+
   const handleViewModeChange = (nextMode) => {
     if (nextMode === viewMode) return;
 
@@ -766,8 +780,8 @@ export default function ProjectConfigPage() {
               />
               <ScheduleOptionCard
                 active={scheduleType === 'time'}
-                title="Time Picker"
-                description="Choose a date, time, and timezone."
+                title="Schedule Regularly"
+                description="Pick a calendar date, time, and timezone."
                 onClick={() => setScheduleType('time')}
               />
             </div>
@@ -795,18 +809,103 @@ export default function ProjectConfigPage() {
               <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>e.g. 0 0 * * * (every day at midnight)</div>
             </div>
           )}
-          {scheduleType === 'time' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {scheduleType === 'time' && (
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', padding: 12, borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
+                Schedule regularly using the calendar below. This is frontend-only for now and does not create a backend scheduler yet.
+              </div>
+            )}
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
-                <label style={{ fontWeight: 500, fontSize: 12, display: 'block', marginBottom: 6 }}>Pick Date</label>
-                <input type="date" value={scheduleDate} onChange={e => setScheduleDate(e.target.value)} style={modalInputStyle} />
+                <label style={{ fontWeight: 500, fontSize: 12, display: 'block', marginBottom: 6 }}>Schedule Date</label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    ref={scheduleDateInputRef}
+                    type="date"
+                    value={scheduleDate}
+                    min={new Date().toISOString().slice(0, 10)}
+                    onChange={e => setScheduleDate(e.target.value)}
+                    style={{ ...modalInputStyle, paddingRight: 42 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (scheduleDateInputRef.current?.showPicker) {
+                        scheduleDateInputRef.current.showPicker();
+                      } else {
+                        scheduleDateInputRef.current?.focus();
+                      }
+                    }}
+                    style={{
+                      position: 'absolute',
+                      right: 8,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      border: 'none',
+                      background: 'transparent',
+                      color: 'var(--text-secondary)',
+                      cursor: 'pointer',
+                      padding: 4,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    aria-label="Open calendar"
+                    title="Open calendar"
+                  >
+                    <CalendarDays size={16} />
+                  </button>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                  Click the calendar icon to pick a date.
+                </div>
               </div>
               <div>
-                <label style={{ fontWeight: 500, fontSize: 12, display: 'block', marginBottom: 6 }}>Pick Time</label>
-                <input type="time" value={timeValue} onChange={e => setTimeValue(e.target.value)} style={modalInputStyle} />
+                <label style={{ fontWeight: 500, fontSize: 12, display: 'block', marginBottom: 6 }}>{scheduleTimingLabel}</label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    ref={scheduleTimeInputRef}
+                    type="time"
+                    value={timeValue}
+                    onChange={e => setTimeValue(e.target.value)}
+                    style={{ ...modalInputStyle, paddingRight: 42 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (scheduleTimeInputRef.current?.showPicker) {
+                        scheduleTimeInputRef.current.showPicker();
+                      } else {
+                        scheduleTimeInputRef.current?.focus();
+                      }
+                    }}
+                    style={{
+                      position: 'absolute',
+                      right: 8,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      border: 'none',
+                      background: 'transparent',
+                      color: 'var(--text-secondary)',
+                      cursor: 'pointer',
+                      padding: 4,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    aria-label="Open time picker"
+                    title="Open time picker"
+                  >
+                    <CalendarClock size={16} />
+                  </button>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                  {scheduleTimingHelper}
+                </div>
               </div>
             </div>
-          )}
+          </div>
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 24 }}>
           <button onClick={() => setSchedulerOpen(false)} style={secondaryBtn}>Cancel</button>
