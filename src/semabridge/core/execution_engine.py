@@ -27,6 +27,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, Literal, Optional
 import yaml
 from pydantic import Field
@@ -393,6 +394,36 @@ class ExecutionEngine:
         try:
             # Load settings (from .env by default)
             config = get_settings()
+
+            if config_path and Path(config_path).exists():
+                try:
+                    raw_config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
+                except Exception as raw_exc:
+                    logger.warning("Could not parse config at %s for project-scoped settings: %s", config_path, raw_exc)
+                    raw_config = {}
+
+                source_cfg = raw_config.get("source") if isinstance(raw_config.get("source"), dict) else {}
+                target_cfg: dict[str, Any] = {}
+                raw_target = raw_config.get("target")
+                if isinstance(raw_target, dict):
+                    target_cfg = raw_target
+                elif not raw_target:
+                    targets_cfg = raw_config.get("targets")
+                    if isinstance(targets_cfg, list) and targets_cfg and isinstance(targets_cfg[0], dict):
+                        target_cfg = targets_cfg[0]
+
+                if source_cfg:
+                    object.__setattr__(config, "source", SimpleNamespace(**source_cfg))
+                    if source == "fabric":
+                        source_workspace_id = str(source_cfg.get("workspace_id") or "").strip()
+                        if source_workspace_id:
+                            config.fabric.workspace_id = source_workspace_id
+                if target_cfg:
+                    object.__setattr__(config, "target", SimpleNamespace(**target_cfg))
+                    if target == "fabric":
+                        target_workspace_id = str(target_cfg.get("workspace_id") or "").strip()
+                        if target_workspace_id:
+                            config.fabric.workspace_id = target_workspace_id
             
             # Validate connector types
             if source not in self.SUPPORTED_SOURCES:
@@ -563,9 +594,13 @@ class ExecutionEngine:
                 auth_sources.append("OFFLINE")
             else:
                 fabric_env_ok = config.validate_fabric()
+                identity_id = str(getattr(getattr(config, "source", None), "identity_id", "") or "").strip()
+                fabric_identity_ok = self._has_fabric_identity_auth(identity_id)
                 fabric_ui_ok = self._has_fabric_interactive_auth()
-                if not (fabric_env_ok or fabric_ui_ok):
+                if not (fabric_env_ok or fabric_identity_ok or fabric_ui_ok):
                     missing.append("Fabric credentials (FABRIC_*)")
+                elif fabric_identity_ok:
+                    auth_sources.append("DB identity")
                 elif fabric_ui_ok:
                     auth_sources.append("UI token")
                 else:
@@ -580,9 +615,13 @@ class ExecutionEngine:
                 missing.append("Snowflake credentials (SNOWFLAKE_*)")
         elif context.target_type == "fabric":
             fabric_env_ok = config.validate_fabric()
+            identity_id = str(getattr(getattr(config, "target", None), "identity_id", "") or "").strip()
+            fabric_identity_ok = self._has_fabric_identity_auth(identity_id)
             fabric_ui_ok = self._has_fabric_interactive_auth()
-            if not (fabric_env_ok or fabric_ui_ok):
+            if not (fabric_env_ok or fabric_identity_ok or fabric_ui_ok):
                 missing.append("Fabric credentials (FABRIC_*)")
+            elif fabric_identity_ok:
+                auth_sources.append("DB identity")
             elif fabric_ui_ok:
                 auth_sources.append("UI token")
             else:
@@ -611,6 +650,19 @@ class ExecutionEngine:
             return cm.get_fabric_auth_method() == "interactive" and cm.has_valid_token()
         except Exception as exc:
             logger.warning("_has_fabric_interactive_auth: credential lookup failed: %s", exc)
+            return False
+
+    def _has_fabric_identity_auth(self, identity_id: str) -> bool:
+        """Return True when a selected Fabric identity is resolvable from the DB."""
+        if not identity_id:
+            return False
+        try:
+            from semabridge.api.main import _resolve_fabric_access_token
+
+            token = _resolve_fabric_access_token(None, identity_id)
+            return bool(token)
+        except Exception as exc:
+            logger.warning("_has_fabric_identity_auth: identity lookup failed for %s: %s", identity_id, exc)
             return False
     
     # =========================================================================
@@ -904,9 +956,11 @@ class ExecutionEngine:
         from semabridge.connectors.fabric_extractor import FabricExtractor
         
         config = context.config
+        source_config = getattr(config, "source", None)
         ws_id = workspace_id or config.fabric.workspace_id
         interactive_token: Optional[str] = None
         stored_workspace_id: str = ""
+        identity_id: str = str(getattr(source_config, "identity_id", "") or "").strip()
 
         if context.behavior.features.offline_mode:
             offline_path = Path(context.behavior.features.offline_fabric_model_path)
@@ -949,13 +1003,28 @@ class ExecutionEngine:
             cm = CredentialManager()
             stored_fabric = cm.get_credentials("fabric", mask_secrets=False)
             stored_workspace_id = (stored_fabric.get("workspace_id") or "").strip()
-            if not workspace_id and stored_workspace_id:
+            configured_workspace_id = str(getattr(config.fabric, "workspace_id", "") or "").strip()
+            if not workspace_id and not configured_workspace_id and stored_workspace_id:
                 ws_id = stored_workspace_id
 
-            token_data = cm.get_msal_token()
-            if cm.get_fabric_auth_method() == "interactive" and cm.has_valid_token() and token_data:
-                interactive_token = token_data.get("access_token")
-                logger.debug("_extract_fabric: injecting interactive token from credential store")
+            if identity_id:
+                try:
+                    from semabridge.api.main import _resolve_fabric_access_token
+
+                    interactive_token = _resolve_fabric_access_token(None, identity_id)
+                    logger.debug("_extract_fabric: injecting identity-scoped interactive token for %s", identity_id)
+                except Exception as identity_exc:
+                    logger.warning(
+                        "_extract_fabric: failed to resolve token for identity %s; falling back to default interactive token: %s",
+                        identity_id,
+                        identity_exc,
+                    )
+
+            if not interactive_token:
+                token_data = cm.get_msal_token()
+                if cm.get_fabric_auth_method() == "interactive" and cm.has_valid_token() and token_data:
+                    interactive_token = token_data.get("access_token")
+                    logger.debug("_extract_fabric: injecting interactive token from credential store")
         except Exception as exc:
             logger.warning("_extract_fabric: credential lookup failed, falling back to env auth: %s", exc)
         

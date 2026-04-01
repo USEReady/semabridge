@@ -78,6 +78,8 @@ export default function CreateProjectPage() {
   const [tagInput, setTagInput] = useState('');
 
   // Step 2
+  const [fabricAccountId, setFabricAccountId] = useState('');
+  const [fabricAccounts, setFabricAccounts] = useState([]);
   const [fabricWorkspaceId, setFabricWorkspaceId] = useState('');
   const [snowflakeDatabase, setSnowflakeDatabase] = useState('');
   const [snowflakeSchema, setSnowflakeSchema] = useState('');
@@ -109,6 +111,7 @@ export default function CreateProjectPage() {
   const [databricksLoading, setDatabricksLoading] = useState(false);
   const [selectedDatabricksTables, setSelectedDatabricksTables] = useState(new Set());
   const [databricksQuery, setDatabricksQuery] = useState('');
+  const [databricksQueryRegex, setDatabricksQueryRegex] = useState(false);
   // Fetch Databricks sources when selected in Step 3
   useEffect(() => {
     if (step !== 3 || sourceConnector !== 'databricks') return;
@@ -138,7 +141,29 @@ export default function CreateProjectPage() {
     allModels, ['name', 'description', 'wsid'], { idField: '_id' }
   );
 
-  const selectedWorkspace = availableWorkspaces.find(ws => ws.id === fabricWorkspaceId)
+  const liveFabricWorkspaces = useMemo(() => {
+    const merged = [...allWorkspacesFromApi, ...availableWorkspaces]
+      .filter(Boolean)
+      .map((ws) => ({
+        ...ws,
+        id: ws?.id || ws?.workspace_id || '',
+        name: ws?.name || ws?.displayName || ws?.workspace_id || ws?.id || '',
+      }))
+      .filter((ws) => ws.id);
+
+    const deduped = [];
+    const seen = new Set();
+    for (const ws of merged) {
+      if (seen.has(ws.id)) continue;
+      seen.add(ws.id);
+      deduped.push(ws);
+    }
+    return deduped;
+  }, [availableWorkspaces, allWorkspacesFromApi]);
+
+  const selectedWorkspace = liveFabricWorkspaces.find(ws => ws.id === fabricWorkspaceId)
+    ?? availableWorkspaces.find(ws => ws.id === fabricWorkspaceId)
+    ?? allWorkspacesFromApi.find(ws => ws.id === fabricWorkspaceId)
     ?? availableWorkspaces.find(ws => ws.id === activeWorkspaceId)
     ?? activeWorkspace
     ?? null;
@@ -149,59 +174,101 @@ export default function CreateProjectPage() {
 
   const [isRefreshingWorkspaces, setIsRefreshingWorkspaces] = useState(false);
 
-  const fetchFabricWorkspaces = useCallback(async () => {
+  const fetchFabricWorkspaces = useCallback(async (accountId = fabricAccountId) => {
     setIsRefreshingWorkspaces(true);
     try {
-      const data = await api.getFabricDefaultWorkspace();
-      console.log('[SemaBridge] getFabricDefaultWorkspace raw response:', data);
-      if (data?.workspace_id) {
-        setGlobalDefaultWorkspaceId(data.workspace_id);
-        setGlobalDefaultWorkspaceName(data.workspace_name || '');
-        setSessionWorkspaceId(data.workspace_id);
+      const [defaultResp, listRespByIdentity, listRespByBearer] = await Promise.allSettled([
+        api.getFabricDefaultWorkspace(accountId),
+        api.fabricListWorkspaces(accountId),
+        api.fabricListWorkspaces(),
+      ]);
+
+      const defaultData = defaultResp.status === 'fulfilled' ? defaultResp.value : null;
+      const listDataByIdentity = listRespByIdentity.status === 'fulfilled' ? listRespByIdentity.value : null;
+      const listDataByBearer = listRespByBearer.status === 'fulfilled' ? listRespByBearer.value : null;
+
+      console.log('[SemaBridge] getFabricDefaultWorkspace raw response:', defaultData);
+      console.log('[SemaBridge] fabricListWorkspaces(identity) raw response:', listDataByIdentity);
+      console.log('[SemaBridge] fabricListWorkspaces(bearer) raw response:', listDataByBearer);
+
+      if (defaultData?.workspace_id) {
+        setGlobalDefaultWorkspaceId(defaultData.workspace_id);
+        setGlobalDefaultWorkspaceName(defaultData.workspace_name || '');
+        setSessionWorkspaceId(defaultData.workspace_id);
       }
-      const apiWorkspaces = (data?.all_workspaces || []).map(ws => ({
-        id: ws.id,
-        name: ws.name,
-        displayName: ws.name,
+
+      const discovered = [
+        ...(Array.isArray(listDataByIdentity?.workspaces) ? listDataByIdentity.workspaces : []),
+        ...(Array.isArray(listDataByBearer?.workspaces) ? listDataByBearer.workspaces : []),
+        ...(defaultData?.all_workspaces || []),
+      ];
+
+      const apiWorkspaces = discovered.map(ws => ({
+        id: ws.id || ws.workspace_id,
+        name: ws.name || ws.displayName || ws.workspace_name || ws.id || ws.workspace_id,
+        displayName: ws.name || ws.displayName || ws.workspace_name,
         type: ws.type,
-      }));
-      console.log('[SemaBridge] Resolved workspace list:', apiWorkspaces);
-      if (apiWorkspaces.length > 0) {
-        setAllWorkspacesFromApi(apiWorkspaces);
-        // Purge stale localStorage key if the stored ID is no longer in the live list
-        const storedId = localStorage.getItem('semabridge_workspace_id');
-        if (storedId && !apiWorkspaces.some(w => w.id === storedId)) {
-          console.warn('[SemaBridge] Purging stale workspace from localStorage:', storedId);
-          localStorage.removeItem('semabridge_workspace_id');
-        }
+      })).filter(ws => ws.id);
+
+      const deduped = [];
+      const seen = new Set();
+      for (const ws of apiWorkspaces) {
+        if (seen.has(ws.id)) continue;
+        seen.add(ws.id);
+        deduped.push(ws);
+      }
+
+      console.log('[SemaBridge] Resolved workspace list:', deduped);
+      if (deduped.length > 0) {
+        setAllWorkspacesFromApi(deduped);
+      } else {
+        setAllWorkspacesFromApi([]);
       }
     } catch {
-      // silently ignore
+      setAllWorkspacesFromApi([]);
     } finally {
       setIsRefreshingWorkspaces(false);
     }
-  }, []);
+  }, [fabricAccountId]);
 
-  // Fetch the global default workspace once on mount.
+  // Fetch Fabric accounts when step 2 opens
   useEffect(() => {
-    fetchFabricWorkspaces();
-  }, [fetchFabricWorkspaces]);
-
-  // Re-fetch workspaces whenever entering Step 2
-  useEffect(() => {
-    if (step === 2 && sourceConnector === 'fabric') {
-      fetchFabricWorkspaces();
+    const needsFabricWorkspaceConfig = sourceConnector === 'fabric' || targetConnectors.has('fabric');
+    if (step === 2 && needsFabricWorkspaceConfig) {
+      const fetchAccounts = async () => {
+        try {
+          const res = await api.getAccounts('FABRIC');
+          const list = Array.isArray(res) ? res : (res?.accounts || []);
+          setFabricAccounts(list);
+          // Find default account if present
+          const defaultAccount = list.find(acc => acc.is_default);
+          if (list.length > 0 && !fabricAccountId) {
+            if (defaultAccount) {
+              setFabricAccountId(defaultAccount.id);
+              fetchFabricWorkspaces(defaultAccount.id);
+            } else {
+              setFabricAccountId(list[0].id);
+              fetchFabricWorkspaces(list[0].id);
+            }
+          } else if (fabricAccountId) {
+            fetchFabricWorkspaces(fabricAccountId);
+          }
+        } catch (e) {
+          console.warn("[SemaBridge] Failed to fetch Fabric Accounts", e);
+        }
+      };
+      fetchAccounts();
     }
-  }, [step, sourceConnector, fetchFabricWorkspaces]);
+  }, [step, sourceConnector, targetConnectors]); // deliberately omitting fabricAccountId/fetchFabricWorkspaces to prevent reload loops
 
   // Auto-populate the workspace dropdown on step 2 when Fabric is the source.
   // Priority: manual override > active session exact match > 'semabridge' name > global default > generic fallback.
   useEffect(() => {
-    if (sourceConnector !== 'fabric') return;
+    const needsFabricWorkspaceConfig = sourceConnector === 'fabric' || targetConnectors.has('fabric');
+    if (!needsFabricWorkspaceConfig) return;
     if (workspaceManuallySet) return; // user made an explicit choice — never reset
 
-    // Combine both lists; prioritize availableWorkspaces (richer metadata)
-    const liveList = availableWorkspaces.length > 0 ? availableWorkspaces : allWorkspacesFromApi;
+    const liveList = liveFabricWorkspaces;
 
     // Don't run if we have no live data yet
     if (liveList.length === 0) return;
@@ -234,7 +301,7 @@ export default function CreateProjectPage() {
       console.log('[SemaBridge] Auto-selecting workspace:', preferred);
       setFabricWorkspaceId(preferred);
     }
-  }, [sourceConnector, fabricWorkspaceId, workspaceManuallySet, sessionWorkspaceId,
+  }, [sourceConnector, targetConnectors, fabricWorkspaceId, workspaceManuallySet, sessionWorkspaceId,
       globalDefaultWorkspaceName, globalDefaultWorkspaceId, availableWorkspaces, allWorkspacesFromApi]);
 
   // Ghost-purge: if the current selection no longer exists in the live list, force-clear it
@@ -242,7 +309,7 @@ export default function CreateProjectPage() {
   // This eliminates the "Primary Workspace" zombie that was persisted in localStorage.
   useEffect(() => {
     if (!fabricWorkspaceId) return;
-    const liveList = availableWorkspaces.length > 0 ? availableWorkspaces : allWorkspacesFromApi;
+    const liveList = liveFabricWorkspaces;
     if (liveList.length === 0) return; // don't clear before we have data
     const stillExists = liveList.some(ws => ws.id === fabricWorkspaceId);
     if (!stillExists) {
@@ -276,7 +343,7 @@ export default function CreateProjectPage() {
   // Defensive: auto-select first available workspace if missing after loading
   useEffect(() => {
     if (step === 3 && sourceConnector === 'fabric' && !fabricWorkspaceId && !wsLoading) {
-      const liveList = availableWorkspaces.length > 0 ? availableWorkspaces : allWorkspacesFromApi;
+      const liveList = liveFabricWorkspaces;
       if (liveList.length > 0) {
         setFabricWorkspaceId(liveList[0].id);
       }
@@ -298,10 +365,12 @@ export default function CreateProjectPage() {
       setExpandedWs(prev => ({ ...prev, [fabricWorkspaceId]: true }));
       setWsLoading(true);
       console.log('[SemaBridge] Discovering Fabric models for workspaceId:', fabricWorkspaceId);
-      api.discoverFabricModels(fabricWorkspaceId)
+      api.discoverFabricModels(fabricWorkspaceId, fabricAccountId)
         .then(data => {
           if (!Array.isArray(data) || data.length === 0) {
             setRunWarning('No semantic models found for this workspace. Check Fabric permissions or workspace contents.');
+          } else {
+            setRunWarning('');
           }
           setWsModels({ [fabricWorkspaceId]: data ?? [] });
           setWsLoading(false); // Set loading to false immediately after 200 OK
@@ -338,17 +407,17 @@ export default function CreateProjectPage() {
     }
 
     setWorkspaces([]);
-  }, [step, sourceConnector, fabricWorkspaceId, selectedWorkspace, availableWorkspaces, allWorkspacesFromApi]);
+  }, [step, sourceConnector, fabricWorkspaceId, fabricAccountId, selectedWorkspace, liveFabricWorkspaces]);
 
   const loadWsModels = useCallback(async (wsid) => {
     if (wsModels[wsid]) return;
     try {
-      const models = await api.discoverFabricModels(wsid);
+      const models = await api.discoverFabricModels(wsid, fabricAccountId);
       setWsModels(prev => ({ ...prev, [wsid]: models ?? [] }));
     } catch {
       setWsModels(prev => ({ ...prev, [wsid]: [] }));
     }
-  }, [wsModels]);
+  }, [wsModels, fabricAccountId]);
 
   const toggleWorkspace = (wsid) => {
     const next = { ...expandedWs, [wsid]: !expandedWs[wsid] };
@@ -491,6 +560,7 @@ export default function CreateProjectPage() {
     const source = { type: sourceConnector };
 
     if (sourceConnector === 'fabric') {
+      if (fabricAccountId) source.identity_id = fabricAccountId;
       if (fabricWorkspaceId) source.workspace_id = fabricWorkspaceId;
       if (selectedWorkspace?.name) source.workspace = selectedWorkspace.name;
       if (selectedModelNames.length > 0) {
@@ -522,6 +592,12 @@ export default function CreateProjectPage() {
         if (targetSchema.trim()) target.schema = targetSchema.trim();
       }
 
+      if (connector === 'fabric') {
+        if (fabricAccountId) target.identity_id = fabricAccountId;
+        if (fabricWorkspaceId) target.workspace_id = fabricWorkspaceId;
+        if (selectedWorkspace?.name) target.workspace = selectedWorkspace.name;
+      }
+
       return target;
     });
   };
@@ -534,6 +610,7 @@ export default function CreateProjectPage() {
 
     lines.push('source:');
     lines.push(`  type: ${source.type}`);
+    if (source.identity_id) lines.push(`  identity_id: "${escapeYamlString(source.identity_id)}"`);
     if (source.workspace_id) lines.push(`  workspace_id: "${escapeYamlString(source.workspace_id)}"`);
     if (source.workspace) lines.push(`  workspace: "${escapeYamlString(source.workspace)}"`);
     if (source.database) lines.push(`  database: "${escapeYamlString(source.database)}"`);
@@ -550,6 +627,9 @@ export default function CreateProjectPage() {
       lines.push(`  - type: ${target.type}`);
       if (target.database) lines.push(`    database: "${escapeYamlString(target.database)}"`);
       if (target.schema) lines.push(`    schema: "${escapeYamlString(target.schema)}"`);
+      if (target.identity_id) lines.push(`    identity_id: "${escapeYamlString(target.identity_id)}"`);
+      if (target.workspace_id) lines.push(`    workspace_id: "${escapeYamlString(target.workspace_id)}"`);
+      if (target.workspace) lines.push(`    workspace: "${escapeYamlString(target.workspace)}"`);
     });
 
     // Add mappings section
@@ -770,13 +850,17 @@ export default function CreateProjectPage() {
           <StepConnectorConfig
             sourceConnector={sourceConnector}
             targetConnectors={targetConnectors}
-            fabricWorkspaceId={fabricWorkspaceId} setFabricWorkspaceId={setFabricWorkspaceId}
+            fabricAccountId={fabricAccountId}
+            setFabricAccountId={setFabricAccountId}
+            fabricAccounts={fabricAccounts}
+            fabricWorkspaceId={fabricWorkspaceId}
+            setFabricWorkspaceId={setFabricWorkspaceId}
             snowflakeDatabase={snowflakeDatabase} setSnowflakeDatabase={setSnowflakeDatabase}
             snowflakeSchema={snowflakeSchema} setSnowflakeSchema={setSnowflakeSchema}
             targetDatabase={targetDatabase} setTargetDatabase={setTargetDatabase}
             targetSchema={targetSchema} setTargetSchema={setTargetSchema}
             domainHint={domainHint} setDomainHint={setDomainHint}
-            workspaces={availableWorkspaces.length > 0 ? availableWorkspaces : allWorkspacesFromApi}
+            workspaces={liveFabricWorkspaces}
             workspacesLoading={workspacesLoading}
             globalDefaultWorkspaceId={globalDefaultWorkspaceId}
             globalDefaultWorkspaceName={globalDefaultWorkspaceName}
@@ -788,7 +872,7 @@ export default function CreateProjectPage() {
               setFabricWorkspaceId(id);
             }}
             isRefreshingWorkspaces={isRefreshingWorkspaces}
-            fetchFabricWorkspaces={fetchFabricWorkspaces}
+            fetchFabricWorkspaces={() => fetchFabricWorkspaces(fabricAccountId)}
             runWarning={runWarning}
           />
         )}
@@ -806,6 +890,14 @@ export default function CreateProjectPage() {
             setModelQueryRegex={setModelQueryRegex}
             modelResults={modelResultsByConnector.fabric}
             snowflakeResults={modelResultsByConnector.snowflake}
+            databricksQuery={databricksQuery}
+            setDatabricksQuery={setDatabricksQuery}
+            databricksQueryRegex={databricksQueryRegex}
+            setDatabricksQueryRegex={setDatabricksQueryRegex}
+            databricksObjects={databricksObjects}
+            databricksLoading={databricksLoading}
+            selectedDatabricksTables={selectedDatabricksTables}
+            setSelectedDatabricksTables={setSelectedDatabricksTables}
             allModels={allModels}
           />
         )}
@@ -1172,6 +1264,9 @@ function ConnectorChip({ icon, label, selected, onClick }) {
 function StepConnectorConfig({
   sourceConnector,
   targetConnectors,
+  fabricAccountId,
+  setFabricAccountId,
+  fabricAccounts,
   fabricWorkspaceId,
   setFabricWorkspaceId,
   snowflakeDatabase,
@@ -1233,71 +1328,97 @@ function StepConnectorConfig({
         </div>
 
         {sourceConnector === 'fabric' && (
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <label style={{ ...LABEL, margin: 0 }}>Fabric Workspace</label>
-              {isUsingGlobalDefault && (
-                <span style={{
-                  fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 999,
-                  background: 'var(--color-success-bg)', color: 'var(--color-success)',
-                  border: '1px solid var(--color-success)30', letterSpacing: '0.3px',
-                }}>
-                  ✓ Default
-                </span>
-              )}
-              <div style={{ flex: 1 }} />
-              <button 
-                onClick={fetchFabricWorkspaces} 
-                disabled={isRefreshingWorkspaces}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 4,
-                  background: 'none', border: 'none', cursor: isRefreshingWorkspaces ? 'not-allowed' : 'pointer',
-                  fontSize: 11, color: 'var(--text-tertiary)', padding: '2px 6px',
-                  borderRadius: 4, transition: 'all 0.2s ease',
-                  opacity: isRefreshingWorkspaces ? 0.6 : 1
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Account Selection */}
+            <div>
+              <label style={LABEL}>Fabric Account</label>
+              <select
+                value={fabricAccountId}
+                onChange={e => {
+                  setFabricAccountId(e.target.value);
+                  setFabricWorkspaceId(''); // reset workspace when account changes
+                  fetchFabricWorkspaces(e.target.value);
                 }}
-                onMouseEnter={e => { if(!isRefreshingWorkspaces) e.currentTarget.style.color = 'var(--text-primary)'; }}
-                onMouseLeave={e => { if(!isRefreshingWorkspaces) e.currentTarget.style.color = 'var(--text-tertiary)'; }}
-                title="Refresh workspaces"
+                style={INPUT}
               >
-                <RefreshCw size={12} style={{ animation: isRefreshingWorkspaces ? 'spin 1s linear infinite' : 'none' }} />
-                Refresh
-              </button>
+                {fabricAccounts.length === 0 && <option value="" disabled>No accounts available</option>}
+                {fabricAccounts.length > 0 && fabricAccounts.map(acc => (
+                  <option key={acc.id} value={acc.id}>
+                    {(acc.is_default ? 'Default' : (acc.tag || ''))} ({acc.identity_email})
+                  </option>
+                ))}
+              </select>
+              <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
+                Select an authenticated identity to use for discovery and synchronization.
+              </p>
             </div>
-            <SearchableSelect
-              items={workspaces}
-              displayKey="name"
-              valueKey="id"
-              searchFields={['name', 'id', 'workspace_id']}
-              placeholder="Choose a workspace"
-              value={fabricWorkspaceId}
-              onChange={item => {
-                const newId = item?.id || '';
-                // If the user picks a different workspace, notify the parent.
-                if (newId !== fabricWorkspaceId && onWorkspaceManualChange) {
-                  onWorkspaceManualChange(newId);
-                } else {
-                  setFabricWorkspaceId(newId);
-                }
-              }}
-              loading={workspacesLoading}
-              clearable={false}
-            />
-            <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
-              {isUsingGlobalDefault
-                ? `Pre-selected from your active Fabric session${globalDefaultWorkspaceName ? ` (${globalDefaultWorkspaceName})` : ''}. You can override it below.`
-                : 'Pick one workspace here. Step 3 will show models from this workspace only.'}
-            </p>
-            {!workspacesLoading && workspaces.length === 0 && (
-              <p style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 8 }}>
-                No Fabric workspaces were found. Check connector setup in Settings.
+
+            {/* Workspace Selection */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <label style={{ ...LABEL, margin: 0 }}>Fabric Workspace</label>
+                {isUsingGlobalDefault && (
+                  <span style={{
+                    fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 999,
+                    background: 'var(--color-success-bg)', color: 'var(--color-success)',
+                    border: '1px solid var(--color-success)30', letterSpacing: '0.3px',
+                  }}>
+                    ✓ Default
+                  </span>
+                )}
+                <div style={{ flex: 1 }} />
+                <button 
+                  onClick={() => fetchFabricWorkspaces(fabricAccountId)} 
+                  disabled={isRefreshingWorkspaces}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 4,
+                    background: 'none', border: 'none', cursor: isRefreshingWorkspaces ? 'not-allowed' : 'pointer',
+                    fontSize: 11, color: 'var(--text-tertiary)', padding: '2px 6px',
+                    borderRadius: 4, transition: 'all 0.2s ease',
+                    opacity: isRefreshingWorkspaces ? 0.6 : 1
+                  }}
+                  onMouseEnter={e => { if(!isRefreshingWorkspaces) e.currentTarget.style.color = 'var(--text-primary)'; }}
+                  onMouseLeave={e => { if(!isRefreshingWorkspaces) e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+                  title="Refresh workspaces"
+                >
+                  <RefreshCw size={12} style={{ animation: isRefreshingWorkspaces ? 'spin 1s linear infinite' : 'none' }} />
+                  Refresh
+                </button>
+              </div>
+              <SearchableSelect
+                items={workspaces}
+                displayKey="name"
+                valueKey="id"
+                searchFields={['name', 'id', 'workspace_id']}
+                placeholder={isRefreshingWorkspaces ? "Refreshing..." : "Choose a workspace"}
+                value={fabricWorkspaceId}
+                onChange={item => {
+                  const newId = item?.id || '';
+                  if (newId !== fabricWorkspaceId && onWorkspaceManualChange) {
+                    onWorkspaceManualChange(newId);
+                  } else {
+                    setFabricWorkspaceId(newId);
+                  }
+                }}
+                loading={workspacesLoading || isRefreshingWorkspaces}
+                clearable={false}
+              />
+              <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
+                {isUsingGlobalDefault
+                  ? `Pre-selected from your active Fabric session${globalDefaultWorkspaceName ? ` (${globalDefaultWorkspaceName})` : ''}. You can override it below.`
+                  : 'Pick one workspace here. Step 3 will show models from this workspace only.'}
               </p>
-            )}
-            {runWarning && (
-              <p style={{ fontSize: 12, color: 'var(--color-error)', marginTop: 8 }}>
-                {runWarning}
-              </p>
-            )}
+              {!workspacesLoading && !isRefreshingWorkspaces && workspaces.length === 0 && fabricAccountId && (
+                <p style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 8 }}>
+                  No Fabric workspaces were found for this account.
+                </p>
+              )}
+              {runWarning && (
+                <p style={{ fontSize: 12, color: 'var(--color-error)', marginTop: 8 }}>
+                  {runWarning}
+                </p>
+              )}
+            </div>
           </div>
         )}
 
@@ -1401,8 +1522,84 @@ function StepConnectorConfig({
                   )}
 
                   {target === 'fabric' && (
-                    <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
-                      Fabric target uses the existing global connector. Destination details can be refined later in project configuration.
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      <div>
+                        <label style={LABEL}>Fabric Account</label>
+                        <select
+                          value={fabricAccountId}
+                          onChange={e => {
+                            const nextAccountId = e.target.value;
+                            setFabricAccountId(nextAccountId);
+                            setFabricWorkspaceId('');
+                            fetchFabricWorkspaces(nextAccountId);
+                          }}
+                          style={INPUT}
+                        >
+                          {fabricAccounts.length === 0 && <option value="" disabled>No accounts available</option>}
+                          {fabricAccounts.length > 0 && fabricAccounts.map(acc => (
+                            <option key={acc.id} value={acc.id}>
+                              {(acc.is_default ? 'Default' : (acc.tag || ''))} ({acc.identity_email})
+                            </option>
+                          ))}
+                        </select>
+                        <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
+                          Choose the Fabric identity for target deployment.
+                        </p>
+                      </div>
+
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                          <label style={{ ...LABEL, margin: 0 }}>Target Fabric Workspace</label>
+                          {isUsingGlobalDefault && (
+                            <span style={{
+                              fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 999,
+                              background: 'var(--color-success-bg)', color: 'var(--color-success)',
+                              border: '1px solid var(--color-success)30', letterSpacing: '0.3px',
+                            }}>
+                              ✓ Default
+                            </span>
+                          )}
+                          <div style={{ flex: 1 }} />
+                          <button
+                            onClick={() => fetchFabricWorkspaces(fabricAccountId)}
+                            disabled={isRefreshingWorkspaces}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: 4,
+                              background: 'none', border: 'none', cursor: isRefreshingWorkspaces ? 'not-allowed' : 'pointer',
+                              fontSize: 11, color: 'var(--text-tertiary)', padding: '2px 6px',
+                              borderRadius: 4, transition: 'all 0.2s ease',
+                              opacity: isRefreshingWorkspaces ? 0.6 : 1
+                            }}
+                            title="Refresh workspaces"
+                          >
+                            <RefreshCw size={12} style={{ animation: isRefreshingWorkspaces ? 'spin 1s linear infinite' : 'none' }} />
+                            Refresh
+                          </button>
+                        </div>
+
+                        <SearchableSelect
+                          items={workspaces}
+                          displayKey="name"
+                          valueKey="id"
+                          searchFields={['name', 'id', 'workspace_id']}
+                          placeholder={isRefreshingWorkspaces ? 'Refreshing...' : 'Choose a target workspace'}
+                          value={fabricWorkspaceId}
+                          onChange={item => {
+                            const newId = item?.id || '';
+                            if (newId !== fabricWorkspaceId && onWorkspaceManualChange) {
+                              onWorkspaceManualChange(newId);
+                            } else {
+                              setFabricWorkspaceId(newId);
+                            }
+                          }}
+                          loading={workspacesLoading || isRefreshingWorkspaces}
+                          clearable={false}
+                        />
+
+                        <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
+                          Choose the destination Fabric workspace for this target sync.
+                        </p>
+                      </div>
                     </div>
                   )}
 
@@ -1451,6 +1648,8 @@ function StepSourceBrowser({
   setSelectedDatabricksTables = () => {},
   databricksQuery = '',
   setDatabricksQuery = () => {},
+  databricksQueryRegex = false,
+  setDatabricksQueryRegex = () => {},
 }) {
 
   if (sourceConnector === 'databricks') {
@@ -1464,7 +1663,13 @@ function StepSourceBrowser({
       }))
     );
     const filteredTables = databricksQuery
-      ? allTables.filter(t => t.table.toLowerCase().includes(databricksQuery.toLowerCase()) || t.schema.toLowerCase().includes(databricksQuery.toLowerCase()) || t.catalog.toLowerCase().includes(databricksQuery.toLowerCase()))
+      ? allTables.filter(t =>
+          matchesSmartQuery(
+            `${t.table || ''} ${t.schema || ''} ${t.catalog || ''}`,
+            databricksQuery,
+            databricksQueryRegex,
+          )
+        )
       : allTables;
 
     return (
@@ -1478,6 +1683,8 @@ function StepSourceBrowser({
         <SmartSearchBar
           value={databricksQuery}
           onChange={setDatabricksQuery}
+          useRegex={databricksQueryRegex}
+          onToggleRegex={setDatabricksQueryRegex}
           placeholder="Search Databricks tables"
         />
         {selectedDatabricksTables.size > 0 && (
@@ -1543,7 +1750,13 @@ function StepSourceBrowser({
 
     const fabricModels = wsModels[selectedWorkspace.id] || [];
     const displayModels = modelQuery
-      ? fabricModels.filter(m => (m.name || '').toLowerCase().includes(modelQuery.toLowerCase()))
+      ? fabricModels.filter(m =>
+          matchesSmartQuery(
+            `${m.name || ''} ${m.id || ''} ${m.description || ''}`,
+            modelQuery,
+            modelQueryRegex,
+          )
+        )
       : fabricModels.map(m => ({ ...m, _id: m.id }));
 
     // Show loader if loading

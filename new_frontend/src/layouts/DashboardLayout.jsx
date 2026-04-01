@@ -33,6 +33,7 @@ export default function DashboardLayout() {
   const collapsed = useUIStore(state => state.sidebarCollapsed);
   const setSidebarCollapsed = useUIStore(state => state.setSidebarCollapsed);
   const [search, setSearch] = useState('');
+  const [searchUseRegex, setSearchUseRegex] = useState(false);
 
   // Overlay panel toggles
   const [showLogs, setShowLogs] = useState(false);
@@ -267,7 +268,13 @@ export default function DashboardLayout() {
           >
             <SearchInput
               value={search}
-              onChange={setSearch}
+              onChange={(next) => {
+                setSearch(next);
+                setShowCommandPalette(true);
+              }}
+              useRegex={searchUseRegex}
+              onToggleRegex={setSearchUseRegex}
+              allowRegex
               placeholder="Search… (Ctrl+K)"
               width={240}
               onFocus={() => setShowCommandPalette(true)}
@@ -371,6 +378,10 @@ export default function DashboardLayout() {
         isOpen={showCommandPalette}
         onClose={() => setShowCommandPalette(false)}
         onAction={handlePaletteAction}
+        queryValue={search}
+        onQueryChange={setSearch}
+        useRegexValue={searchUseRegex}
+        onUseRegexChange={setSearchUseRegex}
       />
     </div>
   );

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import {
     Search,
+    Regex,
     Map,
     GitCommit,
     Bell,
@@ -12,6 +13,7 @@ import {
     Layers,
     Command,
 } from 'lucide-react';
+import { matchesSmartQuery } from './common/SmartSearchBar';
 
 const COMMANDS = [
     { id: 'repo-map', label: 'Open Repository Map', icon: Map, action: 'toggleRepoMap', category: 'View' },
@@ -24,18 +26,45 @@ const COMMANDS = [
     { id: 'export', label: 'Export SML', icon: FileCode2, action: 'export', category: 'File' },
 ];
 
-export default function CommandPalette({ isOpen, onClose, onAction, models = [] }) {
+export default function CommandPalette({
+    isOpen,
+    onClose,
+    onAction,
+    models = [],
+    queryValue,
+    onQueryChange,
+    useRegexValue,
+    onUseRegexChange,
+}) {
     const [query, setQuery] = useState('');
+    const [useRegex, setUseRegex] = useState(false);
     const [selectedIndex, setSelectedIndex] = useState(0);
     const inputRef = useRef(null);
 
+    const queryText = queryValue ?? query;
+    const setQueryText = onQueryChange ?? setQuery;
+    const regexEnabled = useRegexValue ?? useRegex;
+    const setRegexEnabled = onUseRegexChange ?? setUseRegex;
+
     useEffect(() => {
         if (isOpen) {
-            setQuery('');
             setSelectedIndex(0);
+            if (!onQueryChange) setQuery('');
+            if (!onUseRegexChange) setUseRegex(false);
             setTimeout(() => inputRef.current?.focus(), 50);
         }
-    }, [isOpen]);
+    }, [isOpen, onQueryChange, onUseRegexChange]);
+
+    const regexError = useMemo(() => {
+        const q = String(queryText || '').trim();
+        if (!regexEnabled || !q) return '';
+        try {
+            new RegExp(q);
+            return '';
+        } catch (err) {
+            return err?.message || 'Invalid regex';
+        }
+    }, [queryText, regexEnabled]);
 
     // Global Ctrl+K shortcut
     useEffect(() => {
@@ -54,13 +83,23 @@ export default function CommandPalette({ isOpen, onClose, onAction, models = [] 
     }, [isOpen, onClose, onAction]);
 
     const results = useMemo(() => {
-        const q = query.toLowerCase().trim();
+        const q = String(queryText || '').trim();
+        const qLower = q.toLowerCase();
         const items = [];
+
+        const match = (text) => {
+            if (!q) return true;
+            if (regexEnabled) {
+                if (regexError) return false;
+                return matchesSmartQuery(text, q, true);
+            }
+            return String(text || '').toLowerCase().includes(qLower);
+        };
 
         // Search models
         if (q) {
             const matchedModels = models
-                .filter(m => m.name?.toLowerCase().includes(q) || m.id?.toLowerCase().includes(q))
+                .filter(m => match(`${m.name || ''} ${m.id || ''}`))
                 .slice(0, 5)
                 .map(m => ({
                     id: `model-${m.id}`,
@@ -75,16 +114,16 @@ export default function CommandPalette({ isOpen, onClose, onAction, models = [] 
 
         // Search commands
         const matchedCommands = COMMANDS.filter(c =>
-            !q || c.label.toLowerCase().includes(q) || c.category.toLowerCase().includes(q)
+            !q || match(`${c.label || ''} ${c.category || ''}`)
         );
         items.push(...matchedCommands);
 
         return items;
-    }, [query, models]);
+    }, [queryText, models, regexEnabled, regexError]);
 
     useEffect(() => {
         setSelectedIndex(0);
-    }, [query]);
+    }, [queryText]);
 
     const handleSelect = (item) => {
         onClose();
@@ -136,14 +175,39 @@ export default function CommandPalette({ isOpen, onClose, onAction, models = [] 
                     <input
                         ref={inputRef}
                         type="text"
-                        value={query}
-                        onChange={e => setQuery(e.target.value)}
+                        value={queryText}
+                        onChange={e => setQueryText(e.target.value)}
                         onKeyDown={handleKeyDown}
                         placeholder="Search models, commands..."
                         className="flex-1 bg-transparent border-none outline-none text-sm text-primary placeholder:text-tertiary"
                     />
+                    <button
+                        type="button"
+                        onClick={() => setRegexEnabled(!regexEnabled)}
+                        title={regexEnabled ? 'Regex enabled' : 'Regex disabled'}
+                        style={{
+                            width: 22,
+                            height: 22,
+                            borderRadius: 6,
+                            border: '1px solid var(--border-main)',
+                            background: regexEnabled ? 'var(--accent-blue)18' : 'var(--bg-surface)',
+                            color: regexEnabled ? 'var(--accent-blue)' : 'var(--text-tertiary)',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0,
+                        }}
+                    >
+                        <Regex size={12} />
+                    </button>
                     <kbd className="px-1.5 py-0.5 rounded bg-surface-raised border border-main text-[9px] font-mono text-tertiary">ESC</kbd>
                 </div>
+                {regexError && (
+                    <div className="px-4 py-1 text-[10px]" style={{ color: 'var(--color-error)', borderBottom: '1px solid var(--border-main)' }}>
+                        Regex error: {regexError}
+                    </div>
+                )}
 
                 {/* Results */}
                 <div className="max-h-[300px] overflow-y-auto custom-scrollbar py-1">

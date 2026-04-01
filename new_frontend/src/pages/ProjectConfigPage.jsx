@@ -78,6 +78,7 @@ export default function ProjectConfigPage() {
     source_type: 'fabric',
     target_type: 'snowflake',
     output_format: 'osi',
+    identity_id: '',
     workspace_id: '',
     database: '',
     schema: '',
@@ -88,6 +89,9 @@ export default function ProjectConfigPage() {
     auto_relationships: true,
     generate_descriptions: true,
   });
+  const [fabricAccounts, setFabricAccounts] = useState([]);
+  const [fabricWorkspaces, setFabricWorkspaces] = useState([]);
+  const [fabricLoading, setFabricLoading] = useState(false);
 
   const [globalOpen, setGlobalOpen] = useState(false);
   const timezoneOptions = useMemo(() => ([
@@ -239,6 +243,66 @@ export default function ProjectConfigPage() {
     setProjectConfigDraft(id, nextDraft);
   }, [id, isInvalidProjectId, loading, viewMode, yamlText, configForm, setProjectConfigDraft, stableDraftKey]);
 
+  useEffect(() => {
+    if (configForm.source_type !== 'fabric') {
+      setFabricAccounts([]);
+      setFabricWorkspaces([]);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.getAccounts('FABRIC');
+        const list = Array.isArray(res) ? res : (res?.accounts || []);
+        if (!cancelled) {
+          setFabricAccounts(list);
+          if (!configForm.identity_id) {
+            const preferred = list.find(acc => acc.id === project?.account_id) || list.find(acc => acc.is_default) || list[0];
+            if (preferred?.id) {
+              setConfigForm(prev => ({ ...prev, identity_id: prev.identity_id || preferred.id }));
+            }
+          }
+        }
+      } catch {
+        if (!cancelled) setFabricAccounts([]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [configForm.source_type, configForm.identity_id, project?.account_id]);
+
+  const refreshFabricWorkspaces = async (identityId = configForm.identity_id) => {
+    if (!identityId) {
+      setFabricWorkspaces([]);
+      return;
+    }
+    setFabricLoading(true);
+    try {
+      const data = await api.fabricListWorkspaces(identityId);
+      const list = Array.isArray(data?.workspaces) ? data.workspaces : (Array.isArray(data) ? data : []);
+      setFabricWorkspaces(list);
+      if (!configForm.workspace_id && list[0]) {
+        setConfigForm(prev => ({
+          ...prev,
+          workspace_id: prev.workspace_id || String(list[0].id || list[0].workspace_id || ''),
+        }));
+      }
+    } catch {
+      setFabricWorkspaces([]);
+    } finally {
+      setFabricLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (configForm.source_type === 'fabric' && configForm.identity_id) {
+      refreshFabricWorkspaces(configForm.identity_id);
+    }
+  }, [configForm.source_type, configForm.identity_id]);
+
   const isLikelyBinaryOrGarbage = (text) => {
     const t = String(text || '').trim();
     if (!t) return false;
@@ -321,6 +385,7 @@ export default function ProjectConfigPage() {
           source_type: fallbackSource,
           target_type: fallbackTarget,
           output_format: 'osi',
+          identity_id: '',
           workspace_id: '',
           database: '',
           schema: '',
@@ -363,6 +428,7 @@ export default function ProjectConfigPage() {
         source_type: String(source.type || fallbackSource),
         target_type: String(target.type || fallbackTarget),
         output_format: String(ui.intermediate_format || ui.output_format || 'osi'),
+        identity_id: String(source.identity_id || ''),
         workspace_id: String(source.workspace_id || ''),
         database: String(source.database || ''),
         schema: String(source.schema || ''),
@@ -409,14 +475,18 @@ export default function ProjectConfigPage() {
     };
 
     if (configForm.source_type === 'fabric') {
+      if (configForm.identity_id) nextTree.source.identity_id = configForm.identity_id;
+      else delete nextTree.source.identity_id;
       nextTree.source.workspace_id = configForm.workspace_id || '';
       delete nextTree.source.database;
       delete nextTree.source.schema;
     } else if (configForm.source_type === 'snowflake') {
+      delete nextTree.source.identity_id;
       nextTree.source.database = configForm.database || '';
       nextTree.source.schema = configForm.schema || '';
       delete nextTree.source.workspace_id;
     } else {
+      delete nextTree.source.identity_id;
       delete nextTree.source.workspace_id;
       delete nextTree.source.database;
       delete nextTree.source.schema;
@@ -718,7 +788,14 @@ export default function ProjectConfigPage() {
 
           <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 16 }}>
             {viewMode === 'form' ? (
-              <FormEditor value={configForm} onChange={setConfigForm} />
+              <FormEditor
+                value={configForm}
+                onChange={setConfigForm}
+                fabricAccounts={fabricAccounts}
+                fabricWorkspaces={fabricWorkspaces}
+                fabricLoading={fabricLoading}
+                onRefreshFabricWorkspaces={() => refreshFabricWorkspaces()}
+              />
             ) : (
               <div style={{ height: '100%', minHeight: 420 }}>
                 <div style={{ height: '100%', border: '1px solid var(--border-main)', borderRadius: 12, overflow: 'hidden', background: 'var(--bg-input)', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 24px rgba(0, 0, 0, 0.08)' }}>
@@ -947,7 +1024,14 @@ export default function ProjectConfigPage() {
   );
 }
 
-function FormEditor({ value, onChange }) {
+function FormEditor({
+  value,
+  onChange,
+  fabricAccounts = [],
+  fabricWorkspaces = [],
+  fabricLoading = false,
+  onRefreshFabricWorkspaces,
+}) {
   const patch = (k, v) => onChange(prev => ({ ...prev, [k]: v }));
 
   return (
@@ -966,6 +1050,7 @@ function FormEditor({ value, onChange }) {
           <select value={value.target_type} onChange={e => patch('target_type', e.target.value)} style={{ ...INPUT, cursor: 'pointer' }}>
             <option value="snowflake">snowflake</option>
             <option value="fabric">fabric</option>
+            <option value="databricks">databricks</option>
           </select>
         </div>
       </div>
@@ -979,10 +1064,61 @@ function FormEditor({ value, onChange }) {
       </div>
 
       {value.source_type === 'fabric' && (
-        <div>
-          <label style={LABEL}>Workspace ID</label>
-          <input value={value.workspace_id} onChange={e => patch('workspace_id', e.target.value)} style={INPUT} placeholder="fabric workspace id" />
-        </div>
+        <>
+          <div>
+            <label style={LABEL}>Fabric Account</label>
+            <select
+              value={value.identity_id}
+              onChange={e => patch('identity_id', e.target.value)}
+              style={{ ...INPUT, cursor: 'pointer' }}
+            >
+              <option value="">Select account</option>
+              {fabricAccounts.map(acc => (
+                <option key={acc.id} value={acc.id}>
+                  {acc.tag || acc.identity_email || acc.id}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <label style={{ ...LABEL, margin: 0 }}>Workspace ID</label>
+              <div style={{ flex: 1 }} />
+              <button
+                type="button"
+                onClick={onRefreshFabricWorkspaces}
+                disabled={fabricLoading || !value.identity_id}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-tertiary)',
+                  cursor: fabricLoading || !value.identity_id ? 'not-allowed' : 'pointer',
+                  fontSize: 11,
+                  padding: 0,
+                }}
+              >
+                {fabricLoading ? 'Loading...' : 'Refresh'}
+              </button>
+            </div>
+            {fabricWorkspaces.length > 0 ? (
+              <select
+                value={value.workspace_id}
+                onChange={e => patch('workspace_id', e.target.value)}
+                style={{ ...INPUT, cursor: 'pointer' }}
+              >
+                <option value="">Select workspace</option>
+                {fabricWorkspaces.map(ws => (
+                  <option key={ws.id || ws.workspace_id} value={ws.id || ws.workspace_id}>
+                    {ws.name || ws.displayName || ws.id || ws.workspace_id}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input value={value.workspace_id} onChange={e => patch('workspace_id', e.target.value)} style={INPUT} placeholder="fabric workspace id" />
+            )}
+          </div>
+        </>
       )}
 
       {value.source_type === 'snowflake' && (

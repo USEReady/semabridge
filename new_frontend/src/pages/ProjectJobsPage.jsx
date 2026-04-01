@@ -3,6 +3,7 @@ import { Play, RefreshCw, Clock, CalendarClock, RotateCcw, ChevronDown, ChevronR
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
 import SearchInput from '../components/common/SearchInput';
+import { matchesSmartQuery } from '../components/common/SmartSearchBar';
 import { api } from '../utils/api';
 import { buildMockRunLogs, getRunLogs, saveRunLogs } from '../utils/runLogs';
 
@@ -34,6 +35,7 @@ export default function ProjectJobsPage() {
   const [running, setRunning] = useState(false);
   const [scheduleDeletingId, setScheduleDeletingId] = useState('');
   const [search, setSearch] = useState('');
+  const [searchUseRegex, setSearchUseRegex] = useState(false);
   const [statusFilter, setStatusFilter] = useState('all');
   const [expandedRunId, setExpandedRunId] = useState(null);
 
@@ -130,9 +132,11 @@ export default function ProjectJobsPage() {
   };
 
   const filteredRuns = runs.filter((run) => {
-    const matchSearch = !search
-      || String(run.id || '').includes(search)
-      || String(run.project_name || '').toLowerCase().includes(search.toLowerCase());
+    const matchSearch = !search || matchesSmartQuery(
+      `${String(run.id || '')} ${String(run.project_name || '')}`,
+      search,
+      searchUseRegex,
+    );
     const matchStatus = statusFilter === 'all' || String(run.status || '').toLowerCase() === statusFilter;
     return matchSearch && matchStatus;
   });
@@ -334,7 +338,16 @@ export default function ProjectJobsPage() {
         <div className="flex items-center gap-3 mb-4">
           <h2 className="text-primary font-semibold" style={{ fontSize: 14, margin: 0 }}>Run History</h2>
           <div className="flex-1" />
-          <SearchInput value={search} onChange={setSearch} placeholder="Filter runs…" width={220} />
+          <SearchInput
+            value={search}
+            onChange={setSearch}
+            useRegex={searchUseRegex}
+            onToggleRegex={setSearchUseRegex}
+            allowRegex
+            helperText={searchUseRegex ? 'Regex examples: ^run_\\d+$ or failed|running' : 'Tip: enable regex to use patterns like ^run_\\d+$'}
+            placeholder="Filter runs…"
+            width={220}
+          />
           <select
             value={statusFilter}
             onChange={e => setStatusFilter(e.target.value)}

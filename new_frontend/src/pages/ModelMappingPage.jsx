@@ -4,6 +4,7 @@ import PageHeader from '../components/common/PageHeader';
 import Modal from '../components/common/Modal';
 import StatusBadge from '../components/common/StatusBadge';
 import SearchInput from '../components/common/SearchInput';
+import { matchesSmartQuery } from '../components/common/SmartSearchBar';
 import { api } from '../utils/api';
 
 const TYPE_COLORS = {
@@ -43,6 +44,7 @@ export default function ModelMappingPage() {
   const [loading, setLoading] = useState(true);
   const [autoMapping, setAutoMapping] = useState(false);
   const [search, setSearch] = useState('');
+  const [searchUseRegex, setSearchUseRegex] = useState(false);
   const [selectedMapping, setSelectedMapping] = useState(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editForm, setEditForm] = useState({ transform: '', validation: 'None' });
@@ -119,11 +121,11 @@ export default function ModelMappingPage() {
     }
   };
 
-  const filteredMappings = mappings.filter(m =>
-    !search ||
-    (m.source_field || '').toLowerCase().includes(search.toLowerCase()) ||
-    (m.target_field || '').toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredMappings = mappings.filter(m => !search || matchesSmartQuery(
+    `${m.source_field || ''} ${m.target_field || ''}`,
+    search,
+    searchUseRegex,
+  ));
 
   const autoCount = mappings.filter(m => m.status === 'auto').length;
   const manualCount = mappings.filter(m => m.status === 'manual').length;
@@ -210,7 +212,16 @@ export default function ModelMappingPage() {
           </span>
         </div>
         <div className="flex-1" />
-        <SearchInput value={search} onChange={setSearch} placeholder="Search fields…" width={240} />
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          useRegex={searchUseRegex}
+          onToggleRegex={setSearchUseRegex}
+          allowRegex
+          helperText={searchUseRegex ? 'Regex examples: ^cust_.* or amount|revenue' : 'Tip: enable regex to use patterns like ^cust_.*'}
+          placeholder="Search fields…"
+          width={240}
+        />
       </div>
 
       {/* Mapping table */}

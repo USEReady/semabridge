@@ -18,9 +18,10 @@
  *   clearable      — show clear button when a value is selected
  */
 
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { ChevronDown, X, Search, Loader2 } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { ChevronDown, X, Search, Loader2, Regex } from 'lucide-react';
 import { useHPSearch } from '../../hooks/useHPSearch';
+import { matchesSmartQuery } from './SmartSearchBar';
 
 export default function SearchableSelect({
   items = [],
@@ -40,6 +41,7 @@ export default function SearchableSelect({
 }) {
   const fields = searchFields ?? [displayKey];
   const [open, setOpen] = useState(false);
+  const [useRegex, setUseRegex] = useState(false);
   const containerRef = useRef(null);
 
   // Normalise items so every entry has a usable `id` field for MiniSearch
@@ -53,6 +55,27 @@ export default function SearchableSelect({
     maxResults: 1000,
   });
 
+  const regexError = useMemo(() => {
+    const q = String(query || '').trim();
+    if (!useRegex || !q) return '';
+    try {
+      new RegExp(q);
+      return '';
+    } catch (err) {
+      return err?.message || 'Invalid regex';
+    }
+  }, [query, useRegex]);
+
+  const displayResults = useMemo(() => {
+    if (!useRegex) return results;
+    const q = String(query || '').trim();
+    if (!q || regexError) return [];
+    return normItems.filter(item => {
+      const haystack = fields.map(field => String(item?.[field] ?? '')).join(' ');
+      return matchesSmartQuery(haystack, q, true);
+    });
+  }, [useRegex, results, query, regexError, normItems, fields]);
+
   // Find the currently selected item for display
   const selectedItem = items.find(it => String(it[valueKey]) === String(value ?? '')) ?? null;
 
@@ -62,6 +85,7 @@ export default function SearchableSelect({
       if (containerRef.current && !containerRef.current.contains(e.target)) {
         setOpen(false);
         setQuery('');
+        setUseRegex(false);
       }
     };
     document.addEventListener('mousedown', handler);
@@ -72,6 +96,7 @@ export default function SearchableSelect({
     onChange?.(item);
     setOpen(false);
     setQuery('');
+    setUseRegex(false);
   }, [onChange, setQuery]);
 
   const handleClear = useCallback((e) => {
@@ -81,7 +106,7 @@ export default function SearchableSelect({
 
   // Group items if groupKey is provided
   const grouped = groupKey
-    ? results.reduce((acc, item) => {
+    ? displayResults.reduce((acc, item) => {
         const grp = item[groupKey] ?? 'Other';
         if (!acc[grp]) acc[grp] = [];
         acc[grp].push(item);
@@ -182,15 +207,50 @@ export default function SearchableSelect({
               style={{
                 width: '100%',
                 background: 'var(--bg-input)',
-                border: '1px solid var(--border-subtle)',
+                border: `1px solid ${regexError ? 'var(--color-error)' : 'var(--border-subtle)'}`,
                 borderRadius: 6,
                 color: 'var(--text-primary)',
-                padding: '6px 8px 6px 28px',
+                padding: '6px 28px 6px 28px',
                 fontSize: 12,
                 outline: 'none',
                 boxSizing: 'border-box',
               }}
             />
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.stopPropagation();
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setUseRegex(v => !v);
+              }}
+              title={useRegex ? 'Regex enabled' : 'Regex disabled'}
+              style={{
+                position: 'absolute',
+                right: 14,
+                top: '50%',
+                transform: 'translateY(-20%)',
+                zIndex: 2,
+                width: 18,
+                height: 18,
+                borderRadius: 5,
+                border: '1px solid var(--border-main)',
+                background: useRegex ? 'var(--accent-blue)18' : 'var(--bg-surface)',
+                color: useRegex ? 'var(--accent-blue)' : 'var(--text-tertiary)',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Regex size={10} />
+            </button>
+            {regexError && (
+              <div style={{ marginTop: 4, fontSize: 10, color: 'var(--color-error)' }}>
+                Regex error: {regexError}
+              </div>
+            )}
           </div>
 
           {/* Items list */}
@@ -206,7 +266,7 @@ export default function SearchableSelect({
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
                 <Loader2 size={16} style={{ color: 'var(--text-tertiary)', animation: 'spin 1s linear infinite' }} />
               </div>
-            ) : results.length === 0 ? (
+            ) : displayResults.length === 0 ? (
               <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'center' }}>
                 No results
               </div>
@@ -237,7 +297,7 @@ export default function SearchableSelect({
                 </div>
               ))
             ) : (
-              results.map(item => (
+              displayResults.map(item => (
                 <ItemRow
                   key={item._sid}
                   item={item}

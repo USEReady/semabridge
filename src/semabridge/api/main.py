@@ -23,7 +23,7 @@ from pathlib import Path
 from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Dict, Any, List, Optional
-from fastapi import FastAPI, HTTPException, Depends, Header, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, Header, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -82,6 +82,34 @@ version_control_service: Optional[VersionControlService] = None
 
 # Content hash tracker -- avoids duplicate versions for unchanged files
 _last_snapshot_hash: dict[str, str] = {}
+
+
+# -------------------------------------------------------
+# Bearer Token Extraction (needed by early Fabric routes)
+# -------------------------------------------------------
+def _extract_bearer_token(
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+) -> Optional[str]:
+    """Extract a bearer token from Authorization header.
+
+    Accepts header format: ``Authorization: Bearer <token>``.
+    Returns ``None`` when no header is provided so existing auth flows can
+    continue to use stored credentials or env-token fallback.
+    """
+    if not authorization:
+        logger.info("Fabric request received without Authorization header")
+        return None
+
+    scheme, _, token = authorization.partition(" ")
+    token = token.strip()
+    if scheme.lower() != "bearer" or not token:
+        logger.warning("Invalid Authorization header format for Fabric request")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Authorization header format. Expected: Bearer <token>",
+        )
+    logger.info("Fabric bearer token received in Authorization header")
+    return token
 
 
 # -------------------------------------------------------
@@ -501,10 +529,15 @@ async def health_check():
 # -------------------------------------------------------
 
 @app.get("/api/discovery/fabric")
-async def discover_fabric_models():
+async def discover_fabric_models(
+    bearer_token: Optional[str] = Depends(_extract_bearer_token),
+    identity_id: Optional[str] = Query(None),
+    workspace_id: Optional[str] = Query(None),
+):
     import asyncio
     from pydantic import ValidationError
-    from semabridge.repository.credential_manager import CredentialManager
+    import anyio
+    import httpx
 
     try:
         settings = get_settings()
@@ -521,115 +554,67 @@ async def discover_fabric_models():
                 )
             )
         
-        cm = CredentialManager()
-        auth_method = cm.get_fabric_auth_method()
+        resolved_workspace_id = (workspace_id or "").strip()
+        if not resolved_workspace_id:
+            resolved_workspace_id = os.environ.get("FABRIC_WORKSPACE_ID", "").strip()
+        if not resolved_workspace_id:
+            try:
+                resolved_workspace_id = settings.fabric.workspace_id
+            except Exception:
+                pass
 
-        # Also accept a pre-issued token injected via env (CI / dev shortcut)
-        env_token = os.environ.get("FABRIC_ACCESS_TOKEN", "").strip()
-        if env_token and auth_method == "none":
-            auth_method = "env_token"
-
-        # Interactive (device-code) or env-token path
-        if auth_method in ("interactive", "env_token"):
-            import httpx
-
-            fabric_creds = cm.get_credentials("fabric", mask_secrets=False)
-            workspace_id = (
-                fabric_creds.get("workspace_id")
-                or os.environ.get("FABRIC_WORKSPACE_ID", "")
-            ).strip()
-
-            if not workspace_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail="No Fabric workspace configured. Select a workspace in Settings -> Connections.",
-                )
-
-            cache_key = f"fabric:{workspace_id}"
-            cached = _discovery_cache.get(cache_key)
-            if cached and _time.monotonic() < cached["expires_at"]:
-                return cached["data"]
-
-            if auth_method == "env_token":
-                access_token = env_token
-            else:
-                # Get token via thread to avoid blocking
-                try:
-                    access_token = await asyncio.to_thread(_get_valid_fabric_token)
-                    logger.debug(f"Retrieved Fabric token via device-code flow (length: {len(access_token)})")
-                except HTTPException as he:
-                    # If token retrieval fails, provide clear guidance
-                    logger.error(f"Failed to get Fabric token: {he.detail}")
-                    raise
-
-            logger.info(f"Attempting to discover Fabric models in workspace: {workspace_id}")
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.get(
-                    f"https://api.fabric.microsoft.com/v1/workspaces/{workspace_id}/semanticModels",
-                    headers={"Authorization": f"Bearer {access_token}"},
-                )
-
-            if resp.status_code == 401:
-                logger.error(f"Fabric API returned 401 Unauthorized. Token may be invalid or expired.")
-                logger.error(f"Response: {resp.text[:500]}")
-                # Try to give more helpful error message
-                if "invalid_token" in resp.text.lower() or "expired" in resp.text.lower():
-                    raise HTTPException(
-                        status_code=401,
-                        detail="Fabric token expired or invalid. Please sign in again via Connections."
-                    )
-                else:
-                    raise HTTPException(
-                        status_code=401,
-                        detail="Fabric API returned 401. Possibly invalid workspace ID or insufficient permissions. Please sign in again."
-                    )
-            if resp.status_code != 200:
-                logger.error(f"Fabric API error {resp.status_code}: {resp.text[:500]}")
-                raise HTTPException(status_code=resp.status_code, detail=f"Fabric API error: {resp.text}")
-
-            models = resp.json().get("value", [])
-            logger.info(f"Successfully discovered {len(models)} Fabric semantic models")
-            result = [
-                {
-                    "id": m.get("id", ""),
-                    "name": m.get("displayName", "Unnamed"),
-                    "type": "semantic_model",
-                    "status": "Available",
-                }
-                for m in models
-            ]
-            _discovery_cache[cache_key] = {"data": result, "expires_at": _time.monotonic() + _DISCOVERY_CACHE_TTL}
-            return result
-
-        # No token at all -- raise 401 with sign-in guidance
-        if auth_method == "none":
-            logger.warning("No Fabric credentials found - user needs to sign in")
+        if not resolved_workspace_id:
             raise HTTPException(
-                status_code=401,
-                detail=(
-                    "No valid Fabric credentials found. "
-                    "Sign in via the Connections panel (device-code login), "
-                    "set FABRIC_ACCESS_TOKEN in .env, "
-                    "or configure FABRIC_CLIENT_SECRET for service-principal auth."
-                ),
+                status_code=400,
+                detail="No Fabric workspace configured. Select a workspace in Settings -> Connections.",
             )
 
-        # Service-principal fallback via FabricExtractor (client_secret set)
-        logger.info(f"Using service-principal authentication for Fabric discovery")
-        cache_key = f"fabric:{settings.fabric.workspace_id}"
+        cache_key = f"fabric:{resolved_workspace_id}:{identity_id}"
         cached = _discovery_cache.get(cache_key)
         if cached and _time.monotonic() < cached["expires_at"]:
             return cached["data"]
 
-        extractor = FabricExtractor(settings.fabric)
-        models = await asyncio.to_thread(extractor.list_semantic_models)
+        access_token = await anyio.to_thread.run_sync(
+            _resolve_fabric_access_token,
+            bearer_token,
+            identity_id,
+        )
 
+        logger.info(
+            "Attempting to discover Fabric models in workspace: %s with Identity: %s",
+            resolved_workspace_id,
+            identity_id,
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"https://api.fabric.microsoft.com/v1/workspaces/{resolved_workspace_id}/semanticModels",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+
+        if resp.status_code == 401:
+            logger.error("Fabric API returned 401 Unauthorized. Token may be invalid or expired.")
+            logger.error("Response: %s", resp.text[:500])
+            if "invalid_token" in resp.text.lower() or "expired" in resp.text.lower():
+                raise HTTPException(
+                    status_code=401,
+                    detail="Fabric token expired or invalid. Please sign in again via Connections.",
+                )
+            raise HTTPException(
+                status_code=401,
+                detail="Fabric API returned 401. Possibly invalid workspace ID or insufficient permissions. Please sign in again.",
+            )
+        if resp.status_code != 200:
+            logger.error("Fabric API error %s: %s", resp.status_code, resp.text[:500])
+            raise HTTPException(status_code=resp.status_code, detail=f"Fabric API error: {resp.text}")
+
+        models = resp.json().get("value", [])
+        logger.info("Successfully discovered %s Fabric semantic models", len(models))
         result = [
             {
-                "id": m["id"],
-                "name": m["displayName"],
+                "id": m.get("id", ""),
+                "name": m.get("displayName", "Unnamed"),
                 "type": "semantic_model",
-                "status": "Available"
+                "status": "Available",
             }
             for m in models
         ]
@@ -648,12 +633,17 @@ async def discover_fabric_models():
 
 
 @app.get("/api/discovery/fabric/workspaces/{workspace_id}/models")
-async def discover_fabric_models_by_workspace(workspace_id: str):
+async def discover_fabric_models_by_workspace(
+    workspace_id: str,
+    bearer_token: Optional[str] = Depends(_extract_bearer_token),
+    identity_id: Optional[str] = Query(None),
+):
     """Compatibility route for workspace-scoped Fabric discovery."""
-    workspace_id = (workspace_id or "").strip()
-    if workspace_id:
-        os.environ["FABRIC_WORKSPACE_ID"] = workspace_id
-    return await discover_fabric_models()
+    return await discover_fabric_models(
+        bearer_token=bearer_token,
+        identity_id=identity_id,
+        workspace_id=(workspace_id or "").strip() or None,
+    )
 
 
 @app.get("/api/discovery/snowflake")
@@ -1993,7 +1983,10 @@ async def validate_live(payload: Dict[str, Any] = None):
 
 
 @app.get("/api/workspaces")
-async def list_workspaces(db: "Session" = Depends(get_db)):
+async def list_workspaces(
+    db: "Session" = Depends(get_db),
+    identity_id: Optional[str] = Query(None),
+):
     """List available Fabric workspaces for the current Default account.
 
     Identity is resolved fresh on every request from the DuckDB Account table
@@ -2008,76 +2001,89 @@ async def list_workspaces(db: "Session" = Depends(get_db)):
     access_token: str | None = None
     account_tag: str | None = None
 
-    # --- Live DB lookup: find the default Fabric account ---
-    try:
-        default_account = db.execute(
-            select(Account).where(
-                Account.connector_type == "FABRIC",
-                Account.is_default == True,  # noqa: E712
-            )
-        ).scalar_one_or_none()
+    # If a UI-selected Fabric account is supplied, honor it first.
+    if identity_id:
+        try:
+            import anyio
+            access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, None, identity_id)
+            account_tag = identity_id
+            logger.info("list_workspaces: using identity-scoped account '%s'", account_tag)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("list_workspaces: identity-scoped lookup failed for %s: %s", identity_id, exc)
 
-        if not default_account:
-            raise HTTPException(status_code=401, detail="token_missing")
+    # Fall back to the default Fabric account when no identity was supplied.
+    if not access_token:
+        try:
+            default_account = db.execute(
+                select(Account).where(
+                    Account.connector_type == "FABRIC",
+                    Account.is_default == True,  # noqa: E712
+                )
+            ).scalar_one_or_none()
 
-        if default_account.encrypted_token:
-            # Happy path: token already persisted in Account row
-            account_tag = default_account.tag
-            logger.info("list_workspaces: using default account '%s'", account_tag)
-            access_token = decrypt_token(default_account.encrypted_token)
-            if not access_token:
-                logger.warning("list_workspaces: token decrypt returned empty string")
+            if not default_account:
                 raise HTTPException(status_code=401, detail="token_missing")
-        else:
-            # Fallback: account exists but no token row yet (pre-atomic-write accounts).
-            # Query Credential directly to avoid DuckDB DDL locking from CredentialManager.
-            from semabridge.repository.orm.models import Credential
-            from semabridge.auth.encryption import encrypt_token as _encrypt
-            import time
 
-            rows = db.execute(
-                select(Credential).where(Credential.service == "fabric_token")
-            ).scalars().all()
-            raw_token_data = {row.key: row.value for row in rows} if rows else {}
-            
-            raw_access_token = raw_token_data.get("access_token", "")
-            if not raw_access_token:
-                logger.warning("list_workspaces: no token in Account row nor Credential table")
-                raise HTTPException(status_code=401, detail="token_missing")
-                
-            try:
-                expires_at = int(raw_token_data.get("expires_at", "0"))
-                if time.time() >= expires_at - 60:
-                    logger.warning("list_workspaces: Credential table token is expired")
+            if default_account.encrypted_token:
+                # Happy path: token already persisted in Account row
+                account_tag = default_account.tag
+                logger.info("list_workspaces: using default account '%s'", account_tag)
+                access_token = decrypt_token(default_account.encrypted_token)
+                if not access_token:
+                    logger.warning("list_workspaces: token decrypt returned empty string")
                     raise HTTPException(status_code=401, detail="token_missing")
-            except (ValueError, TypeError):
-                raise HTTPException(status_code=401, detail="token_missing")
+            else:
+                # Fallback: account exists but no token row yet (pre-atomic-write accounts).
+                # Query Credential directly to avoid DuckDB DDL locking from CredentialManager.
+                from semabridge.repository.orm.models import Credential
+                from semabridge.auth.encryption import encrypt_token as _encrypt
+                import time
 
-            # Backfill: write the token to the Account row so next request uses DB path
-            try:
-                default_account.encrypted_token = _encrypt(raw_access_token)
-                default_account.identity_email = raw_token_data.get(
-                    "account_username", default_account.identity_email
-                )
-                db.commit()
+                rows = db.execute(
+                    select(Credential).where(Credential.service == "fabric_token")
+                ).scalars().all()
+                raw_token_data = {row.key: row.value for row in rows} if rows else {}
+                
+                raw_access_token = raw_token_data.get("access_token", "")
+                if not raw_access_token:
+                    logger.warning("list_workspaces: no token in Account row nor Credential table")
+                    raise HTTPException(status_code=401, detail="token_missing")
+                    
+                try:
+                    expires_at = int(raw_token_data.get("expires_at", "0"))
+                    if time.time() >= expires_at - 60:
+                        logger.warning("list_workspaces: Credential table token is expired")
+                        raise HTTPException(status_code=401, detail="token_missing")
+                except (ValueError, TypeError):
+                    raise HTTPException(status_code=401, detail="token_missing")
+
+                # Backfill: write the token to the Account row so next request uses DB path
+                try:
+                    default_account.encrypted_token = _encrypt(raw_access_token)
+                    default_account.identity_email = raw_token_data.get(
+                        "account_username", default_account.identity_email
+                    )
+                    db.commit()
+                    logger.info(
+                        "list_workspaces: backfilled encrypted_token for account '%s'",
+                        default_account.tag,
+                    )
+                except Exception as bf_exc:
+                    logger.warning("list_workspaces: backfill write failed (non-fatal): %s", bf_exc)
+                    db.rollback()
+
+                account_tag = default_account.tag
+                access_token = raw_access_token
                 logger.info(
-                    "list_workspaces: backfilled encrypted_token for account '%s'",
-                    default_account.tag,
+                    "list_workspaces: using CredentialManager fallback for account '%s'", account_tag
                 )
-            except Exception as bf_exc:
-                logger.warning("list_workspaces: backfill write failed (non-fatal): %s", bf_exc)
-                db.rollback()
-
-            account_tag = default_account.tag
-            access_token = raw_access_token
-            logger.info(
-                "list_workspaces: using CredentialManager fallback for account '%s'", account_tag
-            )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("list_workspaces: unexpected DB error: %s", exc)
-        raise HTTPException(status_code=503, detail="Workspace discovery temporarily unavailable")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("list_workspaces: unexpected DB error: %s", exc)
+            raise HTTPException(status_code=503, detail="Workspace discovery temporarily unavailable")
 
     if not access_token:
         logger.warning("list_workspaces: no valid default account token — returning 401")
@@ -4484,20 +4490,26 @@ def _extract_bearer_token(
     return token
 
 
-def _resolve_fabric_access_token(header_bearer_token: Optional[str]) -> str:
+def _resolve_fabric_access_token(
+    header_bearer_token: Optional[str],
+    identity_id: Optional[str] = None,
+) -> str:
     """Resolve Fabric access token with compatibility-safe precedence.
 
     Precedence:
-    1. Authorization header bearer token from current request.
-    2. Stored MSAL token from interactive Connections login flow.
+    1. Explicit identity-scoped account token, if ``identity_id`` is supplied.
+    2. Authorization header bearer token from current request.
+    3. Default stored MSAL token from interactive Connections login flow.
        - If expired, silently refresh using the stored refresh_token.
-    3. FABRIC_ACCESS_TOKEN environment variable (dev/CI fallback).
+    4. FABRIC_ACCESS_TOKEN environment variable (dev/CI fallback).
 
-    IMPORTANT: This function uses a two-phase approach to avoid DuckDB
-    QueuePool(1) deadlocks — all DB reads happen in Phase 1 (session is
-    closed), then token refresh happens in Phase 2 (can open its own session).
+    Explicit ``identity_id`` selection wins over any ambient bearer token so
+    the UI-selected account is always honored.
     """
     # ── Phase 0: Header token (no DB needed) ─────────────────────────────
+    if identity_id:
+        header_bearer_token = None
+
     if header_bearer_token:
         try:
             fabric_validator.validate_msal_token(header_bearer_token)
@@ -4524,9 +4536,17 @@ def _resolve_fabric_access_token(header_bearer_token: Optional[str]) -> str:
         with db_manager.get_session() as session:
             session.expire_all()
 
-            default_account = session.execute(
-                select(Account).where(Account.connector_type == "FABRIC")
-            ).scalars().first()
+            if identity_id:
+                default_account = session.execute(
+                    select(Account).where(
+                        Account.connector_type == "FABRIC",
+                        Account.id == identity_id,
+                    )
+                ).scalars().first()
+            else:
+                default_account = session.execute(
+                    select(Account).where(Account.connector_type == "FABRIC")
+                ).scalars().first()
 
             if default_account:
                 has_account_row = True
@@ -4656,6 +4676,7 @@ def _try_silent_refresh() -> Optional[str]:
 @app.get("/api/connections/fabric/workspaces")
 async def fabric_list_workspaces(
     bearer_token: Optional[str] = Depends(_extract_bearer_token),
+    identity_id: Optional[str] = Query(None),
 ):
     """Discover all Fabric workspaces accessible to the logged-in user.
 
@@ -4666,8 +4687,8 @@ async def fabric_list_workspaces(
     import httpx
 
     import anyio
-    access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token)
-    logger.info("Calling Fabric workspaces API with resolved access token")
+    access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token, identity_id)
+    logger.info("Calling Fabric workspaces API with resolved access token (Identity: %s)", identity_id)
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -4729,6 +4750,7 @@ async def debug_token_header(
 @app.get("/api/connections/fabric/default-workspace")
 async def fabric_get_default_workspace(
     bearer_token: Optional[str] = Depends(_extract_bearer_token),
+    identity_id: Optional[str] = Query(None),
 ):
     """Return the best-available default workspace for the project wizard from the Default account."""
     from sqlalchemy import select
@@ -4740,7 +4762,7 @@ async def fabric_get_default_workspace(
     access_token = None
     import anyio
     try:
-        access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token)
+        access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token, identity_id)
     except HTTPException:
         pass
 
