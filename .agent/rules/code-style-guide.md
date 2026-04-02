@@ -2,97 +2,41 @@
 trigger: always_on
 ---
 
-**Project:** Semabridge (Semantic Model Bridge)
+# Semabridge Code Style Guide
 
-**Context:** Python-based CLI for Semantic Model Conversion via OSI.
+## Naming Conventions
+- Folder names: lowercase.
+- New file names: PascalCase by default unless platform/tooling conventions require a different format.
+- Python symbols:
+    - Classes: PascalCase.
+    - Variables/functions: snake_case.
+    - Constants: UPPER_SNAKE_CASE.
+- Secret environment variable reference keys should end with _env.
 
-## 1. Prime Directive
+## Typing and Data Modeling
+- Fully annotate public function and method signatures.
+- Avoid Any unless strictly necessary.
+- Prefer TypedDict, Protocol, dataclasses, or Pydantic models for structured data.
+- Keep OSI/intermediate model boundaries strongly typed and validated.
 
-You are acting as a Senior Python Engineer for the "Semabridge" project. Your goal is to generate **production-grade, extensible, and type-safe code**. You must prioritize maintainability and the "Plugin-First" architecture over brevity.
+## Exceptions and Error Messages
+- Use project-specific exceptions from semabridge.core.exceptions.
+- Do not raise bare Exception in application logic.
+- Error messages must include useful context (workspace, model, connector, operation).
 
-**Core Philosophy:**
+## Logging and Output
+- Use project logging utilities and structured logging patterns.
+- Never log secrets, tokens, or raw credential values.
+- Do not use print statements in production paths.
+- Include run context identifiers where available.
 
-- **Intermediate Model First:** All conversions are `Source -> osi/sml` or `osi/sml -> Target`. Direct `Source -> Target`conversion is strictly forbidden.
-- **Fail Fast:** Missing configuration, invalid environment variables, or interface violations must raise specific exceptions immediately at startup.
-- **No Secrets in Code:** Never accept secrets as arguments. Only accept environment variable *names*.
+## Formatting and Imports
+- Maintain consistent import grouping: stdlib, third-party, internal.
+- Prefer concise comments explaining why a complex block exists.
+- Keep module docstrings meaningful for public modules.
+- Keep function/class docstrings meaningful for public APIs.
 
----
-
-## 2. Architecture & Patterns
-
-### 2.1 The Plugin Pattern
-
-All connectors must be isolated. The core engine must never import a connector module directly.
-
-- **Dependency Injection:** Use Python `entry_points` or `pluggy` for discovery.
-- **Isolation:** Connectors reside in `src/semabridge/plugins/` (or `connectors/` during v1) but must not depend on each other.
-
-### 2.2 The Canonical Hub
-
-- **Source of Truth:** The `intermediate/` module contains the osi/sml definitions. This is the only language connectors are allowed to "speak."
-- **Round-Tripping:** Every Source extraction must map to osi/sml. Every Target emission must map from osi/sml.
-
-
----
-
-## 3. Coding Standards
-
-### 3.1 Type Safety
-
-- **Strict Typing:** All function signatures must be fully annotated.
-- **No `Any`:** Avoid `Any` wherever possible. Use `TypedDict`, `Protocol`, or Pydantic models.
-- **Data Models:** Use `pydantic` for internal data structures (osi objects) to enforce schema validation at runtime.
-
-### 3.2 Naming Conventions
-
-- **Files:** `snake_case` (e.g., `fabric_connector.py`, `osi_converter.py`).
-- **Classes:** `PascalCase` (e.g., `FabricConnector`, `SnowflakeToosiConverter`).
-- **Variables:** `snake_case`.
-- **Constants:** `UPPER_SNAKE_CASE`.
-- **Auth Config:** Keys representing environment variable names must end in `_env` (e.g., `client_secret_env`).
-
-### 3.3 Error Handling & Logging
-
-- **Exceptions:** Define custom exceptions in `semabridge.core.exceptions` (e.g., `ConnectorError`, `ConversionError`). Do not raise generic `Exception`.
-- **Logging:**
-    - Use the standard `logging` library.
-    - **Context:** All log messages inside a run loop must include `[RunID: ...]` context.
-    - **Redaction:** You must implement a log filter that scrubs values matching credential patterns.
-
----
-
-## 4. File Structure
-
-Generate code within this specific hierarchy:
-
-Plaintext
-
-`semabridge/
-├── src/
-│   └── semabridge/
-│       ├── core/               # Exceptions, Logger, Orchestrator
-│       │   └── interfaces.py   # BaseConnector, BaseConverter ABCs
-│       ├── intermediate/       # osi/OSI Definitions
-│       │   └── models.py       # Pydantic models for osi
-│       ├── connectors/         # Implementations
-│       │   ├── fabric/         # semabridge_fabric_connector
-│       │   └── snowflake/      # semabridge_snowflake_connector
-│       ├── repository/         # DuckDB Logic
-│       └── cli/                # Click/Typer app entry point
-└── pyproject.toml              # Dependencies & Entry Points`
-
----
-
-## 5. Security Mandates
-
-1. **Environment Variables Only:** If a method requires a password, it must read it from `os.environ` inside the method. Never pass the password as a parameter.
-2. **Immutability:** osi objects should be treated as immutable once created.
-
-## 6. Documentation Requirements
-
-- **Docstrings:** Google-style docstrings for all public methods (Arguments, Returns, Raises).
-- **Comments:** Comment *why* complex logic exists, not *what* it is doing.
-
----
-
-**End of Instructions**
+## Test and Quality Style
+- Keep tests deterministic and isolated from live external services.
+- Prefer fixtures and mocks over hardcoded environment dependencies.
+- Keep test names explicit and behavior-focused.
