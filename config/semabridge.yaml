@@ -1,16 +1,52 @@
-project_name: demotable
+project_name: multi
 source:
   type: fabric
-  identity_id: b0f47051-1209-4b72-b44a-aff8c5f63803
+  identity_id: f00dceb0-5ac7-425f-b939-103eac9bab01
   workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
   workspace: semabridge
   models:
-    - DEMO_TABLE_SEMATIC
+    - annual
+    - Competitive Marketing Analysis
+    - Client Data
 targets:
   - type: snowflake
 mappings:
-  - source: DEMO_TABLE_SEMATIC
-    target: demo_table_sematic_mapped
+  - source: annual
+    target: annual_mapped
+    type: table
+    columns:
+      - source: id
+        target: id
+        type: INT
+        primary_key: true
+      - source: name
+        target: name
+        type: VARCHAR(255)
+      - source: created_at
+        target: created_at
+        type: TIMESTAMP
+      - source: updated_at
+        target: updated_at
+        type: TIMESTAMP
+  - source: Competitive Marketing Analysis
+    target: competitive marketing analysis_mapped
+    type: table
+    columns:
+      - source: id
+        target: id
+        type: INT
+        primary_key: true
+      - source: name
+        target: name
+        type: VARCHAR(255)
+      - source: created_at
+        target: created_at
+        type: TIMESTAMP
+      - source: updated_at
+        target: updated_at
+        type: TIMESTAMP
+  - source: Client Data
+    target: client data_mapped
     type: table
     columns:
       - source: id
@@ -32,7 +68,9 @@ ui:
   output_format: osi
 selection:
   model_ids:
-    - 1de94708-b786-4843-9280-e2d04de43144
+    - a3eb7be8-2df8-482b-872b-9d661659895a
+    - f65e2eeb-b9d8-4695-aaf8-504fc15aa936
+    - 0794fdcc-d85f-4d93-a42c-8bacaad04819
 options:
   auto_relationships: true
   generate_descriptions: true

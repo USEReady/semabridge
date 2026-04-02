@@ -309,7 +309,9 @@ class FabricExtractor:
                  
             # DEBUG: Save raw definition
             try:
-                debug_path = Path("output/debug/raw_fabric_model.json")
+                safe_dataset = re.sub(r"[^A-Za-z0-9_.-]", "_", str(dataset_id or resolved_id or "model"))
+                safe_dataset = re.sub(r"_+", "_", safe_dataset).strip("._") or "model"
+                debug_path = Path("output/debug") / safe_dataset / "raw_fabric_model.json"
                 debug_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(debug_path, "w", encoding="utf-8") as f:
                     json.dump(result, f, indent=2)

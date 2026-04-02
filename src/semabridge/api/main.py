@@ -23,6 +23,7 @@ from pathlib import Path
 from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Dict, Any, List, Optional
+import asyncio
 from fastapi import FastAPI, HTTPException, Depends, Header, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -35,6 +36,16 @@ import re
 import yaml
 import logging
 import time
+
+# Windows-specific asyncio stability:
+# use the selector loop instead of Proactor to avoid intermittent
+# `_ProactorBaseWritePipeTransport._loop_writing` assertion failures
+# during heavy logging / websocket / pipe writes.
+if os.name == "nt":
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    except Exception:
+        pass
 
 # Core imports
 from semabridge.core.settings import get_settings, reload_settings

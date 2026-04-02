@@ -305,7 +305,7 @@ def _run_single_job(
             target=target_type,
             dataset_id=job["dataset_id"],
             pbix_path=job["pbix_path"],
-            project_name=config.get("model_name") or config.get("project_name") or model_label,
+            project_name=model_label,
             tag=str(config.get("version_tag", "v1.0")),
             deploy=deploy_enabled,
             dry_run=False,

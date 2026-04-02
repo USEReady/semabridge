@@ -133,6 +133,22 @@ class ExecutionEngine:
         self._context: Optional[RunContext] = None
         self._summary: Optional[RunSummary] = None
 
+    @staticmethod
+    def _safe_output_name(name: Optional[str]) -> str:
+        raw = str(name or "model")
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", raw)
+        safe = re.sub(r"_+", "_", safe).strip("._")
+        return safe or "model"
+
+    def _model_output_dir(self, *parts: str, model_name: Optional[str] = None) -> Path:
+        safe_name = self._safe_output_name(model_name or (self._context.project_id if self._context else None))
+        path = Path("output")
+        for part in parts:
+            path /= part
+        path /= safe_name
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     # -------------------------------------------------------------------------
     @classmethod
     def from_yaml(cls, config_path: "Path") -> "ExecutionEngine":
@@ -1881,8 +1897,7 @@ class ExecutionEngine:
             snowflake_schema=config.snowflake.schema_name,
         )
         
-        output_dir = Path("output")
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = self._model_output_dir("fabric", model_name=context.project_id)
         
         bim_path = output_dir / "model.bim"
         generator.save(bim_path)
@@ -1895,8 +1910,7 @@ class ExecutionEngine:
         config = context.config
         emitter = SnowflakeEmitter(config.snowflake, behavior=context.behavior)
         
-        output_dir = Path("output/reverse")
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = self._model_output_dir("reverse", model_name=context.project_id)
         
         ddls = emitter.generate_ddls(context.sml_model)
         full_ddl = "\n\n".join(ddls)
@@ -1919,8 +1933,7 @@ class ExecutionEngine:
         publisher = DatabricksPublisher(context.config.databricks)
         statements = publisher.generate_sql_statements(context.sml_model)
 
-        output_dir = Path("output/databricks")
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = self._model_output_dir("databricks", model_name=context.project_id)
         sql_path = output_dir / "semantic_model.sql"
 
         with open(sql_path, "w", encoding="utf-8") as f:
@@ -2079,8 +2092,7 @@ class ExecutionEngine:
             osi_model = SMLToOSIConverter().to_osi(context.sml_model)
             context.osi_model = osi_model
 
-            out_dir = Path("output")
-            out_dir.mkdir(parents=True, exist_ok=True)
+            out_dir = self._model_output_dir("inferred", model_name=context.project_id)
             json_path = out_dir / "osi_inferred.json"
             yaml_path = out_dir / "osi_inferred.yaml"
 
