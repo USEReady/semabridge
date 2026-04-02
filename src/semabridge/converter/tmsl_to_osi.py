@@ -95,10 +95,9 @@ class TMSLToOSIConverter(BaseConverter):
                         osi_model.dimensions.append(dim)
 
                     # Process Measures (Metrics)
-                    if "measures" in table:
-                        for measure in table["measures"]:
-                            metric = self._parse_metric(measure, dataset.unique_name)
-                            osi_model.metrics.append(metric)
+                    for measure in self._iter_table_measures(table):
+                        metric = self._parse_metric(measure, dataset.unique_name)
+                        osi_model.metrics.append(metric)
 
             # Process Relationships
             # Build set of valid dataset names (excluding filtered-out tables like LocalDateTable_*)
@@ -385,11 +384,19 @@ class TMSLToOSIConverter(BaseConverter):
 
     def _parse_metric(self, measure_def: Dict[str, Any], dataset_name: str) -> OSIMetric:
         """Parse a TMSL measure into OSIMetric with Cortex AI metadata."""
-        dax = measure_def.get("expression", "")
+        dax = self._extract_measure_expression(measure_def)
         if isinstance(dax, list):
             dax = "\n".join(dax)
 
         name = measure_def["name"]
+
+        if not str(dax).strip():
+            logger.warning(
+                "Measure '%s' in dataset '%s' has no expression; retaining it with a placeholder",
+                name,
+                dataset_name,
+            )
+            dax = f"[{name}]"
 
         # access_modifier heuristic:
         # - Names prefixed with "_" or ending with " Helper" / " Base" → private_access
@@ -417,6 +424,48 @@ class TMSLToOSIConverter(BaseConverter):
             access_modifier=access_modifier,
             synonyms=synonyms,
         )
+
+    @staticmethod
+    def _iter_table_measures(table_def: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Return any measure definitions attached to a TMSL table."""
+        raw_measures = table_def.get("measures")
+        if raw_measures is None:
+            raw_measures = table_def.get("metrics")
+
+        if raw_measures is None:
+            return []
+        if isinstance(raw_measures, dict):
+            raw_measures = list(raw_measures.values())
+        if not isinstance(raw_measures, list):
+            logger.warning(
+                "Skipping measures on table '%s': expected list, got %s",
+                table_def.get("name", "<unnamed>"),
+                type(raw_measures).__name__,
+            )
+            return []
+
+        measures: List[Dict[str, Any]] = []
+        for measure in raw_measures:
+            if isinstance(measure, dict):
+                measures.append(measure)
+            else:
+                logger.warning(
+                    "Skipping malformed measure entry on table '%s': %r",
+                    table_def.get("name", "<unnamed>"),
+                    measure,
+                )
+        return measures
+
+    @staticmethod
+    def _extract_measure_expression(measure_def: Dict[str, Any]) -> Any:
+        """Read the raw DAX expression from a TMSL measure definition."""
+        for key in ("expression", "formula", "dax", "value"):
+            if key not in measure_def:
+                continue
+            expr = measure_def.get(key)
+            if expr is not None:
+                return expr
+        return ""
 
     def _parse_relationship(self, rel_def: Dict[str, Any]) -> Optional[OSIRelationship]:
         """Parse TMSL relationship."""

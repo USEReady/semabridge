@@ -1,4 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+        // Utility for case-insensitive status check
+        const isConnected = (statusObj) =>
+            typeof statusObj?.status === 'string' && statusObj.status.toLowerCase() === 'connected';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
     Settings,
     Cloud,
@@ -34,10 +37,10 @@ function withTimeout(promise, ms, fallbackValue = null) {
 }
 
 /* ───────────────────────────────────────────────
-   Fabric Interactive Login Card
+   Account Form: Fabric
    ─────────────────────────────────────────────── */
 
-function FabricLoginCard() {
+function FabricAccountForm({ initialTag, onSave, onCancel }) {
     const [authStatus, setAuthStatus] = useState(null);
     const [loginPhase, setLoginPhase] = useState('idle'); // idle | requesting | code_shown | polling | success | failed
     const [deviceCode, setDeviceCode] = useState(null);
@@ -47,6 +50,8 @@ function FabricLoginCard() {
     // Pre-fetched device code — ready before user clicks "Sign in"
     const prefetchedCode = useRef(null);
     const prefetchInFlight = useRef(false);
+    // Per-session flow_id for multi-user isolation.
+    const flowIdRef = useRef(null);
     const { addLog } = useLogs();
 
     // Workspace discovery state
@@ -56,9 +61,10 @@ function FabricLoginCard() {
     const [loadingWorkspaces, setLoadingWorkspaces] = useState(false);
     const [workspaceSaving, setWorkspaceSaving] = useState(false);
 
-    // Load auth status on mount
+    // We are creating a NEW identity Vault entry. 
+    // Do NOT load the global auth status on mount, otherwise it pulls the existing session.
     useEffect(() => {
-        loadAuthStatus();
+        prefetchDeviceCode();
         return () => { if (pollTimer.current) clearTimeout(pollTimer.current); };
     }, []);
 
@@ -73,32 +79,6 @@ function FabricLoginCard() {
             .then(result => { prefetchedCode.current = result; })
             .catch(() => { /* silent — will fetch fresh on click */ })
             .finally(() => { prefetchInFlight.current = false; });
-    };
-
-    const loadAuthStatus = async () => {
-        try {
-            const status = await withTimeout(api.fabricAuthStatus(), 4000, null);
-            if (status) {
-                setAuthStatus(status);
-            }
-
-            if (status?.logged_in) {
-                setLoginPhase('success');
-                fetchWorkspaces();
-            } else {
-                // Not logged in — silently pre-fetch a device code in the background
-                prefetchDeviceCode();
-            }
-
-            // Also load stored workspace_id
-            const connStatus = await withTimeout(api.getConnectionsStatus(), 4000, null);
-            if (connStatus?.fabric?.credentials?.workspace_id) {
-                setSelectedWorkspaceId(connStatus.fabric.credentials.workspace_id);
-            }
-            if (connStatus?.fabric?.credentials?.workspace_name) {
-                setSavedWorkspaceName(connStatus.fabric.credentials.workspace_name);
-            }
-        } catch { /* backend not running */ }
     };
 
     const fetchWorkspaces = async () => {
@@ -121,24 +101,38 @@ function FabricLoginCard() {
         if (prefetchedCode.current) {
             const result = prefetchedCode.current;
             prefetchedCode.current = null;
+            flowIdRef.current = result.flow_id;
             setDeviceCode(result);
             setLoginPhase('code_shown');
             addLog('info', 'Fabric Auth', `Device code: ${result.user_code}`);
-            window.open(result.verification_uri, '_blank', 'noopener,noreferrer');
+            
+            // Append prompt=select_account to force MS picker
+            let uri = result.verification_uri;
+            if (uri && !uri.includes('prompt=')) {
+                uri += (uri.includes('?') ? '&' : '?') + 'prompt=select_account';
+            }
+            window.open(uri, '_blank', 'noopener,noreferrer');
             startPolling();
             // Pre-fetch the next one quietly for any re-login
             setTimeout(prefetchDeviceCode, 2000);
             return;
         }
 
-        // Fallback: fetch fresh (MSAL app is warm so this is ~300 ms)
+        // Fallback: fetch fresh
         setLoginPhase('requesting');
         try {
             const result = await api.fabricLogin();
+            flowIdRef.current = result.flow_id;
             setDeviceCode(result);
             setLoginPhase('code_shown');
             addLog('info', 'Fabric Auth', `Device code: ${result.user_code}`);
-            window.open(result.verification_uri, '_blank', 'noopener,noreferrer');
+            
+            // Append prompt=select_account to force MS picker
+            let uri = result.verification_uri;
+            if (uri && !uri.includes('prompt=')) {
+                uri += (uri.includes('?') ? '&' : '?') + 'prompt=select_account';
+            }
+            window.open(uri, '_blank', 'noopener,noreferrer');
             startPolling();
         } catch (err) {
             setError(err.message);
@@ -151,7 +145,7 @@ function FabricLoginCard() {
         setLoginPhase('polling');
         pollTimer.current = setTimeout(async () => {
             try {
-                const result = await api.fabricPoll();
+                const result = await api.fabricPoll(flowIdRef.current);
                 if (result.status === 'success') {
                     setLoginPhase('success');
                     setAuthStatus({
@@ -215,39 +209,37 @@ function FabricLoginCard() {
         }
     };
 
+    const handleSaveIdentity = async () => {
+        try {
+            const vaultAccounts = await api.createAccount({
+                connector_type: 'FABRIC',
+                tag: initialTag,
+                identity_email: authStatus?.username || savedWorkspaceName || 'N/A'
+            });
+            addLog('info', 'Connections', `Fabric account ${initialTag} stored in DB.`);
+            if (onSave) onSave(vaultAccounts);
+        } catch (err) {
+            addLog('error', 'Connections', `Failed to create Fabric account: ${err.message}`);
+        }
+    };
+
     const isLoggedIn = authStatus?.logged_in;
 
     return (
-        <div className="rounded-xl border overflow-hidden"
+        <div className="rounded-xl border overflow-hidden p-4 mt-4"
             style={{ borderColor: 'var(--border-main)', background: 'var(--bg-surface)' }}>
-            {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b"
-                style={{ borderColor: 'var(--border-main)' }}>
-                <div className="flex items-center gap-2.5">
-                    {/* Cloud icon removed as requested */}
-                    <div>
-                        <h3 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
-                            Microsoft Fabric
-                        </h3>
-                        <p className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
-                            Sign in with your Microsoft account
-                        </p>
-                    </div>
-                </div>
-                {isLoggedIn ? (
-                    <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full"
-                        style={{ background: 'rgba(52,211,153,0.1)', color: '#34d399' }}>
-                        <CheckCircle2 size={10} /> SIGNED IN
-                    </span>
-                ) : (
-                    <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full"
-                        style={{ background: 'rgba(245,158,11,0.1)', color: '#f59e0b' }}>
-                        <AlertCircle size={10} /> NOT SIGNED IN
-                    </span>
-                )}
+            <div className="flex justify-between items-center mb-4">
+                <h4 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Authenticate New Account</h4>
+                <button onClick={onCancel} className="text-xs text-gray-400 hover:text-white"><X size={14}/></button>
             </div>
+            
+            <div className="space-y-4">
+                {/* Tag/Alias Input locked by ConnectionManager or passed in */}
+                <div>
+                   <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Account Tag</label>
+                   <input type="text" readOnly value={initialTag} className="w-full px-3 py-2 rounded-lg text-xs border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-tertiary)' }} />
+                </div>
 
-            <div className="px-4 py-4">
                 {/* ── Logged In State ── */}
                 {isLoggedIn && (
                     <div className="space-y-3">
@@ -265,68 +257,6 @@ function FabricLoginCard() {
                                     Tenant: {authStatus?.tenant_id?.substring(0, 8)}...
                                 </div>
                             </div>
-                        </div>
-
-                        {/* Workspace Selector */}
-                        <div>
-                            <label className="block text-[11px] font-medium mb-1"
-                                style={{ color: 'var(--text-secondary)' }}>
-                                Workspace
-                                {savedWorkspaceName && (
-                                    <span className="ml-1.5 text-[10px] font-normal"
-                                        style={{ color: 'var(--text-tertiary)' }}>
-                                        (active: {savedWorkspaceName})
-                                    </span>
-                                )}
-                            </label>
-                            <div className="flex gap-2">
-                                {loadingWorkspaces ? (
-                                    <div className="flex-1 flex items-center gap-2 px-3 py-2 text-xs"
-                                        style={{ color: 'var(--text-tertiary)' }}>
-                                        <Loader2 size={12} className="animate-spin" />
-                                        Loading workspaces...
-                                    </div>
-                                ) : workspaces.length > 0 ? (
-                                    <select
-                                        value={selectedWorkspaceId}
-                                        onChange={e => setSelectedWorkspaceId(e.target.value)}
-                                        className="flex-1 px-3 py-2 rounded-lg text-xs border outline-none appearance-none cursor-pointer"
-                                        style={{
-                                            background: 'var(--bg-input, var(--bg-primary))',
-                                            borderColor: 'var(--border-main)',
-                                            color: 'var(--text-primary)',
-                                        }}>
-                                        <option value="">Select a workspace...</option>
-                                        {workspaces.map(ws => (
-                                            <option key={ws.id} value={ws.id}>
-                                                {ws.displayName}
-                                            </option>
-                                        ))}
-                                    </select>
-                                ) : (
-                                    <div className="flex-1 flex items-center gap-2 px-3 py-2 text-xs rounded-lg"
-                                        style={{ color: 'var(--text-tertiary)', background: 'var(--bg-input, var(--bg-primary))', border: '1px solid var(--border-main)' }}>
-                                        No workspaces found
-                                        <button onClick={fetchWorkspaces} className="underline text-[10px]"
-                                            style={{ color: 'var(--color-accent)' }}>Retry</button>
-                                    </div>
-                                )}
-                                <button onClick={handleSaveWorkspace}
-                                    disabled={!selectedWorkspaceId || workspaceSaving}
-                                    className="px-3 py-2 rounded-lg text-xs font-bold transition-all"
-                                    style={{
-                                        background: selectedWorkspaceId ? 'var(--color-accent)' : 'var(--border-main)',
-                                        color: '#fff',
-                                        opacity: (!selectedWorkspaceId || workspaceSaving) ? 0.5 : 1,
-                                    }}>
-                                    {workspaceSaving ? <Loader2 size={12} className="animate-spin" /> : 'Save'}
-                                </button>
-                            </div>
-                            {workspaces.length > 0 && (
-                                <p className="text-[10px] mt-1" style={{ color: 'var(--text-tertiary)' }}>
-                                    {workspaces.length} workspace{workspaces.length !== 1 ? 's' : ''} available
-                                </p>
-                            )}
                         </div>
                     </div>
                 )}
@@ -368,7 +298,14 @@ function FabricLoginCard() {
                                         : <Copy size={16} style={{ color: 'var(--text-tertiary)' }} />}
                                 </button>
                             </div>
-                            <a href={deviceCode.verification_uri}
+                            <a href={(() => {
+                                // Always force account-selection prompt when reopening
+                                let uri = deviceCode.verification_uri || '';
+                                if (uri && !uri.includes('prompt=')) {
+                                    uri += (uri.includes('?') ? '&' : '?') + 'prompt=select_account';
+                                }
+                                return uri;
+                            })()}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition-all hover:brightness-110"
@@ -402,18 +339,12 @@ function FabricLoginCard() {
                 )}
             </div>
 
-            {/* Actions Footer */}
             {isLoggedIn && (
-                <div className="flex items-center justify-between px-4 py-3 border-t"
-                    style={{ borderColor: 'var(--border-main)' }}>
-                    <div className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
-                        <ShieldCheck size={10} style={{ color: '#34d399' }} />
-                        Token stored in DuckDB
-                    </div>
-                    <button onClick={handleLogout}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs hover:bg-red-500/10 transition-colors"
-                        style={{ color: '#ef4444' }}>
-                        <LogOut size={12} />
+                <div className="pt-4 flex justify-end gap-2 border-t" style={{ borderColor: 'var(--border-main)' }}>
+                    <button onClick={handleSaveIdentity} className="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold rounded-lg transition-colors">
+                        Save Identity
+                    </button>
+                    <button onClick={handleLogout} className="px-4 py-2 border border-red-500/30 text-red-500 hover:bg-red-500/10 text-xs font-bold rounded-lg transition-colors">
                         Sign Out
                     </button>
                 </div>
@@ -422,23 +353,19 @@ function FabricLoginCard() {
     );
 }
 
-
 /* ───────────────────────────────────────────────
-   Snowflake Credentials Card (Password + SSO)
+   Account Form: Snowflake
    ─────────────────────────────────────────────── */
 
 const SNOWFLAKE_FIELDS = [
-    { key: 'account', label: 'Account', placeholder: 'abc123.us-east-1', secret: false, required: true },
+    { key: 'account', label: 'Account URL', placeholder: 'abc123.us-east-1', secret: false, required: true },
     { key: 'user', label: 'Username', placeholder: 'your_username', secret: false, required: true },
     { key: 'password', label: 'Password', placeholder: 'Enter your Snowflake password', secret: true, passwordOnly: true },
     { key: 'private_key', label: 'Private Key (PEM)', placeholder: 'Paste your private key content', secret: true, keypairOnly: true },
-    { key: 'warehouse', label: 'Warehouse', placeholder: 'COMPUTE_WH', secret: false },
-    { key: 'database', label: 'Database', placeholder: 'MY_DATABASE', secret: false },
-    { key: 'schema_name', label: 'Schema', placeholder: 'PUBLIC', secret: false },
     { key: 'role', label: 'Role (optional)', placeholder: 'SYSADMIN', secret: false },
 ];
 
-function SnowflakeCard({ status }) {
+function SnowflakeAccountForm({ initialTag, status, onSave, onCancel }) {
     const [formData, setFormData] = useState({});
     const [showSecrets, setShowSecrets] = useState({});
     const [saving, setSaving] = useState(false);
@@ -477,6 +404,7 @@ function SnowflakeCard({ status }) {
         try {
             const filtered = {};
             for (const [k, v] of Object.entries(formData)) { if (v) filtered[k] = v; }
+            filtered.account_tag = initialTag;
 
             // Explicitly set auth_type and clean stale fields per mode
             if (authMode === 'password') {
@@ -495,7 +423,15 @@ function SnowflakeCard({ status }) {
             }
 
             await api.saveConnection('snowflake', filtered);
+            
+            const vaultAccounts = await api.createAccount({
+                connector_type: 'SNOWFLAKE',
+                tag: initialTag,
+                identity_email: filtered.user || filtered.account || 'N/A'
+            });
+
             addLog('info', 'Connections', `Snowflake credentials saved (${authMode})`);
+            if (onSave) onSave(vaultAccounts);
         } catch (err) {
             addLog('error', 'Connections', err.message);
         } finally { setSaving(false); }
@@ -569,33 +505,17 @@ function SnowflakeCard({ status }) {
     });
 
     return (
-        <div className="rounded-xl border overflow-hidden"
+        <div className="rounded-xl border overflow-hidden p-4 mt-4"
             style={{ borderColor: 'var(--border-main)', background: 'var(--bg-surface)' }}>
-            <div className="flex items-center justify-between px-4 py-3 border-b"
-                style={{ borderColor: 'var(--border-main)' }}>
-                <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg flex items-center justify-center"
-                        style={{ background: 'rgba(41,181,232,0.1)' }}>
-                        <Snowflake size={16} style={{ color: '#29b5e8' }} />
-                    </div>
-                    <div>
-                        <h3 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Snowflake</h3>
-                        <p className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
-                            {authMode === 'sso' ? 'Browser SSO Authentication' : 'Account Credentials'}
-                        </p>
-                    </div>
-                </div>
-                {isConfigured ? (
-                    <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full"
-                        style={{ background: 'rgba(52,211,153,0.1)', color: '#34d399' }}>
-                        <CheckCircle2 size={10} /> CONFIGURED
-                    </span>
-                ) : (
-                    <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full"
-                        style={{ background: 'rgba(245,158,11,0.1)', color: '#f59e0b' }}>
-                        <AlertCircle size={10} /> NOT CONFIGURED
-                    </span>
-                )}
+            <div className="flex justify-between items-center mb-4">
+                <h4 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Authenticate New Account</h4>
+                <button onClick={onCancel} className="text-xs text-gray-400 hover:text-white"><X size={14}/></button>
+            </div>
+            
+            {/* Tag/Alias display */}
+            <div className="mb-4">
+               <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Account Tag</label>
+               <input type="text" readOnly value={initialTag} className="w-full px-3 py-2 rounded-lg text-xs border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-tertiary)' }} />
             </div>
 
             {/* Auth Mode Toggle */}
@@ -730,8 +650,188 @@ function SnowflakeCard({ status }) {
 
 
 /* ───────────────────────────────────────────────
-   Connections Panel (Modal)
+   Connection Manager (Identity Vault)
    ─────────────────────────────────────────────── */
+function ConnectionManager({ type, title, subtitle, icon: Icon, color, FormComponent, status }) {
+    const [accounts, setAccounts] = useState([]);
+    const [isAdding, setIsAdding] = useState(false);
+    const [newTag, setNewTag] = useState('');
+    // Warn the user that adding a new account will demote the existing default.
+    const [showDefaultWarning, setShowDefaultWarning] = useState(false);
+    const { addLog } = useLogs();
+
+    const updateVaultAccountsInState = (vaultAccounts) => {
+        if (vaultAccounts && Array.isArray(vaultAccounts)) {
+            const vaultList = vaultAccounts.map(v => ({
+                id: v.id,
+                tag: v.tag,
+                identity: v.identity_email || 'N/A',
+                status: v.status || 'Active',
+                is_default: v.is_default || false
+            }));
+            setAccounts(vaultList);
+        } else {
+            setAccounts([]);
+        }
+    };
+
+    const fetchAccounts = () => {
+        api.getAccounts(type.toUpperCase()).then(vaultAccounts => {
+            updateVaultAccountsInState(vaultAccounts);
+        }).catch(err => {
+            console.error("Failed to fetch vault accounts", err);
+            updateVaultAccountsInState(null);
+        });
+    };
+
+    useEffect(() => {
+        fetchAccounts();
+    }, [type, status]);
+
+    const handleSetDefault = async (accId) => {
+        try {
+            const upToDateVaultAccounts = await api.setDefaultAccount(accId);
+            updateVaultAccountsInState(upToDateVaultAccounts);
+            addLog('info', 'Connections', 'Default account updated');
+        } catch (err) {
+            addLog('error', 'Connections', 'Failed to set default account');
+        }
+    };
+
+    const handleDelete = async (accId) => {
+        if (!confirm('Remove this credential?')) return;
+        try {
+            const upToDateVaultAccounts = await api.deleteAccount(accId);
+            updateVaultAccountsInState(upToDateVaultAccounts);
+            addLog('info', 'Connections', 'Account deleted');
+        } catch (err) {
+            addLog('error', 'Connections', 'Failed to delete account');
+        }
+    };
+
+    return (
+        <div className="mb-8">
+            <div className="mb-4">
+                <div className="flex items-center gap-2 mb-1">
+                    <Icon size={18} style={{ color: color }} />
+                    <h2 className="text-sm font-bold text-white">{title}</h2>
+                </div>
+                <p className="text-xs text-gray-400">{subtitle}</p>
+            </div>
+
+            {/* List Header */}
+            {accounts.length > 0 && (
+                <div className="grid grid-cols-4 gap-4 px-4 py-2 border-b border-gray-700/50 text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">
+                    <div>Default</div>
+                    <div>Identity</div>
+                    <div>Tag</div>
+                    <div>Actions</div>
+                </div>
+            )}
+
+            {/* Account Rows */}
+            <div className="space-y-2 mb-4">
+                {accounts.length === 0 ? (
+                    <div className="p-6 text-center text-xs text-gray-500 border border-gray-800 rounded-lg">
+                        No identities configured yet. Ensure to add an account to sync.
+                    </div>
+                ) : (
+                    accounts.map(acc => (
+                        <div key={acc.id} className="grid grid-cols-4 gap-4 items-center px-4 py-3 bg-[#131620] border border-gray-100/10 rounded-lg hover:border-gray-100/20 transition-colors">
+                            <div className="flex items-center gap-2">
+                                {acc.is_default ? (
+                                    <span className="text-[11px] font-bold text-indigo-400">Default</span>
+                                ) : (
+                                    <button
+                                        onClick={() => handleSetDefault(acc.id)}
+                                        className="px-2 py-1 text-[11px] font-bold text-white bg-indigo-500 hover:bg-indigo-600 rounded transition-colors border border-indigo-500/60"
+                                        style={{ minWidth: 70 }}
+                                    >
+                                        Set Default
+                                    </button>
+                                )}
+                            </div>
+                            <div className="text-xs text-gray-400 truncate">{acc.identity}</div>
+                            <div className="text-xs font-bold text-[#e2e8f0] truncate">{acc.tag}</div>
+                            <div className="flex items-center gap-3 text-[11px] font-bold">
+                                <button className="text-gray-500 hover:text-red-400 transition-colors" onClick={() => handleDelete(acc.id)}>Logout </button>
+                            </div>
+                        </div>
+                    ))
+                )}
+            </div>
+
+            {/* Add Account Flow */}
+            {!isAdding ? (
+                <button 
+                    onClick={() => {
+                        // Reset all stale form state before opening the add form
+                        setNewTag('');
+                        setShowDefaultWarning(accounts.length > 0);
+                        setIsAdding(true);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-indigo-400 bg-indigo-500/10 hover:bg-indigo-500/20 rounded-lg border border-indigo-500/30 transition-colors"
+                >
+                    + Add New {title.split(' ')[1] || title} Account
+                </button>
+            ) : (
+                <div className="p-4 bg-[#11131a] border border-indigo-500/50 rounded-xl space-y-3">
+                    {/* Warn user that the new account will become the default */}
+                    {showDefaultWarning && (
+                        <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg text-[11px]"
+                            style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', color: '#d97706' }}>
+                            <AlertCircle size={13} className="shrink-0 mt-0.5" />
+                            <span>
+                                <strong>Heads-up:</strong> Saving a new account will automatically make it the <strong>Default</strong> and demote the current one.
+                                &nbsp;
+                                <button
+                                    onClick={() => setShowDefaultWarning(false)}
+                                    className="underline opacity-70 hover:opacity-100"
+                                >Dismiss</button>
+                            </span>
+                        </div>
+                    )}
+
+                    <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">Name your connection (Tag)</label>
+                    <div className="flex items-center gap-2">
+                        <input 
+                            autoFocus
+                            type="text" 
+                            placeholder="e.g. Production-Azure" 
+                            value={newTag}
+                            onChange={(e) => setNewTag(e.target.value)}
+                            className="flex-1 bg-black/40 border border-gray-700 px-3 py-2 rounded-lg text-xs outline-none focus:border-indigo-500 text-white"
+                        />
+                        <button 
+                            onClick={() => { setIsAdding(false); setNewTag(''); setShowDefaultWarning(false); }} 
+                            className="px-3 py-2 text-xs font-bold text-gray-400 hover:text-white"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                    {newTag.trim().length > 0 && (
+                        <FormComponent 
+                            key={newTag}
+                            initialTag={newTag} 
+                            status={null} // Never prefill existing global status for a NEW account
+                            onSave={(vaultAccounts) => { 
+                                setIsAdding(false); 
+                                setNewTag('');
+                                setShowDefaultWarning(false);
+                                if (vaultAccounts) {
+                                    updateVaultAccountsInState(vaultAccounts);
+                                } else {
+                                    fetchAccounts();
+                                }
+                            }} 
+                            onCancel={() => { setIsAdding(false); setNewTag(''); setShowDefaultWarning(false); }} 
+                        />
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
 
 /* ───────────────────────────────────────────────
    Global Config Editor (~/.semabridge/config.yaml)
@@ -890,20 +990,219 @@ function GlobalConfigEditor() {
     );
 }
 
-export default function ConnectionsPanel({ isOpen, onClose }) {
-    const [activeTab, setActiveTab] = useState('connections');
-    const [snowflakeStatus, setSnowflakeStatus] = useState(null);
-    const [loading, setLoading] = useState(true);
+/* ───────────────────────────────────────────────
+   Account Form: Databricks
+   ─────────────────────────────────────────────── */
+
+const DATABRICKS_FIELDS = [
+    { key: 'host', label: 'Server Hostname', placeholder: 'e.g. adb-123456789.azuredatabricks.net', secret: false, required: true },
+    { key: 'http_path', label: 'HTTP Path', placeholder: 'e.g. /sql/1.0/warehouses/abc12345', secret: false, required: true },
+    { key: 'token', label: 'Personal Access Token', placeholder: 'dapi...', secret: true, passwordOnly: true },
+];
+
+function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
+    const [formData, setFormData] = useState({});
+    const [showSecrets, setShowSecrets] = useState({});
+    const [saving, setSaving] = useState(false);
+    const [testing, setTesting] = useState(false);
+    const [testResult, setTestResult] = useState(null);
+    const { addLog } = useLogs();
 
     useEffect(() => {
-        if (isOpen) {
-            setLoading(true);
-            withTimeout(api.getConnectionsStatus(), 4000, null)
-                .then(data => setSnowflakeStatus(data?.snowflake ?? null))
-                .catch(() => { })
-                .finally(() => setLoading(false));
+        if (status?.credentials) {
+            const initial = {};
+            for (const field of DATABRICKS_FIELDS) {
+                const stored = status.credentials[field.key];
+                initial[field.key] = (field.secret || !stored) ? '' : stored;
+            }
+            setFormData(initial);
         }
-    }, [isOpen]);
+    }, [status]);
+
+    const handleSave = async () => {
+        setSaving(true);
+        setTestResult(null);
+        try {
+            const filtered = {};
+            for (const [k, v] of Object.entries(formData)) { if (v) filtered[k] = v; }
+            filtered.account_tag = initialTag;
+            filtered.auth_type = 'token'; // typical databricks auth
+            
+            await api.saveConnection('databricks', filtered);
+            
+            // Also register in the Vault via account_router
+            await api.createAccount({
+                connector_type: 'DATABRICKS',
+                tag: initialTag,
+                identity_email: filtered.host,
+                encrypted_token: filtered.token,
+            }).catch(e => console.log("Vault sync skipped for now", e));
+
+            addLog('info', 'Connections', `Databricks credentials saved`);
+            if (onSave) onSave();
+        } catch (err) {
+            addLog('error', 'Connections', err.message);
+        } finally { setSaving(false); }
+    };
+
+    const handleTest = async () => {
+        setTesting(true);
+        setTestResult(null);
+        try {
+            const result = await api.testConnection('databricks');
+            setTestResult(result);
+            addLog(result.status === 'success' ? 'info' : 'warning', 'Connections', result.message);
+        } catch (err) {
+            setTestResult({ status: 'failed', message: err.message });
+        } finally { setTesting(false); }
+    };
+
+    const handleDelete = async () => {
+        if (!confirm('Remove all stored Databricks credentials?')) return;
+        try {
+            await api.deleteConnection('databricks');
+            setFormData({});
+            setTestResult(null);
+        } catch (err) { addLog('error', 'Connections', err.message); }
+    };
+
+    const isConfigured = status?.configured;
+
+    return (
+        <div className="rounded-xl border overflow-hidden p-4 mt-4"
+            style={{ borderColor: 'var(--border-main)', background: 'var(--bg-surface)' }}>
+            <div className="flex justify-between items-center mb-4">
+                <h4 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Authenticate New Account</h4>
+                <button onClick={onCancel} className="text-xs text-gray-400 hover:text-white"><X size={14}/></button>
+            </div>
+            
+            <div className="mb-4">
+               <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Account Tag</label>
+               <input type="text" readOnly value={initialTag} className="w-full px-3 py-2 rounded-lg text-xs border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-tertiary)' }} />
+            </div>
+
+            <div className="px-4 py-3 space-y-3">
+                {DATABRICKS_FIELDS.map(field => (
+                    <div key={field.key}>
+                        <label className="block text-[11px] font-medium mb-1"
+                            style={{ color: 'var(--text-secondary)' }}>{field.label}</label>
+                        <div className="relative">
+                            <input
+                                type={field.secret && !showSecrets[field.key] ? 'password' : 'text'}
+                                value={formData[field.key] || ''}
+                                onChange={e => { setFormData(p => ({ ...p, [field.key]: e.target.value })); setTestResult(null); }}
+                                placeholder={field.placeholder}
+                                className="w-full px-3 py-2 rounded-lg text-xs border outline-none focus:ring-1 transition-colors"
+                                style={{ background: 'var(--bg-input, var(--bg-primary))', borderColor: 'var(--border-main)', color: 'var(--text-primary)' }}
+                            />
+                            {field.secret && (
+                                <button onClick={() => setShowSecrets(p => ({ ...p, [field.key]: !p[field.key] }))}
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded opacity-40 hover:opacity-100" type="button">
+                                    {showSecrets[field.key]
+                                        ? <EyeOff size={12} style={{ color: 'var(--text-secondary)' }} />
+                                        : <Eye size={12} style={{ color: 'var(--text-secondary)' }} />}
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                ))}
+            </div>
+
+            {testResult && (
+                <div className="mx-4 mb-3 px-3 py-2 rounded-lg text-xs flex items-center gap-2"
+                    style={{
+                        background: testResult.status === 'success' ? 'rgba(52,211,153,0.1)' : 'rgba(239,68,68,0.1)',
+                        color: testResult.status === 'success' ? '#34d399' : '#ef4444',
+                    }}>
+                    {testResult.status === 'success' ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
+                    {testResult.message}
+                </div>
+            )}
+
+            <div className="flex items-center gap-2 px-4 py-3 border-t" style={{ borderColor: 'var(--border-main)' }}>
+                <button onClick={handleSave} disabled={saving}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold"
+                    style={{ background: 'var(--color-accent)', color: '#fff', opacity: saving ? 0.6 : 1 }}>
+                    {saving ? <Loader2 size={12} className="animate-spin" /> : <Database size={12} />} Save
+                </button>
+                <button onClick={handleTest} disabled={testing || !isConfigured}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium border"
+                    style={{ borderColor: 'var(--border-main)', color: 'var(--text-secondary)', opacity: (testing || !isConfigured) ? 0.4 : 1 }}>
+                    {testing ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />} Test
+                </button>
+                {isConfigured && (
+                    <button onClick={handleDelete} className="ml-auto p-2 rounded-lg hover:bg-red-500/10"
+                        style={{ color: 'var(--text-tertiary)' }} title="Remove"><Trash2 size={14} /></button>
+                )}
+            </div>
+        </div>
+    );
+}
+
+
+export default function ConnectionsPanel({ isOpen, onClose, selectedConnector }) {
+    const [activeTab, setActiveTab] = useState('connections');
+    const [snowflakeStatus, setSnowflakeStatus] = useState(null);
+    const [databricksStatus, setDatabricksStatus] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+
+    // Polling state
+    const pollRef = useRef(null);
+    const pollTimeout = 3000; // 3 seconds
+    const pollMaxAttempts = 20; // ~1 minute
+    const [polling, setPolling] = useState(false);
+    const pollAttempts = useRef(0);
+
+    const fetchAndSetStatus = useCallback(async () => {
+        setLoading(true);
+        try {
+            const data = await withTimeout(api.getConnectionsStatus(), 4000, null);
+            setSnowflakeStatus(data?.snowflake ?? null);
+            setDatabricksStatus(data?.databricks ?? null);
+            // Add more providers as needed
+            return data;
+        } catch {
+            return null;
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    // Polling logic
+    const pollStatus = useCallback(async () => {
+        setPolling(true);
+        pollAttempts.current = 0;
+        const poll = async () => {
+            pollAttempts.current += 1;
+            const data = await fetchAndSetStatus();
+            const allConnected = ['snowflake', 'databricks'].every(
+                key => typeof data?.[key]?.status === 'string' && data[key].status.toLowerCase() === 'connected'
+            );
+            if (allConnected || pollAttempts.current >= pollMaxAttempts) {
+                setPolling(false);
+                return;
+            }
+            pollRef.current = setTimeout(poll, pollTimeout);
+        };
+        poll();
+    }, [fetchAndSetStatus]);
+
+    // Initial fetch on open
+    useEffect(() => {
+        if (isOpen) {
+            fetchAndSetStatus();
+        }
+        return () => { if (pollRef.current) clearTimeout(pollRef.current); };
+    }, [isOpen, fetchAndSetStatus]);
+
+    // Call this after any connect/save action for any provider
+    const handleAfterConnect = useCallback(() => {
+        fetchAndSetStatus();
+        pollStatus();
+    }, [fetchAndSetStatus, pollStatus]);
+
+    // Pass handleAfterConnect to child components (ConnectionManager, etc.) as needed
 
     if (!isOpen) return null;
 
@@ -971,8 +1270,32 @@ export default function ConnectionsPanel({ isOpen, onClose }) {
                             </div>
                         ) : (
                             <>
-                                <FabricLoginCard />
-                                <SnowflakeCard status={snowflakeStatus} />
+                                {(!selectedConnector || selectedConnector === 'fabric') && (
+                                    <ConnectionManager 
+                                        type="fabric" title="Microsoft Fabric" 
+                                        subtitle="Manage your Microsoft identities for data extraction." 
+                                        icon={Cloud} color="#8b5cf6" 
+                                        FormComponent={FabricAccountForm} 
+                                    />
+                                )}
+                                {(!selectedConnector || selectedConnector === 'snowflake') && (
+                                    <ConnectionManager 
+                                        type="snowflake" title="Snowflake" 
+                                        subtitle="Manage your Snowflake data warehouse identities." 
+                                        icon={Snowflake} color="#0ea5e9" 
+                                        FormComponent={SnowflakeAccountForm} 
+                                        status={snowflakeStatus} 
+                                    />
+                                )}
+                                {(!selectedConnector || selectedConnector === 'databricks') && (
+                                    <ConnectionManager 
+                                        type="databricks" title="Databricks" 
+                                        subtitle="Manage your Databricks cluster identities." 
+                                        icon={Database} color="#ff3621" 
+                                        FormComponent={DatabricksAccountForm} 
+                                        status={databricksStatus} 
+                                    />
+                                )}
 
                                 <div className="flex items-start gap-2 px-4 py-3 rounded-lg text-[11px]"
                                     style={{ background: 'var(--bg-surface)', color: 'var(--text-tertiary)' }}>

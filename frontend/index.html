@@ -10,6 +10,12 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script>
+      // Emergency recovery for persisted-state loops.
+      if (window.location.search.includes('reset=true')) {
+        localStorage.clear();
+        window.location.href = window.location.origin;
+      }
+
       // Inline theme detection to prevent FOUC (Flash of Unstyled Content)
       (function() {
         const stored = localStorage.getItem('semabridge-theme');

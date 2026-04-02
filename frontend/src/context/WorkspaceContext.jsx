@@ -12,19 +12,27 @@ export function WorkspaceProvider({ children }) {
     );
     const [isLoading, setIsLoading] = useState(false);
 
-    // Fetch workspaces from API
+let apiLock = false;
+
+    // Fetch workspaces from the DB-driven Fabric endpoint on every mount.
+    // This ensures switching the Default account in Settings is reflected
+    // immediately without a page reload or server restart.
     useEffect(() => {
         const load = async () => {
+            if (apiLock) return;
+            apiLock = true;
             setIsLoading(true);
             try {
-                const [baseWorkspaces, fabricWorkspaces] = await Promise.all([
-                    api.getWorkspaces().catch(() => []),
-                    api.fabricListWorkspaces().catch(() => ({ workspaces: [] })),
-                ]);
+                // Use only the DB-driven /connections/fabric/workspaces endpoint.
+                // The old /api/workspaces (settings-based) is intentionally NOT called here.
+                const fabricResponse = await api.fabricListWorkspaces().catch(() => ({ workspaces: [] }));
+                console.log('WorkspaceContext: raw fabricListWorkspaces response:', fabricResponse);
 
+                const raw = (fabricResponse?.workspaces) || [];
                 const merged = [];
                 const seen = new Set();
-                const pushUnique = (ws) => {
+
+                raw.forEach(ws => {
                     if (!ws) return;
                     const id = String(ws.id ?? ws.workspace_id ?? '').trim();
                     if (!id || seen.has(id)) return;
@@ -34,33 +42,42 @@ export function WorkspaceProvider({ children }) {
                         id,
                         name: ws.name ?? ws.displayName ?? ws.display_name ?? id,
                     });
-                };
-
-                // Keep a stable local workspace option visible in the selector.
-                pushUnique({ id: 'semabridge-local', name: 'SemaBridge Workspace' });
-
-                (baseWorkspaces || []).forEach(pushUnique);
-                ((fabricWorkspaces && fabricWorkspaces.workspaces) || []).forEach(pushUnique);
+                });
 
                 setWorkspaces(merged);
 
-                // Keep selected workspace if valid; else choose first available.
-                const hasActive = merged.some(ws => ws.id === activeWorkspaceId);
-                if (!hasActive && merged.length > 0) {
-                    setActiveWorkspaceId(merged[0].id);
-                    localStorage.setItem(STORAGE_KEY, merged[0].id);
+                // Purge stale localStorage if the stored ID is not in the live list
+                const storedId = localStorage.getItem(STORAGE_KEY) || '';
+                const isStoredValid = storedId && merged.some(ws => ws.id === storedId);
+
+                if (!isStoredValid && merged.length > 0) {
+                    // Prefer 'My workspace' as fallback, otherwise first item
+                    const myWs = merged.find(w => w.name === 'My workspace');
+                    const defaultId = myWs ? myWs.id : merged[0].id;
+                    setActiveWorkspaceId(defaultId);
+                    localStorage.setItem(STORAGE_KEY, defaultId);
+                    if (storedId) {
+                        console.warn('WorkspaceContext: purged stale workspace ID from localStorage:', storedId);
+                    }
+                } else if (!isStoredValid && merged.length === 0) {
+                    setActiveWorkspaceId('');
+                    localStorage.removeItem(STORAGE_KEY);
                 }
+                // else: stored ID is valid — keep it
             } catch (err) {
-                console.warn('Failed to load workspaces, using defaults:', err.message);
-                // Fallback: use the env workspace as the single option
-                const fallbackId = activeWorkspaceId || 'semabridge-local';
-                setWorkspaces([{ id: fallbackId, name: 'SemaBridge Workspace' }]);
+                console.warn('WorkspaceContext: failed to load workspaces:', err.message);
+                setWorkspaces([]);
             } finally {
                 setIsLoading(false);
             }
         };
         load();
+        
+        return () => {
+            apiLock = false; // reset lock if entire app unmounts
+        };
     }, []);
+
 
     const selectWorkspace = useCallback((id) => {
         setActiveWorkspaceId(id);

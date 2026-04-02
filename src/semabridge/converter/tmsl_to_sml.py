@@ -77,12 +77,44 @@ class TMSLTransformer:
             # against ALL datasets, not just the ones seen so far in the loop.
             tables_to_process: List[tuple] = []
             for table in model_obj["tables"]:
+                table_name = table.get("name", "")
+                column_count = len(table.get("columns", []) or [])
+                partition_count = len(table.get("partitions", []) or [])
+
+                logger.info(
+                    "TMSL table discovered: %s (columns=%s, partitions=%s, hidden=%s)",
+                    table_name or "<unnamed>",
+                    column_count,
+                    partition_count,
+                    bool(table.get("isHidden", False)),
+                )
+
                 # Calculation Groups are not supported in V1
                 if table.get("calculationGroup"):
+                    logger.info("Skipping calculation group table: %s", table_name or "<unnamed>")
                     continue
                 # Skip internal auto-generated date tables
-                if table.get("name", "").startswith("DateTableTemplate") or table.get("name", "").startswith("LocalDateTable"):
+                if table_name.startswith("DateTableTemplate") or table_name.startswith("LocalDateTable"):
+                    logger.info("Skipping auto-generated date table: %s", table_name)
                     continue
+
+                if "#ERROR" in json.dumps(table, ensure_ascii=False, default=str).upper():
+                    logger.warning(
+                        "Table '%s' contains #ERROR metadata; retaining it as a logical table",
+                        table_name or "<unnamed>",
+                    )
+
+                if column_count == 0:
+                    logger.warning(
+                        "Table '%s' has no columns; retaining it as a logical table",
+                        table_name or "<unnamed>",
+                    )
+                if partition_count == 0:
+                    logger.warning(
+                        "Table '%s' has no partitions; retaining it as a logical table",
+                        table_name or "<unnamed>",
+                    )
+
                 ds = self._parse_table(table)
                 sml.datasets.append(ds)
                 tables_to_process.append((table, ds))
@@ -131,8 +163,7 @@ class TMSLTransformer:
             tier5_candidates = []  # (metric_name, dax, table_alias, dataset_name)
             
             for table, ds in tables_to_process:
-                if "measures" in table:
-                    for measure in table["measures"]:
+                for measure in self._iter_table_measures(table):
                         metric = self._parse_measure(
                             measure,
                             ds.unique_name,
@@ -457,6 +488,12 @@ class TMSLTransformer:
         normalized_type = str(tmsl_type or "string").strip().lower()
         col_name = col_def.get("name", "")
         name_upper = col_name.upper()
+
+        if "#ERROR" in str(tmsl_type).upper() or "#ERROR" in json.dumps(col_def, ensure_ascii=False, default=str).upper():
+            logger.warning(
+                "Column '%s' contains #ERROR metadata; falling back to a string-compatible type",
+                col_name or "<unnamed>",
+            )
         
         # Robust, case-insensitive Fabric/TMSL -> SML type mapping
         type_map = {
@@ -604,7 +641,7 @@ class TMSLTransformer:
 
     def _parse_measure(self, measure_def: Dict[str, Any], table_name: str, overrides: Dict[str, str] = None, metrics_context: List[Any] = None) -> SMLMetric:
         """Parse a TMSL measure into SMLMetric with complexity analysis."""
-        dax = measure_def.get("expression", "")
+        dax = self._extract_measure_expression(measure_def)
         if isinstance(dax, list):
             dax = "\n".join(dax)  # TMSL expressions can be arrays of strings
         
@@ -707,6 +744,53 @@ class TMSLTransformer:
             metric.sync_enabled = False
             
         return metric
+
+    @staticmethod
+    def _iter_table_measures(table_def: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Return any measure definitions attached to a TMSL table.
+
+        TMSL model payloads usually use `measures`, but some export paths and
+        older fixtures use `metrics`.  We accept both so broken or renamed
+        payloads do not silently drop measures during extraction.
+        """
+        raw_measures = table_def.get("measures")
+        if raw_measures is None:
+            raw_measures = table_def.get("metrics")
+
+        if raw_measures is None:
+            return []
+        if isinstance(raw_measures, dict):
+            raw_measures = list(raw_measures.values())
+        if not isinstance(raw_measures, list):
+            logger.warning(
+                "Skipping measures on table '%s': expected list, got %s",
+                table_def.get("name", "<unnamed>"),
+                type(raw_measures).__name__,
+            )
+            return []
+
+        measures: List[Dict[str, Any]] = []
+        for measure in raw_measures:
+            if isinstance(measure, dict):
+                measures.append(measure)
+            else:
+                logger.warning(
+                    "Skipping malformed measure entry on table '%s': %r",
+                    table_def.get("name", "<unnamed>"),
+                    measure,
+                )
+        return measures
+
+    @staticmethod
+    def _extract_measure_expression(measure_def: Dict[str, Any]) -> Any:
+        """Read the raw DAX expression from a TMSL measure definition."""
+        for key in ("expression", "formula", "dax", "value"):
+            if key not in measure_def:
+                continue
+            expr = measure_def.get(key)
+            if expr is not None:
+                return expr
+        return ""
 
     def _parse_relationship(self, rel_def: Dict[str, Any], sml_context: SMLModel) -> Optional[SMLRelationship]:
         """Parse TMSL relationship."""

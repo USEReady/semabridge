@@ -111,3 +111,30 @@ class TestTMSLToOSI:
         assert next(c for c in ds.columns if c.unique_name == "EventTime").data_type == OSIDataType.TIME
         assert next(c for c in ds.columns if c.unique_name == "IsActive").data_type == OSIDataType.BOOLEAN
         assert next(c for c in ds.columns if c.unique_name == "Amount").data_type == OSIDataType.DECIMAL
+
+    def test_blank_measure_is_retained(self, converter):
+        """Blank/error-state measures should still appear in OSI output."""
+        source = {
+            "tmsl": {
+                "model": {
+                    "name": "BrokenMeasureModel",
+                    "tables": [{
+                        "name": "Sales",
+                        "columns": [],
+                        "measures": [{
+                            "name": "Broken Measure",
+                            "expression": "",
+                        }],
+                    }],
+                }
+            },
+            "workspace_id": "ws-123",
+            "dataset_id": "ds-broken",
+        }
+
+        osi = converter.to_osi(source)
+
+        assert len(osi.metrics) == 1
+        metric = osi.metrics[0]
+        assert metric.unique_name == "Broken Measure"
+        assert metric.expression == "[Broken Measure]"

@@ -265,6 +265,29 @@ class TestMeasureParsing:
         assert "VAR x = 1" in metric.expression
         assert "RETURN x" in metric.expression
 
+    def test_blank_measure_is_retained(self, transformer):
+        """Test that a blank/error-state measure is preserved with failure metadata."""
+        tmsl = {
+            "model": {
+                "name": "Test",
+                "tables": [{
+                    "name": "Sales",
+                    "columns": [],
+                    "measures": [{
+                        "name": "Broken Measure",
+                        "expression": "",
+                    }],
+                }],
+            }
+        }
+
+        sml = transformer.transform(tmsl, "ws-1", "ds-1")
+        metric = sml.get_metric("Broken Measure")
+
+        assert metric is not None
+        assert metric.sync_enabled is False
+        assert metric.sync_failure_reason == "Empty DAX expression"
+
 
 class TestRelationshipParsing:
     """Tests for relationship parsing."""

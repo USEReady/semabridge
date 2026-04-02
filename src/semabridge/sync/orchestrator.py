@@ -335,21 +335,31 @@ class SyncOrchestrator:
     def _discover_pbix_items(
         self, config: SyncConfig, job_id: str
     ) -> List[SyncJobItem]:
-        """Find .pbix files in the configured folder."""
-        if not config.pbix_folder:
-            logger.warning("No pbix_folder configured — skipping PBIX discovery")
+        """Find .pbix files from either a single source path or a configured folder."""
+        pbix_files: List[Path] = []
+
+        if config.source_path:
+            pbix_file = Path(config.source_path)
+            if not pbix_file.exists():
+                raise SyncError(
+                    f"PBIX file not found: {config.source_path}",
+                    job_id=job_id,
+                )
+            pbix_files = [pbix_file]
+        elif config.pbix_folder:
+            folder = Path(config.pbix_folder)
+            if not folder.exists():
+                raise SyncError(
+                    f"PBIX folder not found: {config.pbix_folder}",
+                    job_id=job_id,
+                )
+            pbix_files = sorted(folder.glob(config.pbix_pattern))
+        else:
+            logger.warning("No PBIX source_path or pbix_folder configured — skipping PBIX discovery")
             return []
 
-        folder = Path(config.pbix_folder)
-        if not folder.exists():
-            raise SyncError(
-                f"PBIX folder not found: {config.pbix_folder}",
-                job_id=job_id,
-            )
-
-        pbix_files = sorted(folder.glob(config.pbix_pattern))
         if not pbix_files:
-            logger.warning(f"No PBIX files matching '{config.pbix_pattern}' in {folder}")
+            logger.warning("No PBIX files matched the configured discovery inputs")
             return []
 
         items: List[SyncJobItem] = []
@@ -374,7 +384,7 @@ class SyncOrchestrator:
                 )
             )
 
-        logger.info(f"Discovered {len(items)} PBIX files in {folder}")
+        logger.info("Discovered %s PBIX source item(s)", len(items))
         return items
 
     def _discover_snowflake_items(
@@ -704,15 +714,10 @@ class SyncOrchestrator:
         from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
 
         connector = LocalPBIXConnector({"pbix_path": item.source_path})
-        connector.authenticate()
-        metadata = connector.discover()
-
-        # Convert to OSI via TMSL converter
+        raw_tmsl = connector.extract()
         converter = TMSLToOSIConverter()
-
-        # Build TMSL-compatible input from PBIX metadata
         tmsl_data = {
-            "tmsl": metadata.get("raw_model", metadata),
+            "tmsl": raw_tmsl,
             "workspace_id": "local",
             "dataset_id": item.model_name,
         }

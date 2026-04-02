@@ -66,9 +66,12 @@ class StartSyncRequest(BaseModel):
     direction: SyncDirection
     conflict_resolution: ConflictResolution = ConflictResolution.FAIL_AND_APPROVE
     pbix_folder: Optional[str] = None
+    source_path: Optional[str] = None
+    file_path: Optional[str] = None
     pbix_pattern: str = "*.pbix"
     snowflake_database: Optional[str] = None
     snowflake_schema: Optional[str] = None
+    target_snowflake_schema: Optional[str] = None
     fabric_workspace_id: Optional[str] = None
     max_workers: int = Field(default=5, ge=1, le=32)
     enable_parallel: bool = True
@@ -103,9 +106,10 @@ async def start_sync_job(request: StartSyncRequest) -> Dict[str, Any]:
         direction=request.direction,
         conflict_resolution=request.conflict_resolution,
         pbix_folder=request.pbix_folder,
+        source_path=request.source_path or request.file_path,
         pbix_pattern=request.pbix_pattern,
         snowflake_database=request.snowflake_database,
-        snowflake_schema=request.snowflake_schema,
+        snowflake_schema=request.snowflake_schema or request.target_snowflake_schema,
         fabric_workspace_id=request.fabric_workspace_id,
         max_workers=request.max_workers,
         enable_parallel=request.enable_parallel,

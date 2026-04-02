@@ -37,7 +37,7 @@ class LoggingConfig(BaseModel):
 class SourceConfig(BaseModel):
     """Source connector configuration."""
     
-    type: Literal["fabric", "snowflake"] = Field(
+    type: Literal["fabric", "snowflake", "pbix"] = Field(
         ..., 
         description="Source connector type"
     )
@@ -57,12 +57,37 @@ class SourceConfig(BaseModel):
         default=None,
         description="Snowflake schema (optional, uses env var if not set)"
     )
+    pbix_path: Optional[str] = Field(
+        default=None,
+        description="Path to a local .pbix file",
+    )
+    source_path: Optional[str] = Field(
+        default=None,
+        description="Alias for pbix_path used by sync-oriented configs",
+    )
+    file_path: Optional[str] = Field(
+        default=None,
+        description="Alias for pbix_path used by local file configs",
+    )
     
     @model_validator(mode='after')
     def validate_source_requirements(self) -> "SourceConfig":
         """Validate source-specific requirements."""
         if self.type == "fabric" and not self.dataset_id:
             raise ValueError("dataset_id is required for fabric source")
+        if self.type == "pbix":
+            resolved_path = self.pbix_path or self.source_path or self.file_path
+            if not resolved_path:
+                raise ValueError("pbix source requires one of: pbix_path, source_path, file_path")
+            cleaned = str(resolved_path).strip()
+            if len(cleaned) >= 2 and (
+                (cleaned[0] == '"' and cleaned[-1] == '"')
+                or (cleaned[0] == "'" and cleaned[-1] == "'")
+            ):
+                cleaned = cleaned[1:-1].strip()
+            self.pbix_path = cleaned
+            self.source_path = cleaned
+            self.file_path = cleaned
         return self
 
 
@@ -142,7 +167,7 @@ class ExecutionConfig(BaseModel):
         return self._behavior
     
     # Supported connector types (ClassVar to avoid Pydantic field detection)
-    SUPPORTED_SOURCE_TYPES: ClassVar[Set[str]] = {"fabric", "snowflake"}
+    SUPPORTED_SOURCE_TYPES: ClassVar[Set[str]] = {"fabric", "snowflake", "pbix"}
     SUPPORTED_TARGET_TYPES: ClassVar[Set[str]] = {"fabric", "snowflake"}
     
     @model_validator(mode='after')

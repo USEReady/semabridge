@@ -9,6 +9,7 @@ import {
     Panel,
 } from '@xyflow/react';
 import { Loader2, Database } from 'lucide-react';
+import { useReactFlow } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
 
@@ -45,12 +46,13 @@ const tdStyle = {
 // ────────────────────────────────────────────
 // Dagre hierarchical layout
 // ────────────────────────────────────────────
-function applyDagreLayout(nodes, edges, direction = 'TB', opts = {}) {
+function applyDagreLayout(nodes, edges, direction = 'LR', opts = {}) {
+    // Use LR (left-to-right) for ER/table view for Power BI/dbdiagram style
     const {
-        nodeWidth = 240,
-        nodeHeight = 80,
-        nodeSep = 60,
-        rankSep = 100,
+        nodeWidth = 260,
+        nodeHeight = 110,
+        nodeSep = 120,
+        rankSep = 180,
     } = opts;
     const g = new dagre.graphlib.Graph();
     g.setDefaultEdgeLabel(() => ({}));
@@ -74,6 +76,7 @@ function applyDagreLayout(nodes, edges, direction = 'TB', opts = {}) {
         };
     });
 }
+
 // ────────────────────────────────────────────
 // Simple force-directed simulation (lightweight)
 // ────────────────────────────────────────────
@@ -225,7 +228,10 @@ export default function DependencyGraph({
     isLoading = false,
     snapshotId = null,
     diffMode = false,
+    onRequestFullScreen,
+    showFullScreenButton = false,
 }) {
+    const { getNodes } = useReactFlow?.() || {};
     const [nodes, setNodes, onNodesChange] = useNodesState([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState([]);
     const [versionCounts, setVersionCounts] = useState({});
@@ -451,12 +457,16 @@ export default function DependencyGraph({
         const denseModelView = modelView && filteredNodes.length > 350;
         const denseTableView = tableView && filteredNodes.length > 260;
 
-        if (erMode) {
-            filteredNodes = applyERGridLayout(filteredNodes, filteredEdges);
+        if (erMode || tableView) {
+            // Use LR dagre for ER/table view for best readability
+            filteredNodes = applyDagreLayout(
+                filteredNodes,
+                filteredEdges,
+                'LR',
+                { nodeWidth: 260, nodeHeight: 110, nodeSep: 120, rankSep: 180 }
+            );
         } else if (modelView) {
             filteredNodes = applyModelGridLayout(filteredNodes, denseModelView);
-        } else if (tableView) {
-            filteredNodes = applyTableGridLayout(filteredNodes, filteredEdges);
         } else if (layout === 'hierarchical') {
             filteredNodes = applyDagreLayout(
                 filteredNodes,
@@ -621,55 +631,21 @@ export default function DependencyGraph({
                                     <th style={thStyle}>Schema</th>
                                     <th style={thStyle}>Columns</th>
                                     <th style={thStyle}>Rows</th>
-                                    <th style={thStyle}>Preview Columns</th>
+                                    <th style={thStyle}>Details</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {tableRows.map((n) => {
-                                    const d = n?.data || {};
+                                    const d = n.data || {};
                                     const columns = Array.isArray(d.columns) ? d.columns : [];
-                                    const rowCount = typeof d.row_count === 'number'
-                                        ? d.row_count
-                                        : Array.isArray(d.preview_rows)
-                                            ? d.preview_rows.length
-                                            : '-';
-                                    const previewCols = columns.slice(0, 6).map(c => c?.name || c).filter(Boolean).join(', ');
-
+                                    const rowCount = d.row_count || '-';
                                     return (
-                                        <tr
-                                            key={n.id}
-                                            style={{ cursor: 'pointer' }}
-                                        >
-                                            <td 
-                                                style={tdStyle}
-                                                onClick={() => onNodeClick?.({ ...d, id: n.id })}
-                                            >
-                                                {d.label || n.id}
-                                            </td>
-                                            <td 
-                                                style={tdStyle}
-                                                onClick={() => onNodeClick?.({ ...d, id: n.id })}
-                                            >
-                                                {d.model_label || d.model_name || d.model_id || '-'}
-                                            </td>
-                                            <td 
-                                                style={tdStyle}
-                                                onClick={() => onNodeClick?.({ ...d, id: n.id })}
-                                            >
-                                                {d.schema || 'PUBLIC'}
-                                            </td>
-                                            <td 
-                                                style={tdStyle}
-                                                onClick={() => onNodeClick?.({ ...d, id: n.id })}
-                                            >
-                                                {columns.length}
-                                            </td>
-                                            <td 
-                                                style={tdStyle}
-                                                onClick={() => onNodeClick?.({ ...d, id: n.id })}
-                                            >
-                                                {rowCount}
-                                            </td>
+                                        <tr key={n.id}>
+                                            <td style={tdStyle}>{d.label}</td>
+                                            <td style={tdStyle}>{d.model_label || d.model_name || d.model_id || '-'}</td>
+                                            <td style={tdStyle}>{d.schema || 'PUBLIC'}</td>
+                                            <td style={tdStyle}>{columns.length}</td>
+                                            <td style={tdStyle}>{rowCount}</td>
                                             <td style={{ ...tdStyle, color: 'var(--text-tertiary)' }}>
                                                 <details style={{ cursor: 'pointer' }}>
                                                     <summary style={{ userSelect: 'none', color: '#A5B4FC', fontWeight: 600 }}>
@@ -683,8 +659,8 @@ export default function DependencyGraph({
                                                             maxHeight: 300,
                                                             overflowY: 'auto',
                                                         }}>
-                                                            <table style={{ 
-                                                                width: '100%', 
+                                                            <table style={{
+                                                                width: '100%',
                                                                 borderCollapse: 'collapse',
                                                                 fontSize: 11,
                                                                 marginTop: 4,
@@ -921,35 +897,68 @@ export default function DependencyGraph({
                 {/* Legend */}
                 <Panel position="top-right">
                     <div style={{
-                        background: 'var(--bg-surface)',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: 8,
-                        padding: '10px 14px',
-                        fontSize: 11,
-                        display: 'flex', flexDirection: 'column', gap: 5,
+                        display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8,
+
+
+
+
+
                     }}>
-                        <span style={{ fontWeight: 700, fontSize: 10, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-tertiary)' }}>
-                            Legend
-                        </span>
-                        {[
-                            ...(erMode ? [] : [{ color: '#3B82F6', label: 'Semantic Model' }]),
-                            { color: '#22C55E', label: 'Source Table' },
-                            ...(erMode ? [{ color: '#818CF8', label: 'Relationship' }] : [{ color: '#EAB308', label: 'Metric / Measure' }]),
-                            { color: '#EF4444', label: 'Broken Reference' },
-                            ...(diffMode ? [
-                                { color: '#22C55E', label: 'Diff: Added (green)' },
-                                { color: '#EAB308', label: 'Diff: Modified (yellow)' },
-                                { color: '#EF4444', label: 'Diff: Removed (red/dotted)' },
-                            ] : []),
-                        ].map(item => (
-                            <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <span style={{
-                                    width: 10, height: 10, borderRadius: 3,
-                                    background: item.color, flexShrink: 0,
-                                }} />
-                                <span style={{ color: 'var(--text-secondary)' }}>{item.label}</span>
-                            </div>
-                        ))}
+                        {/* Full Screen Button above legend */}
+                        {showFullScreenButton && (
+                            <button
+                                onClick={onRequestFullScreen}
+                                title="Full Screen Relationship Diagram"
+                                style={{
+                                    width: 44, height: 44,
+                                    background: '#18181b', color: '#818CF8',
+                                    border: '2.5px solid #818CF8', borderRadius: '50%',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    fontSize: 24, fontWeight: 900,
+                                    boxShadow: '0 4px 16px rgba(0,0,0,.18)',
+                                    cursor: 'pointer',
+                                    opacity: 0.96,
+                                    transition: 'box-shadow .18s, border-color .18s, background .18s',
+                                    marginBottom: 2,
+                                }}
+                                onMouseOver={e => e.currentTarget.style.background = '#23234a'}
+                                onMouseOut={e => e.currentTarget.style.background = '#18181b'}
+                            >
+                                <span style={{fontSize: 24, lineHeight: 1}}>⛶</span>
+                            </button>
+                        )}
+                        <div style={{
+                            background: 'var(--bg-surface)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: 8,
+                            padding: '10px 14px',
+                            fontSize: 11,
+                            display: 'flex', flexDirection: 'column', gap: 5,
+                            minWidth: 140,
+                        }}>
+                            <span style={{ fontWeight: 700, fontSize: 10, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-tertiary)' }}>
+                                Legend
+                            </span>
+                            {[
+                                ...(erMode ? [] : [{ color: '#3B82F6', label: 'Semantic Model' }]),
+                                { color: '#22C55E', label: 'Source Table' },
+                                ...(erMode ? [{ color: '#818CF8', label: 'Relationship' }] : [{ color: '#EAB308', label: 'Metric / Measure' }]),
+                                { color: '#EF4444', label: 'Broken Reference' },
+                                ...(diffMode ? [
+                                    { color: '#22C55E', label: 'Diff: Added (green)' },
+                                    { color: '#EAB308', label: 'Diff: Modified (yellow)' },
+                                    { color: '#EF4444', label: 'Diff: Removed (red/dotted)' },
+                                ] : []),
+                            ].map(item => (
+                                <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <span style={{
+                                        width: 10, height: 10, borderRadius: 3,
+                                        background: item.color, flexShrink: 0,
+                                    }} />
+                                    <span style={{ color: 'var(--text-secondary)' }}>{item.label}</span>
+                                </div>
+                            ))}
+                        </div>
                     </div>
                 </Panel>
             </ReactFlow>

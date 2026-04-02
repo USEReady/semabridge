@@ -3,23 +3,25 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   FolderOpen, Plus, MoreVertical, Layers, Trash2, Edit3,
   Upload, Download, Play, Settings, Copy, Folder, FolderPlus,
-  Search, X, Check,
+  X, Check, BarChart3,
 } from 'lucide-react';
 
 import StatusBadge from '../components/common/StatusBadge';
 import EmptyState from '../components/common/EmptyState';
-import FilterBar from '../components/projects/FilterBar';
 import ProjectDetailModal from '../components/projects/ProjectDetailModal';
 import ImportProjectModal from '../components/projects/ImportProjectModal';
-import { useHPSearch } from '../hooks/useHPSearch';
+import SmartSearchBar, { matchesSmartQuery } from '../components/common/SmartSearchBar';
 import { api } from '../utils/api';
+import React, { useContext } from 'react';
+import { SyncContext } from '../context/SyncContext';
+import { DEFAULT_FILTER_OPTIONS, useUIStore } from '../store/uiStore';
 
 const SOURCE_ICONS = {
-  fabric: '🔷', snowflake: '❄️', databricks: '🧱', postgresql: '🐘',
-  salesforce: '☁️', google_sheets: '📊',
+  fabric: '🔷', snowflake: '❄️', databricks: '🧱', google_sheets: '📊',
 };
 
 /* Use CSS variables for folder colors - mapped to semantic status colors */
@@ -36,14 +38,8 @@ const FOLDER_COLORS = [
 /* ─── Main Page ─── */
 export default function ProjectsPage() {
   const navigate = useNavigate();
-  const [projects, setProjects] = useState([]);
-  const [folders, setFolders] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [menuOpen, setMenuOpen] = useState(null);
-  const [selectedFolder, setSelectedFolder] = useState(null);
-  const [sourceFilter, setSourceFilter] = useState('all');
-  const [targetFilter, setTargetFilter] = useState('all');
-  const [tagFilters, setTagFilters] = useState(new Set());
   const [detailProject, setDetailProject] = useState(null);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -53,32 +49,77 @@ export default function ProjectsPage() {
   const [renameFolderName, setRenameFolderName] = useState('');
   const [dragOverFolder, setDragOverFolder] = useState(null);
   const [runningProjectIds, setRunningProjectIds] = useState(new Set());
-  const [viewMode, setViewMode] = useState('folder'); // 'folder' or 'adapter'
+  const searchQuery = useUIStore(state => state.searchQuery);
+  const setSearchQuery = useUIStore(state => state.setSearchQuery);
+  const filterOptions = useUIStore(state => state.filterOptions);
+  const setFilterOptions = useUIStore(state => state.setFilterOptions);
+  const projectListScrollTop = useUIStore(state => state.projectListScrollTop);
+  const setProjectListScrollTop = useUIStore(state => state.setProjectListScrollTop);
+  const setActiveProjectId = useUIStore(state => state.setActiveProjectId);
+  const selectedFolder = filterOptions?.selectedFolder ?? DEFAULT_FILTER_OPTIONS.selectedFolder;
+  const sourceFilter = filterOptions?.sourceFilter ?? DEFAULT_FILTER_OPTIONS.sourceFilter;
+  const targetFilter = filterOptions?.targetFilter ?? DEFAULT_FILTER_OPTIONS.targetFilter;
+  const tagFilters = new Set(filterOptions?.tagFilters ?? DEFAULT_FILTER_OPTIONS.tagFilters);
+  const viewMode = filterOptions?.viewMode ?? DEFAULT_FILTER_OPTIONS.viewMode;
+  const useRegexSearch = filterOptions?.useRegexSearch ?? DEFAULT_FILTER_OPTIONS.useRegexSearch;
 
-  const loadData = useCallback(async () => {
-    try {
-      const [proj, fold] = await Promise.all([api.listProjects(), api.listFolders()]);
-      setProjects(proj);
-      setFolders(fold);
-    } catch {
-      setProjects([]); setFolders([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const {
+    data: projects = [],
+    isLoading: projectsLoading,
+    refetch: refetchProjects,
+  } = useQuery({
+    queryKey: ['projects'],
+    queryFn: api.listProjects,
+  });
 
-  useEffect(() => { loadData(); }, [loadData]);
+  const {
+    data: folders = [],
+    isLoading: foldersLoading,
+    refetch: refetchFolders,
+  } = useQuery({
+    queryKey: ['folders'],
+    queryFn: api.listFolders,
+  });
+
+  const loading = projectsLoading || foldersLoading;
+
+  const setProjects = useCallback((updater) => {
+    queryClient.setQueryData(['projects'], (current = []) => (
+      typeof updater === 'function' ? updater(current) : updater
+    ));
+  }, [queryClient]);
+
+  const setFolders = useCallback((updater) => {
+    queryClient.setQueryData(['folders'], (current = []) => (
+      typeof updater === 'function' ? updater(current) : updater
+    ));
+  }, [queryClient]);
+
+  const refreshData = useCallback(async () => {
+    await Promise.all([refetchProjects(), refetchFolders()]);
+  }, [refetchProjects, refetchFolders]);
+
+  useEffect(() => {
+    const container = document.getElementById('projects-grid-scroll');
+    if (!container || !Number.isFinite(projectListScrollTop)) return;
+    container.scrollTop = projectListScrollTop;
+  }, [projectListScrollTop, loading]);
+
+  const updateFilterOption = useCallback((key, value) => {
+    setFilterOptions({ [key]: value });
+  }, [setFilterOptions]);
 
   const allProjectTags = [...new Set(projects.flatMap(p => p.tags || []))];
 
   const folderFiltered = projects.filter(p => {
     // Handle both folder and source selection
     if (selectedFolder !== null) {
-      if (selectedFolder.startsWith('source:')) {
-        const source = selectedFolder.substring(7);
+      const selectedFolderKey = String(selectedFolder);
+      if (selectedFolderKey.startsWith('source:')) {
+        const source = selectedFolderKey.substring(7);
         if ((p.source || p.adapter) !== source) return false;
       } else {
-        if (p.folder_id !== selectedFolder) return false;
+        if (String(p.folder_id ?? '') !== selectedFolderKey) return false;
       }
     }
     if (sourceFilter !== 'all' && (p.source || p.adapter) !== sourceFilter) return false;
@@ -105,11 +146,20 @@ export default function ProjectsPage() {
     return true;
   });
 
-  const { results: searched, query, setQuery } = useHPSearch(
-    folderFiltered,
-    ['name', 'description', 'source', 'adapter', 'workspace_id', 'target_type'],
-  );
-  const filtered = query ? searched : folderFiltered;
+  const filtered = searchQuery.trim()
+    ? folderFiltered.filter((p) => {
+        const haystack = [
+          p.name,
+          p.description,
+          p.source,
+          p.adapter,
+          p.workspace_id,
+          p.target_type,
+          ...(Array.isArray(p.tags) ? p.tags : []),
+        ].join(' ');
+        return matchesSmartQuery(haystack, searchQuery, useRegexSearch);
+      })
+    : folderFiltered;
 
   /* ── Folder actions ── */
   const handleCreateFolder = async () => {
@@ -132,7 +182,7 @@ export default function ProjectsPage() {
     if (!confirm('Delete folder? Projects will be moved to root.')) return;
     await api.deleteFolder(id);
     setFolders(prev => prev.filter(f => f.id !== id));
-    if (selectedFolder === id) setSelectedFolder(null);
+    if (selectedFolder === id) updateFilterOption('selectedFolder', null);
     setProjects(prev => prev.map(p => p.folder_id === id ? { ...p, folder_id: null } : p));
   };
 
@@ -160,7 +210,7 @@ export default function ProjectsPage() {
     } catch (err) {
       console.error('Delete project failed:', err);
       alert(`Delete failed: ${err.message || 'Unknown error'}`);
-      await loadData();
+      await refreshData();
     }
   };
 
@@ -171,7 +221,7 @@ export default function ProjectsPage() {
       source: project.source ? { type: project.source, workspace_id: project.workspace_id } : undefined,
       target: project.target_type ? { type: project.target_type } : undefined,
     });
-    await loadData();
+    await refreshData();
     setMenuOpen(null);
   };
 
@@ -185,7 +235,7 @@ export default function ProjectsPage() {
     await api.exportProjectsBulk(ids);
   };
 
-  const handleImported = useCallback(() => { loadData(); }, [loadData]);
+  const handleImported = useCallback(() => { refreshData(); }, [refreshData]);
 
   const handleRunNow = useCallback(async (projectId) => {
     if (!projectId) return;
@@ -197,11 +247,21 @@ export default function ProjectsPage() {
     });
 
     try {
-      await api.runProjectNow(projectId);
-      await loadData();
+      const result = await api.syncProject(projectId);
+      const updatedProject = result?.project;
+      if (updatedProject?.id || updatedProject?.project_id) {
+        const pid = updatedProject.id || updatedProject.project_id;
+        setProjects(prev => prev.map(p => (p.id === pid || p.project_id === pid) ? { ...p, ...updatedProject } : p));
+      }
+      // Fallback: force progress bar to 100% and status to 'success' if POST returns 200
+      if (result && typeof window !== 'undefined' && window.dispatchEvent) {
+        window.dispatchEvent(new CustomEvent('semabridge-sync-fallback', { detail: { projectId, status: 'success', progress: 100 } }));
+      }
+      return result;
     } catch (err) {
       console.error('Run project failed:', err);
       alert(`Run failed: ${err.message || 'Unknown error'}`);
+      throw err;
     } finally {
       setRunningProjectIds(prev => {
         const next = new Set(prev);
@@ -209,16 +269,17 @@ export default function ProjectsPage() {
         return next;
       });
     }
-  }, [loadData]);
+  }, [setProjects]);
 
   /* ── Render ── */
   return (
-    <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: 'row-reverse', height: '100%', overflow: 'hidden' }}>
 
       {/* ── Folder/Adapter Sidebar ── */}
       <aside style={{
         width: 220, flexShrink: 0,
-        borderRight: '1px solid var(--border-main)',
+        borderLeft: '1px solid var(--border-main)',
+        borderRight: 'none',
         display: 'flex', flexDirection: 'column',
         padding: '16px 0',
         overflowY: 'auto',
@@ -229,7 +290,7 @@ export default function ProjectsPage() {
           </span>
           <div style={{ display: 'flex', gap: 4 }}>
             <button
-              onClick={() => setViewMode(viewMode === 'folder' ? 'adapter' : 'folder')}
+              onClick={() => updateFilterOption('viewMode', viewMode === 'folder' ? 'adapter' : 'folder')}
               title={viewMode === 'folder' ? 'View by source' : 'View by folder'}
               style={{
                 background: 'none', border: 'none', cursor: 'pointer',
@@ -256,7 +317,7 @@ export default function ProjectsPage() {
           color="var(--text-tertiary)"
           label={`All Projects (${projects.length})`}
           active={selectedFolder === null}
-          onClick={() => setSelectedFolder(null)}
+          onClick={() => updateFilterOption('selectedFolder', null)}
         />
 
         {/* Folder list or Source list */}
@@ -267,7 +328,7 @@ export default function ProjectsPage() {
             folder={f}
             projectCount={projects.filter(p => p.folder_id === f.id).length}
             active={selectedFolder === f.id}
-            onClick={() => setSelectedFolder(f.id)}
+            onClick={() => updateFilterOption('selectedFolder', f.id)}
             isRenaming={renameFolderId === f.id}
             renameValue={renameFolderName}
             onRenameChange={setRenameFolderName}
@@ -293,7 +354,7 @@ export default function ProjectsPage() {
                   color="var(--accent-blue)"
                   label={`${sourceIcon} ${source} (${sourceProjects.length})`}
                   active={selectedFolder === `source:${source}`}
-                  onClick={() => setSelectedFolder(`source:${source}`)}
+                  onClick={() => updateFilterOption('selectedFolder', `source:${source}`)}
                 />
               );
             })
@@ -360,7 +421,7 @@ export default function ProjectsPage() {
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <button
-                onClick={() => setViewMode(viewMode === 'folder' ? 'adapter' : 'folder')}
+                onClick={() => updateFilterOption('viewMode', viewMode === 'folder' ? 'adapter' : 'folder')}
                 title={viewMode === 'folder' ? 'View by source' : 'View by folder'}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 6,
@@ -391,33 +452,14 @@ export default function ProjectsPage() {
 
           {/* Search + filter bar */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-            <div style={{ position: 'relative', flex: 1, maxWidth: 400 }}>
-              <Search size={13} style={{
-                position: 'absolute', left: 10, top: '50%',
-                transform: 'translateY(-50%)', color: 'var(--text-tertiary)', pointerEvents: 'none',
-              }} />
-              <input
-                value={query}
-                onChange={e => setQuery(e.target.value)}
-                placeholder="Fuzzy search, /regex/, or glob*"
-                style={{
-                  width: '100%', paddingLeft: 30, paddingRight: query ? 28 : 10,
-                  paddingTop: 7, paddingBottom: 7,
-                  background: 'var(--bg-input)', border: '1px solid var(--border-main)',
-                  borderRadius: 8, fontSize: 12, color: 'var(--text-primary)', outline: 'none',
-                  boxSizing: 'border-box',
-                }}
-                onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-                onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
+            <div style={{ flex: 1, maxWidth: 440 }}>
+              <SmartSearchBar
+                value={searchQuery}
+                onChange={setSearchQuery}
+                useRegex={useRegexSearch}
+                onToggleRegex={(next) => updateFilterOption('useRegexSearch', next)}
+                placeholder="Search by prefix or regex"
               />
-              {query && (
-                <button
-                  onClick={() => setQuery('')}
-                  style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}
-                >
-                  <X size={12} />
-                </button>
-              )}
             </div>
             <button
               onClick={() => setFilterPanelOpen(!filterPanelOpen)}
@@ -456,7 +498,7 @@ export default function ProjectsPage() {
                   <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Source</label>
                   <select
                     value={sourceFilter}
-                    onChange={e => setSourceFilter(e.target.value)}
+                    onChange={e => updateFilterOption('sourceFilter', e.target.value)}
                     style={{
                       width: '100%', padding: '8px 10px', fontSize: 12, fontWeight: 500,
                       background: 'var(--bg-input)', border: '1px solid var(--border-main)',
@@ -478,7 +520,7 @@ export default function ProjectsPage() {
                   <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Target</label>
                   <select
                     value={targetFilter}
-                    onChange={e => setTargetFilter(e.target.value)}
+                    onChange={e => updateFilterOption('targetFilter', e.target.value)}
                     style={{
                       width: '100%', padding: '8px 10px', fontSize: 12, fontWeight: 500,
                       background: 'var(--bg-input)', border: '1px solid var(--border-main)',
@@ -507,7 +549,7 @@ export default function ProjectsPage() {
                             const newTags = new Set(tagFilters);
                             if (newTags.has(tag)) newTags.delete(tag);
                             else newTags.add(tag);
-                            setTagFilters(newTags);
+                            updateFilterOption('tagFilters', [...newTags]);
                           }}
                           style={{
                             padding: '5px 10px', borderRadius: 5, fontSize: 11, fontWeight: 600,
@@ -532,9 +574,11 @@ export default function ProjectsPage() {
                   <div style={{ display: 'flex', alignItems: 'flex-end' }}>
                     <button
                       onClick={() => {
-                        setSourceFilter('all');
-                        setTargetFilter('all');
-                        setTagFilters(new Set());
+                        setFilterOptions({
+                          sourceFilter: 'all',
+                          targetFilter: 'all',
+                          tagFilters: [],
+                        });
                       }}
                       style={{
                         width: '100%', padding: '8px 12px', fontSize: 11, fontWeight: 600,
@@ -555,12 +599,16 @@ export default function ProjectsPage() {
         </div>
 
         {/* Cards grid */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '4px 28px 28px' }}>
+        <div
+          id="projects-grid-scroll"
+          onScroll={(e) => setProjectListScrollTop(e.currentTarget.scrollTop)}
+          style={{ flex: 1, overflowY: 'auto', padding: '4px 28px 28px' }}
+        >
           {loading ? (
             <div style={{ padding: '80px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
               Loading projects…
             </div>
-          ) : filtered.length === 0 && !query ? (
+          ) : filtered.length === 0 && !searchQuery ? (
             <EmptyState
               icon={<FolderOpen size={26} />}
               title="No projects yet"
@@ -570,7 +618,7 @@ export default function ProjectsPage() {
             />
           ) : filtered.length === 0 ? (
             <div style={{ padding: '80px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-              No projects match "{query}"
+              No projects match "{searchQuery}"
             </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))', gap: 14 }}>
@@ -580,8 +628,8 @@ export default function ProjectsPage() {
                   project={project}
                   menuOpen={menuOpen}
                   onMenuToggle={setMenuOpen}
-                  onViewDetail={() => setDetailProject(project)}
-                  onConfigure={() => navigate(`/projects/${project.id}/config`)}
+                  onViewDetail={() => { setActiveProjectId(project.id); setDetailProject(project); }}
+                  onConfigure={() => { setActiveProjectId(project.id); navigate(`/projects/${project.id}/edit`); }}
                   onRunNow={() => handleRunNow(project.id)}
                   isRunning={runningProjectIds.has(project.id)}
                   onDuplicate={() => handleDuplicate(project)}
@@ -703,7 +751,35 @@ function ProjectCard({
   onDragStart,
 }) {
   const isOpen = menuOpen === project.id;
-  const emoji = SOURCE_ICONS[project.source || project.adapter] ?? '📁';
+  const sourceKey = String(project.source || project.adapter || '').toLowerCase();
+  const emoji = SOURCE_ICONS[sourceKey] ?? '📁';
+  const { activeRuns } = useContext(SyncContext);
+  // Debug log for troubleshooting status updates
+  console.log('[ProjectCard] project.id:', project.id, 'activeRuns:', activeRuns);
+  const myRun = activeRuns.find(
+    run =>
+      String(run.projectId) === String(project.id) ||
+      String(run.project_id) === String(project.id)
+  );
+  console.log('[ProjectCard] myRun:', myRun, 'project.status:', project.status);
+  const status = myRun ? myRun.status : (project.status || 'Idle');
+  let progress = 0;
+  if (myRun) {
+    if (myRun.progress !== undefined) {
+      progress = myRun.progress;
+    } else if (myRun.stepName) {
+      const stepMatch = myRun.stepName.match(/Step\s+(\d+)/i);
+      if (stepMatch && stepMatch[1]) {
+        progress = (parseInt(stepMatch[1], 10) / 10) * 100;
+      }
+    }
+  }
+  const syncInFlight = isRunning || status === 'Running';
+
+  const handleSyncClick = async () => {
+    if (syncInFlight) return;
+    await onRunNow();
+  };
 
   return (
     <div
@@ -734,7 +810,7 @@ function ProjectCard({
             background: 'var(--color-accent-faint)',
             display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20,
           }}>
-            {emoji}
+            {sourceKey === 'pbix' ? <BarChart3 size={20} color="#F2C811" /> : emoji}
           </div>
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>
@@ -801,15 +877,19 @@ function ProjectCard({
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         marginTop: 'auto', paddingTop: 10, borderTop: '1px solid var(--border-subtle)',
       }}>
-        <StatusBadge status={project.status || 'active'} size="sm" />
+        <div className={status === 'Running' ? 'animate-pulse' : ''}>
+          <StatusBadge status={status || 'draft'} size="sm" />
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <IconBtn title={isRunning ? 'Running...' : 'Run Now'} onClick={onRunNow} disabled={isRunning}>
-            {isRunning ? <Layers size={12} className="animate-spin" /> : <Play size={12} fill="currentColor" />}
+          <IconBtn title={syncInFlight ? 'Running...' : 'Run Now'} onClick={handleSyncClick} disabled={syncInFlight}>
+            {syncInFlight ? <Layers size={12} className="animate-spin" /> : <Play size={12} fill="currentColor" />}
           </IconBtn>
           <IconBtn title="View Runs" onClick={onViewDetail}><Layers size={12} /></IconBtn>
           <IconBtn title="Configure" onClick={onConfigure}><Settings size={12} /></IconBtn>
         </div>
       </div>
+
+      {/* Card progress/status bar removed; global StatusBar will be used instead */}
     </div>
   );
 }

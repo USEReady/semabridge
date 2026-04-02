@@ -1,17 +1,16 @@
-project_name: f
+project_name: vvcv
 source:
-  type: fabric
-  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
-  workspace: semabridge
-  models:
-    - Device
-target:
-  type: snowflake
+  type: pbix
+  pbix_path: C:/Users/Premasai/Documents/powerbi/continent.pbix
+  pbix_file_path: C:/Users/Premasai/Documents/powerbi/continent.pbix
+  local_folder_id: d46caf29-626c-482c-a5ab-e94519642f99
+  local_folder_tag: TEST
+targets:
+  - type: snowflake
 ui:
+  intermediate_format: osi
+  editor_mode: form
   output_format: osi
-selection:
-  model_ids:
-    - 974e7d48-4a76-4518-99d7-6ea751e37ce8
 options:
   auto_relationships: true
   generate_descriptions: true

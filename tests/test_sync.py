@@ -192,9 +192,19 @@ class TestSyncModels:
         config = SyncConfig(
             direction=SyncDirection.PBIX_TO_SNOWFLAKE,
             max_workers=5,
+            source_path="/path/to/model.pbix",
         )
         assert config.enable_parallel is True
         assert config.incremental is True
+
+    def test_sync_config_accepts_single_pbix_source_path_aliases(self):
+        config = SyncConfig(
+            direction=SyncDirection.PBIX_TO_SNOWFLAKE,
+            file_path="/path/to/model.pbix",
+            target_snowflake_schema="SEMANTIC_MODELS",
+        )
+        assert config.source_path == "/path/to/model.pbix"
+        assert config.snowflake_schema == "SEMANTIC_MODELS"
 
     def test_sync_conflict_is_resolved(self):
         conflict = SyncConflict(
@@ -738,6 +748,27 @@ class TestSyncOrchestrator:
 
         assert job.total_items == 2
         assert {i.model_name for i in job.items} == {"model_a", "model_b"}
+
+    def test_create_job_with_single_pbix_source_path(self, sync_repo, tmp_path):
+        """Test that the orchestrator accepts a single PBIX file via source_path."""
+        from semabridge.sync.orchestrator import SyncOrchestrator
+
+        pbix_file = tmp_path / "sales.pbix"
+        pbix_file.write_bytes(b"PK\x03\x04dummy")
+
+        config = SyncConfig(
+            direction=SyncDirection.PBIX_TO_SNOWFLAKE,
+            source_path=str(pbix_file),
+            enable_parallel=False,
+            incremental=False,
+        )
+
+        orchestrator = SyncOrchestrator(repository=sync_repo)
+        job = orchestrator._create_job(config, "test")
+
+        assert job.total_items == 1
+        assert job.items[0].model_name == "sales"
+        assert job.items[0].source_path == str(pbix_file)
 
     def test_empty_folder_creates_no_items(self, sync_repo, tmp_path):
         from semabridge.sync.orchestrator import SyncOrchestrator

@@ -70,6 +70,11 @@ function collectStepLogs(summary, prefix = '') {
 
 function buildSummaryRunLogs(run = {}) {
   const lines = [];
+
+  if (Array.isArray(run.logs) && run.logs.length) {
+    lines.push(...run.logs.map((line) => String(line)));
+  }
+
   const topLevelSummaryLines = collectStepLogs(run.summary);
   if (topLevelSummaryLines.length) {
     lines.push(...topLevelSummaryLines);
@@ -82,6 +87,12 @@ function buildSummaryRunLogs(run = {}) {
   });
 
   if (lines.length) {
+    if (run.message) {
+      lines.push(`INFO ${timestampFromIso(run.started_at)} ${String(run.message)}`);
+    }
+    if (run.error) {
+      lines.push(`ERROR ${timestampFromIso(run.completed_at || run.started_at)} ${String(run.error)}`);
+    }
     return lines;
   }
 
