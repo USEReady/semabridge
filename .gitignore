@@ -60,6 +60,8 @@ coverage.xml
 .venv
 .venv/
 .apm/
+!MyStandards/.apm/
+!MyStandards/.apm/**
 venv/
 env/
 ENV/
