@@ -127,6 +127,19 @@ class TestSanitizeExpressionEndToEnd:
         assert 'salesfact."DATE"' in result
         assert "SALESFACT" not in result
 
+    def test_unquoted_identifier_with_dollar_suffix_is_preserved(
+        self, emitter: SnowflakeEmitter
+    ) -> None:
+        result = emitter._normalize_metric_column_references(
+            'AVG(repsfdcchecklistc.DAILY_DELIVERY_LD_RATE_$)',
+            "REP_SFDC_CHECKLIST_C_SUM_OF_DAILY_DELIVERY_LD_RATE_$",
+            {"Rep_Sfdc_Checklist_C": {"DAILY_DELIVERY_LD_RATE_$"}},
+            {"Rep_Sfdc_Checklist_C": "repsfdcchecklistc"},
+            metric_names=set(),
+        )
+        assert result == 'AVG(repsfdcchecklistc.DAILY_DELIVERY_LD_RATE_$)'
+        assert "DAILY_DELIVERY_LD_RATE$" not in result
+
     def test_no_aliases_passthrough(self, emitter: SnowflakeEmitter) -> None:
         """Without dataset_aliases, expression passes through basic sanitisation."""
         result = emitter._sanitize_expression("SUM(X.Y)", dataset_aliases=None)

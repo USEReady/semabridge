@@ -568,7 +568,11 @@ class SnowflakeEmitter(BaseEmitter):
         
         # Pattern 2: Match unquoted references: alias.ColumnName / alias.COLUMN_NAME
         # Convert/resolve to physical names and aliases as needed.
-        unquoted_pattern = r'(\w+)\.([A-Za-z_][A-Za-z0-9_]*)'
+        # Allow `$` in unquoted identifiers as Snowflake physical columns can
+        # legitimately contain it after sanitization (for example `FOO_$`).
+        # Without this, a reference like `alias.FOO_$` gets partially matched
+        # as `alias.FOO_`, and normalization leaves behind a stray `$`.
+        unquoted_pattern = r'(\w+)\.([A-Za-z_][A-Za-z0-9_$]*)'
         
         for match in re.finditer(unquoted_pattern, normalized_sql):
             table_alias = match.group(1)

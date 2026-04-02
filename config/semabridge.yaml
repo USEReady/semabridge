@@ -1,17 +1,38 @@
-project_name: f
+project_name: demotable
 source:
   type: fabric
+  identity_id: b0f47051-1209-4b72-b44a-aff8c5f63803
   workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
   workspace: semabridge
   models:
-    - Device
-target:
-  type: snowflake
+    - DEMO_TABLE_SEMATIC
+targets:
+  - type: snowflake
+mappings:
+  - source: DEMO_TABLE_SEMATIC
+    target: demo_table_sematic_mapped
+    type: table
+    columns:
+      - source: id
+        target: id
+        type: INT
+        primary_key: true
+      - source: name
+        target: name
+        type: VARCHAR(255)
+      - source: created_at
+        target: created_at
+        type: TIMESTAMP
+      - source: updated_at
+        target: updated_at
+        type: TIMESTAMP
 ui:
+  intermediate_format: osi
+  editor_mode: form
   output_format: osi
 selection:
   model_ids:
-    - 974e7d48-4a76-4518-99d7-6ea751e37ce8
+    - 1de94708-b786-4843-9280-e2d04de43144
 options:
   auto_relationships: true
   generate_descriptions: true
