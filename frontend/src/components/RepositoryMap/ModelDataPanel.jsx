@@ -30,8 +30,8 @@ import { Copy, Search } from 'lucide-react';
     const nodes = useMemo(() => (Array.isArray(graphData?.nodes) ? graphData.nodes : []), [graphData]);
     const edges = useMemo(() => (Array.isArray(graphData?.edges) ? graphData.edges : []), [graphData]);
 
-      const tables = useMemo(() => nodes.filter(n => n?.data?.nodeType === 'table'), [nodes]);
-      const measures = useMemo(() => nodes.filter(n => n?.data?.nodeType === 'measure'), [nodes]);
+    const tables = useMemo(() => nodes.filter(n => n?.data?.nodeType === 'table'), [nodes]);
+    const measures = useMemo(() => nodes.filter(n => n?.data?.nodeType === 'measure'), [nodes]); // still called 'measures' in code, but UI will say 'Metrics'
       const relationships = useMemo(() => edges.filter(e => String(e?.id || '').startsWith('rel-')), [edges]);
 
       const modelRows = useMemo(() => {
@@ -133,12 +133,12 @@ import { Copy, Search } from 'lucide-react';
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0, flexWrap: 'wrap' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1px solid var(--border-color)', borderRadius: 6, padding: '2px 8px', background: 'var(--bg-app)', flex: 1 }}>
                               <Search size={12} style={{ color: 'var(--text-tertiary)' }} />
-                              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tables/measures/relationships" style={{ border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-primary)', width: '100%', fontSize: 11 }} />
+                              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tables/metrics/relationships" style={{ border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-primary)', width: '100%', fontSize: 11 }} />
                           </div>
                           <select value={filter} onChange={(e) => setFilter(e.target.value)} style={{ border: '1px solid var(--border-color)', borderRadius: 6, padding: '4px 6px', fontSize: 11, background: 'var(--bg-app)', color: 'var(--text-secondary)' }}>
                               <option value="all">All</option>
                               <option value="table">Tables</option>
-                              <option value="measure">Measures</option>
+                              <option value="measure">Metrics</option>
                               <option value="relationship">Relationships</option>
                           </select>
                           <select value={selectedSchema} onChange={(e) => setSelectedSchema(e.target.value)} style={{ border: '1px solid var(--border-color)', borderRadius: 6, padding: '4px 6px', fontSize: 11, background: 'var(--bg-app)', color: 'var(--text-secondary)' }}>

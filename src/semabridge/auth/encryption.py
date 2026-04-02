@@ -1,3 +1,11 @@
+"""
+Module: encryption
+Purpose: Encrypt and decrypt sensitive token values used by Semabridge.
+Responsibilities:
+- Derive a Fernet key from environment-provided secret material.
+- Provide helper functions for token encryption and decryption.
+"""
+
 import os
 from typing import Optional
 from cryptography.fernet import Fernet

@@ -1,37 +1,37 @@
-# 🌉 Semabridge
+﻿# ðŸŒ‰ Semabridge
 
-> *Snowflake ↔ OSI ↔ Fabric Semantic Model Pipeline*
+> *Snowflake â†” OSI â†” Fabric Semantic Model Pipeline*
 
-[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
+[![uv run 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
 
-## ✨ Overview
+## âœ¨ Overview
 
 **Semabridge** automates the creation and synchronization of Microsoft Fabric Power BI semantic models from Snowflake metadata, and vice versa. It follows a clean pipeline architecture using the Open Semantic Intermediate (OSI) format:
 
 ```text
-Source (Snowflake/Fabric) → Extract → OSI (YAML) → Transform → Emit → Target (Fabric/Snowflake)
+Source (Snowflake/Fabric) â†’ Extract â†’ OSI (YAML) â†’ Transform â†’ Emit â†’ Target (Fabric/Snowflake)
 ```
 
 ### Key Features
 
-- 🔄 **Fully Automated**: No manual modeling required. Synchronize semantic models between platforms.
-- 📊 **Complete Metadata**: Tables, columns, relationships, measures, hierarchies, and complex DAX.
-- 📝 **OSI Intermediate Format**: Human-readable YAML semantic layer (Open Semantic Intermediate).
-- 🗄️ **DuckDB Version Control**: State and history tracking powered by DuckDB.
-- 🎨 **Modern Web UI**: Built-in React/Vite dashboard for configuration, logs, and synchronization control.
-- 🚀 **REST API Integration**: No XMLA endpoint required for Fabric emission.
-- ⚡ **Incremental Processing**: Only process changed tables with local caching.
-- 🔍 **Auto-Detection**: Foreign keys, date/geo patterns, and numeric measures.
+- ðŸ”„ **Fully Automated**: No manual modeling required. Synchronize semantic models between platforms.
+- ðŸ“Š **Complete Metadata**: Tables, columns, relationships, measures, hierarchies, and complex DAX.
+- ðŸ“ **OSI Intermediate Format**: Human-readable YAML semantic layer (Open Semantic Intermediate).
+- ðŸ—„ï¸ **DuckDB Version Control**: State and history tracking powered by DuckDB.
+- ðŸŽ¨ **Modern Web UI**: Built-in React/Vite dashboard for configuration, logs, and synchronization control.
+- ðŸš€ **REST API Integration**: No XMLA endpoint required for Fabric emission.
+- âš¡ **Incremental Processing**: Only process changed tables with local caching.
+- ðŸ” **Auto-Detection**: Foreign keys, date/geo patterns, and numeric measures.
 
 ---
 
-## 🚀 Quick Start
+## ðŸš€ Quick Start
 
 ### Prerequisites
-- Python 3.11
+- uv run 3.11
 - Node.js (v18+) and npm (for the web UI)
 
 ### Installation
@@ -43,7 +43,7 @@ We use [`uv`](https://github.com/astral-sh/uv) for fast, structured dependency m
 git clone https://github.com/inarva-solutions-pvt-ltd/semabridge.git
 cd semabridge
 
-# Install Python dependencies natively
+# Install uv run dependencies natively
 uv sync
 # (Fallback: pip install -e ".[dev]")
 
@@ -97,7 +97,7 @@ model_name: "Customer Profitability"
 
 First, start the backend API (this runs on port 8001 by default, matching the frontend proxy):
 ```bash
-uv run python src/semabridge/api/main.py
+uv run uv run src/semabridge/api/main.py
 ```
 
 Then, start the frontend UI:
@@ -116,8 +116,8 @@ semabridge validate
 # Show current configuration profile
 semabridge config
 
-# Forward Sync (Snowflake → Fabric) or Reverse Sync 
-# (Fabric → Snowflake) based on semabridge.yaml
+# Forward Sync (Snowflake â†’ Fabric) or Reverse Sync 
+# (Fabric â†’ Snowflake) based on semabridge.yaml
 semabridge semantic sync
 
 # Compare different models or state histories
@@ -137,30 +137,30 @@ semabridge logs list
 
 ---
 
-## 🏗️ Architecture & Structure
+## ðŸ—ï¸ Architecture & Structure
 
 Semabridge enforces a strictly typed "Plugin-First" architectural pattern centering around the **OSI** representation:
 
 ```text
 semabridge/
-├── src/semabridge/
-│   ├── core/            # Execution lifecycle, config loading, logging
-│   ├── connectors/      # External integrations (Snowflake, Fabric)
-│   ├── converter/       # Transformation logic (e.g., TMSL ↔ SML/OSI)
-│   ├── formats/         # Format definitions & schema rules
-│   ├── intermediate/    # Pydantic models for OSI / SML representation
-│   ├── repository/      # DuckDB version control logic, persistence
-│   ├── cli/             # Typer/Click CLI commands
-│   ├── plugins/         # Extensible plugin architecture
-│   └── utils/           # Shared utilities (logging, caching)
-├── frontend/            # React/Vite-based modern Web UI
-├── tests/               # Pytest test suite
-└── docs/                # Extended documentation and development guides
+â”œâ”€â”€ src/semabridge/
+â”‚   â”œâ”€â”€ core/            # Execution lifecycle, config loading, logging
+â”‚   â”œâ”€â”€ connectors/      # External integrations (Snowflake, Fabric)
+â”‚   â”œâ”€â”€ converter/       # Transformation logic (e.g., TMSL â†” SML/OSI)
+â”‚   â”œâ”€â”€ formats/         # Format definitions & schema rules
+â”‚   â”œâ”€â”€ intermediate/    # Pydantic models for OSI / SML representation
+â”‚   â”œâ”€â”€ repository/      # DuckDB version control logic, persistence
+â”‚   â”œâ”€â”€ cli/             # Typer/Click CLI commands
+â”‚   â”œâ”€â”€ plugins/         # Extensible plugin architecture
+â”‚   â””â”€â”€ utils/           # Shared utilities (logging, caching)
+â”œâ”€â”€ frontend/            # React/Vite-based modern Web UI
+â”œâ”€â”€ tests/               # Pytest test suite
+â””â”€â”€ docs/                # Extended documentation and development guides
 ```
 
 ---
 
-## 🔧 Development & Testing
+## ðŸ”§ Development & Testing
 
 ```bash
 # Formatting
@@ -176,34 +176,35 @@ pytest tests/ -v --cov=src/semabridge --cov-report=term-missing
 
 ---
 
-## 🤝 Contribution Guidelines
+## ðŸ¤ Contribution Guidelines
 
-1. **Intermediate Model First**: All conversions are strictly `Source → OSI` or `OSI → Target`. Direct point-to-point conversions are strictly forbidden.
+1. **Intermediate Model First**: All conversions are strictly `Source â†’ OSI` or `OSI â†’ Target`. Direct point-to-point conversions are strictly forbidden.
 2. **Fail Fast**: Assert configuration validity at initiation (missing files, bad credentials).
 3. **No Secrets in Code**: Secrets must route dynamically from environment variables, never hard-coded arguments.
-4. **Test Coverage**: All code additions must meet or exceed ≥ 80% test coverage. 
+4. **Test Coverage**: All code additions must meet or exceed â‰¥ 80% test coverage. 
 
 Refer to [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for deeper internal technical mechanics.
 
 ---
 
-## ❓ FAQ & Troubleshooting
+## â“ FAQ & Troubleshooting
 
 - **"Missing Credentials" Error**: Ensure the `.env` file exists in your working directory and correctly populates required variables without quotes (`SNOWFLAKE_PASSWORD`, `FABRIC_CLIENT_SECRET`, etc.).
-- **Failed to launch UI (`semabridge --ui`)**: Ensure Python Streamlit is installed (`pip install streamlit`). For the React interface, ensure NodeJS dependencies are loaded (`cd frontend && npm install`).
+- **Failed to launch UI (`semabridge --ui`)**: Ensure uv run Streamlit is installed (`pip install streamlit`). For the React interface, ensure NodeJS dependencies are loaded (`cd frontend && npm install`).
 - **Database Locked (`semabridge.db`)**: Wait for the other CLI process to terminate. DuckDB enforces file locks.
 
 ---
 
-## 🗺️ Roadmap / Future Extensions
+## ðŸ—ºï¸ Roadmap / Future Extensions
 
 - **Expand Connectors**: Integrations leveraging plugin endpoints for systems beyond Snowflake into GCP BigQuery or proprietary models.
 - **Enhanced Data Transformation**: Real-time evaluation of intermediate variables during sync.
 
 ---
 
-## 📜 License
+## ðŸ“œ License
 
 [MIT License](LICENSE)
 
-Made with ❤️ for the Platform Engineering Team
+Made with â¤ï¸ for the Platform Engineering Team
+

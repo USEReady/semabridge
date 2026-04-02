@@ -1,3 +1,11 @@
+"""
+Module: sanitizer
+Purpose: Normalize logical identifiers to safe Snowflake-compatible names.
+Responsibilities:
+- Transform arbitrary names into valid semantic identifiers.
+- Guard against reserved keyword collisions in generated names.
+"""
+
 import re
 from semabridge.utils.naming import SNOWFLAKE_RESERVED
 

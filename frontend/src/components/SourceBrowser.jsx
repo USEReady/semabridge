@@ -251,25 +251,61 @@ function TreeItem({
     );
 }
 
-export default function SourceBrowser({ selectedItems, onSelectItems, onOpenModel, onSourceTypeChange, onTargetTypeChange, onPbixPathChange, onPbixImported }) {
-    const [sourceType, setSourceType] = useState('fabric');
-    const [targetType, setTargetType] = useState('snowflake');
-    const [pattern, setPattern] = useState('*');
-    const [pbixPath, setPbixPath] = useState('');
-    const [isPbixPathSaved, setIsPbixPathSaved] = useState(false);
-    const filter = '';
-    const [isDiscovering, setIsDiscovering] = useState(false);
-    const [expandedItems, setExpandedItems] = useState(['root-fabric', 'root-snowflake', 'root-repository', 'root-semantic-fabric', 'root-semantic-snowflake']);
-    const [highlightedItem, setHighlightedItem] = useState(null);
-    const [discoveredFromApi, setDiscoveredFromApi] = useState(null);
-    const [discoveryError, setDiscoveryError] = useState(null);
-    // Semantic-sync state
-    const [semanticDirection, setSemanticDirection] = useState('fabric_to_snowflake');
-    const [isSyncingSemantics, setIsSyncingSemantics] = useState(false);
-    const [semanticSyncResult, setSemanticSyncResult] = useState(null);
+export default function SourceBrowser({ workspaceId }) {
+    // Direct state for models and loading
+    const [models, setModels] = useState([]);
+    const [loading, setLoading] = useState(false);
 
-    const { activeWorkspaceId } = useWorkspace();
-    const { addLog } = useLogs();
+    useEffect(() => {
+        if (!workspaceId) {
+            setModels([]);
+            return;
+        }
+        setLoading(true);
+        api.discoverFabricModels(workspaceId)
+            .then(data => setModels(Array.isArray(data) ? data : []))
+            .catch(() => setModels([]))
+            .finally(() => setLoading(false));
+    }, [workspaceId]);
+
+    // UI rendering logic
+    if (loading) {
+        return (
+            <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+                <Loader2 size={24} className="animate-spin text-accent-blue mb-2" />
+                Loading models...
+            </div>
+        );
+    }
+
+    if (!workspaceId) {
+        return (
+            <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+                Choose a Fabric workspace before selecting models.
+            </div>
+        );
+    }
+
+    if (models.length > 0) {
+        return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Select Models</h2>
+                <ul style={{ listStyle: 'none', padding: 0 }}>
+                    {models.map(model => (
+                        <li key={model.id} style={{ padding: '8px 0', borderBottom: '1px solid #eee' }}>
+                            {model.name || model.id}
+                        </li>
+                    ))}
+                </ul>
+            </div>
+        );
+    }
+
+    return (
+        <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+            No models found in this workspace.
+        </div>
+    );
 
     // Auto-discovery on mount or source type change
     // Debounce avoids firing on rapid type switches; AbortController cancels stale requests
@@ -420,10 +456,45 @@ export default function SourceBrowser({ selectedItems, onSelectItems, onOpenMode
         setSemanticSyncResult(null);
         try {
             const result = await api.triggerSemanticSync({ direction: semanticDirection });
-            setSemanticSyncResult({ ok: true, message: result.message || `Sync job ${result.job_id} started.` });
-            addLog('info', 'Semantic Sync', `Started: ${result.message || result.job_id}`);
-            // Refresh discovery after sync
-            handleDiscover();
+            const syncJobId = result?.job_id;
+            setSemanticSyncResult({
+                ok: true,
+                message: result.message || `Sync job ${syncJobId} accepted.`,
+            });
+            addLog('info', 'Semantic Sync', `Started: ${result.message || syncJobId}`);
+
+            if (syncJobId) {
+                const terminalStatuses = new Set(['completed', 'success', 'warning', 'failed', 'cancelled', 'conflict']);
+                let latest = null;
+                const deadline = Date.now() + (10 * 60 * 1000);
+
+                while (Date.now() < deadline) {
+                    await new Promise((resolve) => setTimeout(resolve, 2000));
+                    latest = await api.getSemanticSyncStatus(syncJobId);
+                    const status = String(latest?.status || '').toLowerCase();
+
+                    if (!status || status === 'running' || status === 'pending') {
+                        continue;
+                    }
+
+                    if (terminalStatuses.has(status)) {
+                        const ok = status === 'completed' || status === 'success';
+                        setSemanticSyncResult({
+                            ok,
+                            message: latest?.message || `Sync finished with status: ${status}`,
+                        });
+                        addLog(ok ? 'info' : 'warning', 'Semantic Sync', latest?.message || `Finished with status: ${status}`);
+                        await handleDiscover();
+                        return;
+                    }
+                }
+
+                setSemanticSyncResult({
+                    ok: false,
+                    message: 'Timed out waiting for semantic sync completion status.',
+                });
+                addLog('warning', 'Semantic Sync', 'Timed out waiting for sync completion status.');
+            }
         } catch (err) {
             setSemanticSyncResult({ ok: false, message: err.message });
             addLog('error', 'Semantic Sync', `Failed: ${err.message}`);

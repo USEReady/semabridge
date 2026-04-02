@@ -1,15 +1,21 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Save, Play, CalendarClock, Settings2, FileCode2, SlidersHorizontal, Loader2 } from 'lucide-react';
+import { ArrowLeft, Save, Play, CalendarClock, CalendarDays, Settings2, FileCode2, SlidersHorizontal, Loader2, CheckCircle2 } from 'lucide-react';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import CodeMirror from '@uiw/react-codemirror';
 import { yaml as yamlLang } from '@codemirror/lang-yaml';
 
 import GlobalConfigModal from '../components/projects/GlobalConfigModal';
+
 import SearchableSelect from '../components/common/SearchableSelect';
 import { useTheme } from '../context/ThemeProvider';
 import { useLogs } from '../context/LogsContext';
+import { useSyncStatusStore } from '../context/SyncStatusContext';
 import { api } from '../utils/api';
+import { buildMockRunLogs, saveRunLogs } from '../utils/runLogs';
+import { useUIStore } from '../store/uiStore';
+
+import Modal from '../components/common/Modal';
 
 const INPUT = {
   display: 'block', width: '100%',
@@ -24,13 +30,37 @@ const LABEL = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--t
  * ProjectConfigPage — dedicated full page /projects/:id/config
  */
 export default function ProjectConfigPage() {
+    // --- Scheduler State (must be at top-level of component) ---
+    const [schedulerOpen, setSchedulerOpen] = useState(false);
+    const [scheduleType, setScheduleType] = useState('manual');
+    const [cronValue, setCronValue] = useState('0 0 * * *');
+    const [scheduleDate, setScheduleDate] = useState(() => new Date().toISOString().slice(0, 10));
+    const [timeValue, setTimeValue] = useState('12:00');
+    const [timezoneValue, setTimezoneValue] = useState('UTC');
+  const scheduleDateInputRef = useRef(null);
+  const scheduleTimeInputRef = useRef(null);
   const navigate = useNavigate();
   const { id } = useParams();
   const [searchParams] = useSearchParams();
   const { theme } = useTheme();
   const { addLog } = useLogs();
+  const { runs, currentSyncId, currentSyncStatus, projectStatusById, projectProgressById } = useSyncStatusStore();
+  const lastToastStatusRef = useRef('');
+  const setActiveProjectId = useUIStore(state => state.setActiveProjectId);
+  const hasHydrated = useUIStore(state => state.hasHydrated);
+  const projectConfigDrafts = useUIStore(state => state.projectConfigDrafts);
+  const setProjectConfigDraft = useUIStore(state => state.setProjectConfigDraft);
   const isInvalidProjectId = !id || id === 'null' || id === 'undefined';
   const yamlExtensions = useMemo(() => [yamlLang()], []);
+  const projectDraft = projectConfigDrafts?.[String(id)] || null;
+  const stableDraftKey = useMemo(() => {
+    if (!projectDraft || typeof projectDraft !== 'object') return '';
+    return JSON.stringify({
+      viewMode: projectDraft.viewMode,
+      yamlText: projectDraft.yamlText,
+      configForm: projectDraft.configForm,
+    });
+  }, [projectDraft]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -48,6 +78,7 @@ export default function ProjectConfigPage() {
     source_type: 'fabric',
     target_type: 'snowflake',
     output_format: 'osi',
+    identity_id: '',
     workspace_id: '',
     database: '',
     schema: '',
@@ -55,9 +86,76 @@ export default function ProjectConfigPage() {
     target_schema: '',
     allow_models: '',
     block_models: '',
+    auto_relationships: true,
+    generate_descriptions: true,
   });
+  const [fabricAccounts, setFabricAccounts] = useState([]);
+  const [fabricWorkspaces, setFabricWorkspaces] = useState([]);
+  const [fabricLoading, setFabricLoading] = useState(false);
 
   const [globalOpen, setGlobalOpen] = useState(false);
+  const timezoneOptions = useMemo(() => ([
+    'UTC',
+    'Asia/Kolkata',
+    'America/New_York',
+    'America/Chicago',
+    'America/Denver',
+    'America/Los_Angeles',
+    'Europe/London',
+  ]), []);
+  const normalizedProjectId = String(project?.id || project?.project_id || id || '');
+  const latestProjectRun = useMemo(() => {
+    const projectRuns = runs.filter((run) => String(run?.project_id || '') === normalizedProjectId);
+    if (!projectRuns.length) return null;
+
+    const getRunTs = (run) => {
+      const started = run?.started_at ? Date.parse(run.started_at) : NaN;
+      if (!Number.isNaN(started) && started > 0) return started;
+      const updated = run?.updated_at ? Date.parse(run.updated_at) : NaN;
+      if (!Number.isNaN(updated) && updated > 0) return updated;
+      const created = run?.created_at ? Date.parse(run.created_at) : NaN;
+      if (!Number.isNaN(created) && created > 0) return created;
+      const numericId = Number(run?.id || run?.run_id || 0);
+      return Number.isNaN(numericId) ? 0 : numericId;
+    };
+
+    return projectRuns.sort((a, b) => getRunTs(b) - getRunTs(a))[0] || null;
+  }, [runs, normalizedProjectId]);
+  const projectSyncStatus = String(
+    (normalizedProjectId && projectStatusById?.[normalizedProjectId])
+      || latestProjectRun?.status
+      || (String(currentSyncId || '') === normalizedProjectId ? currentSyncStatus : '')
+      || ''
+  ).toLowerCase();
+  const projectSyncProgress = Number(
+    (normalizedProjectId && projectProgressById?.[normalizedProjectId])
+      ?? latestProjectRun?.progress_pct
+      ?? 0
+  );
+  const isProjectSyncing = projectSyncStatus === 'running'
+    || (String(currentSyncId || '') === normalizedProjectId && currentSyncStatus === 'running');
+  const isProjectSynced = !isProjectSyncing && projectSyncStatus === 'success';
+
+  useEffect(() => {
+    if (!normalizedProjectId) return;
+
+    if (projectSyncStatus === 'running') {
+      lastToastStatusRef.current = 'running';
+      return;
+    }
+
+    if (lastToastStatusRef.current === 'running' && projectSyncStatus === 'success') {
+      addLog('success', 'Sync', `${project?.name || 'Project'} sync completed successfully.`);
+      setSaveInfo('Sync completed successfully.');
+      lastToastStatusRef.current = 'success';
+      return;
+    }
+
+    if (lastToastStatusRef.current === 'running' && (projectSyncStatus === 'failed' || projectSyncStatus === 'warning')) {
+      addLog('error', 'Sync', `${project?.name || 'Project'} sync failed. Check logs for details.`);
+      lastToastStatusRef.current = projectSyncStatus;
+    }
+  }, [addLog, normalizedProjectId, project?.name, projectSyncStatus]);
 
   useEffect(() => {
     const modeFromUrl = searchParams.get('mode');
@@ -69,6 +167,8 @@ export default function ProjectConfigPage() {
   }, [id, searchParams]);
 
   useEffect(() => {
+    if (!hasHydrated) return;
+
     if (isInvalidProjectId) {
       setProject(null);
       setLoading(false);
@@ -87,8 +187,43 @@ export default function ProjectConfigPage() {
         setYamlText(cfg?.config_yaml || '');
         setYamlPath(cfg?.yaml_path || '');
         setAllProjects(all.filter(x => String(x.id) !== String(id)));
+        setActiveProjectId(p?.id || p?.project_id || id);
+        try {
+          const schedule = await api.getProjectSchedule(id);
+          const nextScheduleType = String(schedule?.schedule_type || 'manual').toLowerCase();
+          if (nextScheduleType === 'cron' || nextScheduleType === 'time' || nextScheduleType === 'manual') {
+            setScheduleType(nextScheduleType);
+          }
+          if (typeof schedule?.cron === 'string' && schedule.cron) {
+            setCronValue(schedule.cron);
+          }
+          if (typeof schedule?.date === 'string' && schedule.date) {
+            setScheduleDate(schedule.date);
+          }
+          if (typeof schedule?.time === 'string' && schedule.time) {
+            setTimeValue(schedule.time);
+          }
+          if (typeof schedule?.timezone === 'string' && schedule.timezone) {
+            setTimezoneValue(schedule.timezone);
+          }
+        } catch {
+          // Schedule is optional; keep default frontend state if fetch fails.
+        }
         try {
           hydrateFormFromYaml(cfg?.config_yaml || '', p);
+
+          const draft = useUIStore.getState().projectConfigDrafts?.[String(id)] || null;
+          if (draft && typeof draft === 'object') {
+            if (typeof draft.viewMode === 'string' && (draft.viewMode === 'form' || draft.viewMode === 'yaml')) {
+              setViewMode(draft.viewMode);
+            }
+            if (typeof draft.yamlText === 'string') {
+              setYamlText(draft.yamlText);
+            }
+            if (draft.configForm && typeof draft.configForm === 'object') {
+              setConfigForm(prev => ({ ...prev, ...draft.configForm }));
+            }
+          }
         } catch (err) {
           setConfigTree({});
           setSaveInfo(`Invalid semabridge.yaml format loaded: ${err?.message || 'Unable to parse YAML'}`);
@@ -105,7 +240,81 @@ export default function ProjectConfigPage() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, isInvalidProjectId, navigate]);
+  }, [hasHydrated, id, isInvalidProjectId, navigate, setActiveProjectId]);
+
+  useEffect(() => {
+    if (!id || isInvalidProjectId || loading) return;
+    const nextDraft = {
+      viewMode,
+      yamlText,
+      configForm,
+    };
+
+    const nextDraftKey = JSON.stringify(nextDraft);
+    if (nextDraftKey === stableDraftKey) return;
+
+    setProjectConfigDraft(id, nextDraft);
+  }, [id, isInvalidProjectId, loading, viewMode, yamlText, configForm, setProjectConfigDraft, stableDraftKey]);
+
+  useEffect(() => {
+    if (configForm.source_type !== 'fabric') {
+      setFabricAccounts([]);
+      setFabricWorkspaces([]);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.getAccounts('FABRIC');
+        const list = Array.isArray(res) ? res : (res?.accounts || []);
+        if (!cancelled) {
+          setFabricAccounts(list);
+          if (!configForm.identity_id) {
+            const preferred = list.find(acc => acc.id === project?.account_id) || list.find(acc => acc.is_default) || list[0];
+            if (preferred?.id) {
+              setConfigForm(prev => ({ ...prev, identity_id: prev.identity_id || preferred.id }));
+            }
+          }
+        }
+      } catch {
+        if (!cancelled) setFabricAccounts([]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [configForm.source_type, configForm.identity_id, project?.account_id]);
+
+  const refreshFabricWorkspaces = async (identityId = configForm.identity_id) => {
+    if (!identityId) {
+      setFabricWorkspaces([]);
+      return;
+    }
+    setFabricLoading(true);
+    try {
+      const data = await api.fabricListWorkspaces(identityId);
+      const list = Array.isArray(data?.workspaces) ? data.workspaces : (Array.isArray(data) ? data : []);
+      setFabricWorkspaces(list);
+      if (!configForm.workspace_id && list[0]) {
+        setConfigForm(prev => ({
+          ...prev,
+          workspace_id: prev.workspace_id || String(list[0].id || list[0].workspace_id || ''),
+        }));
+      }
+    } catch {
+      setFabricWorkspaces([]);
+    } finally {
+      setFabricLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (configForm.source_type === 'fabric' && configForm.identity_id) {
+      refreshFabricWorkspaces(configForm.identity_id);
+    }
+  }, [configForm.source_type, configForm.identity_id]);
 
   const isLikelyBinaryOrGarbage = (text) => {
     const t = String(text || '').trim();
@@ -128,9 +337,58 @@ export default function ProjectConfigPage() {
     return value;
   };
 
+  const normalizeConfigTreeForApi = (tree) => {
+    const normalized = normalizeTreeForYaml(tree && typeof tree === 'object' ? tree : {});
+    const source = normalized?.source && typeof normalized.source === 'object'
+      ? { ...normalized.source }
+      : {};
+    const sourceType = String(source.type || '').toLowerCase();
+
+    if (sourceType === 'fabric') {
+      const list = [];
+      const append = (raw) => {
+        if (typeof raw !== 'string') return;
+        raw
+          .split(',')
+          .map(part => part.trim())
+          .filter(Boolean)
+          .forEach(part => list.push(part));
+      };
+
+      if (Array.isArray(source.models)) {
+        source.models
+          .map(item => String(item || '').trim())
+          .filter(Boolean)
+          .forEach(item => list.push(item));
+      } else if (typeof source.models === 'string') {
+        append(source.models);
+      }
+
+      if (!list.length && source.model !== undefined && source.model !== null) {
+        if (typeof source.model === 'string') {
+          append(source.model);
+        } else {
+          const single = String(source.model).trim();
+          if (single) list.push(single);
+        }
+      }
+
+      if (list.length) {
+        source.models = list;
+      } else {
+        delete source.models;
+      }
+
+      delete source.model;
+      normalized.source = source;
+    }
+
+    return normalized;
+  };
+
   const parseProjectYaml = (yaml, projectMeta) => {
     const raw = String(yaml || '').trim();
-    const fallbackTarget = ['fabric', 'snowflake'].includes(projectMeta?.target_type) ? projectMeta.target_type : 'snowflake';
+    const fallbackTarget = ['fabric', 'snowflake', 'databricks'].includes(projectMeta?.target_type) ? projectMeta.target_type : 'snowflake';
     const fallbackSource = projectMeta?.source || 'fabric';
 
     if (!raw) {
@@ -140,6 +398,7 @@ export default function ProjectConfigPage() {
           source_type: fallbackSource,
           target_type: fallbackTarget,
           output_format: 'osi',
+          identity_id: '',
           workspace_id: '',
           database: '',
           schema: '',
@@ -159,7 +418,9 @@ export default function ProjectConfigPage() {
     const tree = parsed && typeof parsed === 'object' ? parsed : {};
 
     const source = tree.source && typeof tree.source === 'object' ? tree.source : {};
-    const target = tree.target && typeof tree.target === 'object' ? tree.target : {};
+    const target = tree.target && typeof tree.target === 'object'
+      ? tree.target
+      : (Array.isArray(tree.targets) && tree.targets.length > 0 && typeof tree.targets[0] === 'object' ? tree.targets[0] : {});
     const ui = tree.ui && typeof tree.ui === 'object' ? tree.ui : {};
     const options = tree.options && typeof tree.options === 'object' ? tree.options : {};
 
@@ -180,6 +441,7 @@ export default function ProjectConfigPage() {
         source_type: String(source.type || fallbackSource),
         target_type: String(target.type || fallbackTarget),
         output_format: String(ui.intermediate_format || ui.output_format || 'osi'),
+        identity_id: String(source.identity_id || ''),
         workspace_id: String(source.workspace_id || ''),
         database: String(source.database || ''),
         schema: String(source.schema || ''),
@@ -187,6 +449,8 @@ export default function ProjectConfigPage() {
         target_schema: String(target.schema || ''),
         allow_models: allowModels.join(', '),
         block_models: blockedModels.join(', '),
+        auto_relationships: options.auto_relationships !== false,
+        generate_descriptions: options.generate_descriptions !== false,
       },
     };
   };
@@ -218,24 +482,37 @@ export default function ProjectConfigPage() {
       },
       options: {
         ...((configTree?.options && typeof configTree.options === 'object') ? configTree.options : {}),
+        auto_relationships: Boolean(configForm.auto_relationships),
+        generate_descriptions: Boolean(configForm.generate_descriptions),
       },
     };
 
     if (configForm.source_type === 'fabric') {
+      if (configForm.identity_id) nextTree.source.identity_id = configForm.identity_id;
+      else delete nextTree.source.identity_id;
       nextTree.source.workspace_id = configForm.workspace_id || '';
       delete nextTree.source.database;
       delete nextTree.source.schema;
     } else if (configForm.source_type === 'snowflake') {
+      delete nextTree.source.identity_id;
       nextTree.source.database = configForm.database || '';
       nextTree.source.schema = configForm.schema || '';
       delete nextTree.source.workspace_id;
     } else {
+      delete nextTree.source.identity_id;
       delete nextTree.source.workspace_id;
       delete nextTree.source.database;
       delete nextTree.source.schema;
     }
 
-    if (allow.length > 1) {
+    if (configForm.source_type === 'fabric') {
+      if (allow.length) {
+        nextTree.source.models = allow;
+      } else {
+        delete nextTree.source.models;
+      }
+      delete nextTree.source.model;
+    } else if (allow.length > 1) {
       nextTree.source.models = allow;
       delete nextTree.source.model;
     } else {
@@ -258,7 +535,7 @@ export default function ProjectConfigPage() {
 
     if (Object.keys(nextTree.options).length === 0) delete nextTree.options;
 
-    const normalized = normalizeTreeForYaml(nextTree);
+    const normalized = normalizeConfigTreeForApi(nextTree);
     return stringifyYaml(normalized, { lineWidth: 0 });
   };
 
@@ -269,13 +546,14 @@ export default function ProjectConfigPage() {
       let nextYaml = '';
       if (viewMode === 'yaml') {
         const parsed = parseProjectYaml(yamlText, project);
-        setConfigTree(parsed.tree || {});
+        const normalizedTree = normalizeConfigTreeForApi(parsed.tree || {});
+        setConfigTree(normalizedTree);
         setConfigForm(parsed.form);
-        nextYaml = stringifyYaml(normalizeTreeForYaml(parsed.tree || {}), { lineWidth: 0 });
+        nextYaml = stringifyYaml(normalizedTree, { lineWidth: 0 });
       } else {
         nextYaml = buildYamlFromForm();
         const parsed = parseProjectYaml(nextYaml, project);
-        setConfigTree(parsed.tree || {});
+        setConfigTree(normalizeConfigTreeForApi(parsed.tree || {}));
         setConfigForm(parsed.form);
       }
 
@@ -332,10 +610,30 @@ export default function ProjectConfigPage() {
 
       const run = await api.runProjectNow(id);
       const status = String(run?.status || '').toLowerCase();
+      if (run?.id) {
+        saveRunLogs(run.id, buildMockRunLogs(run));
+      }
 
-      if (status === 'success') {
+      if (typeof window !== 'undefined' && window.dispatchEvent) {
+        window.dispatchEvent(new CustomEvent('semabridge-sync-fallback', {
+          detail: {
+            projectId: id,
+            status: status || 'running',
+            progress: 5,
+          },
+        }));
+      }
+
+      if (status === 'running') {
+        addLog('info', 'Sync', 'Sync started. You can continue using other screens while it runs.');
+        setSaveInfo('Sync started. Progress is shown in the bottom status bar.');
+      } else if (status === 'success') {
         addLog('success', 'Sync', 'Sync completed successfully.');
         setSaveInfo('Sync completed successfully.');
+        // Fallback: force progress bar to 100% and status to 'success'
+        if (typeof window !== 'undefined' && window.dispatchEvent) {
+          window.dispatchEvent(new CustomEvent('semabridge-sync-fallback', { detail: { projectId: id, status: 'success', progress: 100 } }));
+        }
       } else if (status === 'warning' || status === 'partial') {
         addLog('warning', 'Sync', `Sync completed with warnings${run?.error ? `: ${run.error}` : ''}`);
         setSaveInfo('Sync completed with warnings. Check logs for details.');
@@ -357,6 +655,43 @@ export default function ProjectConfigPage() {
     await handleSave();
     navigate('/jobs');
   };
+
+  const handleScheduleSave = async () => {
+    const payload = {
+      schedule_type: scheduleType,
+      cron: scheduleType === 'cron' ? cronValue : '',
+      date: scheduleDate || '',
+      time: timeValue || '',
+      timezone: timezoneValue,
+    };
+
+    try {
+      const response = await api.saveProjectSchedule(id, payload);
+      setSaveInfo(
+        scheduleType === 'manual'
+          ? (response?.message || 'Schedule cleared. Trigger remains on-demand.')
+          : scheduleType === 'cron'
+            ? `Schedule saved with cron "${cronValue}" (${timezoneValue}).`
+            : `Schedule saved for ${scheduleDate || 'selected date'} at ${timeValue} (${timezoneValue}).`
+      );
+      setSchedulerOpen(false);
+    } catch (err) {
+      setSaveInfo(`Failed to save schedule: ${err?.message || 'Unknown error'}`);
+      addLog('error', 'Scheduler', `Schedule save failed: ${err?.message || 'Unknown error'}`);
+    }
+  };
+
+  const scheduleTimingLabel = scheduleType === 'manual'
+    ? 'Optional Planned Time'
+    : scheduleType === 'cron'
+      ? 'Default Run Time'
+      : 'Schedule Time';
+
+  const scheduleTimingHelper = scheduleType === 'manual'
+    ? 'Optionally choose a date and time for planning purposes in this frontend mock.'
+    : scheduleType === 'cron'
+      ? 'Choose the preferred time window that goes with your cron schedule.'
+      : 'Choose the exact date and time for the scheduled run.';
 
   const handleViewModeChange = (nextMode) => {
     if (nextMode === viewMode) return;
@@ -383,6 +718,19 @@ export default function ProjectConfigPage() {
     setViewMode(nextMode);
   };
 
+  const syncButtonStyle = {
+    ...primaryBtn,
+    opacity: (saving || syncing || isProjectSyncing) ? 0.85 : 1,
+    cursor: (saving || syncing || isProjectSyncing) ? 'not-allowed' : 'pointer',
+    background: isProjectSynced ? 'var(--color-success)' : primaryBtn.background,
+  };
+
+  const syncButtonLabel = isProjectSyncing
+    ? `Syncing${projectSyncProgress > 0 ? ` ${projectSyncProgress}%` : '...'}`
+    : isProjectSynced
+      ? 'Sync Successful'
+      : 'Sync Now';
+
   if (loading) {
     return (
       <div style={{ padding: 36, color: 'var(--text-tertiary)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -403,11 +751,9 @@ export default function ProjectConfigPage() {
     );
   }
 
-  const effectiveYaml = viewMode === 'yaml' ? yamlText : buildYamlFromForm();
-
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      <div style={{ padding: '18px 28px', borderBottom: '1px solid var(--border-main)', display: 'flex', alignItems: 'center', gap: 12 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', minHeight: 0 }}>
+      <div style={{ padding: '18px 28px', borderBottom: '1px solid var(--border-main)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <button
           onClick={() => navigate('/projects')}
           style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}
@@ -417,7 +763,7 @@ export default function ProjectConfigPage() {
         <span style={{ color: 'var(--border-main)' }}>|</span>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{project.name}</div>
-          <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Project Configuration</div>
+          <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Edit Project</div>
         </div>
 
         <button onClick={() => setGlobalOpen(true)} style={secondaryBtn}>
@@ -437,9 +783,9 @@ export default function ProjectConfigPage() {
         </div>
       )}
 
-      <div style={{ flex: 1, overflow: 'hidden', display: 'flex' }}>
-        <div style={{ width: '58%', minWidth: 420, borderRight: '1px solid var(--border-main)', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: 18, borderBottom: '1px solid var(--border-main)' }}>
+      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', minHeight: 0 }}>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <div style={{ padding: '18px 20px', borderBottom: '1px solid var(--border-main)', background: 'var(--bg-surface)' }}>
             <label style={LABEL}>Copy Presets from Another Project</label>
             <SearchableSelect
               items={allProjects}
@@ -453,15 +799,22 @@ export default function ProjectConfigPage() {
             />
           </div>
 
-          <div style={{ flex: 1, overflow: 'auto' }}>
+          <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 16 }}>
             {viewMode === 'form' ? (
-              <FormEditor value={configForm} onChange={setConfigForm} />
+              <FormEditor
+                value={configForm}
+                onChange={setConfigForm}
+                fabricAccounts={fabricAccounts}
+                fabricWorkspaces={fabricWorkspaces}
+                fabricLoading={fabricLoading}
+                onRefreshFabricWorkspaces={() => refreshFabricWorkspaces()}
+              />
             ) : (
-              <div style={{ padding: 12, height: '100%' }}>
-                <div style={{ height: '100%', border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg-input)', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ height: '100%', minHeight: 420 }}>
+                <div style={{ height: '100%', border: '1px solid var(--border-main)', borderRadius: 12, overflow: 'hidden', background: 'var(--bg-input)', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 24px rgba(0, 0, 0, 0.08)' }}>
                   <div style={{
                     display: 'flex', alignItems: 'center', gap: 8,
-                    padding: '8px 10px',
+                    padding: '10px 12px',
                     borderBottom: '1px solid var(--border-main)',
                     background: 'var(--bg-surface)',
                     fontSize: 12,
@@ -495,44 +848,207 @@ export default function ProjectConfigPage() {
           </div>
         </div>
 
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-main)' }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Effective YAML Preview</div>
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 3 }}>Includes current project-level configuration.</div>
-          </div>
-          <pre style={{
-            margin: 0, padding: 18, flex: 1, overflow: 'auto', fontSize: 12, lineHeight: 1.55,
-            color: 'var(--text-primary)', background: 'var(--bg-surface)',
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-          }}>
-            {effectiveYaml || '# Empty configuration'}
-          </pre>
-        </div>
       </div>
 
-      <div style={{ padding: '14px 28px', borderTop: '1px solid var(--border-main)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+      <div style={{ padding: '10px 28px', borderTop: '1px solid var(--border-main)', background: 'var(--bg-surface)' }} />
+
+
+      {/* Action Buttons */}
+      <div style={{ padding: '14px 28px', borderTop: '1px solid var(--border-main)', display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap', background: 'var(--bg-surface)', position: 'sticky', bottom: 0, zIndex: 2 }}>
+        <button onClick={() => setSchedulerOpen(true)} style={secondaryBtn}>
+          <CalendarClock size={13} /> Schedule
+        </button>
         <button onClick={handleCreateJob} style={secondaryBtn}>
           <CalendarClock size={13} /> Create Job for Later
         </button>
-        <button onClick={handleSave} disabled={saving || syncing} style={secondaryBtn}>
+        <button onClick={handleSave} disabled={saving || syncing || isProjectSyncing} style={secondaryBtn}>
           {saving ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Save size={13} />}
           Save Config
         </button>
-        <button onClick={handleRunNow} disabled={saving || syncing} style={{ ...primaryBtn, opacity: (saving || syncing) ? 0.7 : 1, cursor: (saving || syncing) ? 'not-allowed' : 'pointer' }}>
-          {syncing ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={13} />} {syncing ? 'Syncing…' : 'Sync Now'}
+        <button onClick={handleRunNow} disabled={saving || syncing || isProjectSyncing} style={syncButtonStyle}>
+          {isProjectSyncing || syncing ? (
+            <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
+          ) : isProjectSynced ? (
+            <CheckCircle2 size={13} />
+          ) : (
+            <Play size={13} />
+          )} {syncButtonLabel}
         </button>
       </div>
+
+      {/* Scheduler Modal */}
+      <Modal open={schedulerOpen} onClose={() => setSchedulerOpen(false)} title="Schedule Job" size="md">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          <div>
+            <label style={{ fontWeight: 600, fontSize: 13, display: 'block', marginBottom: 10 }}>Schedule Type</label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+              <ScheduleOptionCard
+                active={scheduleType === 'manual'}
+                title="Manual Trigger"
+                description="Run only when someone starts it."
+                onClick={() => setScheduleType('manual')}
+              />
+              <ScheduleOptionCard
+                active={scheduleType === 'cron'}
+                title="Cron Expression"
+                description="Use cron syntax for recurring runs."
+                onClick={() => setScheduleType('cron')}
+              />
+              <ScheduleOptionCard
+                active={scheduleType === 'time'}
+                title="Schedule Regularly"
+                description="Pick a calendar date, time, and timezone."
+                onClick={() => setScheduleType('time')}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label style={{ fontWeight: 500, fontSize: 12, display: 'block', marginBottom: 6 }}>Timezone</label>
+            <select value={timezoneValue} onChange={e => setTimezoneValue(e.target.value)} style={modalInputStyle}>
+              {timezoneOptions.map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          </div>
+
+          {scheduleType === 'manual' && (
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', padding: 12, borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
+              Manual mode selected. The project stays unscheduled and can be triggered whenever needed.
+            </div>
+          )}
+
+          {scheduleType === 'cron' && (
+            <div>
+              <label style={{ fontWeight: 500, fontSize: 12 }}>Cron Expression</label>
+              <input value={cronValue} onChange={e => setCronValue(e.target.value)} style={modalInputStyle} placeholder="0 0 * * *" />
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>e.g. 0 0 * * * (every day at midnight)</div>
+            </div>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {scheduleType === 'time' && (
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', padding: 12, borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
+                Schedule regularly using the calendar below. This is frontend-only for now and does not create a backend scheduler yet.
+              </div>
+            )}
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <label style={{ fontWeight: 500, fontSize: 12, display: 'block', marginBottom: 6 }}>Schedule Date</label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    ref={scheduleDateInputRef}
+                    type="date"
+                    value={scheduleDate}
+                    min={new Date().toISOString().slice(0, 10)}
+                    onChange={e => setScheduleDate(e.target.value)}
+                    style={{ ...modalInputStyle, paddingRight: 42 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (scheduleDateInputRef.current?.showPicker) {
+                        scheduleDateInputRef.current.showPicker();
+                      } else {
+                        scheduleDateInputRef.current?.focus();
+                      }
+                    }}
+                    style={{
+                      position: 'absolute',
+                      right: 8,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      border: 'none',
+                      background: 'transparent',
+                      color: 'var(--text-secondary)',
+                      cursor: 'pointer',
+                      padding: 4,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    aria-label="Open calendar"
+                    title="Open calendar"
+                  >
+                    <CalendarDays size={16} />
+                  </button>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                  Click the calendar icon to pick a date.
+                </div>
+              </div>
+              <div>
+                <label style={{ fontWeight: 500, fontSize: 12, display: 'block', marginBottom: 6 }}>{scheduleTimingLabel}</label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    ref={scheduleTimeInputRef}
+                    type="time"
+                    value={timeValue}
+                    onChange={e => setTimeValue(e.target.value)}
+                    style={{ ...modalInputStyle, paddingRight: 42 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (scheduleTimeInputRef.current?.showPicker) {
+                        scheduleTimeInputRef.current.showPicker();
+                      } else {
+                        scheduleTimeInputRef.current?.focus();
+                      }
+                    }}
+                    style={{
+                      position: 'absolute',
+                      right: 8,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      border: 'none',
+                      background: 'transparent',
+                      color: 'var(--text-secondary)',
+                      cursor: 'pointer',
+                      padding: 4,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    aria-label="Open time picker"
+                    title="Open time picker"
+                  >
+                    <CalendarClock size={16} />
+                  </button>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                  {scheduleTimingHelper}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 24 }}>
+          <button onClick={() => setSchedulerOpen(false)} style={secondaryBtn}>Cancel</button>
+          <button onClick={handleScheduleSave} style={primaryBtn}>Save</button>
+        </div>
+      </Modal>
+
+
+
 
       <GlobalConfigModal open={globalOpen} onClose={() => setGlobalOpen(false)} />
     </div>
   );
 }
 
-function FormEditor({ value, onChange }) {
+function FormEditor({
+  value,
+  onChange,
+  fabricAccounts = [],
+  fabricWorkspaces = [],
+  fabricLoading = false,
+  onRefreshFabricWorkspaces,
+}) {
   const patch = (k, v) => onChange(prev => ({ ...prev, [k]: v }));
 
   return (
-    <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div style={{ maxWidth: 1080, margin: '0 auto', padding: 4, display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <div>
           <label style={LABEL}>Source Type</label>
@@ -540,8 +1056,6 @@ function FormEditor({ value, onChange }) {
             <option value="fabric">fabric</option>
             <option value="snowflake">snowflake</option>
             <option value="databricks">databricks</option>
-            <option value="postgresql">postgresql</option>
-            <option value="salesforce">salesforce</option>
           </select>
         </div>
         <div>
@@ -549,6 +1063,7 @@ function FormEditor({ value, onChange }) {
           <select value={value.target_type} onChange={e => patch('target_type', e.target.value)} style={{ ...INPUT, cursor: 'pointer' }}>
             <option value="snowflake">snowflake</option>
             <option value="fabric">fabric</option>
+            <option value="databricks">databricks</option>
           </select>
         </div>
       </div>
@@ -556,18 +1071,67 @@ function FormEditor({ value, onChange }) {
       <div>
         <label style={LABEL}>Intermediate Format</label>
         <select value={value.output_format} onChange={e => patch('output_format', e.target.value)} style={{ ...INPUT, cursor: 'pointer' }}>
-          <option value="atscale">AtScale</option>
           <option value="osi">OSI (Open Semantic Interchange)</option>
           <option value="sml">SML</option>
-          <option value="dax">DAX</option>
         </select>
       </div>
 
       {value.source_type === 'fabric' && (
-        <div>
-          <label style={LABEL}>Workspace ID</label>
-          <input value={value.workspace_id} onChange={e => patch('workspace_id', e.target.value)} style={INPUT} placeholder="fabric workspace id" />
-        </div>
+        <>
+          <div>
+            <label style={LABEL}>Fabric Account</label>
+            <select
+              value={value.identity_id}
+              onChange={e => patch('identity_id', e.target.value)}
+              style={{ ...INPUT, cursor: 'pointer' }}
+            >
+              <option value="">Select account</option>
+              {fabricAccounts.map(acc => (
+                <option key={acc.id} value={acc.id}>
+                  {acc.tag || acc.identity_email || acc.id}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <label style={{ ...LABEL, margin: 0 }}>Workspace ID</label>
+              <div style={{ flex: 1 }} />
+              <button
+                type="button"
+                onClick={onRefreshFabricWorkspaces}
+                disabled={fabricLoading || !value.identity_id}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-tertiary)',
+                  cursor: fabricLoading || !value.identity_id ? 'not-allowed' : 'pointer',
+                  fontSize: 11,
+                  padding: 0,
+                }}
+              >
+                {fabricLoading ? 'Loading...' : 'Refresh'}
+              </button>
+            </div>
+            {fabricWorkspaces.length > 0 ? (
+              <select
+                value={value.workspace_id}
+                onChange={e => patch('workspace_id', e.target.value)}
+                style={{ ...INPUT, cursor: 'pointer' }}
+              >
+                <option value="">Select workspace</option>
+                {fabricWorkspaces.map(ws => (
+                  <option key={ws.id || ws.workspace_id} value={ws.id || ws.workspace_id}>
+                    {ws.name || ws.displayName || ws.id || ws.workspace_id}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input value={value.workspace_id} onChange={e => patch('workspace_id', e.target.value)} style={INPUT} placeholder="fabric workspace id" />
+            )}
+          </div>
+        </>
       )}
 
       {value.source_type === 'snowflake' && (
@@ -605,6 +1169,26 @@ function FormEditor({ value, onChange }) {
         <input value={value.block_models} onChange={e => patch('block_models', e.target.value)} style={INPUT} placeholder="LegacyModel, TestModel" />
       </div>
 
+      <div style={{ border: '1px solid var(--border-main)', borderRadius: 8, padding: 12, background: 'var(--bg-surface)' }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>Mapping Options</div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
+          <input
+            type="checkbox"
+            checked={Boolean(value.auto_relationships)}
+            onChange={e => patch('auto_relationships', e.target.checked)}
+          />
+          Auto-detect relationships
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
+          <input
+            type="checkbox"
+            checked={Boolean(value.generate_descriptions)}
+            onChange={e => patch('generate_descriptions', e.target.checked)}
+          />
+          Generate AI descriptions (tables and fields)
+        </label>
+      </div>
+
       <div style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
         Fields left blank inherit ghost defaults from global config where applicable.
       </div>
@@ -628,6 +1212,37 @@ function ModeButton({ active, onClick, icon, label }) {
     </button>
   );
 }
+
+function ScheduleOptionCard({ active, title, description, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        border: `1px solid ${active ? 'var(--accent-blue)' : 'var(--border-main)'}`,
+        borderRadius: 10,
+        padding: 12,
+        background: active ? 'rgba(59, 130, 246, 0.1)' : 'var(--bg-surface)',
+        color: 'var(--text-primary)',
+        cursor: 'pointer',
+        textAlign: 'left',
+      }}
+    >
+      <div style={{ fontSize: 12, fontWeight: 700 }}>{title}</div>
+      <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4, lineHeight: 1.45 }}>{description}</div>
+    </button>
+  );
+}
+
+const modalInputStyle = {
+  width: '100%',
+  padding: 8,
+  borderRadius: 6,
+  border: '1px solid var(--border-main)',
+  fontSize: 13,
+  background: 'var(--bg-input)',
+  color: 'var(--text-primary)',
+  boxSizing: 'border-box',
+};
 
 const primaryBtn = {
   display: 'inline-flex', alignItems: 'center', gap: 6,

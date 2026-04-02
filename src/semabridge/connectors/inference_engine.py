@@ -1,3 +1,10 @@
+"""
+Module: inference_engine
+Purpose: Infer table roles and structure from discovered metadata.
+Responsibilities:
+- Score tables using relationship and schema heuristics.
+- Classify tables into semantic roles used by downstream modeling.
+"""
 
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Set

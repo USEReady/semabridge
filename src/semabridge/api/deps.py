@@ -1,3 +1,10 @@
+"""
+Module: deps
+Purpose: Provide FastAPI dependency providers for request-scoped services.
+Responsibilities:
+- Expose dependency functions for database sessions and repositories.
+- Centralize dependency wiring for API routes.
+"""
 
 from __future__ import annotations
 from fastapi import Request, HTTPException, Header, Depends

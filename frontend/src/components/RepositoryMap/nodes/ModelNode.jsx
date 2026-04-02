@@ -4,7 +4,9 @@ import { Box } from 'lucide-react';
 /**
  * ModelNode — blue semantic model node for the dependency graph.
  */
+import { useState } from 'react';
 export default function ModelNode({ data, selected }) {
+    const [hovered, setHovered] = useState(false);
     const isBroken = data.status === 'broken';
     const diffStatus = data.diffStatus;
     const compact = !!data.compactModelView;
@@ -13,22 +15,31 @@ export default function ModelNode({ data, selected }) {
         diffStatus === 'added' ? '#22C55E'
             : diffStatus === 'removed' ? '#EF4444'
                 : diffStatus === 'modified' ? '#EAB308'
-                    : isBroken ? '#EF4444' : selected ? '#60A5FA' : '#3B82F6';
+                    : isBroken ? '#EF4444' : selected ? '#60A5FA' : hovered ? '#60A5FA' : '#3B82F6';
+    const shadow = selected
+        ? '0 0 20px 0 #60a5facc'
+        : hovered
+            ? '0 0 14px 0 #60a5fa55'
+            : '0 4px 16px rgba(0,0,0,.25)';
+    const scale = hovered ? 1.025 : 1;
 
     return (
-        <div style={{
-            background: 'linear-gradient(135deg, #1E3A5F 0%, #1E293B 100%)',
-            border: `2px solid ${borderColor}`,
-            borderRadius: compact ? 9 : 12,
-            padding: compact ? (dense ? '6px 8px' : '8px 10px') : '12px 16px',
-            minWidth: compact ? (dense ? 120 : 145) : 200,
-            position: 'relative',
-            boxShadow: selected
-                ? '0 0 20px rgba(59,130,246,.35)'
-                : '0 4px 16px rgba(0,0,0,.25)',
-            transition: 'box-shadow .2s, border-color .2s',
-            opacity: diffStatus === 'removed' ? 0.78 : 1,
-        }}>
+        <div
+            style={{
+                background: 'linear-gradient(135deg, #3b82f6 0%, #1E293B 100%)',
+                border: `2.5px solid ${borderColor}`,
+                borderRadius: compact ? 13 : 16,
+                padding: compact ? (dense ? '7px 10px' : '10px 12px') : '16px 20px',
+                minWidth: compact ? (dense ? 120 : 145) : 200,
+                position: 'relative',
+                boxShadow: shadow,
+                transition: 'box-shadow .18s, border-color .18s, transform .18s',
+                opacity: diffStatus === 'removed' ? 0.78 : 1,
+                transform: `scale(${scale})`,
+            }}
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+        >
             {/* Version badge */}
             {data.versionCount > 0 && !dense && (
                 <div style={{

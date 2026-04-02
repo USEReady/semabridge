@@ -1,23 +1,45 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
-    Wifi,
-    WifiOff,
-    Database,
-    HardDrive,
     Clock,
-    GitBranch,
-    AlertTriangle,
-    CheckCircle2,
     Radio,
+    RefreshCw,
 } from 'lucide-react';
 import { api } from '../utils/api';
 import { useLogs } from '../context/LogsContext';
+import useProjectSync from '../hooks/useProjectSync';
+import { useSyncStatusStore } from '../context/SyncStatusContext';
+
+function extractRunError(run) {
+    const direct = [run?.error_message, run?.error].filter(Boolean).join(' | ');
+    if (direct) return direct;
+
+    const summaryErrors = run?.summary?.errors;
+    if (Array.isArray(summaryErrors) && summaryErrors.length > 0) {
+        return String(summaryErrors[0]?.message || summaryErrors[0]?.error_type || '').trim();
+    }
+
+    const nestedErrors = run?.results?.[0]?.summary?.errors;
+    if (Array.isArray(nestedErrors) && nestedErrors.length > 0) {
+        return String(nestedErrors[0]?.message || nestedErrors[0]?.error_type || '').trim();
+    }
+
+    return '';
+}
 
 export default function StatusBar() {
+    // Remove showSyncBar, always render the bar
     const [connected, setConnected] = useState(false);
-    const [isSyncing, setIsSyncing] = useState(false);
-    const [progress, setProgress] = useState(0);
-    const { wsConnected } = useLogs();
+    const { wsConnected, addLog } = useLogs();
+    const seenStatusRef = useRef(new Map());
+    const { runs, currentSyncId } = useSyncStatusStore();
+    const {
+        status: currentSyncStatus,
+        progress,
+        indeterminate,
+        warning,
+    } = useProjectSync();
+
+    // No-op: always show the bar, only sync status is conditional
 
     // Replicating PyQt ProgressBar behavior + Health Checking
     useEffect(() => {
@@ -36,25 +58,60 @@ export default function StatusBar() {
     }, []);
 
     useEffect(() => {
-        // Simulated sync for UI demonstration (PyQt parity)
-        if (connected) {
-            const timeout = setTimeout(() => {
-                setIsSyncing(true);
-                const progressInterval = setInterval(() => {
-                    setProgress(p => {
-                        if (p >= 100) {
-                            clearInterval(progressInterval);
-                            setTimeout(() => setIsSyncing(false), 1000);
-                            return 100;
-                        }
-                        return p + 2;
-                    });
-                }, 50);
-            }, 5000);
-            return () => clearTimeout(timeout);
-        }
-    }, [connected]);
+        runs.forEach((run) => {
+            const runId = String(run?.run_id || run?.id || '');
+            if (!runId) return;
+            const status = String(run?.status || '').toLowerCase();
+            const previous = seenStatusRef.current.get(runId);
+            if (previous === 'running' && status && status !== 'running') {
+                const projectName = run?.project_name || run?.project_id || 'project';
+                if (status === 'success') {
+                    addLog('success', 'Sync', `${projectName} sync completed successfully.`);
+                } else if (status === 'warning' || status === 'partial') {
+                    addLog('warning', 'Sync', `${projectName} sync completed with warnings.`);
+                } else {
+                    const reason = extractRunError(run);
+                    addLog('error', 'Sync', `${projectName} sync failed${reason ? `: ${reason}` : '.'}`);
+                }
+            }
+            seenStatusRef.current.set(runId, status);
+        });
+    }, [runs, addLog]);
 
+
+    const latestSuccessfulRun = runs.find((run) => {
+        const status = String(run?.status || '').toLowerCase();
+        return status === 'success';
+    });
+
+    let lastSyncLabel = 'Never';
+    if (latestSuccessfulRun) {
+        const ts = latestSuccessfulRun.completed_at || latestSuccessfulRun.started_at;
+        if (ts) {
+            const dateStr = ts.includes('Z') || ts.includes('+') ? ts : `${ts}Z`;
+            const d = new Date(dateStr);
+            if (!isNaN(d.getTime())) {
+                lastSyncLabel = d.toLocaleString('en-IN', {
+                    timeZone: 'Asia/Kolkata',
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: true
+                });
+            }
+        }
+    }
+
+
+    const safeProgress = progress ?? 0;
+    const isSyncing = (currentSyncStatus === 'running' || currentSyncStatus === 'starting' || currentSyncStatus === 'pending') && currentSyncId;
+    const isStarting = safeProgress < 5;
+    const transitionStyle = isStarting ? 'none' : 'width 1s linear';
+
+    // The bar is always visible; only the sync progress section is conditional
     return (
         <footer
             className="theme-transition flex items-center justify-between px-4 h-8 shrink-0 text-[11px] select-none"
@@ -78,38 +135,18 @@ export default function StatusBar() {
                         />
                     </div>
                     <span className="flex items-center gap-1 font-medium" style={{ color: connected ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                        {connected ? 'Fabric Connected' : 'API Unreachable'}
+                        {connected ? 'API Connected' : 'API Unreachable'}
                     </span>
                 </div>
 
-                <div className="w-px h-3.5 bg-white/5" />
 
-                <div className="flex items-center gap-1">
-                    <Database size={11} className="opacity-50" />
-                    <span>Snowflake:</span>
-                    <span className="text-emerald-500 font-bold uppercase text-[9px]">OK</span>
-                </div>
-
-                <div className="w-px h-3.5 bg-white/5" />
-
-                <div className="flex items-center gap-1">
-                    <Radio size={11} className={wsConnected ? 'text-emerald-400' : 'text-slate-500'} />
-                    <span>Alerts:</span>
-                    <span className={`font-bold uppercase text-[9px] ${wsConnected ? 'text-emerald-500' : 'text-amber-500'}`}>
-                        {wsConnected ? 'LIVE' : 'OFF'}
-                    </span>
-                </div>
 
                 {isSyncing && (
                     <div className="flex items-center gap-3 ml-4">
-                        <span className="text-indigo-400 font-bold animate-pulse">Syncing Models...</span>
-                        <div className="w-32 h-1.5 bg-indigo-500/10 rounded-full overflow-hidden border border-white/5">
-                            <div
-                                className="h-full bg-indigo-500 transition-all duration-300 ease-out"
-                                style={{ width: `${progress}%` }}
-                            />
-                        </div>
-                        <span className="text-indigo-400 font-mono w-8">{progress}%</span>
+                        <span className="text-indigo-400 font-bold animate-pulse inline-flex items-center gap-1">
+                            <RefreshCw size={11} className="animate-spin" />
+                            Sync in progress
+                        </span>
                     </div>
                 )}
             </div>
@@ -117,20 +154,8 @@ export default function StatusBar() {
             {/* Right section */}
             <div className="flex items-center gap-4">
                 <div className="flex items-center gap-1">
-                    <GitBranch size={11} className="text-slate-500" />
-                    <span className="font-mono">main</span>
-                </div>
-
-                <div className="flex items-center gap-1">
-                    <CheckCircle2 size={11} className="text-emerald-500" />
-                    <span className="text-slate-400">22 Models Valid</span>
-                </div>
-
-                <div className="w-px h-3.5 bg-white/5" />
-
-                <div className="flex items-center gap-1">
                     <Clock size={11} className="text-slate-500" />
-                    <span>Last sync: 2 min ago</span>
+                    <span>Last sync: {lastSyncLabel}</span>
                 </div>
             </div>
         </footer>

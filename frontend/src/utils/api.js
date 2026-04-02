@@ -1,5 +1,9 @@
+// ...existing code...
+// (Removed duplicate export of api. Only export once at the end of the file, with getDatabricksSources included as a method.)
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
 const TOKEN_KEY = 'semabridge-token';
+const FABRIC_TOKEN_KEY = 'semabridge-fabric-token';
+const FABRIC_TOKEN_EXPIRES_KEY = 'semabridge-fabric-token-expires';
 
 function normalizeProject(project) {
     if (!project || typeof project !== 'object') return project;
@@ -11,7 +15,7 @@ function normalizeProject(project) {
 
     const id = project.id ?? project.project_id ?? null;
     const source = project.source ?? project.adapter ?? project.source_type ?? null;
-    const targetType = project.target_type ?? project.target?.type ?? null;
+    const targetType = project.target_type ?? project.target?.type ?? project.targets?.[0]?.type ?? null;
 
     return {
         ...project,
@@ -85,9 +89,34 @@ function getAuthHeaders() {
     return {};
 }
 
+/**
+ * Return the stored Fabric MSAL access token as a Bearer header if valid.
+ * This is injected on Fabric-specific API calls so the backend resolves
+ * the correct per-user token instead of falling back to the shared DB row.
+ */
+function getFabricAuthHeaders() {
+    const token = localStorage.getItem(FABRIC_TOKEN_KEY);
+    const expiresAt = parseInt(localStorage.getItem(FABRIC_TOKEN_EXPIRES_KEY) || '0', 10);
+    if (token && Date.now() < expiresAt) {
+        return { Authorization: `Bearer ${token}` };
+    }
+    // Token expired or missing — clean up stale values.
+    localStorage.removeItem(FABRIC_TOKEN_KEY);
+    localStorage.removeItem(FABRIC_TOKEN_EXPIRES_KEY);
+    return {};
+}
+
 async function handleResponse(res) {
     if (res.status === 401) {
-        // Token expired or invalid â€” clear it so the UI shows login
+        try {
+            const cloned = res.clone();
+            const data = await cloned.json();
+            if (data?.error === 'reauth_required' || data?.detail?.error === 'reauth_required') {
+                return data.detail || data;
+            }
+        } catch(e) {}
+        
+        // Token expired or invalid — clear it so the UI shows login
         localStorage.removeItem(TOKEN_KEY);
         window.dispatchEvent(new Event('semabridge:auth-expired'));
     }
@@ -116,6 +145,55 @@ async function authFetch(url, options = {}) {
 }
 
 export const api = {
+    // ── Auth & Identity Vault ──────────────────────────────────────────────
+    async getAccounts(connectorType = '') {
+        const query = connectorType ? `?connector_type=${encodeURIComponent(connectorType)}` : '';
+        const res = await authFetch(`${API_BASE_URL}/accounts${query}`);
+        return handleResponse(res);
+    },
+
+    async createAccount(payload) {
+        const res = await authFetch(`${API_BASE_URL}/accounts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        return handleResponse(res);
+    },
+
+    async deleteAccount(accountId) {
+        const res = await authFetch(`${API_BASE_URL}/accounts/${accountId}`, {
+            method: 'DELETE'
+        });
+        if (res.status === 204) return null;
+        return handleResponse(res);
+    },
+
+    async updateAccountTag(accountId, tag) {
+        const res = await authFetch(`${API_BASE_URL}/accounts/${accountId}/tag`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tag })
+        });
+        return handleResponse(res);
+    },
+
+    async setDefaultAccount(accountId) {
+        const res = await authFetch(`${API_BASE_URL}/accounts/${accountId}/default`, {
+            method: 'PATCH',
+        });
+        return handleResponse(res);
+    },
+
+    async linkProjectAccount(projectId, payload) {
+        const res = await authFetch(`${API_BASE_URL}/accounts/project/${projectId}/link-account`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        return handleResponse(res);
+    },
+
     async getHealth() {
         const res = await authFetch(`${API_BASE_URL}/health`);
         return handleResponse(res);
@@ -382,14 +460,26 @@ export const api = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(tenantId ? { tenant_id: tenantId } : {}),
         });
-        return handleResponse(res);
+        const data = await handleResponse(res);
+        // data now contains { flow_id, user_code, verification_uri, ... }
+        return data;
     },
 
-    async fabricPoll() {
+    async fabricPoll(flowId) {
         const res = await authFetch(`${API_BASE_URL}/connections/fabric/poll`, {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ flow_id: flowId }),
         });
-        return handleResponse(res);
+        const data = await handleResponse(res);
+
+        // On success, store the MSAL token in localStorage for Bearer passthrough.
+        if (data.status === 'success' && data.access_token) {
+            localStorage.setItem(FABRIC_TOKEN_KEY, data.access_token);
+            const expiresAt = Date.now() + (data.expires_in || 3600) * 1000;
+            localStorage.setItem(FABRIC_TOKEN_EXPIRES_KEY, String(expiresAt));
+        }
+        return data;
     },
 
     async fabricAuthStatus() {
@@ -397,7 +487,16 @@ export const api = {
         return handleResponse(res);
     },
 
+    async refreshFabricCredentials() {
+        const res = await authFetch(`${API_BASE_URL}/connections/fabric/refresh-token`, {
+            method: 'POST',
+        });
+        return handleResponse(res);
+    },
+
     async fabricLogout() {
+        localStorage.removeItem(FABRIC_TOKEN_KEY);
+        localStorage.removeItem(FABRIC_TOKEN_EXPIRES_KEY);
         const res = await authFetch(`${API_BASE_URL}/connections/fabric/logout`, {
             method: 'POST',
         });
@@ -406,7 +505,9 @@ export const api = {
 
     // â”€â”€ Fabric Workspace Discovery â”€â”€â”€â”€â”€â”€
     async fabricListWorkspaces() {
-        const res = await authFetch(`${API_BASE_URL}/connections/fabric/workspaces`);
+        const res = await fetch(`${API_BASE_URL}/connections/fabric/workspaces`, {
+            headers: { ...getAuthHeaders(), ...getFabricAuthHeaders() },
+        });
         return handleResponse(res);
     },
 
@@ -453,6 +554,11 @@ export const api = {
         return handleResponse(res);
     },
 
+    async getSemanticSyncStatus(jobId) {
+        const res = await authFetch(`${API_BASE_URL}/semantic/sync/${encodeURIComponent(jobId)}`);
+        return handleResponse(res);
+    },
+
     async refreshSemanticMetadata(payload = {}) {
         const res = await authFetch(`${API_BASE_URL}/semantic/refresh`, {
             method: 'POST',
@@ -484,8 +590,10 @@ export const api = {
         return dedupeProjects(data || []);
     },
 
-    async getProject(projectId) {
-        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}`);
+    async getProject(projectId, options = {}) {
+        const noCache = Boolean(options?.noCache);
+        const query = noCache ? `?refresh=${Date.now()}` : '';
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}${query}`);
         const data = await handleResponse(res);
         return normalizeProject(data);
     },
@@ -524,6 +632,14 @@ export const api = {
         if (filters.project_id) params.set('project_id', filters.project_id);
         const query = params.toString();
         const res = await authFetch(`${API_BASE_URL}/jobs/runs${query ? `?${query}` : ''}`);
+        return handleResponse(res);
+    },
+
+    async listJobSchedules() {
+        const res = await authFetch(`${API_BASE_URL}/jobs/schedules`);
+        if (res.status === 404) {
+            return [];
+        }
         return handleResponse(res);
     },
 
@@ -618,12 +734,59 @@ export const api = {
 
     // ── Project Runs ──────────────────────────────────────────────────────
 
+    async getProjectSchedule(projectId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/schedule`);
+        if (res.status === 404) {
+            return { project_id: projectId, schedule_type: 'manual', enabled: false };
+        }
+        return handleResponse(res);
+    },
+
+    async saveProjectSchedule(projectId, data) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/schedule`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (res.status === 404) {
+            return {
+                project_id: projectId,
+                schedule_type: data?.schedule_type || 'manual',
+                cron: data?.cron || '',
+                date: data?.date || '',
+                time: data?.time || '',
+                timezone: data?.timezone || 'UTC',
+                enabled: data?.schedule_type && data.schedule_type !== 'manual',
+                message: 'Scheduler API is not available yet on the backend.',
+            };
+        }
+        return handleResponse(res);
+    },
+
+    async deleteProjectSchedule(projectId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/schedule`, {
+            method: 'DELETE',
+        });
+        if (res.status === 404) {
+            return { status: 'deleted', project_id: projectId, schedule_type: 'manual', enabled: false };
+        }
+        return handleResponse(res);
+    },
+
     async getProjectRuns(projectId) {
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/runs`);
         return handleResponse(res);
     },
 
     async runProjectNow(projectId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
+            method: 'POST',
+        });
+        return handleResponse(res);
+    },
+
+    async syncProject(projectId) {
+        // Backend compatibility API exposes /run as the sync trigger route.
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
             method: 'POST',
         });
@@ -725,9 +888,11 @@ export const api = {
     // ── Discovery ─────────────────────────────────────────────────────────
 
     async discoverFabricWorkspaces() {
-        const res = await authFetch(`${API_BASE_URL}/discovery/fabric/workspaces`);
+        const res = await fetch(`${API_BASE_URL}/connections/fabric/workspaces`, {
+            headers: { ...getAuthHeaders(), ...getFabricAuthHeaders() },
+        });
         const data = await handleResponse(res);
-        return (data || []).map(normalizeWorkspace);
+        return (data.workspaces || data || []).map(normalizeWorkspace);
     },
 
     async discoverFabricModels(workspaceId) {
@@ -800,6 +965,30 @@ export const api = {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
+        });
+        return handleResponse(res);
+    },
+
+    // ── Fabric Workspace helpers ──────────────────────────────────────────
+
+    /**
+     * Returns the workspace_id and workspace_name that were previously saved
+     * via the Settings → Connections page. Used to pre-populate the project
+     * wizard without requiring the user to re-select the same workspace.
+     */
+    async getFabricDefaultWorkspace() {
+        const res = await authFetch(`${API_BASE_URL}/connections/fabric/default-workspace`);
+        return handleResponse(res);
+    },
+
+    /**
+     * Persist a workspace selection globally (mirrors the Settings flow).
+     */
+    async selectFabricWorkspace({ workspace_id, workspace_name = '' }) {
+        const res = await authFetch(`${API_BASE_URL}/connections/fabric/select-workspace`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ workspace_id, workspace_name }),
         });
         return handleResponse(res);
     },

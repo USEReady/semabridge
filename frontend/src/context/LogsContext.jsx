@@ -2,9 +2,23 @@ import { createContext, useContext, useState, useCallback, useEffect, useRef } f
 
 const LogsContext = createContext(null);
 
-const WS_URL = 'ws://127.0.0.1:8000/ws/alerts';
-const RECONNECT_DELAY_MS = 3000;
-const MAX_RECONNECT_DELAY_MS = 30000;
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
+const WS_URL = (() => {
+    const explicit = import.meta.env.VITE_WS_ALERTS_URL;
+    if (explicit) return explicit;
+
+    if (/^https?:\/\//.test(API_BASE_URL)) {
+        return `${API_BASE_URL.replace(/^http/, 'ws').replace(/\/api$/, '')}/ws/alerts`;
+    }
+
+    if (import.meta.env.DEV) {
+        return 'ws://127.0.0.1:8001/ws/alerts';
+    }
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.host}/ws/alerts`;
+})();
+const RECONNECT_STEPS_MS = [5000, 10000, 30000];
 const TOAST_DURATION_MS = 6000;
 
 export function LogsProvider({ children }) {
@@ -12,8 +26,13 @@ export function LogsProvider({ children }) {
     const [toasts, setToasts] = useState([]);
     const [wsConnected, setWsConnected] = useState(false);
     const wsRef = useRef(null);
-    const reconnectDelay = useRef(RECONNECT_DELAY_MS);
+    const reconnectAttempt = useRef(0);
     const reconnectTimer = useRef(null);
+
+    const getReconnectDelay = useCallback((attempt) => {
+        if (attempt <= 0) return RECONNECT_STEPS_MS[0];
+        return RECONNECT_STEPS_MS[Math.min(attempt, RECONNECT_STEPS_MS.length - 1)];
+    }, []);
 
     // --- Core: add a log entry + auto-toast for warnings/errors ---
     const addLog = useCallback((severity, source, message) => {
@@ -43,7 +62,11 @@ export function LogsProvider({ children }) {
 
     // --- WebSocket: connect to backend alerts ---
     const connectWebSocket = useCallback(() => {
-        if (wsRef.current?.readyState === WebSocket.OPEN) return;
+        if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return;
+        if (reconnectTimer.current) {
+            clearTimeout(reconnectTimer.current);
+            reconnectTimer.current = null;
+        }
 
         try {
             const ws = new WebSocket(WS_URL);
@@ -51,7 +74,7 @@ export function LogsProvider({ children }) {
 
             ws.onopen = () => {
                 setWsConnected(true);
-                reconnectDelay.current = RECONNECT_DELAY_MS;
+                reconnectAttempt.current = 0;
                 console.log('[SemaBridge] WebSocket connected to alerts');
             };
 
@@ -74,14 +97,12 @@ export function LogsProvider({ children }) {
             ws.onclose = () => {
                 setWsConnected(false);
                 wsRef.current = null;
-                // Auto-reconnect with exponential backoff
+                // Auto-reconnect with exponential backoff: 5s, 10s, then 30s capped.
+                const delayMs = getReconnectDelay(reconnectAttempt.current);
                 reconnectTimer.current = setTimeout(() => {
-                    reconnectDelay.current = Math.min(
-                        reconnectDelay.current * 1.5,
-                        MAX_RECONNECT_DELAY_MS
-                    );
+                    reconnectAttempt.current += 1;
                     connectWebSocket();
-                }, reconnectDelay.current);
+                }, delayMs);
             };
 
             ws.onerror = () => {
@@ -90,8 +111,14 @@ export function LogsProvider({ children }) {
         } catch {
             // WebSocket constructor can throw if URL is invalid
             setWsConnected(false);
+
+            const delayMs = getReconnectDelay(reconnectAttempt.current);
+            reconnectTimer.current = setTimeout(() => {
+                reconnectAttempt.current += 1;
+                connectWebSocket();
+            }, delayMs);
         }
-    }, [addLog]);
+    }, [addLog, getReconnectDelay]);
 
     // Connect on mount, cleanup on unmount
     useEffect(() => {

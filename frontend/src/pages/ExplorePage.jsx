@@ -13,12 +13,14 @@ export default function ExplorePage() {
   const [diffMode, setDiffMode] = useState(false);
   
   return (
-    <div style={{ height: 'calc(100vh - 64px)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-      <RepositoryMap
-        snapshotId={selectedSnapshotId}
-        compareSnapshotId={compareSnapshotId}
-        diffMode={diffMode}
-      />
+    <div style={{ height: '100%', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <RepositoryMap
+          snapshotId={selectedSnapshotId}
+          compareSnapshotId={compareSnapshotId}
+          diffMode={diffMode}
+        />
+      </div>
       <TimeMachine
         modelName="__all__"
         onSnapshotSelect={setSelectedSnapshotId}

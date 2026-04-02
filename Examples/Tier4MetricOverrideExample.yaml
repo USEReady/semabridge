@@ -1,0 +1,7 @@
+﻿project_name: Tier4MetricOverrideExample
+source:
+  type: snowflake
+target:
+  type: fabric
+options:
+  tier4_metric_override: true

@@ -15,11 +15,13 @@ import StatusBar from '../components/StatusBar';
 import LiveValidator from '../components/LiveValidator';
 import { useLogs } from '../context/LogsContext';
 import { useNavigate } from 'react-router-dom';
+import { useUIStore } from '../store/uiStore';
 
 const NAV_ITEMS = [
-  { to: '/explore',       label: 'Explore',         icon: Map },
+
   { to: '/projects',      label: 'Projects',        icon: FolderOpen },
   { to: '/jobs',          label: 'Runs',            icon: PlayCircle },
+    { to: '/explore',       label: 'Explore',         icon: Map },
   { to: '/model-mapping', label: 'Model Mapping',   icon: GitBranch },
   { to: '/settings',      label: 'Settings',        icon: Settings },
 ];
@@ -28,8 +30,10 @@ export default function DashboardLayout() {
   const { user, logout } = useAuth();
   const { logs } = useLogs();
   const navigate = useNavigate();
-  const [collapsed, setCollapsed] = useState(false);
+  const collapsed = useUIStore(state => state.sidebarCollapsed);
+  const setSidebarCollapsed = useUIStore(state => state.setSidebarCollapsed);
   const [search, setSearch] = useState('');
+  const [searchUseRegex, setSearchUseRegex] = useState(false);
 
   // Overlay panel toggles
   const [showLogs, setShowLogs] = useState(false);
@@ -55,6 +59,12 @@ export default function DashboardLayout() {
       case 'openModel':          navigate('/projects'); break;
       default: break;
     }
+  };
+
+  const handleEmergencyReset = () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    window.location.href = '/';
   };
 
   return (
@@ -140,7 +150,7 @@ export default function DashboardLayout() {
           >
             {/* Collapse toggle */}
             <button
-              onClick={() => setCollapsed(v => !v)}
+              onClick={() => setSidebarCollapsed(!collapsed)}
               className="sidebar-link flex items-center rounded-lg w-full mb-2 theme-transition"
               style={{
                 gap: collapsed ? 0 : 10,
@@ -212,6 +222,35 @@ export default function DashboardLayout() {
                 </button>
               )}
             </div>
+
+            <button
+              onClick={handleEmergencyReset}
+              title="Emergency Reset State"
+              style={{
+                width: collapsed ? 28 : '100%',
+                marginTop: 6,
+                padding: collapsed ? '4px 0' : '4px 8px',
+                borderRadius: 6,
+                border: '1px dashed transparent',
+                background: 'transparent',
+                color: 'var(--text-tertiary)',
+                fontSize: 10,
+                textAlign: 'center',
+                cursor: 'pointer',
+                opacity: 0.18,
+                transition: 'opacity 0.2s ease, border-color 0.2s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.opacity = '0.8';
+                e.currentTarget.style.borderColor = 'var(--border-main)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.opacity = '0.18';
+                e.currentTarget.style.borderColor = 'transparent';
+              }}
+            >
+              {collapsed ? 'R' : 'Reset State'}
+            </button>
           </div>
         </aside>
 
@@ -229,7 +268,13 @@ export default function DashboardLayout() {
           >
             <SearchInput
               value={search}
-              onChange={setSearch}
+              onChange={(next) => {
+                setSearch(next);
+                setShowCommandPalette(true);
+              }}
+              useRegex={searchUseRegex}
+              onToggleRegex={setSearchUseRegex}
+              allowRegex
               placeholder="Search… (Ctrl+K)"
               width={240}
               onFocus={() => setShowCommandPalette(true)}
@@ -333,6 +378,10 @@ export default function DashboardLayout() {
         isOpen={showCommandPalette}
         onClose={() => setShowCommandPalette(false)}
         onAction={handlePaletteAction}
+        queryValue={search}
+        onQueryChange={setSearch}
+        useRegexValue={searchUseRegex}
+        onUseRegexChange={setSearchUseRegex}
       />
     </div>
   );
