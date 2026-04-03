@@ -38,6 +38,15 @@ class TestExecutionConfig:
             model_name="TestModel"
         )
         assert config.source.type == "snowflake"
+
+    def test_valid_pbix_source_config_with_source_path(self):
+        """Test that PBIX source accepts source_path/file_path aliases."""
+        config = ExecutionConfig(
+            source=SourceConfig(type="pbix", source_path="./models/sales.pbix"),
+            model_name="SalesModel",
+        )
+        assert config.source.type == "pbix"
+        assert config.source.pbix_path == "./models/sales.pbix"
     
     def test_fabric_source_requires_dataset_id(self):
         """Test that Fabric source requires dataset_id."""
@@ -46,10 +55,18 @@ class TestExecutionConfig:
                 source=SourceConfig(type="fabric"),  # Missing dataset_id
                 model_name="TestModel"
             )
+
+    def test_pbix_source_requires_path(self):
+        """Test that PBIX source requires a file path."""
+        with pytest.raises(ValueError, match="pbix source requires one of"):
+            ExecutionConfig(
+                source=SourceConfig(type="pbix"),
+                model_name="TestModel",
+            )
     
     def test_unsupported_source_type_rejected(self):
         """Test that unsupported source types are rejected by Pydantic Literal validation."""
-        with pytest.raises(ValueError, match="Input should be 'fabric' or 'snowflake'"):
+        with pytest.raises(ValueError, match="Input should be 'fabric', 'snowflake' or 'pbix'"):
             ExecutionConfig(
                 source=SourceConfig(type="invalid_type", dataset_id="test"),
                 model_name="TestModel"

@@ -27,6 +27,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, Literal, Optional
 import yaml
 from pydantic import Field
@@ -131,6 +132,22 @@ class ExecutionEngine:
         self._current_step = 0
         self._context: Optional[RunContext] = None
         self._summary: Optional[RunSummary] = None
+
+    @staticmethod
+    def _safe_output_name(name: Optional[str]) -> str:
+        raw = str(name or "model")
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", raw)
+        safe = re.sub(r"_+", "_", safe).strip("._")
+        return safe or "model"
+
+    def _model_output_dir(self, *parts: str, model_name: Optional[str] = None) -> Path:
+        safe_name = self._safe_output_name(model_name or (self._context.project_id if self._context else None))
+        path = Path("output")
+        for part in parts:
+            path /= part
+        path /= safe_name
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     # -------------------------------------------------------------------------
     @classmethod
@@ -393,6 +410,36 @@ class ExecutionEngine:
         try:
             # Load settings (from .env by default)
             config = get_settings()
+
+            if config_path and Path(config_path).exists():
+                try:
+                    raw_config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
+                except Exception as raw_exc:
+                    logger.warning("Could not parse config at %s for project-scoped settings: %s", config_path, raw_exc)
+                    raw_config = {}
+
+                source_cfg = raw_config.get("source") if isinstance(raw_config.get("source"), dict) else {}
+                target_cfg: dict[str, Any] = {}
+                raw_target = raw_config.get("target")
+                if isinstance(raw_target, dict):
+                    target_cfg = raw_target
+                elif not raw_target:
+                    targets_cfg = raw_config.get("targets")
+                    if isinstance(targets_cfg, list) and targets_cfg and isinstance(targets_cfg[0], dict):
+                        target_cfg = targets_cfg[0]
+
+                if source_cfg:
+                    object.__setattr__(config, "source", SimpleNamespace(**source_cfg))
+                    if source == "fabric":
+                        source_workspace_id = str(source_cfg.get("workspace_id") or "").strip()
+                        if source_workspace_id:
+                            config.fabric.workspace_id = source_workspace_id
+                if target_cfg:
+                    object.__setattr__(config, "target", SimpleNamespace(**target_cfg))
+                    if target == "fabric":
+                        target_workspace_id = str(target_cfg.get("workspace_id") or "").strip()
+                        if target_workspace_id:
+                            config.fabric.workspace_id = target_workspace_id
             
             # Validate connector types
             if source not in self.SUPPORTED_SOURCES:
@@ -407,11 +454,6 @@ class ExecutionEngine:
                     f"Supported: {self.SUPPORTED_TARGETS - {None}}"
                 )
 
-            if target == "databricks" and source != "fabric":
-                raise ConfigValidationError(
-                    "Databricks target is currently supported only for fabric source runs"
-                )
-            
             self._record_step(1, StepStatus.SUCCESS, "Configuration validated")
             return config
             
@@ -563,9 +605,13 @@ class ExecutionEngine:
                 auth_sources.append("OFFLINE")
             else:
                 fabric_env_ok = config.validate_fabric()
+                identity_id = str(getattr(getattr(config, "source", None), "identity_id", "") or "").strip()
+                fabric_identity_ok = self._has_fabric_identity_auth(identity_id)
                 fabric_ui_ok = self._has_fabric_interactive_auth()
-                if not (fabric_env_ok or fabric_ui_ok):
+                if not (fabric_env_ok or fabric_identity_ok or fabric_ui_ok):
                     missing.append("Fabric credentials (FABRIC_*)")
+                elif fabric_identity_ok:
+                    auth_sources.append("DB identity")
                 elif fabric_ui_ok:
                     auth_sources.append("UI token")
                 else:
@@ -580,9 +626,13 @@ class ExecutionEngine:
                 missing.append("Snowflake credentials (SNOWFLAKE_*)")
         elif context.target_type == "fabric":
             fabric_env_ok = config.validate_fabric()
+            identity_id = str(getattr(getattr(config, "target", None), "identity_id", "") or "").strip()
+            fabric_identity_ok = self._has_fabric_identity_auth(identity_id)
             fabric_ui_ok = self._has_fabric_interactive_auth()
-            if not (fabric_env_ok or fabric_ui_ok):
+            if not (fabric_env_ok or fabric_identity_ok or fabric_ui_ok):
                 missing.append("Fabric credentials (FABRIC_*)")
+            elif fabric_identity_ok:
+                auth_sources.append("DB identity")
             elif fabric_ui_ok:
                 auth_sources.append("UI token")
             else:
@@ -611,6 +661,19 @@ class ExecutionEngine:
             return cm.get_fabric_auth_method() == "interactive" and cm.has_valid_token()
         except Exception as exc:
             logger.warning("_has_fabric_interactive_auth: credential lookup failed: %s", exc)
+            return False
+
+    def _has_fabric_identity_auth(self, identity_id: str) -> bool:
+        """Return True when a selected Fabric identity is resolvable from the DB."""
+        if not identity_id:
+            return False
+        try:
+            from semabridge.api.main import _resolve_fabric_access_token
+
+            token = _resolve_fabric_access_token(None, identity_id)
+            return bool(token)
+        except Exception as exc:
+            logger.warning("_has_fabric_identity_auth: identity lookup failed for %s: %s", identity_id, exc)
             return False
     
     # =========================================================================
@@ -904,9 +967,11 @@ class ExecutionEngine:
         from semabridge.connectors.fabric_extractor import FabricExtractor
         
         config = context.config
+        source_config = getattr(config, "source", None)
         ws_id = workspace_id or config.fabric.workspace_id
         interactive_token: Optional[str] = None
         stored_workspace_id: str = ""
+        identity_id: str = str(getattr(source_config, "identity_id", "") or "").strip()
 
         if context.behavior.features.offline_mode:
             offline_path = Path(context.behavior.features.offline_fabric_model_path)
@@ -949,13 +1014,28 @@ class ExecutionEngine:
             cm = CredentialManager()
             stored_fabric = cm.get_credentials("fabric", mask_secrets=False)
             stored_workspace_id = (stored_fabric.get("workspace_id") or "").strip()
-            if not workspace_id and stored_workspace_id:
+            configured_workspace_id = str(getattr(config.fabric, "workspace_id", "") or "").strip()
+            if not workspace_id and not configured_workspace_id and stored_workspace_id:
                 ws_id = stored_workspace_id
 
-            token_data = cm.get_msal_token()
-            if cm.get_fabric_auth_method() == "interactive" and cm.has_valid_token() and token_data:
-                interactive_token = token_data.get("access_token")
-                logger.debug("_extract_fabric: injecting interactive token from credential store")
+            if identity_id:
+                try:
+                    from semabridge.api.main import _resolve_fabric_access_token
+
+                    interactive_token = _resolve_fabric_access_token(None, identity_id)
+                    logger.debug("_extract_fabric: injecting identity-scoped interactive token for %s", identity_id)
+                except Exception as identity_exc:
+                    logger.warning(
+                        "_extract_fabric: failed to resolve token for identity %s; falling back to default interactive token: %s",
+                        identity_id,
+                        identity_exc,
+                    )
+
+            if not interactive_token:
+                token_data = cm.get_msal_token()
+                if cm.get_fabric_auth_method() == "interactive" and cm.has_valid_token() and token_data:
+                    interactive_token = token_data.get("access_token")
+                    logger.debug("_extract_fabric: injecting interactive token from credential store")
         except Exception as exc:
             logger.warning("_extract_fabric: credential lookup failed, falling back to env auth: %s", exc)
         
@@ -1026,103 +1106,59 @@ class ExecutionEngine:
         from semabridge.connectors.local_pbix_connector import LocalPBIXConnector
 
         if not pbix_path:
+            source_cfg = getattr(context.config, "source", None)
+            pbix_path = (
+                str(getattr(source_cfg, "pbix_path", "") or "").strip()
+                or str(getattr(source_cfg, "source_path", "") or "").strip()
+                or str(getattr(source_cfg, "file_path", "") or "").strip()
+            )
+
+        if not pbix_path:
             raise ExtractionError(
                 "pbix_path is required for PBIX source. "
-                "Provide a path to a .pbix file."
+                "Provide it directly or via source.pbix_path/source.source_path/source.file_path."
             )
+
+        pbix_path = str(pbix_path).strip()
+        if len(pbix_path) >= 2 and (
+            (pbix_path[0] == '"' and pbix_path[-1] == '"')
+            or (pbix_path[0] == "'" and pbix_path[-1] == "'")
+        ):
+            pbix_path = pbix_path[1:-1].strip()
+        pbix_path = os.path.expandvars(os.path.expanduser(pbix_path))
 
         p = Path(pbix_path)
         if not p.exists():
             raise ExtractionError(f"PBIX file not found: {pbix_path}")
 
         connector = LocalPBIXConnector({"pbix_path": pbix_path})
-        connector.authenticate()
-        discovered = connector.discover()  # may populate _data_model_schema or fallback metadata
-
-        # The raw DataModelSchema is structurally identical to Fabric TMSL
-        tmsl = connector._data_model_schema
-        if tmsl and "model" not in tmsl and isinstance(tmsl.get("tables"), list):
-            tmsl = {"model": tmsl}
-
-        if not tmsl:
-            # Fallback path (pbixray): build a minimal TMSL-compatible structure
-            model_info = (discovered.get("models") or [{}])[0]
-            model_name = model_info.get("name") or p.stem
-
-            table_entries: list[dict[str, Any]] = []
-            for table in discovered.get("tables", []):
-                table_entries.append(
-                    {
-                        "name": table.get("name", ""),
-                        "description": table.get("description", ""),
-                        "isHidden": table.get("is_hidden", False),
-                        "columns": [
-                            {
-                                "name": col.get("name", ""),
-                                "dataType": col.get("data_type", "string"),
-                                "isHidden": col.get("is_hidden", False),
-                                "sourceColumn": col.get("source_column", ""),
-                                "type": col.get("type", "data"),
-                            }
-                            for col in table.get("columns", [])
-                        ],
-                        "partitions": [],
-                        "measures": [],
-                    }
-                )
-
-            table_index = {t.get("name"): t for t in table_entries}
-            for measure in discovered.get("measures", []):
-                table_name = measure.get("table", "")
-                if table_name not in table_index:
-                    table_index[table_name] = {
-                        "name": table_name,
-                        "description": "",
-                        "isHidden": False,
-                        "columns": [],
-                        "partitions": [],
-                        "measures": [],
-                    }
-                    table_entries.append(table_index[table_name])
-
-                table_index[table_name]["measures"].append(
-                    {
-                        "name": measure.get("name", ""),
-                        "expression": measure.get("expression", ""),
-                        "formatString": measure.get("format_string", ""),
-                        "description": measure.get("description", ""),
-                        "isHidden": measure.get("is_hidden", False),
-                        "displayFolder": measure.get("display_folder", ""),
-                    }
-                )
-
-            relationships = [
-                {
-                    "name": rel.get("name", ""),
-                    "fromTable": rel.get("from_table", ""),
-                    "fromColumn": rel.get("from_column", ""),
-                    "toTable": rel.get("to_table", ""),
-                    "toColumn": rel.get("to_column", ""),
-                    "crossFilteringBehavior": rel.get("cross_filtering_behavior", "oneDirection"),
-                    "isActive": rel.get("is_active", True),
-                    "fromCardinality": "many" if str(rel.get("cardinality", "many-to-one")).startswith("many") else "one",
-                    "toCardinality": "one" if str(rel.get("cardinality", "many-to-one")).endswith("one") else "many",
-                }
-                for rel in discovered.get("relationships", [])
-            ]
-
-            tmsl = {
-                "model": {
-                    "name": model_name,
-                    "tables": table_entries,
-                    "relationships": relationships,
-                }
-            }
+        discovered = connector.discover()
+        tmsl = connector.extract() if discovered.get("raw_tmsl") is None else discovered.get("raw_tmsl")
 
         if not tmsl:
             raise ExtractionError(
                 f"Could not extract DataModelSchema from {pbix_path}"
             )
+
+        logger.debug(
+            "PBIX -> TMSL transition complete for %s (%s tables)",
+            pbix_path,
+            len(tmsl.get("model", {}).get("tables", [])),
+        )
+        try:
+            model_obj = tmsl.get("model", {})
+            table_defs = model_obj.get("tables", []) or []
+            table_names = [str(t.get("name", "")).strip() or "<unnamed>" for t in table_defs]
+            measure_count = sum(len((t.get("measures", []) or [])) for t in table_defs if isinstance(t, dict))
+            logger.info(
+                "PBIX extraction debug: model=%s, tables=%s, measures=%s, table_names=%s",
+                model_obj.get("name", "<unnamed-model>"),
+                len(table_defs),
+                measure_count,
+                table_names,
+            )
+        except Exception as exc:
+            logger.debug("PBIX extraction debug summary skipped: %s", exc)
 
         source_format = from_pbix_tmsl(
             project_id=context.project_id,
@@ -1658,7 +1694,7 @@ class ExecutionEngine:
         sf = context.source_format
         # PBIX has no workspace/dataset IDs — use sentinel values
         ws_id = "local"
-        ds_id = sf.pbix_path or context.project_id
+        ds_id = context.project_id
 
         # Load metric overrides and alias map from the behavior policy
         metric_overrides: Dict[str, str] = context.behavior.semantic_model.metric_overrides
@@ -1676,12 +1712,28 @@ class ExecutionEngine:
             f"PBIX OSI intermediate: {len(osi_model.datasets)} datasets, "
             f"{len(osi_model.metrics)} metrics"
         )
+        logger.info(
+            "PBIX OSI datasets: %s",
+            [ds.unique_name for ds in osi_model.datasets],
+        )
+        logger.info(
+            "PBIX OSI metrics: %s",
+            [m.unique_name for m in osi_model.metrics],
+        )
 
         # Phase 2: OSI → SML
         sml_model = OSIToSMLConverter().from_osi(
             osi_model,
             metric_overrides=metric_overrides,
             override_alias_map=override_alias_map,
+        )
+        logger.info(
+            "PBIX SML datasets: %s",
+            [ds.unique_name for ds in sml_model.datasets],
+        )
+        logger.info(
+            "PBIX SML metrics: %s",
+            [m.unique_name for m in sml_model.metrics],
         )
 
         self._record_step(
@@ -1817,8 +1869,7 @@ class ExecutionEngine:
             snowflake_schema=config.snowflake.schema_name,
         )
         
-        output_dir = Path("output")
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = self._model_output_dir("fabric", model_name=context.project_id)
         
         bim_path = output_dir / "model.bim"
         generator.save(bim_path)
@@ -1831,8 +1882,7 @@ class ExecutionEngine:
         config = context.config
         emitter = SnowflakeEmitter(config.snowflake, behavior=context.behavior)
         
-        output_dir = Path("output/reverse")
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = self._model_output_dir("reverse", model_name=context.project_id)
         
         ddls = emitter.generate_ddls(context.sml_model)
         full_ddl = "\n\n".join(ddls)
@@ -1855,8 +1905,7 @@ class ExecutionEngine:
         publisher = DatabricksPublisher(context.config.databricks, behavior=context.behavior)
         statements = publisher.generate_sql_statements(context.sml_model)
 
-        output_dir = Path("output/databricks")
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = self._model_output_dir("databricks", model_name=context.project_id)
         sql_path = output_dir / "semantic_model.sql"
 
         with open(sql_path, "w", encoding="utf-8") as f:
@@ -2012,11 +2061,24 @@ class ExecutionEngine:
             if not context.sml_model:
                 return
 
+            logger.info(
+                "Pre-export SML summary: datasets=%s, metrics=%s",
+                len(context.sml_model.datasets),
+                len(context.sml_model.metrics),
+            )
+            logger.info(
+                "Pre-export dataset names: %s",
+                [ds.unique_name for ds in context.sml_model.datasets],
+            )
+            logger.info(
+                "Pre-export metric names: %s",
+                [m.unique_name for m in context.sml_model.metrics],
+            )
+
             osi_model = SMLToOSIConverter().to_osi(context.sml_model)
             context.osi_model = osi_model
 
-            out_dir = Path("output")
-            out_dir.mkdir(parents=True, exist_ok=True)
+            out_dir = self._model_output_dir("inferred", model_name=context.project_id)
             json_path = out_dir / "osi_inferred.json"
             yaml_path = out_dir / "osi_inferred.yaml"
 

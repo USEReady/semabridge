@@ -2,7 +2,7 @@
 
 > *Snowflake ↔ OSI ↔ Fabric Semantic Model Pipeline*
 
-[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
@@ -31,7 +31,7 @@ Source (Snowflake/Fabric) → Extract → OSI (YAML) → Transform → Emit → 
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Python 3.11
+- Python 3.10, 3.11, or 3.12
 - Node.js (v18+) and npm (for the web UI)
 
 ### Installation
@@ -48,7 +48,7 @@ uv sync
 # (Fallback: pip install -e ".[dev]")
 
 # Install Frontend dependencies
-cd newfrontend
+cd frontend
 npm install
 cd ..
 ```
@@ -93,17 +93,11 @@ model_name: "Customer Profitability"
 
 ### Usage
 
-**1. Launch the Backend API and Web UI**
-
-First, start the backend API (this runs on port 8001 by default, matching the frontend proxy):
+**1. Launch the Web UI (Recommended)**
 ```bash
-uv run python src/semabridge/api/main.py
+semabridge --ui
 ```
-
-Then, start the frontend UI:
-```bash
-cd newfrontend && npm run dev
-```
+*Alternatively, run the frontend directly via `cd frontend && npm run dev`.*
 
 **2. CLI Initialization & Syncing**
 ```bash

@@ -11,13 +11,17 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, ArrowRight, Check, X, Loader2,
-  ChevronDown, ChevronRight, CheckSquare, Square, RefreshCw
+  ChevronDown, ChevronRight, CheckSquare, Square, RefreshCw,
+  BarChart3, Activity, Snowflake, Database, Link2, Table2,
 } from 'lucide-react';
 import { api } from '../utils/api';
 import { useHPSearch } from '../hooks/useHPSearch';
 import SearchableSelect from '../components/common/SearchableSelect';
 import SmartSearchBar, { matchesSmartQuery } from '../components/common/SmartSearchBar';
 import { useWorkspace } from '../context/WorkspaceContext';
+import Modal from '../components/common/Modal';
+import { useLogs } from '../context/LogsContext';
+import { useUIStore } from '../store/uiStore';
 
 const STEPS = [
   { id: 1, label: 'Basic Info' },
@@ -28,20 +32,26 @@ const STEPS = [
 ];
 
 const CONNECTOR_TYPES = [
-  { value: 'fabric', label: 'Microsoft Fabric', icon: '🔷' },
-  { value: 'snowflake', label: 'Snowflake', icon: '❄️' },
-  { value: 'databricks', label: 'Databricks', icon: '🧱' },
+  { value: 'pbix', label: 'Local PBIX File' },
+  { value: 'fabric', label: 'Microsoft Fabric' },
+  { value: 'snowflake', label: 'Snowflake' },
+  { value: 'databricks', label: 'Databricks' },
 ];
 
 const TARGET_CONNECTOR_TYPES = [
-  { value: 'snowflake', label: 'Snowflake', icon: '❄️' },
-  { value: 'fabric', label: 'Microsoft Fabric', icon: '🔷' },
-  { value: 'databricks', label: 'Databricks', icon: '🧱' },
+  { value: 'snowflake', label: 'Snowflake' },
+  { value: 'fabric', label: 'Microsoft Fabric' },
+  { value: 'databricks', label: 'Databricks' },
 ];
 
 const INTERMEDIATE_FORMAT_TYPES = [
   { value: 'osi', label: 'OSI (Open Semantic Interchange)' },
   { value: 'sml', label: 'SML' },
+];
+
+const PBIX_SOURCE_MODES = [
+  { value: 'TAG', label: 'Use Folder Tag' },
+  { value: 'MANUAL', label: 'Upload PBIX File' },
 ];
 
 const INPUT = {
@@ -52,8 +62,29 @@ const INPUT = {
 };
 
 const LABEL = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 };
+
+function renderConnectorIcon(value, size = 16) {
+  const normalized = String(value || '').toLowerCase();
+
+  const iconStyle = { flexShrink: 0 };
+  if (normalized === 'pbix') {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#F2C811' }}>
+        <BarChart3 size={size} style={iconStyle} />
+      </span>
+    );
+  }
+  if (normalized === 'fabric') return <Activity size={size} color="#3b82f6" style={iconStyle} />;
+  if (normalized === 'snowflake') return <Snowflake size={size} color="#38bdf8" style={iconStyle} />;
+  if (normalized === 'databricks') return <Database size={size} color="#f97316" style={iconStyle} />;
+  return <Link2 size={size} color="var(--text-tertiary)" style={iconStyle} />;
+}
+
 export default function CreateProjectPage() {
   const navigate = useNavigate();
+  const { addLog } = useLogs();
+  const setCreateProjectDraft = useUIStore(state => state.setCreateProjectDraft);
+  const clearCreateProjectDraft = useUIStore(state => state.clearCreateProjectDraft);
   const {
     workspaces: availableWorkspaces,
     activeWorkspaceId,
@@ -78,13 +109,32 @@ export default function CreateProjectPage() {
   const [tagInput, setTagInput] = useState('');
 
   // Step 2
+  const [fabricAccountId, setFabricAccountId] = useState('');
+  const [fabricAccounts, setFabricAccounts] = useState([]);
   const [fabricWorkspaceId, setFabricWorkspaceId] = useState('');
   const [snowflakeDatabase, setSnowflakeDatabase] = useState('');
   const [snowflakeSchema, setSnowflakeSchema] = useState('');
   const [targetDatabase, setTargetDatabase] = useState('');
   const [targetSchema, setTargetSchema] = useState('');
+  const [targetAccount, setTargetAccount] = useState('');
+  const [targetWarehouse, setTargetWarehouse] = useState('');
   const [domainHint, setDomainHint] = useState('');
   const [modelQueryRegex, setModelQueryRegex] = useState(false);
+  const [pbixFile, setPbixFile] = useState(null);
+  const [pbixUploadPath, setPbixUploadPath] = useState('');
+  const [pbixUploading, setPbixUploading] = useState(false);
+  const [pbixSourceMode, setPbixSourceMode] = useState('TAG');
+  const [localFolders, setLocalFolders] = useState([]);
+  const [localFoldersLoading, setLocalFoldersLoading] = useState(false);
+  const [selectedLocalFolderId, setSelectedLocalFolderId] = useState('');
+  const [pbixFiles, setPbixFiles] = useState([]);
+  const [pbixFilesLoading, setPbixFilesLoading] = useState(false);
+  const [pbixFilesError, setPbixFilesError] = useState('');
+  const [selectedPbixFilePath, setSelectedPbixFilePath] = useState('');
+  const [syncJob, setSyncJob] = useState(null);
+  const [syncStarting, setSyncStarting] = useState(false);
+  const [syncError, setSyncError] = useState('');
+  const [syncErrorOpen, setSyncErrorOpen] = useState(false);
 
   // Global default workspace from Settings — fetched once on mount.
   // This is the workspace the user saved in Settings → Connections.
@@ -109,6 +159,7 @@ export default function CreateProjectPage() {
   const [databricksLoading, setDatabricksLoading] = useState(false);
   const [selectedDatabricksTables, setSelectedDatabricksTables] = useState(new Set());
   const [databricksQuery, setDatabricksQuery] = useState('');
+  const [databricksQueryRegex, setDatabricksQueryRegex] = useState(false);
   // Fetch Databricks sources when selected in Step 3
   useEffect(() => {
     if (step !== 3 || sourceConnector !== 'databricks') return;
@@ -138,7 +189,29 @@ export default function CreateProjectPage() {
     allModels, ['name', 'description', 'wsid'], { idField: '_id' }
   );
 
-  const selectedWorkspace = availableWorkspaces.find(ws => ws.id === fabricWorkspaceId)
+  const liveFabricWorkspaces = useMemo(() => {
+    const merged = [...allWorkspacesFromApi, ...availableWorkspaces]
+      .filter(Boolean)
+      .map((ws) => ({
+        ...ws,
+        id: ws?.id || ws?.workspace_id || '',
+        name: ws?.name || ws?.displayName || ws?.workspace_id || ws?.id || '',
+      }))
+      .filter((ws) => ws.id);
+
+    const deduped = [];
+    const seen = new Set();
+    for (const ws of merged) {
+      if (seen.has(ws.id)) continue;
+      seen.add(ws.id);
+      deduped.push(ws);
+    }
+    return deduped;
+  }, [availableWorkspaces, allWorkspacesFromApi]);
+
+  const selectedWorkspace = liveFabricWorkspaces.find(ws => ws.id === fabricWorkspaceId)
+    ?? availableWorkspaces.find(ws => ws.id === fabricWorkspaceId)
+    ?? allWorkspacesFromApi.find(ws => ws.id === fabricWorkspaceId)
     ?? availableWorkspaces.find(ws => ws.id === activeWorkspaceId)
     ?? activeWorkspace
     ?? null;
@@ -149,59 +222,194 @@ export default function CreateProjectPage() {
 
   const [isRefreshingWorkspaces, setIsRefreshingWorkspaces] = useState(false);
 
-  const fetchFabricWorkspaces = useCallback(async () => {
-    setIsRefreshingWorkspaces(true);
+  const selectedLocalFolder = useMemo(() => (
+    localFolders.find(folder => String(folder.id) === String(selectedLocalFolderId)) || null
+  ), [localFolders, selectedLocalFolderId]);
+
+  const selectedLocalFolderTag = selectedLocalFolder?.tag_name || '';
+  const selectedPbixFile = useMemo(() => {
+    if (!selectedPbixFilePath) return null;
+    return pbixFiles.find(file => file.path === selectedPbixFilePath) || null;
+  }, [pbixFiles, selectedPbixFilePath]);
+  const resolvedPbixPath = pbixSourceMode === 'TAG' ? selectedPbixFilePath : pbixUploadPath;
+
+  const refreshLocalFolders = useCallback(async () => {
+    setLocalFoldersLoading(true);
     try {
-      const data = await api.getFabricDefaultWorkspace();
-      console.log('[SemaBridge] getFabricDefaultWorkspace raw response:', data);
-      if (data?.workspace_id) {
-        setGlobalDefaultWorkspaceId(data.workspace_id);
-        setGlobalDefaultWorkspaceName(data.workspace_name || '');
-        setSessionWorkspaceId(data.workspace_id);
-      }
-      const apiWorkspaces = (data?.all_workspaces || []).map(ws => ({
-        id: ws.id,
-        name: ws.name,
-        displayName: ws.name,
-        type: ws.type,
-      }));
-      console.log('[SemaBridge] Resolved workspace list:', apiWorkspaces);
-      if (apiWorkspaces.length > 0) {
-        setAllWorkspacesFromApi(apiWorkspaces);
-        // Purge stale localStorage key if the stored ID is no longer in the live list
-        const storedId = localStorage.getItem('semabridge_workspace_id');
-        if (storedId && !apiWorkspaces.some(w => w.id === storedId)) {
-          console.warn('[SemaBridge] Purging stale workspace from localStorage:', storedId);
-          localStorage.removeItem('semabridge_workspace_id');
-        }
-      }
+      const data = await api.listLocalFolders();
+      setLocalFolders(Array.isArray(data) ? data : []);
     } catch {
-      // silently ignore
+      setLocalFolders([]);
     } finally {
-      setIsRefreshingWorkspaces(false);
+      setLocalFoldersLoading(false);
     }
   }, []);
 
-  // Fetch the global default workspace once on mount.
   useEffect(() => {
-    fetchFabricWorkspaces();
-  }, [fetchFabricWorkspaces]);
-
-  // Re-fetch workspaces whenever entering Step 2
-  useEffect(() => {
-    if (step === 2 && sourceConnector === 'fabric') {
-      fetchFabricWorkspaces();
+    if (sourceConnector === 'pbix') {
+      refreshLocalFolders();
     }
-  }, [step, sourceConnector, fetchFabricWorkspaces]);
+  }, [refreshLocalFolders, sourceConnector, step]);
+
+  useEffect(() => {
+    if (sourceConnector !== 'pbix') {
+      clearCreateProjectDraft();
+      return;
+    }
+
+    setCreateProjectDraft({
+      sourceConnector,
+      sourceMode: pbixSourceMode,
+      folder_id: pbixSourceMode === 'TAG' ? (selectedLocalFolderId || '') : '',
+      folder_tag: pbixSourceMode === 'TAG' ? selectedLocalFolderTag : '',
+      pbix_path: resolvedPbixPath,
+    });
+  }, [clearCreateProjectDraft, pbixSourceMode, resolvedPbixPath, selectedLocalFolderId, selectedLocalFolderTag, setCreateProjectDraft, sourceConnector]);
+
+  useEffect(() => {
+    if (pbixSourceMode !== 'TAG' || sourceConnector !== 'pbix' || !selectedLocalFolderTag) {
+      setPbixFiles([]);
+      setPbixFilesError('');
+      setSelectedPbixFilePath('');
+      return;
+    }
+
+    if (step !== 3) {
+      return;
+    }
+
+    let active = true;
+    setPbixFilesLoading(true);
+    setPbixFilesError('');
+    api.getLocalFolderFiles(selectedLocalFolderTag)
+      .then((data) => {
+        if (!active) return;
+        const discoveredFiles = Array.isArray(data?.files) ? data.files : [];
+        setPbixFiles(discoveredFiles);
+
+        if (!discoveredFiles.length) {
+          setSelectedPbixFilePath('');
+          return;
+        }
+
+        // Auto-select a discovered file so pbix_path is populated without extra clicks.
+        setSelectedPbixFilePath((currentPath) => {
+          if (currentPath && discoveredFiles.some(file => file.path === currentPath)) {
+            return currentPath;
+          }
+          return discoveredFiles[0]?.path || '';
+        });
+      })
+      .catch((err) => {
+        if (!active) return;
+        setPbixFiles([]);
+        setSelectedPbixFilePath('');
+        setPbixFilesError(err?.message || 'Failed to discover PBIX files for the selected tag.');
+      })
+      .finally(() => {
+        if (active) setPbixFilesLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [pbixSourceMode, selectedLocalFolderTag, sourceConnector, step]);
+
+  const fetchFabricWorkspaces = useCallback(async (accountId = fabricAccountId) => {
+    setIsRefreshingWorkspaces(true);
+    try {
+      const [defaultResp, listRespByIdentity, listRespByBearer] = await Promise.allSettled([
+        api.getFabricDefaultWorkspace(accountId),
+        api.fabricListWorkspaces(accountId),
+        api.fabricListWorkspaces(),
+      ]);
+
+      const defaultData = defaultResp.status === 'fulfilled' ? defaultResp.value : null;
+      const listDataByIdentity = listRespByIdentity.status === 'fulfilled' ? listRespByIdentity.value : null;
+      const listDataByBearer = listRespByBearer.status === 'fulfilled' ? listRespByBearer.value : null;
+
+      console.log('[SemaBridge] getFabricDefaultWorkspace raw response:', defaultData);
+      console.log('[SemaBridge] fabricListWorkspaces(identity) raw response:', listDataByIdentity);
+      console.log('[SemaBridge] fabricListWorkspaces(bearer) raw response:', listDataByBearer);
+
+      if (defaultData?.workspace_id) {
+        setGlobalDefaultWorkspaceId(defaultData.workspace_id);
+        setGlobalDefaultWorkspaceName(defaultData.workspace_name || '');
+        setSessionWorkspaceId(defaultData.workspace_id);
+      }
+
+      const discovered = [
+        ...(Array.isArray(listDataByIdentity?.workspaces) ? listDataByIdentity.workspaces : []),
+        ...(Array.isArray(listDataByBearer?.workspaces) ? listDataByBearer.workspaces : []),
+        ...(defaultData?.all_workspaces || []),
+      ];
+
+      const apiWorkspaces = discovered.map(ws => ({
+        id: ws.id || ws.workspace_id,
+        name: ws.name || ws.displayName || ws.workspace_name || ws.id || ws.workspace_id,
+        displayName: ws.name || ws.displayName || ws.workspace_name,
+        type: ws.type,
+      })).filter(ws => ws.id);
+
+      const deduped = [];
+      const seen = new Set();
+      for (const ws of apiWorkspaces) {
+        if (seen.has(ws.id)) continue;
+        seen.add(ws.id);
+        deduped.push(ws);
+      }
+
+      console.log('[SemaBridge] Resolved workspace list:', deduped);
+      if (deduped.length > 0) {
+        setAllWorkspacesFromApi(deduped);
+      } else {
+        setAllWorkspacesFromApi([]);
+      }
+    } catch {
+      setAllWorkspacesFromApi([]);
+    } finally {
+      setIsRefreshingWorkspaces(false);
+    }
+  }, [fabricAccountId]);
+
+  // Fetch Fabric accounts when step 2 opens
+  useEffect(() => {
+    const needsFabricWorkspaceConfig = sourceConnector === 'fabric' || targetConnectors.has('fabric');
+    if (step === 2 && needsFabricWorkspaceConfig) {
+      const fetchAccounts = async () => {
+        try {
+          const res = await api.getAccounts('FABRIC');
+          const list = Array.isArray(res) ? res : (res?.accounts || []);
+          setFabricAccounts(list);
+          // Find default account if present
+          const defaultAccount = list.find(acc => acc.is_default);
+          if (list.length > 0 && !fabricAccountId) {
+            if (defaultAccount) {
+              setFabricAccountId(defaultAccount.id);
+              fetchFabricWorkspaces(defaultAccount.id);
+            } else {
+              setFabricAccountId(list[0].id);
+              fetchFabricWorkspaces(list[0].id);
+            }
+          } else if (fabricAccountId) {
+            fetchFabricWorkspaces(fabricAccountId);
+          }
+        } catch (e) {
+          console.warn("[SemaBridge] Failed to fetch Fabric Accounts", e);
+        }
+      };
+      fetchAccounts();
+    }
+  }, [step, sourceConnector, targetConnectors]); // deliberately omitting fabricAccountId/fetchFabricWorkspaces to prevent reload loops
 
   // Auto-populate the workspace dropdown on step 2 when Fabric is the source.
   // Priority: manual override > active session exact match > 'semabridge' name > global default > generic fallback.
   useEffect(() => {
-    if (sourceConnector !== 'fabric') return;
+    const needsFabricWorkspaceConfig = sourceConnector === 'fabric' || targetConnectors.has('fabric');
+    if (!needsFabricWorkspaceConfig) return;
     if (workspaceManuallySet) return; // user made an explicit choice — never reset
 
-    // Combine both lists; prioritize availableWorkspaces (richer metadata)
-    const liveList = availableWorkspaces.length > 0 ? availableWorkspaces : allWorkspacesFromApi;
+    const liveList = liveFabricWorkspaces;
 
     // Don't run if we have no live data yet
     if (liveList.length === 0) return;
@@ -234,7 +442,7 @@ export default function CreateProjectPage() {
       console.log('[SemaBridge] Auto-selecting workspace:', preferred);
       setFabricWorkspaceId(preferred);
     }
-  }, [sourceConnector, fabricWorkspaceId, workspaceManuallySet, sessionWorkspaceId,
+  }, [sourceConnector, targetConnectors, fabricWorkspaceId, workspaceManuallySet, sessionWorkspaceId,
       globalDefaultWorkspaceName, globalDefaultWorkspaceId, availableWorkspaces, allWorkspacesFromApi]);
 
   // Ghost-purge: if the current selection no longer exists in the live list, force-clear it
@@ -242,7 +450,7 @@ export default function CreateProjectPage() {
   // This eliminates the "Primary Workspace" zombie that was persisted in localStorage.
   useEffect(() => {
     if (!fabricWorkspaceId) return;
-    const liveList = availableWorkspaces.length > 0 ? availableWorkspaces : allWorkspacesFromApi;
+    const liveList = liveFabricWorkspaces;
     if (liveList.length === 0) return; // don't clear before we have data
     const stillExists = liveList.some(ws => ws.id === fabricWorkspaceId);
     if (!stillExists) {
@@ -276,7 +484,7 @@ export default function CreateProjectPage() {
   // Defensive: auto-select first available workspace if missing after loading
   useEffect(() => {
     if (step === 3 && sourceConnector === 'fabric' && !fabricWorkspaceId && !wsLoading) {
-      const liveList = availableWorkspaces.length > 0 ? availableWorkspaces : allWorkspacesFromApi;
+      const liveList = liveFabricWorkspaces;
       if (liveList.length > 0) {
         setFabricWorkspaceId(liveList[0].id);
       }
@@ -298,10 +506,12 @@ export default function CreateProjectPage() {
       setExpandedWs(prev => ({ ...prev, [fabricWorkspaceId]: true }));
       setWsLoading(true);
       console.log('[SemaBridge] Discovering Fabric models for workspaceId:', fabricWorkspaceId);
-      api.discoverFabricModels(fabricWorkspaceId)
+      api.discoverFabricModels(fabricWorkspaceId, fabricAccountId)
         .then(data => {
           if (!Array.isArray(data) || data.length === 0) {
             setRunWarning('No semantic models found for this workspace. Check Fabric permissions or workspace contents.');
+          } else {
+            setRunWarning('');
           }
           setWsModels({ [fabricWorkspaceId]: data ?? [] });
           setWsLoading(false); // Set loading to false immediately after 200 OK
@@ -338,17 +548,17 @@ export default function CreateProjectPage() {
     }
 
     setWorkspaces([]);
-  }, [step, sourceConnector, fabricWorkspaceId, selectedWorkspace, availableWorkspaces, allWorkspacesFromApi]);
+  }, [step, sourceConnector, fabricWorkspaceId, fabricAccountId, selectedWorkspace, liveFabricWorkspaces]);
 
   const loadWsModels = useCallback(async (wsid) => {
     if (wsModels[wsid]) return;
     try {
-      const models = await api.discoverFabricModels(wsid);
+      const models = await api.discoverFabricModels(wsid, fabricAccountId);
       setWsModels(prev => ({ ...prev, [wsid]: models ?? [] }));
     } catch {
       setWsModels(prev => ({ ...prev, [wsid]: [] }));
     }
-  }, [wsModels]);
+  }, [wsModels, fabricAccountId]);
 
   const toggleWorkspace = (wsid) => {
     const next = { ...expandedWs, [wsid]: !expandedWs[wsid] };
@@ -385,6 +595,13 @@ export default function CreateProjectPage() {
 
     if ((sourceConnector === 'fabric' || sourceConnector === 'snowflake') && selectedModels.size > 0 && selectedModelNames.length === 0) {
       setCreateError('Selected models could not be resolved. Please reselect the model(s) and try again.');
+      return;
+    }
+
+    if (sourceConnector === 'pbix' && !resolvedPbixPath) {
+      setCreateError(pbixSourceMode === 'TAG'
+        ? 'Select a PBIX file from the tagged folder before finishing.'
+        : 'Upload a .pbix file before finishing.');
       return;
     }
 
@@ -448,6 +665,26 @@ export default function CreateProjectPage() {
       setCreatedProject(project);
       const projectId = project?.id || project?.project_id;
 
+      if (sourceConnector === 'pbix' && projectId && pbixFile) {
+        try {
+          const uploadResp = await api.uploadProjectPbix(projectId, pbixFile);
+          const persistedPath = String(uploadResp?.path || '').trim();
+          if (persistedPath) {
+            setPbixUploadPath(persistedPath);
+            const updatedSource = { ...source, pbix_path: persistedPath, pbix_file_path: persistedPath };
+            const updatedYaml = buildConfigYaml(updatedSource, targets);
+            await api.saveProjectConfig(projectId, updatedYaml);
+            setCreatedProject(prev => ({ ...(prev || {}), pbix_file_path: persistedPath }));
+          }
+        } catch (uploadErr) {
+          const uploadMsg = uploadErr?.message || 'PBIX file uploaded but could not be linked to project.';
+          setRunWarning(prev => {
+            const base = prev ? `${prev} ` : '';
+            return `${base}${uploadMsg}`.trim();
+          });
+        }
+      }
+
       if (createReverseProject && targets.length > 0) {
         const reverseSource = { ...targets[0] };
         const reverseTargets = [{ type: source.type }];
@@ -491,6 +728,7 @@ export default function CreateProjectPage() {
     const source = { type: sourceConnector };
 
     if (sourceConnector === 'fabric') {
+      if (fabricAccountId) source.identity_id = fabricAccountId;
       if (fabricWorkspaceId) source.workspace_id = fabricWorkspaceId;
       if (selectedWorkspace?.name) source.workspace = selectedWorkspace.name;
       if (selectedModelNames.length > 0) {
@@ -510,6 +748,21 @@ export default function CreateProjectPage() {
       }
     }
 
+    if (sourceConnector === 'pbix') {
+      if (pbixSourceMode === 'TAG') {
+        if (selectedLocalFolderId) source.local_folder_id = selectedLocalFolderId;
+        if (selectedLocalFolderTag) source.local_folder_tag = selectedLocalFolderTag;
+        if (selectedPbixFile?.name) source.file_name = selectedPbixFile.name;
+      } else if (pbixFile?.name) {
+        source.file_name = pbixFile.name;
+      }
+
+      if (resolvedPbixPath) {
+        source.pbix_path = resolvedPbixPath;
+        source.pbix_file_path = resolvedPbixPath;
+      }
+    }
+
     return source;
   };
 
@@ -518,8 +771,16 @@ export default function CreateProjectPage() {
       const target = { type: connector };
 
       if (connector === 'snowflake') {
+        if (targetAccount.trim()) target.account = targetAccount.trim();
+        if (targetWarehouse.trim()) target.warehouse = targetWarehouse.trim();
         if (targetDatabase.trim()) target.database = targetDatabase.trim();
         if (targetSchema.trim()) target.schema = targetSchema.trim();
+      }
+
+      if (connector === 'fabric') {
+        if (fabricAccountId) target.identity_id = fabricAccountId;
+        if (fabricWorkspaceId) target.workspace_id = fabricWorkspaceId;
+        if (selectedWorkspace?.name) target.workspace = selectedWorkspace.name;
       }
 
       return target;
@@ -534,6 +795,7 @@ export default function CreateProjectPage() {
 
     lines.push('source:');
     lines.push(`  type: ${source.type}`);
+    if (source.identity_id) lines.push(`  identity_id: "${escapeYamlString(source.identity_id)}"`);
     if (source.workspace_id) lines.push(`  workspace_id: "${escapeYamlString(source.workspace_id)}"`);
     if (source.workspace) lines.push(`  workspace: "${escapeYamlString(source.workspace)}"`);
     if (source.database) lines.push(`  database: "${escapeYamlString(source.database)}"`);
@@ -544,12 +806,21 @@ export default function CreateProjectPage() {
     } else if (source.model) {
       lines.push(`  model: "${escapeYamlString(source.model)}"`);
     }
+    if (source.pbix_path) lines.push(`  pbix_path: "${escapeYamlString(source.pbix_path)}"`);
+    if (source.pbix_file_path) lines.push(`  pbix_file_path: "${escapeYamlString(source.pbix_file_path)}"`);
+    if (source.local_folder_id) lines.push(`  local_folder_id: "${escapeYamlString(source.local_folder_id)}"`);
+    if (source.local_folder_tag) lines.push(`  local_folder_tag: "${escapeYamlString(source.local_folder_tag)}"`);
 
     lines.push('targets:');
     targets.forEach((target) => {
       lines.push(`  - type: ${target.type}`);
       if (target.database) lines.push(`    database: "${escapeYamlString(target.database)}"`);
       if (target.schema) lines.push(`    schema: "${escapeYamlString(target.schema)}"`);
+      if (target.account) lines.push(`    account: "${escapeYamlString(target.account)}"`);
+      if (target.warehouse) lines.push(`    warehouse: "${escapeYamlString(target.warehouse)}"`);
+      if (target.identity_id) lines.push(`    identity_id: "${escapeYamlString(target.identity_id)}"`);
+      if (target.workspace_id) lines.push(`    workspace_id: "${escapeYamlString(target.workspace_id)}"`);
+      if (target.workspace) lines.push(`    workspace: "${escapeYamlString(target.workspace)}"`);
     });
 
     // Add mappings section
@@ -770,13 +1041,34 @@ export default function CreateProjectPage() {
           <StepConnectorConfig
             sourceConnector={sourceConnector}
             targetConnectors={targetConnectors}
-            fabricWorkspaceId={fabricWorkspaceId} setFabricWorkspaceId={setFabricWorkspaceId}
+            fabricAccountId={fabricAccountId}
+            setFabricAccountId={setFabricAccountId}
+            fabricAccounts={fabricAccounts}
+            fabricWorkspaceId={fabricWorkspaceId}
+            setFabricWorkspaceId={setFabricWorkspaceId}
             snowflakeDatabase={snowflakeDatabase} setSnowflakeDatabase={setSnowflakeDatabase}
             snowflakeSchema={snowflakeSchema} setSnowflakeSchema={setSnowflakeSchema}
             targetDatabase={targetDatabase} setTargetDatabase={setTargetDatabase}
             targetSchema={targetSchema} setTargetSchema={setTargetSchema}
+            targetAccount={targetAccount} setTargetAccount={setTargetAccount}
+            targetWarehouse={targetWarehouse} setTargetWarehouse={setTargetWarehouse}
             domainHint={domainHint} setDomainHint={setDomainHint}
-            workspaces={availableWorkspaces.length > 0 ? availableWorkspaces : allWorkspacesFromApi}
+            pbixFile={pbixFile}
+            setPbixFile={setPbixFile}
+            pbixUploadPath={pbixUploadPath}
+            pbixUploading={pbixUploading}
+            setPbixUploading={setPbixUploading}
+            pbixSourceMode={pbixSourceMode}
+            setPbixSourceMode={setPbixSourceMode}
+            localFolders={localFolders}
+            localFoldersLoading={localFoldersLoading}
+            selectedLocalFolderId={selectedLocalFolderId}
+            setSelectedLocalFolderId={setSelectedLocalFolderId}
+            onUploadSuccess={({ file, path }) => {
+              if (file) setPbixFile(file);
+              setPbixUploadPath(String(path || '').trim());
+            }}
+            workspaces={liveFabricWorkspaces}
             workspacesLoading={workspacesLoading}
             globalDefaultWorkspaceId={globalDefaultWorkspaceId}
             globalDefaultWorkspaceName={globalDefaultWorkspaceName}
@@ -788,7 +1080,7 @@ export default function CreateProjectPage() {
               setFabricWorkspaceId(id);
             }}
             isRefreshingWorkspaces={isRefreshingWorkspaces}
-            fetchFabricWorkspaces={fetchFabricWorkspaces}
+            fetchFabricWorkspaces={() => fetchFabricWorkspaces(fabricAccountId)}
             runWarning={runWarning}
           />
         )}
@@ -806,7 +1098,22 @@ export default function CreateProjectPage() {
             setModelQueryRegex={setModelQueryRegex}
             modelResults={modelResultsByConnector.fabric}
             snowflakeResults={modelResultsByConnector.snowflake}
+            databricksQuery={databricksQuery}
+            setDatabricksQuery={setDatabricksQuery}
+            databricksQueryRegex={databricksQueryRegex}
+            setDatabricksQueryRegex={setDatabricksQueryRegex}
+            databricksObjects={databricksObjects}
+            databricksLoading={databricksLoading}
+            selectedDatabricksTables={selectedDatabricksTables}
+            setSelectedDatabricksTables={setSelectedDatabricksTables}
             allModels={allModels}
+            pbixSourceMode={pbixSourceMode}
+            selectedLocalFolderTag={selectedLocalFolderTag}
+            pbixFiles={pbixFiles}
+            pbixFilesLoading={pbixFilesLoading}
+            pbixFilesError={pbixFilesError}
+            selectedPbixFilePath={selectedPbixFilePath}
+            onSelectPbixFile={setSelectedPbixFilePath}
           />
         )}
         {step === 4 && (
@@ -834,7 +1141,6 @@ export default function CreateProjectPage() {
           />
         )}
       </div>
-
       {/* Footer nav */}
       {!createdProject && (
         <div style={{
@@ -871,6 +1177,17 @@ export default function CreateProjectPage() {
           </button>
         </div>
       )}
+
+      <Modal
+        open={syncErrorOpen}
+        onClose={() => setSyncErrorOpen(false)}
+        title="Sync Error"
+        size="md"
+      >
+        <div style={{ fontSize: 13, color: 'var(--text-primary)', lineHeight: 1.6 }}>
+          {syncError || 'An unexpected sync error occurred.'}
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -923,7 +1240,7 @@ function StepBasicInfo({
         />
         {showValidation && isNameEmpty && (
           <p style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 4 }}>
-            💡 Project name is required to continue
+            Project name is required to continue.
           </p>
         )}
       </div>
@@ -1035,7 +1352,7 @@ function StepBasicInfo({
                     background: isSelected ? 'var(--accent-blue)20' : 'transparent',
                     transition: 'all 0.2s ease',
                   }} />
-                  {c.icon && <span style={{ fontSize: 16 }}>{c.icon}</span>}
+                  {renderConnectorIcon(c.value, 16)}
                   <span style={{ flex: 1 }}>{c.label}</span>
                   {isSelected && <Check size={14} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />}
                 </button>
@@ -1044,7 +1361,7 @@ function StepBasicInfo({
           </div>
           {showValidation && isSourceMissing && (
             <p style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 8 }}>
-              💡 Please select one source connector to continue
+              Please select one source connector to continue.
             </p>
           )}
           <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 8 }}>
@@ -1114,19 +1431,18 @@ function StepBasicInfo({
                   }}>
                     {isSelected && <Check size={12} color="white" />}
                   </div>
-                  {t.icon && <span style={{ fontSize: 16 }}>{t.icon}</span>}
+                  {renderConnectorIcon(t.value, 16)}
                   <span style={{ flex: 1 }}>{t.label}</span>
-                  {isSelected && <span style={{ fontSize: 11, color: 'var(--accent-blue)', fontWeight: 500 }}></span>}
+                  {isSelected && <Check size={14} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />}
                 </button>
               );
             })}
           </div>
           <p style={{ fontSize: 11, color: showValidation && isTargetsMissing ? 'var(--color-error)' : 'var(--text-tertiary)', marginTop: 8 }}>
-            {isTargetsMissing ? '💡 Select at least one target to continue' : 'Choose one or more targets. Data will be synced to all selected connectors.'}
+            {isTargetsMissing ? 'Select at least one target to continue.' : 'Choose one or more targets. Data will be synced to all selected connectors.'}
           </p>
         </div>
       </div>
-
       <div>
         <label style={LABEL}>Intermediate Format</label>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -1139,7 +1455,7 @@ function StepBasicInfo({
           ))}
         </div>
         <p style={{ fontSize: 11, color: showValidation && isFormatMissing ? 'var(--color-error)' : 'var(--text-tertiary)', marginTop: 6 }}>
-          {isFormatMissing ? '💡 Choose an intermediate format to continue' : 'The target connector is used for sync. The intermediate format controls which semantic artifacts are generated for review or deployment.'}
+          {isFormatMissing ? 'Choose an intermediate format to continue.' : 'The target connector is used for sync. The intermediate format controls which semantic artifacts are generated for review or deployment.'}
         </p>
       </div>
 
@@ -1172,6 +1488,9 @@ function ConnectorChip({ icon, label, selected, onClick }) {
 function StepConnectorConfig({
   sourceConnector,
   targetConnectors,
+  fabricAccountId,
+  setFabricAccountId,
+  fabricAccounts,
   fabricWorkspaceId,
   setFabricWorkspaceId,
   snowflakeDatabase,
@@ -1182,8 +1501,24 @@ function StepConnectorConfig({
   setTargetDatabase,
   targetSchema,
   setTargetSchema,
+  targetAccount,
+  setTargetAccount,
+  targetWarehouse,
+  setTargetWarehouse,
   domainHint,
   setDomainHint,
+  pbixFile,
+  setPbixFile,
+  pbixUploadPath,
+  pbixUploading,
+  setPbixUploading,
+  pbixSourceMode,
+  setPbixSourceMode,
+  localFolders,
+  localFoldersLoading,
+  selectedLocalFolderId,
+  setSelectedLocalFolderId,
+  onUploadSuccess,
   workspaces,
   workspacesLoading,
   globalDefaultWorkspaceId,
@@ -1195,6 +1530,40 @@ function StepConnectorConfig({
   fetchFabricWorkspaces,
   runWarning,
 }) {
+  const [pbixDragOver, setPbixDragOver] = useState(false);
+  const [pbixUploadError, setPbixUploadError] = useState('');
+  const uploadPbixFile = async (file) => {
+    if (!file) return;
+    if (!String(file.name || '').toLowerCase().endsWith('.pbix')) {
+      setPbixUploadError('Only .pbix files are supported.');
+      return;
+    }
+
+    setPbixUploadError('');
+    setPbixUploading(true);
+    try {
+      const response = await api.uploadPbix(file);
+      const uploadedPath = String(response?.path || '').trim();
+      setPbixFile(file);
+      onUploadSuccess?.({ file, path: uploadedPath });
+      if (!uploadedPath) {
+        setPbixUploadError('Upload succeeded but server did not return a file path.');
+      }
+    } catch (err) {
+      setPbixUploadError(err?.message || 'PBIX upload failed.');
+    } finally {
+      setPbixUploading(false);
+    }
+  };
+
+  const handlePbixDrop = async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setPbixDragOver(false);
+    const droppedFile = event.dataTransfer?.files?.[0] || null;
+    if (droppedFile) await uploadPbixFile(droppedFile);
+  };
+
   // True when the currently selected workspace is the one saved in Settings.
   const isUsingGlobalDefault = Boolean(
     globalDefaultWorkspaceId && fabricWorkspaceId === globalDefaultWorkspaceId
@@ -1202,6 +1571,7 @@ function StepConnectorConfig({
 
   const selectedTargets = [...targetConnectors];
   const sourceLabel = CONNECTOR_TYPES.find(c => c.value === sourceConnector)?.label || sourceConnector;
+  const activeLocalFolders = (localFolders || []).filter(folder => folder?.is_active !== false);
 
   const SECTION_CARD = {
     border: '1px solid var(--border-main)',
@@ -1233,71 +1603,97 @@ function StepConnectorConfig({
         </div>
 
         {sourceConnector === 'fabric' && (
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <label style={{ ...LABEL, margin: 0 }}>Fabric Workspace</label>
-              {isUsingGlobalDefault && (
-                <span style={{
-                  fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 999,
-                  background: 'var(--color-success-bg)', color: 'var(--color-success)',
-                  border: '1px solid var(--color-success)30', letterSpacing: '0.3px',
-                }}>
-                  ✓ Default
-                </span>
-              )}
-              <div style={{ flex: 1 }} />
-              <button 
-                onClick={fetchFabricWorkspaces} 
-                disabled={isRefreshingWorkspaces}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 4,
-                  background: 'none', border: 'none', cursor: isRefreshingWorkspaces ? 'not-allowed' : 'pointer',
-                  fontSize: 11, color: 'var(--text-tertiary)', padding: '2px 6px',
-                  borderRadius: 4, transition: 'all 0.2s ease',
-                  opacity: isRefreshingWorkspaces ? 0.6 : 1
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Account Selection */}
+            <div>
+              <label style={LABEL}>Fabric Account</label>
+              <select
+                value={fabricAccountId}
+                onChange={e => {
+                  setFabricAccountId(e.target.value);
+                  setFabricWorkspaceId(''); // reset workspace when account changes
+                  fetchFabricWorkspaces(e.target.value);
                 }}
-                onMouseEnter={e => { if(!isRefreshingWorkspaces) e.currentTarget.style.color = 'var(--text-primary)'; }}
-                onMouseLeave={e => { if(!isRefreshingWorkspaces) e.currentTarget.style.color = 'var(--text-tertiary)'; }}
-                title="Refresh workspaces"
+                style={INPUT}
               >
-                <RefreshCw size={12} style={{ animation: isRefreshingWorkspaces ? 'spin 1s linear infinite' : 'none' }} />
-                Refresh
-              </button>
+                {fabricAccounts.length === 0 && <option value="" disabled>No accounts available</option>}
+                {fabricAccounts.length > 0 && fabricAccounts.map(acc => (
+                  <option key={acc.id} value={acc.id}>
+                    {(acc.is_default ? 'Default' : (acc.tag || ''))} ({acc.identity_email})
+                  </option>
+                ))}
+              </select>
+              <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
+                Select an authenticated identity to use for discovery and synchronization.
+              </p>
             </div>
-            <SearchableSelect
-              items={workspaces}
-              displayKey="name"
-              valueKey="id"
-              searchFields={['name', 'id', 'workspace_id']}
-              placeholder="Choose a workspace"
-              value={fabricWorkspaceId}
-              onChange={item => {
-                const newId = item?.id || '';
-                // If the user picks a different workspace, notify the parent.
-                if (newId !== fabricWorkspaceId && onWorkspaceManualChange) {
-                  onWorkspaceManualChange(newId);
-                } else {
-                  setFabricWorkspaceId(newId);
-                }
-              }}
-              loading={workspacesLoading}
-              clearable={false}
-            />
-            <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
-              {isUsingGlobalDefault
-                ? `Pre-selected from your active Fabric session${globalDefaultWorkspaceName ? ` (${globalDefaultWorkspaceName})` : ''}. You can override it below.`
-                : 'Pick one workspace here. Step 3 will show models from this workspace only.'}
-            </p>
-            {!workspacesLoading && workspaces.length === 0 && (
-              <p style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 8 }}>
-                No Fabric workspaces were found. Check connector setup in Settings.
+
+            {/* Workspace Selection */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <label style={{ ...LABEL, margin: 0 }}>Fabric Workspace</label>
+                {isUsingGlobalDefault && (
+                  <span style={{
+                    fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 999,
+                    background: 'var(--color-success-bg)', color: 'var(--color-success)',
+                    border: '1px solid var(--color-success)30', letterSpacing: '0.3px',
+                  }}>
+                    ✓ Default
+                  </span>
+                )}
+                <div style={{ flex: 1 }} />
+                <button 
+                  onClick={() => fetchFabricWorkspaces(fabricAccountId)} 
+                  disabled={isRefreshingWorkspaces}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 4,
+                    background: 'none', border: 'none', cursor: isRefreshingWorkspaces ? 'not-allowed' : 'pointer',
+                    fontSize: 11, color: 'var(--text-tertiary)', padding: '2px 6px',
+                    borderRadius: 4, transition: 'all 0.2s ease',
+                    opacity: isRefreshingWorkspaces ? 0.6 : 1
+                  }}
+                  onMouseEnter={e => { if(!isRefreshingWorkspaces) e.currentTarget.style.color = 'var(--text-primary)'; }}
+                  onMouseLeave={e => { if(!isRefreshingWorkspaces) e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+                  title="Refresh workspaces"
+                >
+                  <RefreshCw size={12} style={{ animation: isRefreshingWorkspaces ? 'spin 1s linear infinite' : 'none' }} />
+                  Refresh
+                </button>
+              </div>
+              <SearchableSelect
+                items={workspaces}
+                displayKey="name"
+                valueKey="id"
+                searchFields={['name', 'id', 'workspace_id']}
+                placeholder={isRefreshingWorkspaces ? "Refreshing..." : "Choose a workspace"}
+                value={fabricWorkspaceId}
+                onChange={item => {
+                  const newId = item?.id || '';
+                  if (newId !== fabricWorkspaceId && onWorkspaceManualChange) {
+                    onWorkspaceManualChange(newId);
+                  } else {
+                    setFabricWorkspaceId(newId);
+                  }
+                }}
+                loading={workspacesLoading || isRefreshingWorkspaces}
+                clearable={false}
+              />
+              <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
+                {isUsingGlobalDefault
+                  ? `Pre-selected from your active Fabric session${globalDefaultWorkspaceName ? ` (${globalDefaultWorkspaceName})` : ''}. You can override it below.`
+                  : 'Pick one workspace here. Step 3 will show models from this workspace only.'}
               </p>
-            )}
-            {runWarning && (
-              <p style={{ fontSize: 12, color: 'var(--color-error)', marginTop: 8 }}>
-                {runWarning}
-              </p>
-            )}
+              {!workspacesLoading && !isRefreshingWorkspaces && workspaces.length === 0 && fabricAccountId && (
+                <p style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 8 }}>
+                  No Fabric workspaces were found for this account.
+                </p>
+              )}
+              {runWarning && (
+                <p style={{ fontSize: 12, color: 'var(--color-error)', marginTop: 8 }}>
+                  {runWarning}
+                </p>
+              )}
+            </div>
           </div>
         )}
 
@@ -1326,7 +1722,125 @@ function StepConnectorConfig({
           </div>
         )}
 
-        {sourceConnector !== 'fabric' && sourceConnector !== 'snowflake' && (
+        {sourceConnector === 'pbix' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div>
+              <label style={LABEL}>PBIX Source Mode</label>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {PBIX_SOURCE_MODES.map(mode => {
+                  const active = pbixSourceMode === mode.value;
+                  return (
+                    <button
+                      key={mode.value}
+                      type="button"
+                      onClick={() => setPbixSourceMode(mode.value)}
+                      style={{
+                        border: `1px solid ${active ? 'var(--accent-blue)' : 'var(--border-main)'}`,
+                        background: active ? 'var(--accent-blue)14' : 'var(--bg-surface)',
+                        color: active ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                        borderRadius: 999,
+                        padding: '7px 12px',
+                        cursor: 'pointer',
+                        fontSize: 12,
+                        fontWeight: 700,
+                      }}
+                    >
+                      {mode.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {pbixSourceMode === 'TAG' ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div>
+                  <label style={LABEL}>Folder Tag</label>
+                  <select
+                    value={selectedLocalFolderId}
+                    onChange={(event) => setSelectedLocalFolderId(event.target.value)}
+                    style={INPUT}
+                  >
+                    <option value="">Select Folder Tag...</option>
+                    {activeLocalFolders.map(folder => (
+                      <option key={folder.id} value={folder.id}>
+                        {folder.tag_name} ({folder.absolute_path})
+                      </option>
+                    ))}
+                  </select>
+                  <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
+                    {localFoldersLoading
+                      ? 'Loading trusted local folders…'
+                      : activeLocalFolders.length === 0
+                        ? 'No active local folders are registered in Settings yet.'
+                        : 'Step 3 will show the PBIX files inside the selected tagged folder.'}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <label style={LABEL}>PBIX Upload</label>
+                <label
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setPbixDragOver(true);
+                  }}
+                  onDragLeave={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setPbixDragOver(false);
+                  }}
+                  onDrop={handlePbixDrop}
+                  style={{
+                    border: '1px dashed var(--accent-blue)',
+                    borderRadius: 12,
+                    padding: 18,
+                    background: pbixDragOver ? 'var(--accent-blue)14' : 'var(--accent-blue)08',
+                    color: 'var(--text-secondary)',
+                    cursor: pbixUploading ? 'progress' : 'pointer',
+                  }}
+                >
+                  <input
+                    type="file"
+                    accept=".pbix"
+                    style={{ display: 'none' }}
+                    disabled={pbixUploading}
+                    onChange={async (event) => {
+                      const nextFile = event.target.files?.[0] || null;
+                      if (nextFile) await uploadPbixFile(nextFile);
+                    }}
+                  />
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    Drag and drop a `.pbix` file here or click to browse
+                    {pbixUploading && <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />}
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+                    {pbixUploading
+                      ? 'Saving file to server...'
+                      : pbixUploadPath
+                        ? `Saved path: ${pbixUploadPath}`
+                        : pbixFile
+                          ? `Selected file: ${pbixFile.name}`
+                          : 'The file is uploaded temporarily and passed to LocalPBIXConnector during sync.'}
+                  </div>
+                  {pbixUploading && (
+                    <div style={{ marginTop: 10, width: '100%', height: 6, borderRadius: 999, background: 'var(--border-main)', overflow: 'hidden' }}>
+                      <div style={{ width: '100%', height: '100%', background: 'var(--accent-blue)', animation: 'pulse 1.2s ease-in-out infinite' }} />
+                    </div>
+                  )}
+                  {pbixUploadError && (
+                    <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-error)' }}>
+                      {pbixUploadError}
+                    </div>
+                  )}
+                </label>
+              </div>
+            )}
+          </div>
+        )}
+
+        {sourceConnector !== 'fabric' && sourceConnector !== 'snowflake' && sourceConnector !== 'pbix' && (
           <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
             Source connector defaults will be resolved from the saved global connection.
           </div>
@@ -1349,7 +1863,7 @@ function StepConnectorConfig({
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {selectedTargets.map(target => {
-            const targetMeta = TARGET_CONNECTOR_TYPES.find(t => t.value === target) || { label: target, icon: '🔗' };
+            const targetMeta = TARGET_CONNECTOR_TYPES.find(t => t.value === target) || { label: target };
             return (
               <details key={target} open style={{ border: '1px solid var(--border-main)', borderRadius: 10, overflow: 'hidden' }}>
                 <summary
@@ -1368,7 +1882,7 @@ function StepConnectorConfig({
                   }}
                 >
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                    <span>{targetMeta.icon}</span>
+                      {renderConnectorIcon(targetMeta.value ?? target, 16)}
                     {targetMeta.label} Target Configuration
                   </span>
                   <ChevronDown size={14} />
@@ -1377,6 +1891,26 @@ function StepConnectorConfig({
                 <div style={{ padding: 12, background: 'var(--bg-surface)' }}>
                   {target === 'snowflake' && (
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <div>
+                        <label style={LABEL}>Snowflake Account (override)</label>
+                        <input
+                          type="text" value={targetAccount} onChange={e => setTargetAccount(e.target.value)}
+                          placeholder="Use saved Snowflake account"
+                          style={INPUT}
+                          onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
+                          onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
+                        />
+                      </div>
+                      <div>
+                        <label style={LABEL}>Snowflake Warehouse (override)</label>
+                        <input
+                          type="text" value={targetWarehouse} onChange={e => setTargetWarehouse(e.target.value)}
+                          placeholder="Use saved Snowflake warehouse"
+                          style={INPUT}
+                          onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
+                          onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
+                        />
+                      </div>
                       <div>
                         <label style={LABEL}>Snowflake Database (optional)</label>
                         <input
@@ -1401,8 +1935,84 @@ function StepConnectorConfig({
                   )}
 
                   {target === 'fabric' && (
-                    <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
-                      Fabric target uses the existing global connector. Destination details can be refined later in project configuration.
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      <div>
+                        <label style={LABEL}>Fabric Account</label>
+                        <select
+                          value={fabricAccountId}
+                          onChange={e => {
+                            const nextAccountId = e.target.value;
+                            setFabricAccountId(nextAccountId);
+                            setFabricWorkspaceId('');
+                            fetchFabricWorkspaces(nextAccountId);
+                          }}
+                          style={INPUT}
+                        >
+                          {fabricAccounts.length === 0 && <option value="" disabled>No accounts available</option>}
+                          {fabricAccounts.length > 0 && fabricAccounts.map(acc => (
+                            <option key={acc.id} value={acc.id}>
+                              {(acc.is_default ? 'Default' : (acc.tag || ''))} ({acc.identity_email})
+                            </option>
+                          ))}
+                        </select>
+                        <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
+                          Choose the Fabric identity for target deployment.
+                        </p>
+                      </div>
+
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                          <label style={{ ...LABEL, margin: 0 }}>Target Fabric Workspace</label>
+                          {isUsingGlobalDefault && (
+                            <span style={{
+                              fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 999,
+                              background: 'var(--color-success-bg)', color: 'var(--color-success)',
+                              border: '1px solid var(--color-success)30', letterSpacing: '0.3px',
+                            }}>
+                              ✓ Default
+                            </span>
+                          )}
+                          <div style={{ flex: 1 }} />
+                          <button
+                            onClick={() => fetchFabricWorkspaces(fabricAccountId)}
+                            disabled={isRefreshingWorkspaces}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: 4,
+                              background: 'none', border: 'none', cursor: isRefreshingWorkspaces ? 'not-allowed' : 'pointer',
+                              fontSize: 11, color: 'var(--text-tertiary)', padding: '2px 6px',
+                              borderRadius: 4, transition: 'all 0.2s ease',
+                              opacity: isRefreshingWorkspaces ? 0.6 : 1
+                            }}
+                            title="Refresh workspaces"
+                          >
+                            <RefreshCw size={12} style={{ animation: isRefreshingWorkspaces ? 'spin 1s linear infinite' : 'none' }} />
+                            Refresh
+                          </button>
+                        </div>
+
+                        <SearchableSelect
+                          items={workspaces}
+                          displayKey="name"
+                          valueKey="id"
+                          searchFields={['name', 'id', 'workspace_id']}
+                          placeholder={isRefreshingWorkspaces ? 'Refreshing...' : 'Choose a target workspace'}
+                          value={fabricWorkspaceId}
+                          onChange={item => {
+                            const newId = item?.id || '';
+                            if (newId !== fabricWorkspaceId && onWorkspaceManualChange) {
+                              onWorkspaceManualChange(newId);
+                            } else {
+                              setFabricWorkspaceId(newId);
+                            }
+                          }}
+                          loading={workspacesLoading || isRefreshingWorkspaces}
+                          clearable={false}
+                        />
+
+                        <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
+                          Choose the destination Fabric workspace for this target sync.
+                        </p>
+                      </div>
                     </div>
                   )}
 
@@ -1444,6 +2054,13 @@ function StepSourceBrowser({
   modelQuery, setModelQuery,
   modelQueryRegex, setModelQueryRegex,
   modelResults, snowflakeResults,
+  pbixSourceMode = 'TAG',
+  selectedLocalFolderTag = '',
+  pbixFiles = [],
+  pbixFilesLoading = false,
+  pbixFilesError = '',
+  selectedPbixFilePath = '',
+  onSelectPbixFile = () => {},
   // Databricks props
   databricksObjects = [],
   databricksLoading = false,
@@ -1451,7 +2068,177 @@ function StepSourceBrowser({
   setSelectedDatabricksTables = () => {},
   databricksQuery = '',
   setDatabricksQuery = () => {},
+  databricksQueryRegex = false,
+  setDatabricksQueryRegex = () => {},
 }) {
+
+  if (sourceConnector === 'pbix') {
+    if (pbixSourceMode === 'MANUAL') {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div>
+            <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>PBIX Source Ready</h2>
+            <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
+              PBIX sync skips model discovery. Continue to the finish step to launch the pipeline and monitor Extraction, OSI Conversion, SML Generation, and Snowflake Deployment.
+            </p>
+          </div>
+          <div style={{ padding: '18px 20px', borderRadius: 12, border: '1px solid var(--border-main)', background: 'var(--bg-surface)' }}>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+              Upload the `.pbix` file in Connector Config, then use Start Sync after the project is created.
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div>
+          <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Select PBIX File</h2>
+          <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
+            Choose a file from the tagged folder before continuing. The selected row will populate the final `pbix_file_path`.
+          </p>
+        </div>
+
+        <div style={{ padding: '14px 16px', borderRadius: 12, border: '1px solid var(--border-main)', background: 'var(--bg-surface)' }}>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+            Folder tag: <span style={{ color: 'var(--text-primary)', fontWeight: 700 }}>{selectedLocalFolderTag || 'Not selected'}</span>
+          </div>
+        </div>
+
+        {pbixFilesError && (
+          <div style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--color-error)30', background: 'var(--color-error-bg)', color: 'var(--color-error)', fontSize: 12 }}>
+            {pbixFilesError}
+          </div>
+        )}
+
+        <div className="custom-scrollbar" style={{ maxHeight: 420, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
+          {pbixFilesLoading ? (
+            <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
+              <Loader2 size={18} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 8px', display: 'block' }} />
+              Discovering PBIX files…
+            </div>
+          ) : pbixFiles.length === 0 ? (
+            <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
+              No `.pbix` files were found in the selected folder.
+            </div>
+          ) : pbixFiles.map(file => {
+            const isSelected = selectedPbixFilePath === file.path;
+            return (
+              <div
+                key={file.path}
+                onClick={() => onSelectPbixFile(file.path)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '12px 14px',
+                  cursor: 'pointer',
+                  borderBottom: '1px solid var(--border-subtle)',
+                  background: isSelected ? 'var(--accent-blue)0a' : 'transparent',
+                }}
+                onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = 'var(--bg-surface-hover)'; }}
+                onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
+              >
+                <input type="radio" checked={isSelected} readOnly style={{ accentColor: 'var(--accent-blue)' }} />
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{file.name}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 3 }}>
+                    {file.modified_at ? `Last modified ${new Date(file.modified_at).toLocaleString()}` : file.path}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  if (sourceConnector === 'fabric') {
+    // Conditional rendering for Fabric step
+    if (!selectedWorkspace) {
+      return (
+        <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+          Choose a Fabric workspace in Connector Config before selecting models.
+        </div>
+      );
+    }
+
+    const fabricModels = wsModels[selectedWorkspace.id] || [];
+    const displayModels = modelQuery
+      ? fabricModels.filter(m =>
+          matchesSmartQuery(
+            `${m.name || ''} ${m.id || ''} ${m.description || ''}`,
+            modelQuery,
+            modelQueryRegex,
+          )
+        )
+      : fabricModels.map(m => ({ ...m, _id: m.id }));
+
+    // Show loader if loading
+    if (wsLoading) {
+      return (
+        <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
+          <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
+            <Loader2 size={18} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 8px', display: 'block' }} />
+            Discovering Fabric semantic models…
+          </div>
+        </div>
+      );
+    }
+
+    // Show models if available
+    if (displayModels.length > 0) {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div>
+            <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Select Models</h2>
+            <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
+              Choose which Fabric semantic models to include from {selectedWorkspace.name}. Leave all unchecked to include everything in this workspace.
+            </p>
+          </div>
+          <SmartSearchBar
+            value={modelQuery}
+            onChange={setModelQuery}
+            useRegex={modelQueryRegex}
+            onToggleRegex={setModelQueryRegex}
+            placeholder={`Search models in ${selectedWorkspace.name}`}
+          />
+          {selectedModels.size > 0 && (
+            <div style={{ fontSize: 11, color: 'var(--accent-blue)', padding: '4px 0' }}>
+              {selectedModels.size} model{selectedModels.size !== 1 ? 's' : ''} selected
+              <button onClick={clearSelectedModels} style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 11 }}>
+                Clear
+              </button>
+            </div>
+          )}
+          <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
+            {displayModels.map(m => {
+              const modelId = m._id || m.id;
+              return (
+                <ModelRow
+                  key={modelId}
+                  model={{ ...m, _id: modelId }}
+                  selected={selectedModels.has(modelId)}
+                  onToggle={() => toggleModel(modelId, m.name || m.id)}
+                />
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    // Show no models found placeholder
+    return (
+      <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
+        <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
+          No Fabric semantic models found. Check connector setup in Settings.
+        </div>
+      </div>
+    );
+  }
 
   if (sourceConnector === 'databricks') {
     // Flatten all tables for search
@@ -1464,7 +2251,13 @@ function StepSourceBrowser({
       }))
     );
     const filteredTables = databricksQuery
-      ? allTables.filter(t => t.table.toLowerCase().includes(databricksQuery.toLowerCase()) || t.schema.toLowerCase().includes(databricksQuery.toLowerCase()) || t.catalog.toLowerCase().includes(databricksQuery.toLowerCase()))
+      ? allTables.filter(t =>
+          matchesSmartQuery(
+            `${t.table || ''} ${t.schema || ''} ${t.catalog || ''}`,
+            databricksQuery,
+            databricksQueryRegex,
+          )
+        )
       : allTables;
 
     return (
@@ -1478,6 +2271,8 @@ function StepSourceBrowser({
         <SmartSearchBar
           value={databricksQuery}
           onChange={setDatabricksQuery}
+          useRegex={databricksQueryRegex}
+          onToggleRegex={setDatabricksQueryRegex}
           placeholder="Search Databricks tables"
         />
         {selectedDatabricksTables.size > 0 && (
@@ -1543,7 +2338,13 @@ function StepSourceBrowser({
 
     const fabricModels = wsModels[selectedWorkspace.id] || [];
     const displayModels = modelQuery
-      ? fabricModels.filter(m => (m.name || '').toLowerCase().includes(modelQuery.toLowerCase()))
+      ? fabricModels.filter(m =>
+          matchesSmartQuery(
+            `${m.name || ''} ${m.id || ''} ${m.description || ''}`,
+            modelQuery,
+            modelQueryRegex,
+          )
+        )
       : fabricModels.map(m => ({ ...m, _id: m.id }));
 
     // Show loader if loading
@@ -1873,7 +2674,10 @@ function StepMappingOptions({
       {detectedMappings.length > 0 && (
         <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)' }}>
           <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span>📊 Table Mappings</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <Table2 size={16} color="var(--accent-blue)" />
+              Table Mappings
+            </span>
             <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--accent-blue)', background: 'var(--accent-blue)20', padding: '2px 8px', borderRadius: 4 }}>
               {detectedMappings.length} detected
             </span>
@@ -1959,7 +2763,7 @@ function StepMappingOptions({
       {detectedRelationships.length > 0 && autoRelationships && (
         <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)' }}>
           <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span>🔗 Detected Relationships</span>
+            <span>Detected Relationships</span>
             <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--accent-blue)', background: 'var(--accent-blue)20', padding: '2px 8px', borderRadius: 4 }}>
               {detectedRelationships.length} relationships
             </span>
@@ -2093,23 +2897,30 @@ function StepFinish({
 
   if (createdProject) {
     return (
-      <div style={{ textAlign: 'center', padding: '40px 0' }}>
-        <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--color-success)20', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
-          <Check size={28} style={{ color: 'var(--color-success)' }} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20, padding: '20px 0' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--color-success)20', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+            <Check size={28} style={{ color: 'var(--color-success)' }} />
+          </div>
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Project Created!</h2>
+          <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 24 }}>
+            {`Project "${name}" has been created successfully.`}
+          </p>
         </div>
         <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Project Created!</h2>
         <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 24 }}>
           {`Project "${name}" has been created successfully. You can now review your configuration or start your first sync.`}
         </p>
         {runWarning && (
-          <div style={{ maxWidth: 520, margin: '0 auto 20px', padding: '12px 14px', borderRadius: 10, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.5, textAlign: 'left' }}>
+          <div style={{ maxWidth: 640, margin: '0 auto', padding: '12px 14px', borderRadius: 10, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.5, textAlign: 'left' }}>
             {runWarning}
           </div>
         )}
+
         <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
           <button onClick={() => navigate('/projects')} style={footerBtn('secondary')}>Back to Projects</button>
           {createdProjectId ? (
-            <button onClick={() => navigate(`/projects/${createdProjectId}/config?mode=form`)} style={footerBtn('primary')}>
+            <button onClick={() => navigate(`/projects/${createdProjectId}/edit`)} style={footerBtn('primary')}>
               Configure Project
             </button>
           ) : (

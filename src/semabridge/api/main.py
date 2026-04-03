@@ -12,18 +12,18 @@ Production-ready backend for React + PyQt parity
 import os as _os
 from pathlib import Path as _Path
 
-_dotenv_path = _Path(__file__).resolve().parents[3] / ".env"
-try:
-    from dotenv import load_dotenv as _load_dotenv
-    _load_dotenv(dotenv_path=_dotenv_path, override=False)
-except ImportError:
-    pass  # python-dotenv optional — env vars already set by the OS are used as-is
+from semabridge.core.env import get_fabric_access_token_from_env, load_repo_dotenv
+
+load_repo_dotenv()
 
 from pathlib import Path
 from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Dict, Any, List, Optional
-from fastapi import FastAPI, HTTPException, Depends, Header, BackgroundTasks
+
+import asyncio
+from fastapi import FastAPI, HTTPException, Depends, Header, BackgroundTasks, Query, File, UploadFile
+
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -35,6 +35,18 @@ import re
 import yaml
 import logging
 import time
+import tempfile
+import uuid
+
+# Windows-specific asyncio stability:
+# use the selector loop instead of Proactor to avoid intermittent
+# `_ProactorBaseWritePipeTransport._loop_writing` assertion failures
+# during heavy logging / websocket / pipe writes.
+if os.name == "nt":
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    except Exception:
+        pass
 
 # Core imports
 from semabridge.core.settings import get_settings, reload_settings
@@ -46,12 +58,17 @@ from semabridge.auth.fabric_validator import fabric_validator
 from semabridge.api.repo_router import router as repo_router
 from semabridge.api.sync_router import router as sync_router
 from semabridge.api.account_router import router as account_router
+from semabridge.api.settings_api import router as settings_router
+from semabridge.api.discovery_api import router as discovery_router
+from semabridge.api.browse import router as browse_router
 from semabridge.api.websocket_alerts import alert_router, install_websocket_alert_handler
 from semabridge.api.semantic_models import SemanticSyncRequest, SemanticRefreshRequest
 from semabridge.api.services.scheduler_service import SchedulerService
+from semabridge.api.services.sync_execution_service import execute_sync_request
 from semabridge.api.services.version_control_service import VersionControlService
 from sqlalchemy.orm import Session
 from semabridge.api.deps import get_db
+from semabridge.api.ui import router as ui_router
 
 try:
     from semabridge.api.auth_router import router as auth_router
@@ -82,6 +99,34 @@ version_control_service: Optional[VersionControlService] = None
 
 # Content hash tracker -- avoids duplicate versions for unchanged files
 _last_snapshot_hash: dict[str, str] = {}
+
+
+# -------------------------------------------------------
+# Bearer Token Extraction (needed by early Fabric routes)
+# -------------------------------------------------------
+def _extract_bearer_token(
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+) -> Optional[str]:
+    """Extract a bearer token from Authorization header.
+
+    Accepts header format: ``Authorization: Bearer <token>``.
+    Returns ``None`` when no header is provided so existing auth flows can
+    continue to use stored credentials or env-token fallback.
+    """
+    if not authorization:
+        logger.info("Fabric request received without Authorization header")
+        return None
+
+    scheme, _, token = authorization.partition(" ")
+    token = token.strip()
+    if scheme.lower() != "bearer" or not token:
+        logger.warning("Invalid Authorization header format for Fabric request")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Authorization header format. Expected: Bearer <token>",
+        )
+    logger.info("Fabric bearer token received in Authorization header")
+    return token
 
 
 # -------------------------------------------------------
@@ -143,11 +188,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # type: ignore[
                     from alembic.config import Config as _AlembicConfig
                     from alembic import command as _alembic_cmd
 
-                    _root = _Path(__file__).parents[4]
+                    # main.py lives at src/semabridge/api/main.py, so parents[3]
+                    # resolves to the repository root.
+                    _root = _Path(__file__).resolve().parents[3]
                     _ini = _root / "config" / "alembic.ini"
                     if not _ini.exists():
                         _ini = _root / "alembic.ini"
                     _alembic_cfg = _AlembicConfig(str(_ini))
+                    _alembic_cfg.set_main_option(
+                        "script_location",
+                        str(_root / "src" / "semabridge" / "migrations"),
+                    )
                     # Inject the live URL so Alembic uses the same database as the app.
                     _db_url = str(_orm_engine.url)
                     _alembic_cfg.set_main_option("sqlalchemy.url", _db_url)
@@ -347,8 +398,17 @@ if _AUTH_AVAILABLE and auth_router:
 # Account & Credentials Vault endpoints
 app.include_router(account_router)
 
+# Local folder registry + discovery endpoints
+app.include_router(settings_router)
+app.include_router(discovery_router)
+app.include_router(browse_router)
+
 # WebSocket alert endpoints (real-time UI notifications)
 app.include_router(alert_router)
+
+# React project-creation sync bridge endpoints.
+# Mount under /api so it stays aligned with the frontend's API_BASE_URL.
+app.include_router(ui_router, prefix="/api")
 
 
 def _normalize_yaml_windows_path_fields(yaml_text: str) -> str:
@@ -502,10 +562,15 @@ async def health_check():
 # -------------------------------------------------------
 
 @app.get("/api/discovery/fabric")
-async def discover_fabric_models():
+async def discover_fabric_models(
+    bearer_token: Optional[str] = Depends(_extract_bearer_token),
+    identity_id: Optional[str] = Query(None),
+    workspace_id: Optional[str] = Query(None),
+):
     import asyncio
     from pydantic import ValidationError
-    from semabridge.repository.credential_manager import CredentialManager
+    import anyio
+    import httpx
 
     try:
         settings = get_settings()
@@ -522,115 +587,67 @@ async def discover_fabric_models():
                 )
             )
         
-        cm = CredentialManager()
-        auth_method = cm.get_fabric_auth_method()
+        resolved_workspace_id = (workspace_id or "").strip()
+        if not resolved_workspace_id:
+            resolved_workspace_id = os.environ.get("FABRIC_WORKSPACE_ID", "").strip()
+        if not resolved_workspace_id:
+            try:
+                resolved_workspace_id = settings.fabric.workspace_id
+            except Exception:
+                pass
 
-        # Also accept a pre-issued token injected via env (CI / dev shortcut)
-        env_token = os.environ.get("FABRIC_ACCESS_TOKEN", "").strip()
-        if env_token and auth_method == "none":
-            auth_method = "env_token"
-
-        # Interactive (device-code) or env-token path
-        if auth_method in ("interactive", "env_token"):
-            import httpx
-
-            fabric_creds = cm.get_credentials("fabric", mask_secrets=False)
-            workspace_id = (
-                fabric_creds.get("workspace_id")
-                or os.environ.get("FABRIC_WORKSPACE_ID", "")
-            ).strip()
-
-            if not workspace_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail="No Fabric workspace configured. Select a workspace in Settings -> Connections.",
-                )
-
-            cache_key = f"fabric:{workspace_id}"
-            cached = _discovery_cache.get(cache_key)
-            if cached and _time.monotonic() < cached["expires_at"]:
-                return cached["data"]
-
-            if auth_method == "env_token":
-                access_token = env_token
-            else:
-                # Get token via thread to avoid blocking
-                try:
-                    access_token = await asyncio.to_thread(_get_valid_fabric_token)
-                    logger.debug(f"Retrieved Fabric token via device-code flow (length: {len(access_token)})")
-                except HTTPException as he:
-                    # If token retrieval fails, provide clear guidance
-                    logger.error(f"Failed to get Fabric token: {he.detail}")
-                    raise
-
-            logger.info(f"Attempting to discover Fabric models in workspace: {workspace_id}")
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.get(
-                    f"https://api.fabric.microsoft.com/v1/workspaces/{workspace_id}/semanticModels",
-                    headers={"Authorization": f"Bearer {access_token}"},
-                )
-
-            if resp.status_code == 401:
-                logger.error(f"Fabric API returned 401 Unauthorized. Token may be invalid or expired.")
-                logger.error(f"Response: {resp.text[:500]}")
-                # Try to give more helpful error message
-                if "invalid_token" in resp.text.lower() or "expired" in resp.text.lower():
-                    raise HTTPException(
-                        status_code=401,
-                        detail="Fabric token expired or invalid. Please sign in again via Connections."
-                    )
-                else:
-                    raise HTTPException(
-                        status_code=401,
-                        detail="Fabric API returned 401. Possibly invalid workspace ID or insufficient permissions. Please sign in again."
-                    )
-            if resp.status_code != 200:
-                logger.error(f"Fabric API error {resp.status_code}: {resp.text[:500]}")
-                raise HTTPException(status_code=resp.status_code, detail=f"Fabric API error: {resp.text}")
-
-            models = resp.json().get("value", [])
-            logger.info(f"Successfully discovered {len(models)} Fabric semantic models")
-            result = [
-                {
-                    "id": m.get("id", ""),
-                    "name": m.get("displayName", "Unnamed"),
-                    "type": "semantic_model",
-                    "status": "Available",
-                }
-                for m in models
-            ]
-            _discovery_cache[cache_key] = {"data": result, "expires_at": _time.monotonic() + _DISCOVERY_CACHE_TTL}
-            return result
-
-        # No token at all -- raise 401 with sign-in guidance
-        if auth_method == "none":
-            logger.warning("No Fabric credentials found - user needs to sign in")
+        if not resolved_workspace_id:
             raise HTTPException(
-                status_code=401,
-                detail=(
-                    "No valid Fabric credentials found. "
-                    "Sign in via the Connections panel (device-code login), "
-                    "set FABRIC_ACCESS_TOKEN in .env, "
-                    "or configure FABRIC_CLIENT_SECRET for service-principal auth."
-                ),
+                status_code=400,
+                detail="No Fabric workspace configured. Select a workspace in Settings -> Connections.",
             )
 
-        # Service-principal fallback via FabricExtractor (client_secret set)
-        logger.info(f"Using service-principal authentication for Fabric discovery")
-        cache_key = f"fabric:{settings.fabric.workspace_id}"
+        cache_key = f"fabric:{resolved_workspace_id}:{identity_id}"
         cached = _discovery_cache.get(cache_key)
         if cached and _time.monotonic() < cached["expires_at"]:
             return cached["data"]
 
-        extractor = FabricExtractor(settings.fabric)
-        models = await asyncio.to_thread(extractor.list_semantic_models)
+        access_token = await anyio.to_thread.run_sync(
+            _resolve_fabric_access_token,
+            bearer_token,
+            identity_id,
+        )
 
+        logger.info(
+            "Attempting to discover Fabric models in workspace: %s with Identity: %s",
+            resolved_workspace_id,
+            identity_id,
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"https://api.fabric.microsoft.com/v1/workspaces/{resolved_workspace_id}/semanticModels",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+
+        if resp.status_code == 401:
+            logger.error("Fabric API returned 401 Unauthorized. Token may be invalid or expired.")
+            logger.error("Response: %s", resp.text[:500])
+            if "invalid_token" in resp.text.lower() or "expired" in resp.text.lower():
+                raise HTTPException(
+                    status_code=401,
+                    detail="Fabric token expired or invalid. Please sign in again via Connections.",
+                )
+            raise HTTPException(
+                status_code=401,
+                detail="Fabric API returned 401. Possibly invalid workspace ID or insufficient permissions. Please sign in again.",
+            )
+        if resp.status_code != 200:
+            logger.error("Fabric API error %s: %s", resp.status_code, resp.text[:500])
+            raise HTTPException(status_code=resp.status_code, detail=f"Fabric API error: {resp.text}")
+
+        models = resp.json().get("value", [])
+        logger.info("Successfully discovered %s Fabric semantic models", len(models))
         result = [
             {
-                "id": m["id"],
-                "name": m["displayName"],
+                "id": m.get("id", ""),
+                "name": m.get("displayName", "Unnamed"),
                 "type": "semantic_model",
-                "status": "Available"
+                "status": "Available",
             }
             for m in models
         ]
@@ -649,12 +666,17 @@ async def discover_fabric_models():
 
 
 @app.get("/api/discovery/fabric/workspaces/{workspace_id}/models")
-async def discover_fabric_models_by_workspace(workspace_id: str):
+async def discover_fabric_models_by_workspace(
+    workspace_id: str,
+    bearer_token: Optional[str] = Depends(_extract_bearer_token),
+    identity_id: Optional[str] = Query(None),
+):
     """Compatibility route for workspace-scoped Fabric discovery."""
-    workspace_id = (workspace_id or "").strip()
-    if workspace_id:
-        os.environ["FABRIC_WORKSPACE_ID"] = workspace_id
-    return await discover_fabric_models()
+    return await discover_fabric_models(
+        bearer_token=bearer_token,
+        identity_id=identity_id,
+        workspace_id=(workspace_id or "").strip() or None,
+    )
 
 
 @app.get("/api/discovery/snowflake")
@@ -1594,267 +1616,7 @@ async def sync_models(payload: Dict[str, Any]):
     Trigger a full synchronization based on the current configuration.
     """
     try:
-        # 1. Optionally save the current content if provided (to ensures we sync what the user sees)
-        content = payload.get("content")
-        if content:
-            normalized_content = _normalize_yaml_windows_path_fields(content)
-            from semabridge.core.config_loader import get_project_file_path
-            config_target = get_project_file_path("semabridge.yaml")
-            config_target.parent.mkdir(parents=True, exist_ok=True)
-            config_target.write_text(normalized_content, encoding="utf-8")
-        
-        # 2. Reload settings to ensure we have latest config & env vars
-        from semabridge.core.settings import reload_settings
-        reload_settings()
-        
-        # 3. Determine source and target from semabridge.yaml
-        from semabridge.core.config_loader import get_default_config_path, load_yaml_file
-        config_path = get_default_config_path()
-        if not config_path:
-               raise HTTPException(status_code=404, detail="semabridge.yaml not found in project")
-        
-        try:
-            config = load_yaml_file(config_path)
-        except Exception as parse_err:
-            # Self-heal common Windows path escaping issues in YAML and retry once.
-            raw_yaml = Path(config_path).read_text(encoding="utf-8")
-            normalized_yaml = _normalize_yaml_windows_path_fields(raw_yaml)
-            if normalized_yaml != raw_yaml:
-                Path(config_path).write_text(normalized_yaml, encoding="utf-8")
-                config = load_yaml_file(config_path)
-            else:
-                raise parse_err
-        source_cfg = config.get("source", {}) or {}
-        source_type = source_cfg.get("type", "fabric")
-
-        # Support both legacy `target: {...}` and new `targets: [{...}]` schemas.
-        target_cfg = config.get("target") or {}
-        if not target_cfg:
-            targets_list = config.get("targets") or []
-            if isinstance(targets_list, list) and targets_list:
-                first_target = targets_list[0]
-                if isinstance(first_target, dict):
-                    target_cfg = first_target
-                elif isinstance(first_target, str):
-                    target_cfg = {"type": first_target}
-
-        # Fallback for UI/project payloads that store target as scalar fields.
-        if not target_cfg:
-            scalar_target = config.get("target_type") or config.get("targetType")
-            if scalar_target:
-                target_cfg = {"type": scalar_target}
-
-        target_type = (target_cfg or {}).get("type", "snowflake")
-
-        # Normalize connector aliases from UI/config variants.
-        _TYPE_ALIASES = {
-            "snowflake_semantic_view": "snowflake",
-            "microsoft_fabric": "fabric",
-            "ms_fabric": "fabric",
-            "databricks_sql": "databricks",
-            "dbx": "databricks",
-        }
-        source_key = str(source_type or "").strip().lower()
-        target_key = str(target_type or "").strip().lower()
-        source_type = _TYPE_ALIASES.get(source_key, source_key or "fabric")
-        target_type = _TYPE_ALIASES.get(target_key, target_key or "snowflake")
-        
-        # 4. Build list of sync jobs â€” one per model entry so ALL selected models run.
-        # Each job: {"dataset_id": str|None, "pbix_path": str|None, "model_label": str}
-        sync_jobs: List[Dict[str, Any]] = []
-
-        if source_type == "fabric":
-            explicit_id = config.get("source", {}).get("dataset_id")
-            if explicit_id:
-                sync_jobs.append({"dataset_id": explicit_id, "pbix_path": None, "model_label": explicit_id})
-            else:
-                model_list = config.get("source", {}).get("models") or []
-                if not model_list:
-                    raise HTTPException(status_code=400, detail="No models specified in source.models")
-                for m in model_list:
-                    mid = str(m).strip()
-                    sync_jobs.append({"dataset_id": mid, "pbix_path": None, "model_label": mid})
-
-        elif source_type == "pbix":
-            source_cfg = config.get("source", {})
-            # If pbix_path is explicitly set, treat it as a single job
-            explicit_pbix = source_cfg.get("pbix_path")
-            if explicit_pbix:
-                sync_jobs.append({"dataset_id": None, "pbix_path": explicit_pbix, "model_label": Path(explicit_pbix).stem})
-            else:
-                model_list = source_cfg.get("models") or [config.get("model_name", "")]
-                for raw_model in model_list:
-                    if isinstance(raw_model, dict):
-                        model_name = str(raw_model.get("pbixPath") or raw_model.get("name") or "")
-                    else:
-                        model_name = str(raw_model or "")
-
-                    configured_folder = source_cfg.get("pbix_folder")
-                    base_dir = Path(configured_folder).expanduser().resolve() if configured_folder else _resolve_models_path()
-                    if not base_dir.exists() or not base_dir.is_dir():
-                        fallback_dir = _resolve_models_path()
-                        if fallback_dir.exists() and fallback_dir.is_dir():
-                            base_dir = fallback_dir
-
-                    pbix_path: Optional[str] = None
-                    model_path = Path(model_name).expanduser() if model_name else None
-                    if model_path and model_path.suffix.lower() == ".pbix" and model_path.exists():
-                        pbix_path = str(model_path.resolve())
-
-                    if not pbix_path and model_name:
-                        model_stem = Path(model_name).stem
-                        candidate = Path(base_dir) / model_name
-                        if candidate.suffix.lower() != ".pbix":
-                            candidate = candidate.with_suffix(".pbix")
-                        if candidate.exists():
-                            pbix_path = str(candidate)
-                        else:
-                            for p in Path(base_dir).glob(f"*{model_stem}*.pbix"):
-                                pbix_path = str(p); break
-                            if not pbix_path:
-                                for p in Path.cwd().rglob(f"*{model_stem}*.pbix"):
-                                    pbix_path = str(p); break
-
-                    if not pbix_path and base_dir.exists() and base_dir.is_dir():
-                        first_pbix = next(base_dir.glob("*.pbix"), None)
-                        if first_pbix:
-                            pbix_path = str(first_pbix)
-
-                    if not pbix_path:
-                        all_pbix = list(Path.cwd().rglob("*.pbix"))
-                        if len(all_pbix) == 1:
-                            pbix_path = str(all_pbix[0])
-
-                    if not pbix_path:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"No .pbix file found for model '{model_name}'. "
-                                   f"Ensure a .pbix file exists in source.pbix_folder or set source.pbix_path."
-                        )
-                    sync_jobs.append({"dataset_id": None, "pbix_path": pbix_path, "model_label": model_name or Path(pbix_path).stem})
-
-        elif source_type in ("snowflake", "snowflake_semantic_view"):
-            source_cfg = config.get("source", {})
-            model_list = source_cfg.get("models") or []
-            # If no models list, try single model fields
-            if not model_list:
-                single = (
-                    source_cfg.get("model")
-                    or config.get("model_name")
-                    or source_cfg.get("view")
-                    or source_cfg.get("table")
-                )
-                if single:
-                    # Support comma-separated single field from UI/manual YAML.
-                    if isinstance(single, str) and "," in single:
-                        model_list = [part.strip() for part in single.split(",") if part.strip()]
-                    else:
-                        model_list = [single]
-            if not model_list:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "No models specified for Snowflake source. "
-                        "Add source.models: [...] or set model_name in semabridge.yaml."
-                    ),
-                )
-            for raw_model in model_list:
-                if isinstance(raw_model, dict):
-                    view_name = str(raw_model.get("name") or raw_model.get("view") or raw_model.get("table") or "")
-                else:
-                    view_name = str(raw_model or "").strip()
-                if view_name:
-                    sync_jobs.append({"dataset_id": view_name, "pbix_path": None, "model_label": view_name})
-
-        if not sync_jobs:
-            raise HTTPException(status_code=400, detail="No sync jobs resolved from config.")
-
-        # 5. Execute each model in sequence, collect per-model results.
-        per_model_results: List[Dict[str, Any]] = []
-        last_summary = None
-        resolved_workspace_id = str(
-            source_cfg.get("workspace_id")
-            or (target_cfg.get("workspace_id") if isinstance(target_cfg, dict) else None)
-            or (config.get("fabric", {}) or {}).get("workspace_id")
-            or settings.fabric.workspace_id
-            or "default"
-        )
-
-        # Execution engine accepts canonical connector values.
-        engine_source_type = source_type
-
-        deploy_enabled = bool((target_cfg or {}).get("deploy", True))
-
-        for job in sync_jobs:
-            model_label = job["model_label"]
-            logger.info(f"Syncing model: {model_label}")
-            try:
-                summary = engine.execute(
-                    source=engine_source_type,
-                    target=target_type,
-                    dataset_id=job["dataset_id"],
-                    pbix_path=job["pbix_path"],
-                    project_name=config.get("model_name") or config.get("project_name") or model_label,
-                    tag=str(config.get("version_tag", "v1.0")),
-                    deploy=deploy_enabled,
-                    dry_run=False,
-                )
-                last_summary = summary
-                summary_data = summary.model_dump(mode="json")
-                job_ok = str(summary_data.get("status", "")).upper() == "SUCCESS"
-
-                # Persist version row for this model
-                if job_ok:
-                    try:
-                        snapshot_payload: Dict[str, Any] = config
-                        sml_snap_id = summary_data.get("sml_snapshot_id")
-                        if sml_snap_id:
-                            snap = db_manager.get_snapshot(sml_snap_id)
-                            if snap and isinstance(snap.sml_blob, dict):
-                                snapshot_payload = snap.sml_blob
-                        db_manager.insert_model_version(
-                            model_id=model_label,
-                            workspace_id=resolved_workspace_id,
-                            snapshot=snapshot_payload,
-                            author="ui",
-                            change_summary=f"Sync run {summary_data.get('run_id', '')}".strip(),
-                            version_tag=str(config.get("version_tag", "") or "") or None,
-                        )
-                    except Exception as ver_err:
-                        logger.warning(f"Version row write failed for {model_label}: {ver_err}")
-
-                per_model_results.append({
-                    "model": model_label,
-                    "status": "success" if job_ok else "failed",
-                    "summary": summary_data,
-                })
-            except Exception as model_err:
-                logger.error(f"Sync failed for model '{model_label}': {model_err}")
-                per_model_results.append({
-                    "model": model_label,
-                    "status": "failed",
-                    "summary": {"errors": [{"step_number": 0, "step_name": "Execution", "message": str(model_err)}]},
-                })
-
-        # 6. Aggregate overall status
-        succeeded = [r for r in per_model_results if r["status"] == "success"]
-        if len(succeeded) == len(per_model_results):
-            overall_status = "success"
-        elif succeeded:
-            overall_status = "partial"
-        else:
-            overall_status = "failed"
-
-        logger.info(f"Sync complete: {len(succeeded)}/{len(per_model_results)} models succeeded (status={overall_status})")
-
-        return {
-            "status": overall_status,
-            "models_synced": len(succeeded),
-            "total_models": len(per_model_results),
-            "results": per_model_results,
-            # Keep backward-compat single summary from last executed model
-            "summary": last_summary.model_dump(mode="json") if last_summary else {},
-        }
+        return execute_sync_request(payload, _normalize_yaml_windows_path_fields)
 
     except HTTPException:
         raise
@@ -1868,7 +1630,10 @@ async def sync_models(payload: Dict[str, Any]):
 # -------------------------------------------------------
 
 @app.post("/api/config/validate-live")
-async def validate_live(payload: Dict[str, Any] = None):
+async def validate_live(
+    payload: Dict[str, Any] = None,
+    db: "Session" = Depends(get_db),
+):
     """
     Run live-validation on the current model state.
 
@@ -1879,9 +1644,9 @@ async def validate_live(payload: Dict[str, Any] = None):
     warnings: list[dict] = []
 
     try:
-        conn = db_manager._get_connection()
-        try:
-            rows = conn.execute("""
+        from sqlalchemy import text
+
+        rows = db.execute(text("""
                 WITH RankedVersions AS (
                     SELECT model_id, snapshot, created_at,
                            ROW_NUMBER() OVER(PARTITION BY model_id ORDER BY created_at DESC) as rn
@@ -1890,103 +1655,100 @@ async def validate_live(payload: Dict[str, Any] = None):
                 SELECT model_id, snapshot
                 FROM RankedVersions
                 WHERE rn = 1
-            """).fetchall()
+            """)).fetchall()
 
-            for row in rows:
-                model_id = row[0]
-                snapshot_data = row[1]
-                
-                if isinstance(snapshot_data, str):
-                    try:
-                        data = json.loads(snapshot_data)
-                    except Exception as e:
-                        errors.append({
-                            "model": model_id,
-                            "severity": "error",
-                            "message": f"Failed to parse JSON: {str(e)}",
-                        })
-                        continue
-                else:
-                    data = snapshot_data or {}
-
-                if not isinstance(data, dict):
-                    continue
-
-                if not any(
-                    k in data
-                    for k in (
-                        "datasets",
-                        "metrics",
-                        "measures",
-                        "model_name",
-                        "name",
-                        "unique_name",
-                        "label",
-                    )
-                ):
-                    continue
-
-                display_model_name = (
-                    str(data.get("model_name") or "").strip()
-                    or str(data.get("name") or "").strip()
-                    or str(data.get("label") or "").strip()
-                    or str(data.get("unique_name") or "").strip()
-                    or model_id
-                )
-
-                # Check datasets for missing source references
-                for ds in data.get("datasets", []):
-                    tbl = ds.get("source_table") or ds.get("table", "")
-                    cols = ds.get("columns", [])
-                    ds_name = ds.get("name") or ds.get("unique_name") or "?"
-                    if not tbl:
-                        warnings.append({
-                            "model": display_model_name,
-                            "severity": "warning",
-                            "message": f"Dataset '{ds_name}' has no source_table defined",
-                        })
-                    if not cols:
-                        warnings.append({
-                            "model": display_model_name,
-                            "severity": "warning",
-                            "message": f"Dataset '{ds_name}' has no columns defined",
-                        })
-
-                # Check relationships for dangling references
-                datasets_names = {
-                    (ds.get("name") or ds.get("unique_name") or "").upper()
-                    for ds in data.get("datasets", [])
-                    if (ds.get("name") or ds.get("unique_name"))
-                }
-                for rel in data.get("relationships", []):
-                    from_m = (rel.get("from_model") or rel.get("from_table") or "").upper()
-                    to_m = (rel.get("to_model") or rel.get("to_table") or "").upper()
-                    if from_m and from_m not in datasets_names:
-                        warnings.append({
-                            "model": display_model_name,
-                            "severity": "error",
-                            "message": f"Relationship references unknown dataset '{from_m}'",
-                        })
-                    if to_m and to_m not in datasets_names:
-                        warnings.append({
-                            "model": display_model_name,
-                            "severity": "error",
-                            "message": f"Relationship references unknown dataset '{to_m}'",
-                        })
-
-                # Schema checks
-                if not any(
-                    str(data.get(k) or "").strip()
-                    for k in ("model_name", "name", "unique_name", "label")
-                ):
+        for row in rows:
+            model_id = row[0]
+            snapshot_data = row[1]
+            
+            if isinstance(snapshot_data, str):
+                try:
+                    data = json.loads(snapshot_data)
+                except Exception as e:
                     errors.append({
-                        "model": display_model_name,
+                        "model": model_id,
                         "severity": "error",
-                        "message": "Model missing identity field (expected one of: model_name, name, unique_name, label)",
+                        "message": f"Failed to parse JSON: {str(e)}",
+                    })
+                    continue
+            else:
+                data = snapshot_data or {}
+
+            if not isinstance(data, dict):
+                continue
+
+            if not any(
+                k in data
+                for k in (
+                    "datasets",
+                    "metrics",
+                    "measures",
+                    "model_name",
+                    "name",
+                    "unique_name",
+                    "label",
+                )
+            ):
+                continue
+
+            display_model_name = (
+                str(data.get("model_name") or "").strip()
+                or str(data.get("name") or "").strip()
+                or str(data.get("label") or "").strip()
+                or str(data.get("unique_name") or "").strip()
+                or model_id
+            )
+
+            # Check datasets for missing source references
+            for ds in data.get("datasets", []):
+                tbl = ds.get("source_table") or ds.get("table", "")
+                cols = ds.get("columns", [])
+                ds_name = ds.get("name") or ds.get("unique_name") or "?"
+                if not tbl:
+                    warnings.append({
+                        "model": display_model_name,
+                        "severity": "warning",
+                        "message": f"Dataset '{ds_name}' has no source_table defined",
+                    })
+                if not cols:
+                    warnings.append({
+                        "model": display_model_name,
+                        "severity": "warning",
+                        "message": f"Dataset '{ds_name}' has no columns defined",
                     })
 
-        finally:
-            conn.close()
+            # Check relationships for dangling references
+            datasets_names = {
+                (ds.get("name") or ds.get("unique_name") or "").upper()
+                for ds in data.get("datasets", [])
+                if (ds.get("name") or ds.get("unique_name"))
+            }
+            for rel in data.get("relationships", []):
+                from_m = (rel.get("from_model") or rel.get("from_table") or "").upper()
+                to_m = (rel.get("to_model") or rel.get("to_table") or "").upper()
+                if from_m and from_m not in datasets_names:
+                    warnings.append({
+                        "model": display_model_name,
+                        "severity": "error",
+                        "message": f"Relationship references unknown dataset '{from_m}'",
+                    })
+                if to_m and to_m not in datasets_names:
+                    warnings.append({
+                        "model": display_model_name,
+                        "severity": "error",
+                        "message": f"Relationship references unknown dataset '{to_m}'",
+                    })
+
+            # Schema checks
+            if not any(
+                str(data.get(k) or "").strip()
+                for k in ("model_name", "name", "unique_name", "label")
+            ):
+                errors.append({
+                    "model": display_model_name,
+                    "severity": "error",
+                    "message": "Model missing identity field (expected one of: model_name, name, unique_name, label)",
+                })
     except Exception as e:
         errors.append({"model": "system", "severity": "error", "message": str(e)})
 
@@ -2005,7 +1767,10 @@ async def validate_live(payload: Dict[str, Any] = None):
 
 
 @app.get("/api/workspaces")
-async def list_workspaces(db: "Session" = Depends(get_db)):
+async def list_workspaces(
+    db: "Session" = Depends(get_db),
+    identity_id: Optional[str] = Query(None),
+):
     """List available Fabric workspaces for the current Default account.
 
     Identity is resolved fresh on every request from the DuckDB Account table
@@ -2020,76 +1785,89 @@ async def list_workspaces(db: "Session" = Depends(get_db)):
     access_token: str | None = None
     account_tag: str | None = None
 
-    # --- Live DB lookup: find the default Fabric account ---
-    try:
-        default_account = db.execute(
-            select(Account).where(
-                Account.connector_type == "FABRIC",
-                Account.is_default == True,  # noqa: E712
-            )
-        ).scalar_one_or_none()
+    # If a UI-selected Fabric account is supplied, honor it first.
+    if identity_id:
+        try:
+            import anyio
+            access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, None, identity_id)
+            account_tag = identity_id
+            logger.info("list_workspaces: using identity-scoped account '%s'", account_tag)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("list_workspaces: identity-scoped lookup failed for %s: %s", identity_id, exc)
 
-        if not default_account:
-            raise HTTPException(status_code=401, detail="token_missing")
+    # Fall back to the default Fabric account when no identity was supplied.
+    if not access_token:
+        try:
+            default_account = db.execute(
+                select(Account).where(
+                    Account.connector_type == "FABRIC",
+                    Account.is_default == True,  # noqa: E712
+                )
+            ).scalar_one_or_none()
 
-        if default_account.encrypted_token:
-            # Happy path: token already persisted in Account row
-            account_tag = default_account.tag
-            logger.info("list_workspaces: using default account '%s'", account_tag)
-            access_token = decrypt_token(default_account.encrypted_token)
-            if not access_token:
-                logger.warning("list_workspaces: token decrypt returned empty string")
+            if not default_account:
                 raise HTTPException(status_code=401, detail="token_missing")
-        else:
-            # Fallback: account exists but no token row yet (pre-atomic-write accounts).
-            # Query Credential directly to avoid DuckDB DDL locking from CredentialManager.
-            from semabridge.repository.orm.models import Credential
-            from semabridge.auth.encryption import encrypt_token as _encrypt
-            import time
 
-            rows = db.execute(
-                select(Credential).where(Credential.service == "fabric_token")
-            ).scalars().all()
-            raw_token_data = {row.key: row.value for row in rows} if rows else {}
-            
-            raw_access_token = raw_token_data.get("access_token", "")
-            if not raw_access_token:
-                logger.warning("list_workspaces: no token in Account row nor Credential table")
-                raise HTTPException(status_code=401, detail="token_missing")
-                
-            try:
-                expires_at = int(raw_token_data.get("expires_at", "0"))
-                if time.time() >= expires_at - 60:
-                    logger.warning("list_workspaces: Credential table token is expired")
+            if default_account.encrypted_token:
+                # Happy path: token already persisted in Account row
+                account_tag = default_account.tag
+                logger.info("list_workspaces: using default account '%s'", account_tag)
+                access_token = decrypt_token(default_account.encrypted_token)
+                if not access_token:
+                    logger.warning("list_workspaces: token decrypt returned empty string")
                     raise HTTPException(status_code=401, detail="token_missing")
-            except (ValueError, TypeError):
-                raise HTTPException(status_code=401, detail="token_missing")
+            else:
+                # Fallback: account exists but no token row yet (pre-atomic-write accounts).
+                # Query Credential directly to avoid DuckDB DDL locking from CredentialManager.
+                from semabridge.repository.orm.models import Credential
+                from semabridge.auth.encryption import encrypt_token as _encrypt
+                import time
 
-            # Backfill: write the token to the Account row so next request uses DB path
-            try:
-                default_account.encrypted_token = _encrypt(raw_access_token)
-                default_account.identity_email = raw_token_data.get(
-                    "account_username", default_account.identity_email
-                )
-                db.commit()
+                rows = db.execute(
+                    select(Credential).where(Credential.service == "fabric_token")
+                ).scalars().all()
+                raw_token_data = {row.key: row.value for row in rows} if rows else {}
+                
+                raw_access_token = raw_token_data.get("access_token", "")
+                if not raw_access_token:
+                    logger.warning("list_workspaces: no token in Account row nor Credential table")
+                    raise HTTPException(status_code=401, detail="token_missing")
+                    
+                try:
+                    expires_at = int(raw_token_data.get("expires_at", "0"))
+                    if time.time() >= expires_at - 60:
+                        logger.warning("list_workspaces: Credential table token is expired")
+                        raise HTTPException(status_code=401, detail="token_missing")
+                except (ValueError, TypeError):
+                    raise HTTPException(status_code=401, detail="token_missing")
+
+                # Backfill: write the token to the Account row so next request uses DB path
+                try:
+                    default_account.encrypted_token = _encrypt(raw_access_token)
+                    default_account.identity_email = raw_token_data.get(
+                        "account_username", default_account.identity_email
+                    )
+                    db.commit()
+                    logger.info(
+                        "list_workspaces: backfilled encrypted_token for account '%s'",
+                        default_account.tag,
+                    )
+                except Exception as bf_exc:
+                    logger.warning("list_workspaces: backfill write failed (non-fatal): %s", bf_exc)
+                    db.rollback()
+
+                account_tag = default_account.tag
+                access_token = raw_access_token
                 logger.info(
-                    "list_workspaces: backfilled encrypted_token for account '%s'",
-                    default_account.tag,
+                    "list_workspaces: using CredentialManager fallback for account '%s'", account_tag
                 )
-            except Exception as bf_exc:
-                logger.warning("list_workspaces: backfill write failed (non-fatal): %s", bf_exc)
-                db.rollback()
-
-            account_tag = default_account.tag
-            access_token = raw_access_token
-            logger.info(
-                "list_workspaces: using CredentialManager fallback for account '%s'", account_tag
-            )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("list_workspaces: unexpected DB error: %s", exc)
-        raise HTTPException(status_code=503, detail="Workspace discovery temporarily unavailable")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("list_workspaces: unexpected DB error: %s", exc)
+            raise HTTPException(status_code=503, detail="Workspace discovery temporarily unavailable")
 
     if not access_token:
         logger.warning("list_workspaces: no valid default account token — returning 401")
@@ -2550,6 +2328,50 @@ async def save_project_config_compat(project_id: str, payload: dict):
         "yaml_path": str(_compat_repo_yaml_path().resolve()).replace('\\\\', '/'),
         "warnings": [],
     }
+
+
+def _compat_set_project_pbix_path(project_id: str, pbix_path: str) -> None:
+    """Persist PBIX path in project metadata + project semabridge.yaml blob."""
+    _compat_ensure_loaded()
+    project = _compat_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    normalized_pbix_path = str(Path(pbix_path).resolve()).replace('\\\\', '/')
+    project["pbix_file_path"] = normalized_pbix_path
+    project["updated_at"] = _compat_now_iso()
+    _compat_projects[project_id] = project
+
+    yaml_text = _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(project)
+    parsed = yaml.safe_load(yaml_text) if yaml_text else {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+    source_cfg = parsed.get("source") if isinstance(parsed.get("source"), dict) else {}
+    source_cfg["type"] = "pbix"
+    source_cfg["pbix_path"] = normalized_pbix_path
+    source_cfg["pbix_file_path"] = normalized_pbix_path
+    parsed["source"] = source_cfg
+
+    rebuilt = yaml.safe_dump(parsed, sort_keys=False, allow_unicode=False)
+    _compat_project_configs[project_id] = rebuilt
+    _compat_save_store()
+
+
+def _save_uploaded_pbix_file(upload: UploadFile, target_dir: Path) -> Path:
+    """Store an uploaded PBIX file in the target directory and return absolute path."""
+    filename = str(upload.filename or "").strip()
+    if not filename.lower().endswith(".pbix"):
+        raise HTTPException(status_code=400, detail="Only .pbix files are supported")
+
+    safe_name = Path(filename).name
+    target_dir.mkdir(parents=True, exist_ok=True)
+    destination = target_dir / f"{uuid.uuid4().hex}_{safe_name}"
+
+    content = upload.file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    destination.write_bytes(content)
+    return destination.resolve()
 
 
 def _extract_snapshot_connectors(snapshot_obj: Any) -> List[str]:
@@ -3088,6 +2910,87 @@ async def get_project_runs_compat(project_id: str):
     return _compat_project_runs.get(project_id, [])
 
 
+def _extract_source_type_from_project_cfg(project_cfg: str, fallback: str = "fabric") -> str:
+    try:
+        parsed = yaml.safe_load(project_cfg) or {}
+        source_cfg = parsed.get("source") if isinstance(parsed.get("source"), dict) else {}
+        source_type = str(source_cfg.get("type") or fallback).strip().lower()
+        return source_type or fallback
+    except Exception:
+        return fallback
+
+
+def _collect_step_logs(summary: Dict[str, Any], prefix: str = "") -> List[str]:
+    lines: List[str] = []
+    steps = summary.get("steps_completed") if isinstance(summary, dict) else []
+    errors = summary.get("errors") if isinstance(summary, dict) else []
+
+    for step in steps or []:
+        step_no = step.get("step_number", "?")
+        step_name = step.get("step_name") or "Unknown"
+        step_status = str(step.get("status") or "info").upper()
+        detail = f" - {step.get('message')}" if step.get("message") else ""
+        prefix_text = f"{prefix} " if prefix else ""
+        lines.append(f"{step_status} {prefix_text}Stage {step_no}: {step_name}{detail}")
+
+    for err in errors or []:
+        step_no = err.get("step_number", "?")
+        step_name = err.get("step_name") or "Execution"
+        msg = err.get("message") or "Unknown error"
+        prefix_text = f"{prefix} " if prefix else ""
+        lines.append(f"ERROR {prefix_text}Stage {step_no} ({step_name}) - {msg}")
+
+    return lines
+
+
+def _build_run_logs(sync_result: Dict[str, Any]) -> List[str]:
+    logs: List[str] = []
+    summary = sync_result.get("summary") if isinstance(sync_result, dict) else {}
+    logs.extend(_collect_step_logs(summary if isinstance(summary, dict) else {}))
+
+    for result in (sync_result.get("results") or []):
+        if not isinstance(result, dict):
+            continue
+        model_name = str(result.get("model") or "Model")
+        model_summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+        logs.extend(_collect_step_logs(model_summary, f"[{model_name}]"))
+
+    return logs
+
+
+def _build_stage_states(sync_result: Dict[str, Any]) -> List[Dict[str, str]]:
+    stage_defaults: List[Dict[str, str]] = [
+        {"id": "extraction", "label": "Extraction", "status": "pending"},
+        {"id": "osi_conversion", "label": "OSI Conversion", "status": "pending"},
+        {"id": "sml_generation", "label": "SML Generation", "status": "pending"},
+        {"id": "snowflake_deployment", "label": "Snowflake Deployment", "status": "pending"},
+    ]
+
+    summary = sync_result.get("summary") if isinstance(sync_result, dict) else {}
+    steps = summary.get("steps_completed") if isinstance(summary, dict) else []
+    if not isinstance(steps, list):
+        return stage_defaults
+
+    status_by_stage = {item["id"]: item["status"] for item in stage_defaults}
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        step_number = int(step.get("step_number") or 0)
+        normalized = str(step.get("status") or "pending").lower()
+        if step_number == 4:
+            status_by_stage["extraction"] = normalized
+        elif step_number == 6:
+            status_by_stage["osi_conversion"] = normalized
+            status_by_stage["sml_generation"] = normalized
+        elif step_number in (8, 9):
+            status_by_stage["snowflake_deployment"] = normalized
+
+    return [
+        {"id": item["id"], "label": item["label"], "status": status_by_stage.get(item["id"], item["status"])}
+        for item in stage_defaults
+    ]
+
+
 def _create_project_run(project_id: str, schedule_label: str = "Manual") -> tuple[dict, str, float]:
     _compat_ensure_loaded()
     if project_id not in _compat_projects:
@@ -3095,6 +2998,12 @@ def _create_project_run(project_id: str, schedule_label: str = "Manual") -> tupl
 
     started = _time.time()
     run_id = f"run-{int(_time.time() * 1000)}"
+    project_cfg = _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(_compat_projects[project_id])
+    source_type = _extract_source_type_from_project_cfg(
+        project_cfg,
+        fallback=str(_compat_projects[project_id].get("source") or "fabric").lower(),
+    )
+
     run = {
         "run_id": run_id,
         "id": run_id,
@@ -3102,12 +3011,20 @@ def _create_project_run(project_id: str, schedule_label: str = "Manual") -> tupl
         "project_name": _compat_projects[project_id].get("name", project_id),
         "schedule": schedule_label,
         "status": "running",
+        "source_type": source_type,
+        "message": "Execution started.",
+        "logs": ["LIVE Run queued. Waiting for execution engine..."],
+        "stage_states": [
+            {"id": "extraction", "label": "Extraction", "status": "running"},
+            {"id": "osi_conversion", "label": "OSI Conversion", "status": "pending"},
+            {"id": "sml_generation", "label": "SML Generation", "status": "pending"},
+            {"id": "snowflake_deployment", "label": "Snowflake Deployment", "status": "pending"},
+        ],
         "duration_ms": 0,
         "started_at": _compat_now_iso(),
     }
     _compat_project_runs.setdefault(project_id, []).insert(0, run)
     _compat_save_store()
-    project_cfg = _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(_compat_projects[project_id])
     return run, project_cfg, started
 
 
@@ -3127,9 +3044,28 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
         run["results"] = (sync_result or {}).get("results") or []
         run["models_synced"] = int((sync_result or {}).get("models_synced") or 0)
         run["total_models"] = int((sync_result or {}).get("total_models") or 0)
+        run["logs"] = _build_run_logs(sync_result or {})
+        run["stage_states"] = _build_stage_states(sync_result or {})
+        if run["status"] == "success":
+            run["message"] = "Execution completed successfully."
+        elif run["status"] == "warning":
+            run["message"] = "Execution completed with warnings."
+        else:
+            first_error = ""
+            if run["summary"].get("errors"):
+                first_error = str((run["summary"].get("errors") or [{}])[0].get("message") or "")
+            run["message"] = first_error or "Execution failed."
     except Exception as exc:
         run["status"] = "failed"
         run["error"] = str(exc)
+        run["message"] = str(exc)
+        run["logs"] = [f"ERROR Execution failed: {exc}"]
+        run["stage_states"] = [
+            {"id": "extraction", "label": "Extraction", "status": "failed"},
+            {"id": "osi_conversion", "label": "OSI Conversion", "status": "pending"},
+            {"id": "sml_generation", "label": "SML Generation", "status": "pending"},
+            {"id": "snowflake_deployment", "label": "Snowflake Deployment", "status": "pending"},
+        ]
     _compat_save_store()
     return run
 
@@ -3635,6 +3571,25 @@ async def rollback_version(payload: Dict[str, Any]):
 # -------------------------------------------------------
 # PBIX Import (Air-Gapped Extraction)
 # -------------------------------------------------------
+
+@app.post("/api/upload")
+async def upload_pbix_temp(file: UploadFile = File(...)):
+    """Upload a PBIX file to a temporary local folder and return absolute path."""
+    temp_root = Path(tempfile.gettempdir()) / "semabridge" / "uploads"
+    saved = _save_uploaded_pbix_file(file, temp_root)
+    return {"path": str(saved).replace('\\\\', '/')}
+
+
+@app.post("/api/projects/{project_id}/upload")
+async def upload_project_pbix(project_id: str, file: UploadFile = File(...)):
+    """Upload PBIX for a specific project and persist path in project metadata/config."""
+    project_root = Path(tempfile.gettempdir()) / "semabridge" / "projects" / project_id
+    saved = _save_uploaded_pbix_file(file, project_root)
+    _compat_set_project_pbix_path(project_id, str(saved))
+    return {
+        "project_id": project_id,
+        "path": str(saved).replace('\\\\', '/'),
+    }
 
 @app.post("/api/pbix/import")
 async def import_pbix(payload: Dict[str, Any]):
@@ -4854,20 +4809,26 @@ def _extract_bearer_token(
     return token
 
 
-def _resolve_fabric_access_token(header_bearer_token: Optional[str]) -> str:
+def _resolve_fabric_access_token(
+    header_bearer_token: Optional[str],
+    identity_id: Optional[str] = None,
+) -> str:
     """Resolve Fabric access token with compatibility-safe precedence.
 
     Precedence:
-    1. Authorization header bearer token from current request.
-    2. Stored MSAL token from interactive Connections login flow.
+    1. Explicit identity-scoped account token, if ``identity_id`` is supplied.
+    2. Authorization header bearer token from current request.
+    3. Default stored MSAL token from interactive Connections login flow.
        - If expired, silently refresh using the stored refresh_token.
-    3. FABRIC_ACCESS_TOKEN environment variable (dev/CI fallback).
+    4. FABRIC_ACCESS_TOKEN environment variable from the process or .env file.
 
-    IMPORTANT: This function uses a two-phase approach to avoid DuckDB
-    QueuePool(1) deadlocks — all DB reads happen in Phase 1 (session is
-    closed), then token refresh happens in Phase 2 (can open its own session).
+    Explicit ``identity_id`` selection wins over any ambient bearer token so
+    the UI-selected account is always honored.
     """
-    # ── Phase 0: Header token (no DB needed) ─────────────────────────────
+    # ── Phase 0: Header token / temporary env token ──────────────────────
+    if identity_id:
+        header_bearer_token = None
+
     if header_bearer_token:
         try:
             fabric_validator.validate_msal_token(header_bearer_token)
@@ -4878,6 +4839,11 @@ def _resolve_fabric_access_token(header_bearer_token: Optional[str]) -> str:
         except Exception as e:
             logger.error(f"Fabric token validation error: {e}")
             raise HTTPException(status_code=401, detail={"status": "invalid_token", "message": "Signature or claim validation failed."})
+
+    env_token = get_fabric_access_token_from_env()
+    if env_token:
+        logger.info("Using temporary Fabric access token from .env / environment")
+        return env_token
 
     # ── Phase 1: Read everything we need from DB in ONE session ──────────
     # Variables populated by Phase 1:
@@ -4894,13 +4860,21 @@ def _resolve_fabric_access_token(header_bearer_token: Optional[str]) -> str:
         with db_manager.get_session() as session:
             session.expire_all()
 
-            fabric_accounts = session.execute(
-                select(Account).where(Account.connector_type == "FABRIC")
-            ).scalars().all()
-            
-            default_account = next((a for a in fabric_accounts if a.is_default), None)
-            if not default_account and fabric_accounts:
-                default_account = fabric_accounts[0]
+            if identity_id:
+                default_account = session.execute(
+                    select(Account).where(
+                        Account.connector_type == "FABRIC",
+                        Account.id == identity_id,
+                    )
+                ).scalars().first()
+            else:
+                fabric_accounts = session.execute(
+                    select(Account).where(Account.connector_type == "FABRIC")
+                ).scalars().all()
+                
+                default_account = next((a for a in fabric_accounts if a.is_default), None)
+                if not default_account and fabric_accounts:
+                    default_account = fabric_accounts[0]
 
             if default_account:
                 has_account_row = True
@@ -4972,7 +4946,7 @@ def _resolve_fabric_access_token(header_bearer_token: Optional[str]) -> str:
         if not encrypted_token and not credential_token_data:
             raise HTTPException(status_code=401, detail={"error": "reauth_required"})
 
-    logger.warning("No valid Fabric access token available (bypassed .env fallback to respect UI state)")
+    logger.warning("No valid Fabric access token available")
     raise HTTPException(
         status_code=401,
         detail={"error": "reauth_required"}
@@ -5027,6 +5001,7 @@ def _try_silent_refresh() -> Optional[str]:
 @app.get("/api/connections/fabric/workspaces")
 async def fabric_list_workspaces(
     bearer_token: Optional[str] = Depends(_extract_bearer_token),
+    identity_id: Optional[str] = Query(None),
 ):
     """Discover all Fabric workspaces accessible to the logged-in user.
 
@@ -5037,8 +5012,8 @@ async def fabric_list_workspaces(
     import httpx
 
     import anyio
-    access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token)
-    logger.info("Calling Fabric workspaces API with resolved access token")
+    access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token, identity_id)
+    logger.info("Calling Fabric workspaces API with resolved access token (Identity: %s)", identity_id)
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -5100,6 +5075,7 @@ async def debug_token_header(
 @app.get("/api/connections/fabric/default-workspace")
 async def fabric_get_default_workspace(
     bearer_token: Optional[str] = Depends(_extract_bearer_token),
+    identity_id: Optional[str] = Query(None),
 ):
     """Return the best-available default workspace for the project wizard from the Default account."""
     from sqlalchemy import select
@@ -5111,7 +5087,7 @@ async def fabric_get_default_workspace(
     access_token = None
     import anyio
     try:
-        access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token)
+        access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token, identity_id)
     except HTTPException:
         pass
 

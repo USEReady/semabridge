@@ -360,8 +360,12 @@ def validate_config_schema(config: Dict[str, Any]) -> List[str]:
             errors.append("'source' must be an object")
         elif "type" not in source:
             errors.append("Missing required key: 'source.type'")
-        elif source["type"] not in ("snowflake", "fabric"):
-            errors.append(f"Invalid source.type: '{source['type']}'. Must be 'snowflake' or 'fabric'")
+        elif source["type"] not in ("snowflake", "fabric", "pbix"):
+            errors.append(f"Invalid source.type: '{source['type']}'. Must be 'snowflake', 'fabric' or 'pbix'")
+        elif source["type"] == "pbix":
+            pbix_path = source.get("pbix_path") or source.get("source_path") or source.get("file_path")
+            if not pbix_path:
+                errors.append("PBIX source requires one of: source.pbix_path, source.source_path, source.file_path")
     
     if "model_name" not in config:
         errors.append("Missing required key: 'model_name'")

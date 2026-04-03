@@ -1,3 +1,11 @@
+"""
+Module: fabric_validator
+Purpose: Validate Microsoft Fabric access tokens for API authorization.
+Responsibilities:
+- Fetch and cache JWKS metadata used for token validation.
+- Validate token payload claims and return normalized identity data.
+"""
+
 import time
 import httpx
 import jwt

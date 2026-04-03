@@ -84,11 +84,18 @@ export default function SmartSearchBar({
         {allowRegex && (
           <button
             type="button"
-            onClick={() => onToggleRegex?.(!useRegex)}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleRegex?.(!useRegex);
+            }}
             title={useRegex ? 'Regex enabled' : 'Regex disabled'}
             style={{
               position: 'absolute',
               right: query ? 28 : 6,
+              zIndex: 2,
               width: 20,
               height: 20,
               borderRadius: 5,
@@ -108,11 +115,18 @@ export default function SmartSearchBar({
         {query && (
           <button
             type="button"
-            onClick={() => onChange?.('')}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onChange?.('');
+            }}
             title="Clear"
             style={{
               position: 'absolute',
               right: 6,
+              zIndex: 2,
               width: 20,
               height: 20,
               border: 'none',

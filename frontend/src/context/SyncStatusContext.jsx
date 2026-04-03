@@ -38,6 +38,18 @@ function deriveProgressFromRun(run) {
   return 0;
 }
 
+function getRunSortTimestamp(run) {
+  const started = run?.started_at ? Date.parse(run.started_at) : NaN;
+  if (!Number.isNaN(started) && started > 0) return started;
+  const updated = run?.updated_at ? Date.parse(run.updated_at) : NaN;
+  if (!Number.isNaN(updated) && updated > 0) return updated;
+  const created = run?.created_at ? Date.parse(run.created_at) : NaN;
+  if (!Number.isNaN(created) && created > 0) return created;
+  const numericId = Number(run?.id || run?.run_id || 0);
+  if (!Number.isNaN(numericId) && numericId > 0) return numericId;
+  return 0;
+}
+
 export function SyncStatusProvider({ children }) {
   const [runs, setRuns] = useState([]);
   const [projectStatusById, setProjectStatusById] = useState({});
@@ -99,12 +111,14 @@ export function SyncStatusProvider({ children }) {
         if (disposed) return;
 
         const runList = Array.isArray(data) ? data : [];
+        const sortedRuns = [...runList].sort((a, b) => getRunSortTimestamp(b) - getRunSortTimestamp(a));
         setRuns(runList);
 
         const nextStatusById = {};
         const nextProgressById = {};
 
-        for (const run of runList) {
+        // Keep the latest run per project (sortedRuns is newest-first).
+        for (const run of sortedRuns) {
           const pid = String(run?.project_id || '');
           if (!pid) continue;
           if (!(pid in nextStatusById)) {
@@ -125,7 +139,7 @@ export function SyncStatusProvider({ children }) {
         });
 
         // Fallback: if any run is success/completed, force progress to 100%
-        const completedRun = runList.find((r) => normalizeStatus(r?.status) === 'success');
+        const completedRun = sortedRuns.find((r) => normalizeStatus(r?.status) === 'success');
         if (completedRun) {
           setCurrentProgress(100);
           setCurrentSyncStatus('success');
@@ -133,11 +147,14 @@ export function SyncStatusProvider({ children }) {
 
         // Only consider a run as active if it started less than 1 hour ago
         const now = Date.now();
-        const activeRun = runList.find((r) => {
+        const activeRun = sortedRuns.find((r) => {
           if (normalizeStatus(r?.status) !== 'running') return false;
           const started = r?.started_at ? new Date(r.started_at).getTime() : 0;
-          // If no started_at, treat as active (legacy safety)
-          if (!started) return true;
+          // If no started_at, treat as active but only if it looks fresh by alternate timestamps.
+          if (!started) {
+            const fallbackTs = getRunSortTimestamp(r);
+            return fallbackTs > 0 && (Date.now() - fallbackTs) < 3600000;
+          }
           // 1 hour = 3600000 ms
           return (now - started) < 3600000;
         }) || null;

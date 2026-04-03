@@ -1,0 +1,40 @@
+project_name: vv
+source:
+  type: fabric
+  identity_id: 9917dd54-ff80-4e98-819a-63bd537d883f
+  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
+  workspace: semabridge
+  models:
+    - continent
+targets:
+  - type: snowflake
+mappings:
+  - source: continent
+    target: continent_mapped
+    type: table
+    columns:
+      - source: id
+        target: id
+        type: INT
+        primary_key: true
+      - source: name
+        target: name
+        type: VARCHAR(255)
+      - source: created_at
+        target: created_at
+        type: TIMESTAMP
+      - source: updated_at
+        target: updated_at
+        type: TIMESTAMP
+ui:
+  intermediate_format: osi
+  editor_mode: form
+  output_format: osi
+selection:
+  model_ids:
+    - d32e8900-31cc-4647-872d-08a7e62bf03b
+options:
+  auto_relationships: true
+  generate_descriptions: true
+target:
+  type: snowflake

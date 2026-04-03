@@ -568,7 +568,11 @@ class SnowflakeEmitter(BaseEmitter):
         
         # Pattern 2: Match unquoted references: alias.ColumnName / alias.COLUMN_NAME
         # Convert/resolve to physical names and aliases as needed.
-        unquoted_pattern = r'(\w+)\.([A-Za-z_][A-Za-z0-9_]*)'
+        # Allow `$` in unquoted identifiers as Snowflake physical columns can
+        # legitimately contain it after sanitization (for example `FOO_$`).
+        # Without this, a reference like `alias.FOO_$` gets partially matched
+        # as `alias.FOO_`, and normalization leaves behind a stray `$`.
+        unquoted_pattern = r'(\w+)\.([A-Za-z_][A-Za-z0-9_$]*)'
         
         for match in re.finditer(unquoted_pattern, normalized_sql):
             table_alias = match.group(1)
@@ -2671,7 +2675,8 @@ class SnowflakeEmitter(BaseEmitter):
         # DIMENSIONS clause (FR-01 & FR-02: Filter out measure candidates)
         # =====================================================================
         dims_lines = []
-        added_dimensions = set()  # Track what we've added to avoid duplicates
+        added_dimensions = set()  # Track physical additions to avoid duplicates
+        used_dimension_aliases: set[str] = set()
         
         # Collect all measure columns for exclusion
         measure_columns = {(m.dataset, m.source_column) for m in sml.metrics if m.source_column}
@@ -2704,11 +2709,17 @@ class SnowflakeEmitter(BaseEmitter):
                     continue
                     
                 semantic_name = self._sanitize_semantic_name(attr.unique_name)
-                dim_key = (alias, semantic_name)
+                dim_key = (alias, semantic_name, phys_col)
                 
                 if dim_key not in added_dimensions:
+                    emitted_name = self._resolve_unique_dimension_alias(
+                        semantic_name,
+                        alias,
+                        used_dimension_aliases,
+                        attr.unique_name,
+                    )
                     # Re-add quoting for semantic names to handle reserved words (KEY, COSTS, etc.)
-                    dims_lines.append(f'  {alias}."{semantic_name}" AS {alias}."{phys_col}"')
+                    dims_lines.append(f'  {alias}."{emitted_name}" AS {alias}."{phys_col}"')
                     added_dimensions.add(dim_key)
                     
         # 2. Add raw attributes (excluding measure candidates)
@@ -2736,7 +2747,7 @@ class SnowflakeEmitter(BaseEmitter):
                 semantic_name = self._sanitize_semantic_name(col.unique_name)
                 # Physical column must use sanitized name (with underscores) to match Snowflake
                 phys_col = self._sanitize_col_name(col.unique_name)
-                dim_key = (alias, semantic_name)
+                dim_key = (alias, semantic_name, phys_col)
                 
                 # Skip if already added
                 if dim_key in added_dimensions:
@@ -2753,7 +2764,13 @@ class SnowflakeEmitter(BaseEmitter):
                     if dataset.is_fact:  # Only skip on fact tables
                         continue
                 
-                dims_lines.append(f'  {alias}."{semantic_name}" AS {alias}."{phys_col}"')
+                emitted_name = self._resolve_unique_dimension_alias(
+                    semantic_name,
+                    alias,
+                    used_dimension_aliases,
+                    col.unique_name,
+                )
+                dims_lines.append(f'  {alias}."{emitted_name}" AS {alias}."{phys_col}"')
                 added_dimensions.add(dim_key)
 
         # Ensure DIMENSIONS is not empty (Snowflake requires at least one dimension)
@@ -2767,7 +2784,13 @@ class SnowflakeEmitter(BaseEmitter):
                  if not col.is_measure_candidate and not col.unique_name.startswith("_") and phys in known_phys:
                      # Sanitize both sides of AS to ensure valid identifiers
                      semantic = self._sanitize_semantic_name(col.unique_name)
-                     dims_lines.append(f'  {alias}."{semantic}" AS {alias}."{phys}"')
+                     emitted_name = self._resolve_unique_dimension_alias(
+                         semantic,
+                         alias,
+                         used_dimension_aliases,
+                         col.unique_name,
+                     )
+                     dims_lines.append(f'  {alias}."{emitted_name}" AS {alias}."{phys}"')
                      break
              else:
                  # Absolute fallback if no physical columns found (safest possible)
@@ -2775,7 +2798,13 @@ class SnowflakeEmitter(BaseEmitter):
                      phys = self._sanitize_col_name(col.unique_name)
                      if phys in known_phys:
                          semantic = self._sanitize_semantic_name(col.unique_name)
-                         dims_lines.append(f'  {alias}."{semantic}" AS {alias}."{phys}"')
+                         emitted_name = self._resolve_unique_dimension_alias(
+                             semantic,
+                             alias,
+                             used_dimension_aliases,
+                             col.unique_name,
+                         )
+                         dims_lines.append(f'  {alias}."{emitted_name}" AS {alias}."{phys}"')
                          break
                  else:
                      # If genuinely NO physical columns are known, fall back to the very first 
@@ -2784,7 +2813,13 @@ class SnowflakeEmitter(BaseEmitter):
                      col = first_ds.columns[0]
                      semantic = self._sanitize_semantic_name(col.unique_name)
                      phys = self._sanitize_col_name(col.unique_name)
-                     dims_lines.append(f'  {alias}."{semantic}" AS {alias}."{phys}"')
+                     emitted_name = self._resolve_unique_dimension_alias(
+                         semantic,
+                         alias,
+                         used_dimension_aliases,
+                         col.unique_name,
+                     )
+                     dims_lines.append(f'  {alias}."{emitted_name}" AS {alias}."{phys}"')
 
         if dims_lines:
             definitions.append("DIMENSIONS (\n" + ",\n".join(dims_lines) + "\n)")
@@ -3253,6 +3288,43 @@ class SnowflakeEmitter(BaseEmitter):
                 logger.warning(
                     "Metric alias collision for '%s' (base '%s'); using '%s'",
                     original_metric_name,
+                    base_alias,
+                    candidate,
+                )
+                return candidate
+            idx += 1
+
+    def _resolve_unique_dimension_alias(
+        self,
+        base_alias: str,
+        table_alias: str,
+        used_aliases: set[str],
+        original_dimension_name: str,
+    ) -> str:
+        """Ensure dimension alias is unique across a semantic view."""
+        if base_alias not in used_aliases:
+            used_aliases.add(base_alias)
+            return base_alias
+
+        candidate = self._sanitize_semantic_name(f"{table_alias}_{base_alias}")
+        if candidate not in used_aliases:
+            used_aliases.add(candidate)
+            logger.warning(
+                "Dimension alias collision for '%s' (base '%s'); using '%s'",
+                original_dimension_name,
+                base_alias,
+                candidate,
+            )
+            return candidate
+
+        idx = 2
+        while True:
+            candidate = self._sanitize_semantic_name(f"{table_alias}_{base_alias}_{idx}")
+            if candidate not in used_aliases:
+                used_aliases.add(candidate)
+                logger.warning(
+                    "Dimension alias collision for '%s' (base '%s'); using '%s'",
+                    original_dimension_name,
                     base_alias,
                     candidate,
                 )
@@ -4605,7 +4677,8 @@ class SnowflakeEmitter(BaseEmitter):
         # DIMENSIONS
         # =================================================================
         dims_lines: list[str] = []
-        added_dimensions: set[tuple[str, str]] = set()
+        added_dimensions: set[tuple[str, str, str]] = set()
+        used_dimension_aliases: set[str] = set()
 
         # 1. Explicitly defined dimension attributes
         for dim in osi.dimensions:
@@ -4633,10 +4706,16 @@ class SnowflakeEmitter(BaseEmitter):
                     continue
 
                 semantic_name = self._sanitize_semantic_name(attr.unique_name)
-                dim_key = (alias, semantic_name)
+                dim_key = (alias, semantic_name, phys_col)
                 if dim_key not in added_dimensions:
+                    emitted_name = self._resolve_unique_dimension_alias(
+                        semantic_name,
+                        alias,
+                        used_dimension_aliases,
+                        attr.unique_name,
+                    )
                     dims_lines.append(
-                        f'  {alias}."{semantic_name}" AS {alias}."{phys_col}"'
+                        f'  {alias}."{emitted_name}" AS {alias}."{phys_col}"'
                     )
                     added_dimensions.add(dim_key)
 
@@ -4661,7 +4740,7 @@ class SnowflakeEmitter(BaseEmitter):
 
                 semantic_name = self._sanitize_semantic_name(col.unique_name)
                 phys_col = self._sanitize_col_name(col.unique_name)
-                dim_key = (alias, semantic_name)
+                dim_key = (alias, semantic_name, phys_col)
                 if dim_key in added_dimensions:
                     continue
 
@@ -4683,8 +4762,14 @@ class SnowflakeEmitter(BaseEmitter):
                     if dataset.is_fact:
                         continue
 
+                emitted_name = self._resolve_unique_dimension_alias(
+                    semantic_name,
+                    alias,
+                    used_dimension_aliases,
+                    col.unique_name,
+                )
                 dims_lines.append(
-                    f'  {alias}."{semantic_name}" AS {alias}."{phys_col}"'
+                    f'  {alias}."{emitted_name}" AS {alias}."{phys_col}"'
                 )
                 added_dimensions.add(dim_key)
 
@@ -4698,7 +4783,13 @@ class SnowflakeEmitter(BaseEmitter):
                 phys = self._sanitize_col_name(col.unique_name)
                 if not col.unique_name.startswith("_") and phys in known_phys:
                     semantic = self._sanitize_semantic_name(col.unique_name)
-                    dims_lines.append(f'  {alias}."{semantic}" AS {alias}."{phys}"')
+                    emitted_name = self._resolve_unique_dimension_alias(
+                        semantic,
+                        alias,
+                        used_dimension_aliases,
+                        col.unique_name,
+                    )
+                    dims_lines.append(f'  {alias}."{emitted_name}" AS {alias}."{phys}"')
                     break
             else:
                 # Absolute fallback if no physical columns found (unlikely for a valid table)
@@ -4707,13 +4798,25 @@ class SnowflakeEmitter(BaseEmitter):
                     phys = self._sanitize_col_name(col.unique_name)
                     if phys in known_phys:
                          semantic = self._sanitize_semantic_name(col.unique_name)
-                         dims_lines.append(f'  {alias}."{semantic}" AS {alias}."{phys}"')
+                         emitted_name = self._resolve_unique_dimension_alias(
+                             semantic,
+                             alias,
+                             used_dimension_aliases,
+                             col.unique_name,
+                         )
+                         dims_lines.append(f'  {alias}."{emitted_name}" AS {alias}."{phys}"')
                          break
                 else:
                     col = first_ds.columns[0]
                     semantic = self._sanitize_semantic_name(col.unique_name)
                     phys = self._sanitize_col_name(col.unique_name)
-                    dims_lines.append(f'  {alias}."{semantic}" AS {alias}."{phys}"')
+                    emitted_name = self._resolve_unique_dimension_alias(
+                        semantic,
+                        alias,
+                        used_dimension_aliases,
+                        col.unique_name,
+                    )
+                    dims_lines.append(f'  {alias}."{emitted_name}" AS {alias}."{phys}"')
 
         if dims_lines:
             definitions.append(

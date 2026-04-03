@@ -1,0 +1,1845 @@
+{
+  "projects": {
+    "vvcv": {
+      "id": "vvcv",
+      "project_id": "vvcv",
+      "name": "continent",
+      "description": "",
+      "source": "pbix",
+      "adapter": "pbix",
+      "workspace_id": "local",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:26:35.550866",
+      "updated_at": "2026-04-03T08:26:35.550866"
+    },
+    "fdcvbd": {
+      "id": "fdcvbd",
+      "project_id": "fdcvbd",
+      "name": "fdcvbd",
+      "description": "",
+      "source": "pbix",
+      "adapter": "pbix",
+      "workspace_id": "local",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:26:35.552380",
+      "updated_at": "2026-04-03T08:26:35.552380"
+    },
+    "be": {
+      "id": "be",
+      "project_id": "be",
+      "name": "continent",
+      "description": "",
+      "source": "pbix",
+      "adapter": "pbix",
+      "workspace_id": "local",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:26:35.553395",
+      "updated_at": "2026-04-03T08:26:35.553395"
+    },
+    "dd": {
+      "id": "dd",
+      "project_id": "dd",
+      "name": "b50fda80e8dc434a9c28c7391cd1a789_client",
+      "description": "",
+      "source": "pbix",
+      "adapter": "pbix",
+      "workspace_id": "local",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:26:35.554395",
+      "updated_at": "2026-04-03T08:26:35.554395"
+    },
+    "bbv": {
+      "id": "bbv",
+      "project_id": "bbv",
+      "name": "Device",
+      "description": "",
+      "source": "pbix",
+      "adapter": "pbix",
+      "workspace_id": "local",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:26:35.554395",
+      "updated_at": "2026-04-03T08:26:35.554395"
+    },
+    "bi": {
+      "id": "bi",
+      "project_id": "bi",
+      "name": "f912db1c159948309ffebcf5c3e816ee_client",
+      "description": "",
+      "source": "pbix",
+      "adapter": "pbix",
+      "workspace_id": "local",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:26:35.555395",
+      "updated_at": "2026-04-03T08:26:35.555395"
+    },
+    "meme": {
+      "id": "meme",
+      "project_id": "meme",
+      "name": "client",
+      "description": "",
+      "source": "pbix",
+      "adapter": "pbix",
+      "workspace_id": "local",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:26:35.555395",
+      "updated_at": "2026-04-03T08:26:35.555395"
+    },
+    "pbix": {
+      "id": "pbix",
+      "project_id": "pbix",
+      "name": "continent",
+      "description": "",
+      "source": "pbix",
+      "adapter": "pbix",
+      "workspace_id": "local",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:26:35.556397",
+      "updated_at": "2026-04-03T08:26:35.556397"
+    },
+    "hi": {
+      "id": "hi",
+      "project_id": "hi",
+      "name": "Competitive Marketing Analysis",
+      "description": "",
+      "source": "pbix",
+      "adapter": "pbix",
+      "workspace_id": "local",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:26:35.556397",
+      "updated_at": "2026-04-03T08:26:35.556397"
+    },
+    "Device": {
+      "id": "Device",
+      "project_id": "Device",
+      "name": "f",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:26:35.557396",
+      "updated_at": "2026-04-03T08:26:35.557396"
+    },
+    "Competitive Marketing Analysis": {
+      "id": "Competitive Marketing Analysis",
+      "project_id": "Competitive Marketing Analysis",
+      "name": "cc",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:26:35.559397",
+      "updated_at": "2026-04-03T08:26:35.559397"
+    },
+    "Competitive Marketing Analysis orig": {
+      "id": "Competitive Marketing Analysis orig",
+      "project_id": "Competitive Marketing Analysis orig",
+      "name": "bii",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:26:35.563930",
+      "updated_at": "2026-04-03T08:26:35.563930"
+    },
+    "client_pbix": {
+      "id": "client_pbix",
+      "project_id": "client_pbix",
+      "name": "client dataset",
+      "description": "",
+      "source": "pbix",
+      "adapter": "pbix",
+      "workspace_id": "local",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:26:35.564946",
+      "updated_at": "2026-04-03T08:26:35.564946"
+    },
+    "hh": {
+      "id": "hh",
+      "project_id": "hh",
+      "name": "continent",
+      "description": "",
+      "source": "pbix",
+      "adapter": "pbix",
+      "workspace_id": "local",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:26:35.565943",
+      "updated_at": "2026-04-03T08:26:35.565943"
+    },
+    "ff": {
+      "id": "ff",
+      "project_id": "ff",
+      "name": "client",
+      "description": "",
+      "source": "pbix",
+      "adapter": "pbix",
+      "workspace_id": "local",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:26:35.566945",
+      "updated_at": "2026-04-03T08:26:35.566945"
+    },
+    "Client Data": {
+      "id": "Client Data",
+      "project_id": "Client Data",
+      "name": "FabricModel",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:26:35.566945",
+      "updated_at": "2026-04-03T08:26:35.566945"
+    },
+    "continent": {
+      "id": "continent",
+      "project_id": "continent",
+      "name": "FabricModel",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:26:35.567943",
+      "updated_at": "2026-04-03T08:26:35.567943"
+    },
+    "d32e8900-31cc-4647-872d-08a7e62bf03b": {
+      "id": "d32e8900-31cc-4647-872d-08a7e62bf03b",
+      "project_id": "d32e8900-31cc-4647-872d-08a7e62bf03b",
+      "name": "hi njjj",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:26:35.567943",
+      "updated_at": "2026-04-03T08:26:35.567943"
+    },
+    "0794fdcc-d85f-4d93-a42c-8bacaad04819": {
+      "id": "0794fdcc-d85f-4d93-a42c-8bacaad04819",
+      "project_id": "0794fdcc-d85f-4d93-a42c-8bacaad04819",
+      "name": "FabricModel",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:26:35.568946",
+      "updated_at": "2026-04-03T08:26:35.568946"
+    },
+    "Employee": {
+      "id": "Employee",
+      "project_id": "Employee",
+      "name": "FabricModel",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "8bdf7f63-16ce-46f2-aeb1-921392b2abbb",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:26:35.569943",
+      "updated_at": "2026-04-03T08:26:35.569943"
+    },
+    "proj-1775205586474": {
+      "id": "proj-1775205586474",
+      "project_id": "proj-1775205586474",
+      "name": "pb to sf",
+      "description": "",
+      "source": "pbix",
+      "adapter": "pbix",
+      "workspace_id": "",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:39:46.474050",
+      "updated_at": "2026-04-03T08:39:54.253127"
+    },
+    "proj-1775205739819": {
+      "id": "proj-1775205739819",
+      "project_id": "proj-1775205739819",
+      "name": "dd",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "d875c0c3-59e9-4d55-a7f0-99595b756718",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T08:42:19.819474",
+      "updated_at": "2026-04-03T08:42:22.541445"
+    },
+    "proj-1775209672426": {
+      "id": "proj-1775209672426",
+      "project_id": "proj-1775209672426",
+      "name": "xx",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "d875c0c3-59e9-4d55-a7f0-99595b756718",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T09:47:52.426749",
+      "updated_at": "2026-04-03T09:47:57.797575"
+    },
+    "proj-1775209769340": {
+      "id": "proj-1775209769340",
+      "project_id": "proj-1775209769340",
+      "name": "gg",
+      "description": "",
+      "source": "pbix",
+      "adapter": "pbix",
+      "workspace_id": "",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T09:49:29.340571",
+      "updated_at": "2026-04-03T09:49:32.615831"
+    },
+    "proj-1775211292971": {
+      "id": "proj-1775211292971",
+      "project_id": "proj-1775211292971",
+      "name": "vv",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "d875c0c3-59e9-4d55-a7f0-99595b756718",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-03T10:14:52.971795",
+      "updated_at": "2026-04-03T10:14:56.263040"
+    }
+  },
+  "project_configs": {
+    "vvcv": "project_name: \"continent\"\nsource:\n  type: pbix\n  workspace_id: \"local\"\n  model: \"*\"\ntarget:\n  type: snowflake\nui:\n  output_format: \"osi\"",
+    "fdcvbd": "project_name: \"fdcvbd\"\nsource:\n  type: pbix\n  workspace_id: \"local\"\n  model: \"*\"\ntarget:\n  type: snowflake\nui:\n  output_format: \"osi\"",
+    "be": "project_name: \"continent\"\nsource:\n  type: pbix\n  workspace_id: \"local\"\n  model: \"*\"\ntarget:\n  type: snowflake\nui:\n  output_format: \"osi\"",
+    "dd": "project_name: \"b50fda80e8dc434a9c28c7391cd1a789_client\"\nsource:\n  type: pbix\n  workspace_id: \"local\"\n  model: \"*\"\ntarget:\n  type: snowflake\nui:\n  output_format: \"osi\"",
+    "bbv": "project_name: \"Device\"\nsource:\n  type: pbix\n  workspace_id: \"local\"\n  model: \"*\"\ntarget:\n  type: snowflake\nui:\n  output_format: \"osi\"",
+    "bi": "project_name: \"f912db1c159948309ffebcf5c3e816ee_client\"\nsource:\n  type: pbix\n  workspace_id: \"local\"\n  model: \"*\"\ntarget:\n  type: snowflake\nui:\n  output_format: \"osi\"",
+    "meme": "project_name: \"client\"\nsource:\n  type: pbix\n  workspace_id: \"local\"\n  model: \"*\"\ntarget:\n  type: snowflake\nui:\n  output_format: \"osi\"",
+    "pbix": "project_name: \"continent\"\nsource:\n  type: pbix\n  workspace_id: \"local\"\n  model: \"*\"\ntarget:\n  type: snowflake\nui:\n  output_format: \"osi\"",
+    "hi": "project_name: \"Competitive Marketing Analysis\"\nsource:\n  type: pbix\n  workspace_id: \"local\"\n  model: \"*\"\ntarget:\n  type: snowflake\nui:\n  output_format: \"osi\"",
+    "Device": "project_name: \"f\"\nsource:\n  type: fabric\n  workspace_id: \"8bdf7f63-16ce-46f2-aeb1-921392b2abbb\"\n  model: \"*\"\ntarget:\n  type: snowflake\nui:\n  output_format: \"osi\"",
+    "Competitive Marketing Analysis": "project_name: \"cc\"\nsource:\n  type: fabric\n  workspace_id: \"8bdf7f63-16ce-46f2-aeb1-921392b2abbb\"\n  model: \"*\"\ntarget:\n  type: snowflake\nui:\n  output_format: \"osi\"",
+    "Competitive Marketing Analysis orig": "project_name: \"bii\"\nsource:\n  type: fabric\n  workspace_id: \"8bdf7f63-16ce-46f2-aeb1-921392b2abbb\"\n  model: \"*\"\ntarget:\n  type: snowflake\nui:\n  output_format: \"osi\"",
+    "client_pbix": "project_name: \"client dataset\"\nsource:\n  type: pbix\n  workspace_id: \"local\"\n  model: \"*\"\ntarget:\n  type: snowflake\nui:\n  output_format: \"osi\"",
+    "hh": "project_name: \"continent\"\nsource:\n  type: pbix\n  workspace_id: \"local\"\n  model: \"*\"\ntarget:\n  type: snowflake\nui:\n  output_format: \"osi\"",
+    "ff": "project_name: \"client\"\nsource:\n  type: pbix\n  workspace_id: \"local\"\n  model: \"*\"\ntarget:\n  type: snowflake\nui:\n  output_format: \"osi\"",
+    "Client Data": "project_name: \"FabricModel\"\nsource:\n  type: fabric\n  workspace_id: \"8bdf7f63-16ce-46f2-aeb1-921392b2abbb\"\n  model: \"*\"\ntarget:\n  type: snowflake\nui:\n  output_format: \"osi\"",
+    "continent": "project_name: \"FabricModel\"\nsource:\n  type: fabric\n  workspace_id: \"8bdf7f63-16ce-46f2-aeb1-921392b2abbb\"\n  model: \"*\"\ntarget:\n  type: snowflake\nui:\n  output_format: \"osi\"",
+    "d32e8900-31cc-4647-872d-08a7e62bf03b": "project_name: \"hi njjj\"\nsource:\n  type: fabric\n  workspace_id: \"8bdf7f63-16ce-46f2-aeb1-921392b2abbb\"\n  model: \"*\"\ntarget:\n  type: snowflake\nui:\n  output_format: \"osi\"",
+    "0794fdcc-d85f-4d93-a42c-8bacaad04819": "project_name: \"FabricModel\"\nsource:\n  type: fabric\n  workspace_id: \"8bdf7f63-16ce-46f2-aeb1-921392b2abbb\"\n  model: \"*\"\ntarget:\n  type: snowflake\nui:\n  output_format: \"osi\"",
+    "Employee": "project_name: \"FabricModel\"\nsource:\n  type: fabric\n  workspace_id: \"8bdf7f63-16ce-46f2-aeb1-921392b2abbb\"\n  model: \"*\"\ntarget:\n  type: snowflake\nui:\n  output_format: \"osi\"",
+    "proj-1775205586474": "project_name: pb to sf\nsource:\n  type: pbix\n  pbix_path: C:/Users/Premasai/Documents/powerbi/continent.pbix\n  pbix_file_path: C:/Users/Premasai/Documents/powerbi/continent.pbix\n  local_folder_id: d46caf29-626c-482c-a5ab-e94519642f99\n  local_folder_tag: TEST\ntargets:\n  - type: snowflake\nui:\n  intermediate_format: osi\n  editor_mode: form\n  output_format: osi\noptions:\n  auto_relationships: true\n  generate_descriptions: true\ntarget:\n  type: snowflake",
+    "proj-1775205739819": "project_name: dd\nsource:\n  type: fabric\n  identity_id: 9917dd54-ff80-4e98-819a-63bd537d883f\n  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718\n  workspace: semabridge\n  models:\n    - continent\ntargets:\n  - type: snowflake\nmappings:\n  - source: continent\n    target: continent_mapped\n    type: table\n    columns:\n      - source: id\n        target: id\n        type: INT\n        primary_key: true\n      - source: name\n        target: name\n        type: VARCHAR(255)\n      - source: created_at\n        target: created_at\n        type: TIMESTAMP\n      - source: updated_at\n        target: updated_at\n        type: TIMESTAMP\nui:\n  intermediate_format: osi\n  editor_mode: form\n  output_format: osi\nselection:\n  model_ids:\n    - d32e8900-31cc-4647-872d-08a7e62bf03b\noptions:\n  auto_relationships: true\n  generate_descriptions: true\ntarget:\n  type: snowflake",
+    "proj-1775209672426": "project_name: xx\nsource:\n  type: fabric\n  identity_id: 9917dd54-ff80-4e98-819a-63bd537d883f\n  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718\n  workspace: semabridge\n  models:\n    - Core_Finance_v1\ntargets:\n  - type: snowflake\nmappings:\n  - source: Core_Finance_v1\n    target: core_finance_v1_mapped\n    type: table\n    columns:\n      - source: id\n        target: id\n        type: INT\n        primary_key: true\n      - source: name\n        target: name\n        type: VARCHAR(255)\n      - source: created_at\n        target: created_at\n        type: TIMESTAMP\n      - source: updated_at\n        target: updated_at\n        type: TIMESTAMP\nui:\n  intermediate_format: osi\n  editor_mode: form\n  output_format: osi\nselection:\n  model_ids:\n    - bbe97d8c-bf99-457f-b322-6c5e7a948171\noptions:\n  auto_relationships: true\n  generate_descriptions: true\ntarget:\n  type: snowflake",
+    "proj-1775209769340": "project_name: gg\nsource:\n  type: pbix\n  pbix_path: C:/Users/Premasai/Documents/powerbi/client.pbix\n  pbix_file_path: C:/Users/Premasai/Documents/powerbi/client.pbix\n  local_folder_id: d46caf29-626c-482c-a5ab-e94519642f99\n  local_folder_tag: TEST\ntargets:\n  - type: snowflake\nui:\n  intermediate_format: osi\n  editor_mode: form\n  output_format: osi\noptions:\n  auto_relationships: true\n  generate_descriptions: true\ntarget:\n  type: snowflake",
+    "proj-1775211292971": "project_name: vv\nsource:\n  type: fabric\n  identity_id: 9917dd54-ff80-4e98-819a-63bd537d883f\n  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718\n  workspace: semabridge\n  models:\n    - continent\ntargets:\n  - type: snowflake\nmappings:\n  - source: continent\n    target: continent_mapped\n    type: table\n    columns:\n      - source: id\n        target: id\n        type: INT\n        primary_key: true\n      - source: name\n        target: name\n        type: VARCHAR(255)\n      - source: created_at\n        target: created_at\n        type: TIMESTAMP\n      - source: updated_at\n        target: updated_at\n        type: TIMESTAMP\nui:\n  intermediate_format: osi\n  editor_mode: form\n  output_format: osi\nselection:\n  model_ids:\n    - d32e8900-31cc-4647-872d-08a7e62bf03b\noptions:\n  auto_relationships: true\n  generate_descriptions: true\ntarget:\n  type: snowflake"
+  },
+  "project_runs": {
+    "vvcv": [],
+    "fdcvbd": [],
+    "be": [],
+    "dd": [],
+    "bbv": [],
+    "bi": [],
+    "meme": [
+      {
+        "run_id": "run-1775205472288",
+        "id": "run-1775205472288",
+        "project_id": "meme",
+        "project_name": "client",
+        "schedule": "Manual",
+        "status": "failed",
+        "source_type": "pbix",
+        "message": "400: No .pbix file found for model ''. Ensure a .pbix file exists in source.pbix_folder or set source.pbix_path.",
+        "logs": [
+          "ERROR Execution failed: 400: No .pbix file found for model ''. Ensure a .pbix file exists in source.pbix_folder or set source.pbix_path."
+        ],
+        "stage_states": [
+          {
+            "id": "extraction",
+            "label": "Extraction",
+            "status": "failed"
+          },
+          {
+            "id": "osi_conversion",
+            "label": "OSI Conversion",
+            "status": "pending"
+          },
+          {
+            "id": "sml_generation",
+            "label": "SML Generation",
+            "status": "pending"
+          },
+          {
+            "id": "snowflake_deployment",
+            "label": "Snowflake Deployment",
+            "status": "pending"
+          }
+        ],
+        "duration_ms": 0,
+        "started_at": "2026-04-03T08:37:52.290914",
+        "error": "400: No .pbix file found for model ''. Ensure a .pbix file exists in source.pbix_folder or set source.pbix_path."
+      }
+    ],
+    "pbix": [
+      {
+        "run_id": "run-1775209744793",
+        "id": "run-1775209744793",
+        "project_id": "pbix",
+        "project_name": "continent",
+        "schedule": "Manual",
+        "status": "failed",
+        "source_type": "pbix",
+        "message": "400: No .pbix file found for model ''. Ensure a .pbix file exists in source.pbix_folder or set source.pbix_path.",
+        "logs": [
+          "ERROR Execution failed: 400: No .pbix file found for model ''. Ensure a .pbix file exists in source.pbix_folder or set source.pbix_path."
+        ],
+        "stage_states": [
+          {
+            "id": "extraction",
+            "label": "Extraction",
+            "status": "failed"
+          },
+          {
+            "id": "osi_conversion",
+            "label": "OSI Conversion",
+            "status": "pending"
+          },
+          {
+            "id": "sml_generation",
+            "label": "SML Generation",
+            "status": "pending"
+          },
+          {
+            "id": "snowflake_deployment",
+            "label": "Snowflake Deployment",
+            "status": "pending"
+          }
+        ],
+        "duration_ms": 0,
+        "started_at": "2026-04-03T09:49:04.794839",
+        "error": "400: No .pbix file found for model ''. Ensure a .pbix file exists in source.pbix_folder or set source.pbix_path."
+      }
+    ],
+    "hi": [],
+    "Device": [],
+    "Competitive Marketing Analysis": [],
+    "Competitive Marketing Analysis orig": [],
+    "client_pbix": [],
+    "hh": [],
+    "ff": [],
+    "Client Data": [],
+    "continent": [],
+    "d32e8900-31cc-4647-872d-08a7e62bf03b": [
+      {
+        "run_id": "run-1775211247201",
+        "id": "run-1775211247201",
+        "project_id": "d32e8900-31cc-4647-872d-08a7e62bf03b",
+        "project_name": "hi njjj",
+        "schedule": "Manual",
+        "status": "failed",
+        "source_type": "fabric",
+        "message": "400: No models specified in source.models",
+        "logs": [
+          "ERROR Execution failed: 400: No models specified in source.models"
+        ],
+        "stage_states": [
+          {
+            "id": "extraction",
+            "label": "Extraction",
+            "status": "failed"
+          },
+          {
+            "id": "osi_conversion",
+            "label": "OSI Conversion",
+            "status": "pending"
+          },
+          {
+            "id": "sml_generation",
+            "label": "SML Generation",
+            "status": "pending"
+          },
+          {
+            "id": "snowflake_deployment",
+            "label": "Snowflake Deployment",
+            "status": "pending"
+          }
+        ],
+        "duration_ms": 0,
+        "started_at": "2026-04-03T10:14:07.203693",
+        "error": "400: No models specified in source.models"
+      },
+      {
+        "run_id": "run-1775211245525",
+        "id": "run-1775211245525",
+        "project_id": "d32e8900-31cc-4647-872d-08a7e62bf03b",
+        "project_name": "hi njjj",
+        "schedule": "Manual",
+        "status": "failed",
+        "source_type": "fabric",
+        "message": "400: No models specified in source.models",
+        "logs": [
+          "ERROR Execution failed: 400: No models specified in source.models"
+        ],
+        "stage_states": [
+          {
+            "id": "extraction",
+            "label": "Extraction",
+            "status": "failed"
+          },
+          {
+            "id": "osi_conversion",
+            "label": "OSI Conversion",
+            "status": "pending"
+          },
+          {
+            "id": "sml_generation",
+            "label": "SML Generation",
+            "status": "pending"
+          },
+          {
+            "id": "snowflake_deployment",
+            "label": "Snowflake Deployment",
+            "status": "pending"
+          }
+        ],
+        "duration_ms": 0,
+        "started_at": "2026-04-03T10:14:05.529490",
+        "error": "400: No models specified in source.models"
+      }
+    ],
+    "0794fdcc-d85f-4d93-a42c-8bacaad04819": [],
+    "Employee": [],
+    "proj-1775205586474": [
+      {
+        "run_id": "run-1775205594294",
+        "id": "run-1775205594294",
+        "project_id": "proj-1775205586474",
+        "project_name": "pb to sf",
+        "schedule": "Manual",
+        "status": "success",
+        "source_type": "pbix",
+        "message": "Execution completed successfully.",
+        "logs": [
+          "SUCCESS Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS Stage 3: Resolve Authentication - Authentication resolved",
+          "SUCCESS Stage 4: Extract from Source - Extracted 1 tables from continent.pbix",
+          "SUCCESS Stage 5: Validate & Parse Source Format - Source format valid",
+          "SUCCESS Stage 6: Convert to Canonical SML - 2 datasets, 2 metrics (via OSI)",
+          "SUCCESS Stage 7: Persist Artifacts - Snapshot 657e6e7a... committed",
+          "SUCCESS Stage 8: Convert to Target Format - Target format generated",
+          "SUCCESS Stage 9: Deploy to Target - Deployment complete",
+          "SUCCESS Stage 10: Finalize Run - Status: SUCCESS",
+          "SUCCESS [continent] Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS [continent] Stage 3: Resolve Authentication - Authentication resolved",
+          "SUCCESS [continent] Stage 4: Extract from Source - Extracted 1 tables from continent.pbix",
+          "SUCCESS [continent] Stage 5: Validate & Parse Source Format - Source format valid",
+          "SUCCESS [continent] Stage 6: Convert to Canonical SML - 2 datasets, 2 metrics (via OSI)",
+          "SUCCESS [continent] Stage 7: Persist Artifacts - Snapshot 657e6e7a... committed",
+          "SUCCESS [continent] Stage 8: Convert to Target Format - Target format generated",
+          "SUCCESS [continent] Stage 9: Deploy to Target - Deployment complete",
+          "SUCCESS [continent] Stage 10: Finalize Run - Status: SUCCESS"
+        ],
+        "stage_states": [
+          {
+            "id": "extraction",
+            "label": "Extraction",
+            "status": "success"
+          },
+          {
+            "id": "osi_conversion",
+            "label": "OSI Conversion",
+            "status": "success"
+          },
+          {
+            "id": "sml_generation",
+            "label": "SML Generation",
+            "status": "success"
+          },
+          {
+            "id": "snowflake_deployment",
+            "label": "Snowflake Deployment",
+            "status": "success"
+          }
+        ],
+        "duration_ms": 34517,
+        "started_at": "2026-04-03T08:39:54.296358",
+        "summary": {
+          "project_id": "continent",
+          "run_id": "43197da8-a08f-443e-b706-e7286ac1ad11",
+          "status": "SUCCESS",
+          "started_at": "2026-04-03T08:39:54.438522",
+          "completed_at": "2026-04-03T08:40:28.428229",
+          "duration_ms": 33989,
+          "source_type": "pbix",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T08:39:54.438522",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T08:39:54.452319",
+              "duration_ms": null,
+              "message": "Authentication resolved",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T08:39:54.974884",
+              "duration_ms": null,
+              "message": "Extracted 1 tables from continent.pbix",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T08:39:54.974884",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T08:39:59.358492",
+              "duration_ms": null,
+              "message": "2 datasets, 2 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T08:39:59.472649",
+              "duration_ms": null,
+              "message": "Snapshot 657e6e7a... committed",
+              "artifact_ids": [
+                "657e6e7a-3d80-4f05-afe6-7785658cf5c6",
+                "895d2205-71fa-497f-9482-cee0b97b2c73"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T08:39:59.486189",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T08:40:28.428229",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T08:40:28.428229",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "895d2205-71fa-497f-9482-cee0b97b2c73",
+          "sml_snapshot_id": "657e6e7a-3d80-4f05-afe6-7785658cf5c6",
+          "target_artifact_path": "output\\reverse\\continent\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "continent",
+            "status": "success",
+            "summary": {
+              "project_id": "continent",
+              "run_id": "43197da8-a08f-443e-b706-e7286ac1ad11",
+              "status": "SUCCESS",
+              "started_at": "2026-04-03T08:39:54.438522",
+              "completed_at": "2026-04-03T08:40:28.428229",
+              "duration_ms": 33989,
+              "source_type": "pbix",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T08:39:54.438522",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T08:39:54.452319",
+                  "duration_ms": null,
+                  "message": "Authentication resolved",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T08:39:54.974884",
+                  "duration_ms": null,
+                  "message": "Extracted 1 tables from continent.pbix",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T08:39:54.974884",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T08:39:59.358492",
+                  "duration_ms": null,
+                  "message": "2 datasets, 2 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T08:39:59.472649",
+                  "duration_ms": null,
+                  "message": "Snapshot 657e6e7a... committed",
+                  "artifact_ids": [
+                    "657e6e7a-3d80-4f05-afe6-7785658cf5c6",
+                    "895d2205-71fa-497f-9482-cee0b97b2c73"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T08:39:59.486189",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T08:40:28.428229",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T08:40:28.428229",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "895d2205-71fa-497f-9482-cee0b97b2c73",
+              "sml_snapshot_id": "657e6e7a-3d80-4f05-afe6-7785658cf5c6",
+              "target_artifact_path": "output\\reverse\\continent\\semantic_view.sql",
+              "errors": []
+            },
+            "console": {
+              "lines": [
+                "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated",
+                "[SUCCESS] Step 3: Resolve Authentication - Authentication resolved",
+                "[SUCCESS] Step 4: Extract from Source - Extracted 1 tables from continent.pbix",
+                "[SUCCESS] Step 5: Validate & Parse Source Format - Source format valid",
+                "[SUCCESS] Step 6: Convert to Canonical SML - 2 datasets, 2 metrics (via OSI)",
+                "[SUCCESS] Step 7: Persist Artifacts - Snapshot 657e6e7a... committed",
+                "[SUCCESS] Step 8: Convert to Target Format - Target format generated",
+                "[SUCCESS] Step 9: Deploy to Target - Deployment complete",
+                "[SUCCESS] Step 10: Finalize Run - Status: SUCCESS"
+              ],
+              "text": "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated\n[SUCCESS] Step 3: Resolve Authentication - Authentication resolved\n[SUCCESS] Step 4: Extract from Source - Extracted 1 tables from continent.pbix\n[SUCCESS] Step 5: Validate & Parse Source Format - Source format valid\n[SUCCESS] Step 6: Convert to Canonical SML - 2 datasets, 2 metrics (via OSI)\n[SUCCESS] Step 7: Persist Artifacts - Snapshot 657e6e7a... committed\n[SUCCESS] Step 8: Convert to Target Format - Target format generated\n[SUCCESS] Step 9: Deploy to Target - Deployment complete\n[SUCCESS] Step 10: Finalize Run - Status: SUCCESS"
+            },
+            "run_id": "43197da8-a08f-443e-b706-e7286ac1ad11"
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      }
+    ],
+    "proj-1775205739819": [
+      {
+        "run_id": "run-1775205742582",
+        "id": "run-1775205742582",
+        "project_id": "proj-1775205739819",
+        "project_name": "dd",
+        "schedule": "Manual",
+        "status": "failed",
+        "source_type": "fabric",
+        "message": "Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+        "logs": [
+          "SUCCESS Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS Stage 3: Resolve Authentication - Authentication resolved from UI token",
+          "FAILED Stage 4: Extract from Source - Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+          "SUCCESS Stage 10: Finalize Run - Status: FAILED",
+          "ERROR Stage 4 (Extract from Source) - Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+          "SUCCESS [continent] Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS [continent] Stage 3: Resolve Authentication - Authentication resolved from UI token",
+          "FAILED [continent] Stage 4: Extract from Source - Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+          "SUCCESS [continent] Stage 10: Finalize Run - Status: FAILED",
+          "ERROR [continent] Stage 4 (Extract from Source) - Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models."
+        ],
+        "stage_states": [
+          {
+            "id": "extraction",
+            "label": "Extraction",
+            "status": "failed"
+          },
+          {
+            "id": "osi_conversion",
+            "label": "OSI Conversion",
+            "status": "pending"
+          },
+          {
+            "id": "sml_generation",
+            "label": "SML Generation",
+            "status": "pending"
+          },
+          {
+            "id": "snowflake_deployment",
+            "label": "Snowflake Deployment",
+            "status": "pending"
+          }
+        ],
+        "duration_ms": 2177,
+        "started_at": "2026-04-03T08:42:22.590563",
+        "summary": {
+          "project_id": "continent",
+          "run_id": "6b5620ea-ce6b-4e08-ac0e-e6caf313543f",
+          "status": "FAILED",
+          "started_at": "2026-04-03T08:42:22.722694",
+          "completed_at": "2026-04-03T08:42:24.760651",
+          "duration_ms": 2037,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T08:42:22.722694",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T08:42:22.748277",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-04-03T08:42:24.757533",
+              "duration_ms": null,
+              "message": "Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T08:42:24.760651",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "error_type": "ExtractionError",
+              "message": "Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 704, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1082, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 149, in resolve_model_id\n    raise FabricExtractionError(\nsemabridge.connectors.fabric_extractor.FabricExtractionError: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 305, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 712, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "continent",
+            "status": "failed",
+            "summary": {
+              "project_id": "continent",
+              "run_id": "6b5620ea-ce6b-4e08-ac0e-e6caf313543f",
+              "status": "FAILED",
+              "started_at": "2026-04-03T08:42:22.722694",
+              "completed_at": "2026-04-03T08:42:24.760651",
+              "duration_ms": 2037,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T08:42:22.722694",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T08:42:22.748277",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T08:42:24.757533",
+                  "duration_ms": null,
+                  "message": "Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T08:42:24.760651",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "error_type": "ExtractionError",
+                  "message": "Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 704, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1082, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 149, in resolve_model_id\n    raise FabricExtractionError(\nsemabridge.connectors.fabric_extractor.FabricExtractionError: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 305, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 712, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.\n"
+                }
+              ]
+            },
+            "console": {
+              "lines": [
+                "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated",
+                "[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from UI token",
+                "[FAILED] Step 4: Extract from Source - Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+                "[SUCCESS] Step 10: Finalize Run - Status: FAILED",
+                "[ERROR] Step 4: Extract from Source - Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models."
+              ],
+              "text": "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated\n[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from UI token\n[FAILED] Step 4: Extract from Source - Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.\n[SUCCESS] Step 10: Finalize Run - Status: FAILED\n[ERROR] Step 4: Extract from Source - Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models."
+            },
+            "run_id": "6b5620ea-ce6b-4e08-ac0e-e6caf313543f"
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      }
+    ],
+    "proj-1775209672426": [
+      {
+        "run_id": "run-1775209677832",
+        "id": "run-1775209677832",
+        "project_id": "proj-1775209672426",
+        "project_name": "xx",
+        "schedule": "Manual",
+        "status": "failed",
+        "source_type": "fabric",
+        "message": "Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+        "logs": [
+          "SUCCESS Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS Stage 3: Resolve Authentication - Authentication resolved from UI token",
+          "FAILED Stage 4: Extract from Source - Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+          "SUCCESS Stage 10: Finalize Run - Status: FAILED",
+          "ERROR Stage 4 (Extract from Source) - Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+          "SUCCESS [Core_Finance_v1] Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS [Core_Finance_v1] Stage 3: Resolve Authentication - Authentication resolved from UI token",
+          "FAILED [Core_Finance_v1] Stage 4: Extract from Source - Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+          "SUCCESS [Core_Finance_v1] Stage 10: Finalize Run - Status: FAILED",
+          "ERROR [Core_Finance_v1] Stage 4 (Extract from Source) - Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models."
+        ],
+        "stage_states": [
+          {
+            "id": "extraction",
+            "label": "Extraction",
+            "status": "failed"
+          },
+          {
+            "id": "osi_conversion",
+            "label": "OSI Conversion",
+            "status": "pending"
+          },
+          {
+            "id": "sml_generation",
+            "label": "SML Generation",
+            "status": "pending"
+          },
+          {
+            "id": "snowflake_deployment",
+            "label": "Snowflake Deployment",
+            "status": "pending"
+          }
+        ],
+        "duration_ms": 1547,
+        "started_at": "2026-04-03T09:47:57.842569",
+        "summary": {
+          "project_id": "Core_Finance_v1",
+          "run_id": "f5520437-e510-4aa0-bda2-25054788dd83",
+          "status": "FAILED",
+          "started_at": "2026-04-03T09:47:57.983400",
+          "completed_at": "2026-04-03T09:47:59.378989",
+          "duration_ms": 1395,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T09:47:57.983400",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T09:47:58.011587",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-04-03T09:47:59.371116",
+              "duration_ms": null,
+              "message": "Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T09:47:59.378989",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "error_type": "ExtractionError",
+              "message": "Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 704, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1082, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 149, in resolve_model_id\n    raise FabricExtractionError(\nsemabridge.connectors.fabric_extractor.FabricExtractionError: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 305, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 712, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Core_Finance_v1",
+            "status": "failed",
+            "summary": {
+              "project_id": "Core_Finance_v1",
+              "run_id": "f5520437-e510-4aa0-bda2-25054788dd83",
+              "status": "FAILED",
+              "started_at": "2026-04-03T09:47:57.983400",
+              "completed_at": "2026-04-03T09:47:59.378989",
+              "duration_ms": 1395,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T09:47:57.983400",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T09:47:58.011587",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T09:47:59.371116",
+                  "duration_ms": null,
+                  "message": "Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T09:47:59.378989",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "error_type": "ExtractionError",
+                  "message": "Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 704, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1082, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 149, in resolve_model_id\n    raise FabricExtractionError(\nsemabridge.connectors.fabric_extractor.FabricExtractionError: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 305, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 712, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.\n"
+                }
+              ]
+            },
+            "console": {
+              "lines": [
+                "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated",
+                "[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from UI token",
+                "[FAILED] Step 4: Extract from Source - Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+                "[SUCCESS] Step 10: Finalize Run - Status: FAILED",
+                "[ERROR] Step 4: Extract from Source - Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models."
+              ],
+              "text": "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated\n[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from UI token\n[FAILED] Step 4: Extract from Source - Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.\n[SUCCESS] Step 10: Finalize Run - Status: FAILED\n[ERROR] Step 4: Extract from Source - Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models."
+            },
+            "run_id": "f5520437-e510-4aa0-bda2-25054788dd83"
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      }
+    ],
+    "proj-1775209769340": [
+      {
+        "run_id": "run-1775209772653",
+        "id": "run-1775209772653",
+        "project_id": "proj-1775209769340",
+        "project_name": "gg",
+        "schedule": "Manual",
+        "status": "success",
+        "source_type": "pbix",
+        "message": "Execution completed successfully.",
+        "logs": [
+          "SUCCESS Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS Stage 3: Resolve Authentication - Authentication resolved",
+          "SUCCESS Stage 4: Extract from Source - Extracted 114 tables from client.pbix",
+          "SUCCESS Stage 5: Validate & Parse Source Format - Source format valid",
+          "SUCCESS Stage 6: Convert to Canonical SML - 26 datasets, 0 metrics (via OSI)",
+          "SUCCESS Stage 7: Persist Artifacts - Snapshot ddc92ce2... committed",
+          "SUCCESS Stage 8: Convert to Target Format - Target format generated",
+          "SUCCESS Stage 9: Deploy to Target - Deployment complete",
+          "SUCCESS Stage 10: Finalize Run - Status: SUCCESS",
+          "SUCCESS [client] Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS [client] Stage 3: Resolve Authentication - Authentication resolved",
+          "SUCCESS [client] Stage 4: Extract from Source - Extracted 114 tables from client.pbix",
+          "SUCCESS [client] Stage 5: Validate & Parse Source Format - Source format valid",
+          "SUCCESS [client] Stage 6: Convert to Canonical SML - 26 datasets, 0 metrics (via OSI)",
+          "SUCCESS [client] Stage 7: Persist Artifacts - Snapshot ddc92ce2... committed",
+          "SUCCESS [client] Stage 8: Convert to Target Format - Target format generated",
+          "SUCCESS [client] Stage 9: Deploy to Target - Deployment complete",
+          "SUCCESS [client] Stage 10: Finalize Run - Status: SUCCESS"
+        ],
+        "stage_states": [
+          {
+            "id": "extraction",
+            "label": "Extraction",
+            "status": "success"
+          },
+          {
+            "id": "osi_conversion",
+            "label": "OSI Conversion",
+            "status": "success"
+          },
+          {
+            "id": "sml_generation",
+            "label": "SML Generation",
+            "status": "success"
+          },
+          {
+            "id": "snowflake_deployment",
+            "label": "Snowflake Deployment",
+            "status": "success"
+          }
+        ],
+        "duration_ms": 141071,
+        "started_at": "2026-04-03T09:49:32.658841",
+        "summary": {
+          "project_id": "client",
+          "run_id": "7aa45b56-b25b-42a4-9346-33a445ad5658",
+          "status": "SUCCESS",
+          "started_at": "2026-04-03T09:49:32.753484",
+          "completed_at": "2026-04-03T09:51:53.636550",
+          "duration_ms": 140883,
+          "source_type": "pbix",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T09:49:32.753484",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T09:49:32.769999",
+              "duration_ms": null,
+              "message": "Authentication resolved",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T09:49:34.682705",
+              "duration_ms": null,
+              "message": "Extracted 114 tables from client.pbix",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T09:49:34.682705",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T09:49:34.780469",
+              "duration_ms": null,
+              "message": "26 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T09:49:34.935564",
+              "duration_ms": null,
+              "message": "Snapshot ddc92ce2... committed",
+              "artifact_ids": [
+                "ddc92ce2-934c-49ed-8317-c2e4b4e774da",
+                "0cecf969-5754-4140-87c4-818a451cccc3"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T09:49:35.285525",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T09:51:53.636550",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T09:51:53.636550",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "0cecf969-5754-4140-87c4-818a451cccc3",
+          "sml_snapshot_id": "ddc92ce2-934c-49ed-8317-c2e4b4e774da",
+          "target_artifact_path": "output\\reverse\\client\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "client",
+            "status": "success",
+            "summary": {
+              "project_id": "client",
+              "run_id": "7aa45b56-b25b-42a4-9346-33a445ad5658",
+              "status": "SUCCESS",
+              "started_at": "2026-04-03T09:49:32.753484",
+              "completed_at": "2026-04-03T09:51:53.636550",
+              "duration_ms": 140883,
+              "source_type": "pbix",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T09:49:32.753484",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T09:49:32.769999",
+                  "duration_ms": null,
+                  "message": "Authentication resolved",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T09:49:34.682705",
+                  "duration_ms": null,
+                  "message": "Extracted 114 tables from client.pbix",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T09:49:34.682705",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T09:49:34.780469",
+                  "duration_ms": null,
+                  "message": "26 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T09:49:34.935564",
+                  "duration_ms": null,
+                  "message": "Snapshot ddc92ce2... committed",
+                  "artifact_ids": [
+                    "ddc92ce2-934c-49ed-8317-c2e4b4e774da",
+                    "0cecf969-5754-4140-87c4-818a451cccc3"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T09:49:35.285525",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T09:51:53.636550",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T09:51:53.636550",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "0cecf969-5754-4140-87c4-818a451cccc3",
+              "sml_snapshot_id": "ddc92ce2-934c-49ed-8317-c2e4b4e774da",
+              "target_artifact_path": "output\\reverse\\client\\semantic_view.sql",
+              "errors": []
+            },
+            "console": {
+              "lines": [
+                "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated",
+                "[SUCCESS] Step 3: Resolve Authentication - Authentication resolved",
+                "[SUCCESS] Step 4: Extract from Source - Extracted 114 tables from client.pbix",
+                "[SUCCESS] Step 5: Validate & Parse Source Format - Source format valid",
+                "[SUCCESS] Step 6: Convert to Canonical SML - 26 datasets, 0 metrics (via OSI)",
+                "[SUCCESS] Step 7: Persist Artifacts - Snapshot ddc92ce2... committed",
+                "[SUCCESS] Step 8: Convert to Target Format - Target format generated",
+                "[SUCCESS] Step 9: Deploy to Target - Deployment complete",
+                "[SUCCESS] Step 10: Finalize Run - Status: SUCCESS"
+              ],
+              "text": "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated\n[SUCCESS] Step 3: Resolve Authentication - Authentication resolved\n[SUCCESS] Step 4: Extract from Source - Extracted 114 tables from client.pbix\n[SUCCESS] Step 5: Validate & Parse Source Format - Source format valid\n[SUCCESS] Step 6: Convert to Canonical SML - 26 datasets, 0 metrics (via OSI)\n[SUCCESS] Step 7: Persist Artifacts - Snapshot ddc92ce2... committed\n[SUCCESS] Step 8: Convert to Target Format - Target format generated\n[SUCCESS] Step 9: Deploy to Target - Deployment complete\n[SUCCESS] Step 10: Finalize Run - Status: SUCCESS"
+            },
+            "run_id": "7aa45b56-b25b-42a4-9346-33a445ad5658"
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      }
+    ],
+    "proj-1775211292971": [
+      {
+        "run_id": "run-1775211296289",
+        "id": "run-1775211296289",
+        "project_id": "proj-1775211292971",
+        "project_name": "vv",
+        "schedule": "Manual",
+        "status": "failed",
+        "source_type": "fabric",
+        "message": "Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+        "logs": [
+          "SUCCESS Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS Stage 3: Resolve Authentication - Authentication resolved from UI token",
+          "FAILED Stage 4: Extract from Source - Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+          "SUCCESS Stage 10: Finalize Run - Status: FAILED",
+          "ERROR Stage 4 (Extract from Source) - Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+          "SUCCESS [continent] Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS [continent] Stage 3: Resolve Authentication - Authentication resolved from UI token",
+          "FAILED [continent] Stage 4: Extract from Source - Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+          "SUCCESS [continent] Stage 10: Finalize Run - Status: FAILED",
+          "ERROR [continent] Stage 4 (Extract from Source) - Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models."
+        ],
+        "stage_states": [
+          {
+            "id": "extraction",
+            "label": "Extraction",
+            "status": "failed"
+          },
+          {
+            "id": "osi_conversion",
+            "label": "OSI Conversion",
+            "status": "pending"
+          },
+          {
+            "id": "sml_generation",
+            "label": "SML Generation",
+            "status": "pending"
+          },
+          {
+            "id": "snowflake_deployment",
+            "label": "Snowflake Deployment",
+            "status": "pending"
+          }
+        ],
+        "duration_ms": 2315,
+        "started_at": "2026-04-03T10:14:56.296019",
+        "summary": {
+          "project_id": "continent",
+          "run_id": "542e9341-31f8-46a5-a40f-ab486d435cb9",
+          "status": "FAILED",
+          "started_at": "2026-04-03T10:14:56.403773",
+          "completed_at": "2026-04-03T10:14:58.362158",
+          "duration_ms": 1958,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T10:14:56.403773",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T10:14:56.422881",
+              "duration_ms": null,
+              "message": "Authentication resolved from UI token",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-04-03T10:14:58.357621",
+              "duration_ms": null,
+              "message": "Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-03T10:14:58.362158",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": null,
+          "sml_snapshot_id": null,
+          "target_artifact_path": null,
+          "errors": [
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "error_type": "ExtractionError",
+              "message": "Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 704, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1082, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 150, in resolve_model_id\n    raise FabricExtractionError(\nsemabridge.connectors.fabric_extractor.FabricExtractionError: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 305, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 712, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "continent",
+            "status": "failed",
+            "summary": {
+              "project_id": "continent",
+              "run_id": "542e9341-31f8-46a5-a40f-ab486d435cb9",
+              "status": "FAILED",
+              "started_at": "2026-04-03T10:14:56.403773",
+              "completed_at": "2026-04-03T10:14:58.362158",
+              "duration_ms": 1958,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T10:14:56.403773",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T10:14:56.422881",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from UI token",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T10:14:58.357621",
+                  "duration_ms": null,
+                  "message": "Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-03T10:14:58.362158",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": null,
+              "sml_snapshot_id": null,
+              "target_artifact_path": null,
+              "errors": [
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "error_type": "ExtractionError",
+                  "message": "Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 704, in _step4_extract\n    return self._extract_fabric(context, dataset_id, workspace_id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1082, in _extract_fabric\n    resolved_dataset_id = extractor.resolve_model_id(dataset_id)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\fabric_extractor.py\", line 150, in resolve_model_id\n    raise FabricExtractionError(\nsemabridge.connectors.fabric_extractor.FabricExtractionError: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 305, in execute\n    source_format = self._step4_extract(\n                    ^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 712, in _step4_extract\n    raise ExtractionError(f\"Extraction failed: {e}\") from e\nsemabridge.core.execution_engine.ExtractionError: Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.\n"
+                }
+              ]
+            },
+            "console": {
+              "lines": [
+                "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated",
+                "[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from UI token",
+                "[FAILED] Step 4: Extract from Source - Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.",
+                "[SUCCESS] Step 10: Finalize Run - Status: FAILED",
+                "[ERROR] Step 4: Extract from Source - Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models."
+              ],
+              "text": "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated\n[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from UI token\n[FAILED] Step 4: Extract from Source - Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models.\n[SUCCESS] Step 10: Finalize Run - Status: FAILED\n[ERROR] Step 4: Extract from Source - Extraction failed: Workspace '8bdf7f63-16ce-46f2-aeb1-921392b2abbb' has no semantic models available. Please ensure the workspace contains Power BI semantic models or data items. Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models."
+            },
+            "run_id": "542e9341-31f8-46a5-a40f-ab486d435cb9"
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      }
+    ]
+  },
+  "folders": {},
+  "mappings": {
+    "default-map-1": {
+      "id": "default-map-1",
+      "project_id": "default",
+      "source_field": "transaction_id",
+      "source_type": "uuid",
+      "target_field": "txn_id",
+      "target_type": "varchar",
+      "status": "auto",
+      "transform": "",
+      "validation": "None"
+    },
+    "default-map-2": {
+      "id": "default-map-2",
+      "project_id": "default",
+      "source_field": "amount",
+      "source_type": "decimal",
+      "target_field": "sale_amount",
+      "target_type": "float",
+      "status": "auto",
+      "transform": "",
+      "validation": "None"
+    },
+    "default-map-3": {
+      "id": "default-map-3",
+      "project_id": "default",
+      "source_field": "customer_ref",
+      "source_type": "string",
+      "target_field": "customer_key",
+      "target_type": "varchar",
+      "status": "auto",
+      "transform": "",
+      "validation": "None"
+    },
+    "default-map-4": {
+      "id": "default-map-4",
+      "project_id": "default",
+      "source_field": "created_at",
+      "source_type": "timestamp",
+      "target_field": "sale_date",
+      "target_type": "date",
+      "status": "auto",
+      "transform": "",
+      "validation": "None"
+    },
+    "default-map-5": {
+      "id": "default-map-5",
+      "project_id": "default",
+      "source_field": "status_code",
+      "source_type": "integer",
+      "target_field": "order_status",
+      "target_type": "integer",
+      "status": "auto",
+      "transform": "",
+      "validation": "None"
+    },
+    "default-map-6": {
+      "id": "default-map-6",
+      "project_id": "default",
+      "source_field": "contact_email",
+      "source_type": "string",
+      "target_field": "email_address",
+      "target_type": "varchar",
+      "status": "auto",
+      "transform": "",
+      "validation": "None"
+    },
+    "default-map-7": {
+      "id": "default-map-7",
+      "project_id": "default",
+      "source_field": "region_id",
+      "source_type": "integer",
+      "target_field": "region_key",
+      "target_type": "integer",
+      "status": "auto",
+      "transform": "",
+      "validation": "None"
+    }
+  },
+  "project_schedules": {},
+  "job_config": {
+    "schedule_type": "Manual Trigger Only",
+    "cron": "0 0 * * *",
+    "timezone": "UTC",
+    "enabled": false,
+    "mode": "local"
+  }
+}

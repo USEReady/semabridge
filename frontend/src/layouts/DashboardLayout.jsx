@@ -1,4 +1,4 @@
-import { createElement, useState } from 'react';
+import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   Map, FolderOpen, PlayCircle, Settings, GitBranch,
@@ -26,6 +26,29 @@ const NAV_ITEMS = [
   { to: '/settings',      label: 'Settings',        icon: Settings },
 ];
 
+function SidebarNavIcon({ icon: Icon, active }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 20,
+        height: 20,
+        flexShrink: 0,
+        color: active ? 'var(--accent-blue)' : 'var(--text-secondary)',
+      }}
+    >
+      <Icon
+        size={18}
+        strokeWidth={active ? 2.5 : 2}
+        style={{ pointerEvents: 'none' }}
+      />
+    </span>
+  );
+}
+
 export default function DashboardLayout() {
   const { user, logout } = useAuth();
   const { logs } = useLogs();
@@ -33,6 +56,7 @@ export default function DashboardLayout() {
   const collapsed = useUIStore(state => state.sidebarCollapsed);
   const setSidebarCollapsed = useUIStore(state => state.setSidebarCollapsed);
   const [search, setSearch] = useState('');
+  const [searchUseRegex, setSearchUseRegex] = useState(false);
 
   // Overlay panel toggles
   const [showLogs, setShowLogs] = useState(false);
@@ -120,11 +144,7 @@ export default function DashboardLayout() {
               >
                 {({ isActive }) => (
                   <>
-                    {createElement(icon, {
-                      size: 18,
-                      strokeWidth: isActive ? 2.5 : 2,
-                      style: { flexShrink: 0, color: isActive ? 'var(--accent-blue)' : 'var(--text-secondary)' },
-                    })}
+                    <SidebarNavIcon icon={icon} active={isActive} />
                     {!collapsed && (
                       <span
                         className="text-sm font-medium"
@@ -267,7 +287,13 @@ export default function DashboardLayout() {
           >
             <SearchInput
               value={search}
-              onChange={setSearch}
+              onChange={(next) => {
+                setSearch(next);
+                setShowCommandPalette(true);
+              }}
+              useRegex={searchUseRegex}
+              onToggleRegex={setSearchUseRegex}
+              allowRegex
               placeholder="Search… (Ctrl+K)"
               width={240}
               onFocus={() => setShowCommandPalette(true)}
@@ -371,6 +397,10 @@ export default function DashboardLayout() {
         isOpen={showCommandPalette}
         onClose={() => setShowCommandPalette(false)}
         onAction={handlePaletteAction}
+        queryValue={search}
+        onQueryChange={setSearch}
+        useRegexValue={searchUseRegex}
+        onUseRegexChange={setSearchUseRegex}
       />
     </div>
   );

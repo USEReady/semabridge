@@ -63,6 +63,40 @@ class LocalPBIXConnector(BaseConnector):
         self._data_model_schema: Optional[Dict[str, Any]] = None
         self._connections: Optional[List[Dict[str, Any]]] = None
 
+    def extract(self) -> Dict[str, Any]:
+        """Extract raw PBIX semantic-model metadata as Fabric-like TMSL.
+
+        Returns:
+            A dictionary shaped like the Fabric model-definition payload:
+            ``{"model": {...}}``.
+
+        Raises:
+            PBIXParsingError: If the PBIX file is missing, corrupt, or the
+                semantic model cannot be parsed into a valid JSON/TMSL payload.
+        """
+        self.authenticate()
+        self._open_archive()
+        try:
+            schema = self._extract_data_model_schema()
+            if not schema:
+                raise PBIXParsingError(
+                    "PBIX archive does not contain a readable DataModel/DataModelSchema payload",
+                    pbix_path=str(self._pbix_path),
+                )
+
+            model_payload = schema["model"] if "model" in schema and isinstance(schema["model"], dict) else schema
+            raw_tmsl = {"model": model_payload}
+            raw_json = json.dumps(raw_tmsl, ensure_ascii=False)
+            logger.debug(
+                "PBIX raw TMSL extracted from %s (%s bytes JSON)",
+                self._pbix_path,
+                len(raw_json.encode("utf-8")),
+            )
+            self._data_model_schema = model_payload
+            return raw_tmsl
+        finally:
+            self._close_archive()
+
     def authenticate(self) -> None:
         """Validate that the .pbix file exists and is a valid ZIP archive.
 
@@ -113,6 +147,9 @@ class LocalPBIXConnector(BaseConnector):
             "relationships": [],
             "connections": [],
             "m_code": [],
+            "raw_tmsl": None,
+            "raw_tmsl_json": None,
+            "raw_model": None,
             "metadata": {
                 "source": "local_pbix",
                 "file_path": str(self._pbix_path),
@@ -131,6 +168,10 @@ class LocalPBIXConnector(BaseConnector):
 
         if schema:
             self._data_model_schema = schema
+            raw_tmsl = {"model": schema}
+            result["raw_tmsl"] = raw_tmsl
+            result["raw_tmsl_json"] = json.dumps(raw_tmsl, ensure_ascii=False)
+            result["raw_model"] = schema
             result["tables"] = self._parse_tables(schema)
             result["measures"] = self._parse_measures(schema)
             result["relationships"] = self._parse_relationships(schema)
@@ -150,6 +191,10 @@ class LocalPBIXConnector(BaseConnector):
                 result["m_code"] = fallback_result.get("m_code", [])
                 result["models"] = fallback_result.get("models", [])
                 result["metadata"]["parser"] = "pbixray"
+                fallback_tmsl = self._build_tmsl_from_fallback(result)
+                result["raw_tmsl"] = fallback_tmsl
+                result["raw_tmsl_json"] = json.dumps(fallback_tmsl, ensure_ascii=False)
+                result["raw_model"] = fallback_tmsl["model"]
             elif schema_parse_error:
                 self._close_archive()
                 raise schema_parse_error
@@ -347,6 +392,145 @@ class LocalPBIXConnector(BaseConnector):
             "m_code": m_code,
         }
 
+    def _build_tmsl_from_fallback(self, fallback_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Build a Fabric-like TMSL payload from pbixray fallback fields.
+
+        This prevents downstream conversion from seeing an empty model when
+        JSON DataModelSchema parsing fails but fallback extraction succeeds.
+        """
+        model_meta = ((fallback_result.get("models") or [{}])[0])
+        model_name = model_meta.get("name") or self._pbix_path.stem
+
+        tables_by_name: Dict[str, Dict[str, Any]] = {}
+        for table in fallback_result.get("tables", []) or []:
+            table_name = str(table.get("name", "") or "").strip()
+            if not table_name:
+                continue
+
+            table_def: Dict[str, Any] = {
+                "name": table_name,
+                "columns": [],
+                "partitions": [],
+            }
+            if table.get("description"):
+                table_def["description"] = str(table.get("description", ""))
+            if table.get("is_hidden"):
+                table_def["isHidden"] = bool(table.get("is_hidden"))
+
+            for col in table.get("columns", []) or []:
+                col_name = str(col.get("name", "") or "").strip()
+                if not col_name:
+                    continue
+                col_def: Dict[str, Any] = {
+                    "name": col_name,
+                    "dataType": self._normalize_pbixray_data_type(col.get("data_type", "string")),
+                }
+                if col.get("is_hidden"):
+                    col_def["isHidden"] = bool(col.get("is_hidden"))
+                if col.get("source_column"):
+                    col_def["sourceColumn"] = str(col.get("source_column"))
+                table_def["columns"].append(col_def)
+
+            for partition in table.get("partitions", []) or []:
+                p_name = str(partition.get("name", "") or "").strip() or f"{table_name}_Partition"
+                source_type = str(partition.get("source_type", "") or "m").strip() or "m"
+                table_def["partitions"].append({
+                    "name": p_name,
+                    "source": {"type": source_type},
+                })
+
+            tables_by_name[table_name] = table_def
+
+        for measure in fallback_result.get("measures", []) or []:
+            table_name = str(measure.get("table", "") or "").strip()
+            measure_name = str(measure.get("name", "") or "").strip()
+            if not table_name or not measure_name:
+                continue
+
+            table_def = tables_by_name.setdefault(
+                table_name,
+                {"name": table_name, "columns": [], "partitions": []},
+            )
+
+            measure_def: Dict[str, Any] = {
+                "name": measure_name,
+                "expression": measure.get("expression", "") or "",
+            }
+            if measure.get("description"):
+                measure_def["description"] = str(measure.get("description", ""))
+            if measure.get("format_string"):
+                measure_def["formatString"] = str(measure.get("format_string", ""))
+            if measure.get("display_folder"):
+                measure_def["displayFolder"] = str(measure.get("display_folder", ""))
+            if measure.get("is_hidden"):
+                measure_def["isHidden"] = bool(measure.get("is_hidden"))
+
+            table_def.setdefault("measures", []).append(measure_def)
+
+        relationships: List[Dict[str, Any]] = []
+        for rel in fallback_result.get("relationships", []) or []:
+            from_table = str(rel.get("from_table", "") or "").strip()
+            from_column = str(rel.get("from_column", "") or "").strip()
+            to_table = str(rel.get("to_table", "") or "").strip()
+            to_column = str(rel.get("to_column", "") or "").strip()
+            if not (from_table and from_column and to_table and to_column):
+                continue
+            relationships.append(
+                {
+                    "name": str(rel.get("name", "") or ""),
+                    "fromTable": from_table,
+                    "fromColumn": from_column,
+                    "toTable": to_table,
+                    "toColumn": to_column,
+                    "isActive": bool(rel.get("is_active", True)),
+                }
+            )
+
+        model_payload: Dict[str, Any] = {
+            "name": model_name,
+            "tables": list(tables_by_name.values()),
+            "relationships": relationships,
+        }
+        if model_meta.get("description"):
+            model_payload["description"] = str(model_meta.get("description", ""))
+        if model_meta.get("compatibility_level") is not None:
+            model_payload["compatibilityLevel"] = model_meta.get("compatibility_level")
+        if model_meta.get("culture"):
+            model_payload["culture"] = str(model_meta.get("culture", "en-US"))
+
+        logger.info(
+            "pbixray fallback TMSL assembled: %s tables, %s relationships",
+            len(model_payload["tables"]),
+            len(relationships),
+        )
+        return {"model": model_payload}
+
+    @staticmethod
+    def _normalize_pbixray_data_type(raw_type: Any) -> str:
+        """Map pbixray/Pandas dtypes into TMSL-like dataType values."""
+        text = str(raw_type or "").strip().lower()
+        mapping = {
+            "int64": "int64",
+            "int32": "int64",
+            "int16": "int64",
+            "int8": "int64",
+            "uint64": "int64",
+            "float64": "double",
+            "float32": "double",
+            "float": "double",
+            "double": "double",
+            "decimal": "decimal",
+            "bool": "boolean",
+            "boolean": "boolean",
+            "datetime64[ns]": "dateTime",
+            "datetime": "dateTime",
+            "date": "dateTime",
+            "string": "string",
+            "object": "string",
+            "category": "string",
+        }
+        return mapping.get(text, "string")
+
     @staticmethod
     def _parse_json_candidate(data: bytes) -> Optional[Dict[str, Any]]:
         """Attempt to parse bytes as JSON using robust encoding fallbacks.
@@ -437,10 +621,32 @@ class LocalPBIXConnector(BaseConnector):
 
         for table in schema.get("tables", []):
             table_name = table.get("name", "")
+            column_count = len(table.get("columns", []) or [])
+            partition_count = len(table.get("partitions", []) or [])
+
+            logger.info(
+                "PBIX table discovered: %s (columns=%s, partitions=%s, hidden=%s)",
+                table_name or "<unnamed>",
+                column_count,
+                partition_count,
+                bool(table.get("isHidden", False)),
+            )
 
             # Skip internal/hidden tables
             if table_name.startswith("LocalDateTable_") or table_name.startswith("DateTableTemplate_"):
+                logger.info("Skipping auto-generated PBIX table: %s", table_name)
                 continue
+
+            if column_count == 0:
+                logger.warning(
+                    "PBIX table '%s' has no columns; preserving it as a logical table",
+                    table_name or "<unnamed>",
+                )
+            if partition_count == 0:
+                logger.warning(
+                    "PBIX table '%s' has no partitions; preserving it as a logical table",
+                    table_name or "<unnamed>",
+                )
 
             columns: List[Dict[str, Any]] = []
             for col in table.get("columns", []):

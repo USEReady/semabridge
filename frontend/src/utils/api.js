@@ -83,6 +83,21 @@ function normalizeWorkspace(workspace) {
     };
 }
 
+function normalizeLocalFolder(folder) {
+    if (!folder || typeof folder !== 'object') return folder;
+
+    const id = folder.id ?? folder.folder_id ?? null;
+
+    return {
+        ...folder,
+        id,
+        folder_id: folder.folder_id ?? id,
+        tag_name: folder.tag_name ?? folder.tag ?? '',
+        absolute_path: folder.absolute_path ?? folder.path ?? '',
+        is_active: folder.is_active ?? true,
+    };
+}
+
 function getAuthHeaders() {
     const token = localStorage.getItem(TOKEN_KEY);
     if (token) return { Authorization: `Bearer ${token}` };
@@ -639,6 +654,26 @@ export const api = {
         return normalizeProject(created?.project ?? created);
     },
 
+    async uploadPbix(file) {
+        const form = new FormData();
+        form.append('file', file);
+        const res = await authFetch(`${API_BASE_URL}/upload`, {
+            method: 'POST',
+            body: form,
+        });
+        return handleResponse(res);
+    },
+
+    async uploadProjectPbix(projectId, file) {
+        const form = new FormData();
+        form.append('file', file);
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/upload`, {
+            method: 'POST',
+            body: form,
+        });
+        return handleResponse(res);
+    },
+
     async updateProject(projectId, data) {
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}`, {
             method: 'PUT',
@@ -663,7 +698,15 @@ export const api = {
         if (filters.project_id) params.set('project_id', filters.project_id);
         const query = params.toString();
         const res = await authFetch(`${API_BASE_URL}/jobs/runs${query ? `?${query}` : ''}`);
-        return handleResponse(res);
+        const runs = await handleResponse(res);
+        return (Array.isArray(runs) ? runs : []).map((run) => ({
+            ...run,
+            id: run?.id ?? run?.run_id,
+            run_id: run?.run_id ?? run?.id,
+            source_type: run?.source_type ?? run?.source ?? run?.adapter,
+            message: run?.message ?? run?.error ?? run?.error_message ?? '',
+            error: run?.error ?? run?.error_message ?? '',
+        }));
     },
 
     async listJobSchedules() {
@@ -673,6 +716,7 @@ export const api = {
         }
         return handleResponse(res);
     },
+
 
     async getJobConfig(projectId) {
         const url = projectId

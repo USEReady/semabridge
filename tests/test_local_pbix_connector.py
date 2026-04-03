@@ -191,6 +191,15 @@ class TestPBIXAuthentication:
 class TestPBIXDiscovery:
     """Test semantic model extraction from .pbix archives."""
 
+    def test_extract_returns_fabric_like_raw_tmsl(self, pbix_file: Path) -> None:
+        """Should expose the PBIX semantic model as a Fabric-like TMSL payload."""
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_file)})
+        raw_tmsl = connector.extract()
+
+        assert "model" in raw_tmsl
+        assert raw_tmsl["model"]["name"] == "TestSemanticModel"
+        assert len(raw_tmsl["model"]["tables"]) == 2
+
     def test_discover_extracts_tables(self, pbix_file: Path) -> None:
         """Should extract table definitions from DataModelSchema."""
         connector = LocalPBIXConnector({"pbix_path": str(pbix_file)})
@@ -267,6 +276,8 @@ class TestPBIXDiscovery:
 
         assert result["metadata"]["source"] == "local_pbix"
         assert result["metadata"]["file_size_bytes"] > 0
+        assert result["raw_tmsl"]["model"]["name"] == "TestSemanticModel"
+        assert "\"model\"" in result["raw_tmsl_json"]
 
     def test_discover_model_info(self, pbix_file: Path) -> None:
         """Should extract model-level information."""
@@ -304,6 +315,9 @@ class TestPBIXDiscovery:
         assert result["models"][0]["name"] == "FallbackModel"
         assert result["tables"][0]["name"] == "FactSales"
         assert result["metadata"]["parser"] == "pbixray"
+        assert result["raw_tmsl"]["model"]["name"] == "FallbackModel"
+        assert len(result["raw_tmsl"]["model"]["tables"]) == 1
+        assert result["raw_tmsl"]["model"]["tables"][0]["name"] == "FactSales"
 
 
 # ---------------------------------------------------------------------------

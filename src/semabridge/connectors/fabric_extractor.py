@@ -16,6 +16,7 @@ from typing import Any, Optional
 import requests
 from requests.exceptions import RequestException
 
+from semabridge.core.env import get_fabric_access_token_from_env
 from semabridge.core.settings import FabricConfig
 from semabridge.utils.logger import get_logger
 
@@ -85,6 +86,7 @@ class FabricExtractor:
         
         Returns:
             List of model dictionaries with 'id', 'displayName', 'description', etc.
+            Returns empty list if workspace has no semantic models (404 response).
         """
         workspace_id = self.resolve_workspace_id(self.config.workspace_id)
         api_url = f"{self.config.api_base_url}/workspaces/{workspace_id}/semanticModels"
@@ -92,6 +94,17 @@ class FabricExtractor:
         try:
             logger.info(f"Listing semantic models in workspace {workspace_id}...")
             response = requests.get(api_url, headers=self._get_headers(), timeout=15)
+            
+            # Handle 404: workspace has no semantic models or endpoint not available for this workspace type
+            if response.status_code == 404:
+                logger.warning(
+                    f"Workspace {workspace_id} has no semantic models or semantic models API not available. "
+                    f"This is expected if the workspace contains only data lakehouses, notebooks, or other non-semantic-model items. "
+                    f"Returning empty list."
+                )
+                return []
+            
+            # Raise for other HTTP errors (401, 403, 500, etc.)
             response.raise_for_status()
             
             data = response.json()
@@ -114,6 +127,9 @@ class FabricExtractor:
         Resolve a model name or ID to the actual GUID.
         
         If already a valid GUID, returns as-is. Otherwise searches by display name.
+        
+        Raises:
+            FabricExtractionError: If a name is provided but workspace has no semantic models.
         """
         import re
         
@@ -128,14 +144,27 @@ class FabricExtractor:
         
         # Fetch models and search
         models = self.list_semantic_models()
+        
+        # If workspace has no models, raise a helpful error
+        if not models:
+            raise FabricExtractionError(
+                f"Workspace '{self.config.workspace_id}' has no semantic models available. "
+                f"Please ensure the workspace contains Power BI semantic models or data items. "
+                f"Workspaces with only lakehouses, notebooks, or other non-semantic-model items will not have extractable models."
+            )
+        
         for model in models:
             if model.get("displayName", "").lower() == dataset_id_or_name.lower():
                 logger.info(f"Resolved '{dataset_id_or_name}' to ID: {model.get('id')}")
                 return model.get("id")
         
-        # If no match found, return original (will fail with 404, but that's expected)
+        # If no match found, raise error listing available models
+        available = ", ".join([m.get("displayName", "") for m in models[:5]])
         logger.warning(f"Could not resolve '{dataset_id_or_name}' to a model ID")
-        return dataset_id_or_name
+        raise FabricExtractionError(
+            f"Semantic model '{dataset_id_or_name}' not found in workspace '{self.config.workspace_id}'. "
+            f"Available models: {available}"
+        )
     
     def _get_access_token(self) -> str:
         """
@@ -158,7 +187,7 @@ class FabricExtractor:
             return self._access_token
 
         # 1.5. Pre-issued token supplied via environment variable.
-        env_token = os.environ.get("FABRIC_ACCESS_TOKEN")
+        env_token = get_fabric_access_token_from_env()
         if env_token:
             self._access_token = env_token
             self._token_expires_at = time.time() + 3600
@@ -309,7 +338,9 @@ class FabricExtractor:
                  
             # DEBUG: Save raw definition
             try:
-                debug_path = Path("output/debug/raw_fabric_model.json")
+                safe_dataset = re.sub(r"[^A-Za-z0-9_.-]", "_", str(dataset_id or resolved_id or "model"))
+                safe_dataset = re.sub(r"_+", "_", safe_dataset).strip("._") or "model"
+                debug_path = Path("output/debug") / safe_dataset / "raw_fabric_model.json"
                 debug_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(debug_path, "w", encoding="utf-8") as f:
                     json.dump(result, f, indent=2)

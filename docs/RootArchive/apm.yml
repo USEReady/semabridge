@@ -1,9 +1,0 @@
-name: semabridge
-version: 1.0.0
-description: Semantic Model Bridge - Python CLI for Semantic Model Conversion via
-  OSI
-author: Premasai
-dependencies:
-  apm: []
-  mcp: []
-scripts: {}

@@ -44,6 +44,7 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+pytest-cache-files-*/
 
 # ============================================================================
 # Environment & Secrets
@@ -60,6 +61,8 @@ coverage.xml
 .venv
 .venv/
 .apm/
+!MyStandards/.apm/
+!MyStandards/.apm/**
 venv/
 env/
 ENV/
@@ -112,6 +115,8 @@ output/
 outputs/
 temp/
 tmp/
+.tmp/
+.tmp/pytest-of-*/
 logs/
 .semabridge_cache/
 .semabridge/

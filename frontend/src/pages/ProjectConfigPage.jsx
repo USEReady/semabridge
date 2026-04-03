@@ -78,6 +78,10 @@ export default function ProjectConfigPage() {
     source_type: 'fabric',
     target_type: 'snowflake',
     output_format: 'osi',
+    pbix_path: '',
+    pbix_folder: '',
+    pbix_uploaded_path: '',
+    identity_id: '',
     workspace_id: '',
     database: '',
     schema: '',
@@ -88,6 +92,9 @@ export default function ProjectConfigPage() {
     auto_relationships: true,
     generate_descriptions: true,
   });
+  const [fabricAccounts, setFabricAccounts] = useState([]);
+  const [fabricWorkspaces, setFabricWorkspaces] = useState([]);
+  const [fabricLoading, setFabricLoading] = useState(false);
 
   const [globalOpen, setGlobalOpen] = useState(false);
   const timezoneOptions = useMemo(() => ([
@@ -100,10 +107,23 @@ export default function ProjectConfigPage() {
     'Europe/London',
   ]), []);
   const normalizedProjectId = String(project?.id || project?.project_id || id || '');
-  const latestProjectRun = useMemo(
-    () => runs.find((run) => String(run?.project_id || '') === normalizedProjectId) || null,
-    [runs, normalizedProjectId]
-  );
+  const latestProjectRun = useMemo(() => {
+    const projectRuns = runs.filter((run) => String(run?.project_id || '') === normalizedProjectId);
+    if (!projectRuns.length) return null;
+
+    const getRunTs = (run) => {
+      const started = run?.started_at ? Date.parse(run.started_at) : NaN;
+      if (!Number.isNaN(started) && started > 0) return started;
+      const updated = run?.updated_at ? Date.parse(run.updated_at) : NaN;
+      if (!Number.isNaN(updated) && updated > 0) return updated;
+      const created = run?.created_at ? Date.parse(run.created_at) : NaN;
+      if (!Number.isNaN(created) && created > 0) return created;
+      const numericId = Number(run?.id || run?.run_id || 0);
+      return Number.isNaN(numericId) ? 0 : numericId;
+    };
+
+    return projectRuns.sort((a, b) => getRunTs(b) - getRunTs(a))[0] || null;
+  }, [runs, normalizedProjectId]);
   const projectSyncStatus = String(
     (normalizedProjectId && projectStatusById?.[normalizedProjectId])
       || latestProjectRun?.status
@@ -238,6 +258,65 @@ export default function ProjectConfigPage() {
 
     setProjectConfigDraft(id, nextDraft);
   }, [id, isInvalidProjectId, loading, viewMode, yamlText, configForm, setProjectConfigDraft, stableDraftKey]);
+  useEffect(() => {
+    if (configForm.source_type !== 'fabric') {
+      setFabricAccounts([]);
+      setFabricWorkspaces([]);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.getAccounts('FABRIC');
+        const list = Array.isArray(res) ? res : (res?.accounts || []);
+        if (!cancelled) {
+          setFabricAccounts(list);
+          if (!configForm.identity_id) {
+            const preferred = list.find(acc => acc.id === project?.account_id) || list.find(acc => acc.is_default) || list[0];
+            if (preferred?.id) {
+              setConfigForm(prev => ({ ...prev, identity_id: prev.identity_id || preferred.id }));
+            }
+          }
+        }
+      } catch {
+        if (!cancelled) setFabricAccounts([]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [configForm.source_type, configForm.identity_id, project?.account_id]);
+
+  const refreshFabricWorkspaces = async (identityId = configForm.identity_id) => {
+    if (!identityId) {
+      setFabricWorkspaces([]);
+      return;
+    }
+    setFabricLoading(true);
+    try {
+      const data = await api.fabricListWorkspaces(identityId);
+      const list = Array.isArray(data?.workspaces) ? data.workspaces : (Array.isArray(data) ? data : []);
+      setFabricWorkspaces(list);
+      if (!configForm.workspace_id && list[0]) {
+        setConfigForm(prev => ({
+          ...prev,
+          workspace_id: prev.workspace_id || String(list[0].id || list[0].workspace_id || ''),
+        }));
+      }
+    } catch {
+      setFabricWorkspaces([]);
+    } finally {
+      setFabricLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (configForm.source_type === 'fabric' && configForm.identity_id) {
+      refreshFabricWorkspaces(configForm.identity_id);
+    }
+  }, [configForm.source_type, configForm.identity_id]);
 
   const isLikelyBinaryOrGarbage = (text) => {
     const t = String(text || '').trim();
@@ -321,6 +400,10 @@ export default function ProjectConfigPage() {
           source_type: fallbackSource,
           target_type: fallbackTarget,
           output_format: 'osi',
+          pbix_path: '',
+          pbix_folder: '',
+          pbix_uploaded_path: '',
+          identity_id: '',
           workspace_id: '',
           database: '',
           schema: '',
@@ -363,6 +446,10 @@ export default function ProjectConfigPage() {
         source_type: String(source.type || fallbackSource).toLowerCase(),
         target_type: String(target.type || fallbackTarget).toLowerCase(),
         output_format: String(ui.intermediate_format || ui.output_format || 'osi').toLowerCase(),
+        pbix_path: String(source.pbix_path || source.pbix_file_path || source.source_path || source.file_path || ''),
+        pbix_folder: String(source.pbix_folder || ''),
+        pbix_uploaded_path: String(projectMeta?.pbix_file_path || source.pbix_file_path || source.pbix_path || ''),
+        identity_id: String(source.identity_id || ''),
         workspace_id: String(source.workspace_id || ''),
         database: String(source.database || ''),
         schema: String(source.schema || ''),
@@ -409,20 +496,59 @@ export default function ProjectConfigPage() {
     };
 
     if (configForm.source_type === 'fabric') {
+      if (configForm.identity_id) nextTree.source.identity_id = configForm.identity_id;
+      else delete nextTree.source.identity_id;
       nextTree.source.workspace_id = configForm.workspace_id || '';
+      delete nextTree.source.pbix_path;
+      delete nextTree.source.pbix_folder;
+      delete nextTree.source.source_path;
+      delete nextTree.source.file_path;
       delete nextTree.source.database;
       delete nextTree.source.schema;
     } else if (configForm.source_type === 'snowflake') {
+      delete nextTree.source.identity_id;
       nextTree.source.database = configForm.database || '';
       nextTree.source.schema = configForm.schema || '';
+      delete nextTree.source.pbix_path;
+      delete nextTree.source.pbix_folder;
+      delete nextTree.source.source_path;
+      delete nextTree.source.file_path;
       delete nextTree.source.workspace_id;
-    } else {
+    } else if (configForm.source_type === 'pbix') {
+      delete nextTree.source.identity_id;
       delete nextTree.source.workspace_id;
       delete nextTree.source.database;
       delete nextTree.source.schema;
+      if (configForm.pbix_path?.trim()) {
+        nextTree.source.pbix_path = configForm.pbix_path.trim();
+        nextTree.source.pbix_file_path = configForm.pbix_path.trim();
+      } else {
+        delete nextTree.source.pbix_path;
+        delete nextTree.source.pbix_file_path;
+      }
+      if (configForm.pbix_folder?.trim()) {
+        nextTree.source.pbix_folder = configForm.pbix_folder.trim();
+      } else {
+        delete nextTree.source.pbix_folder;
+      }
+      delete nextTree.source.source_path;
+      delete nextTree.source.file_path;
+    } else {
+      delete nextTree.source.identity_id;
+      delete nextTree.source.workspace_id;
+      delete nextTree.source.database;
+      delete nextTree.source.schema;
+      delete nextTree.source.pbix_path;
+      delete nextTree.source.pbix_folder;
+      delete nextTree.source.source_path;
+      delete nextTree.source.file_path;
     }
 
-    if (configForm.source_type === 'fabric') {
+    if (configForm.source_type === 'pbix') {
+      // PBIX extraction resolves model from file path/folder; do not force model fields.
+      delete nextTree.source.model;
+      delete nextTree.source.models;
+    } else if (configForm.source_type === 'fabric') {
       if (allow.length) {
         nextTree.source.models = allow;
       } else {
@@ -517,6 +643,17 @@ export default function ProjectConfigPage() {
   };
 
   const handleRunNow = async () => {
+    if (
+      String(configForm.source_type || '').toLowerCase() === 'pbix'
+      && !String(configForm.pbix_path || '').trim()
+      && !String(configForm.pbix_folder || '').trim()
+    ) {
+      const msg = 'PBIX source requires PBIX File Path or PBIX Folder before Sync Now.';
+      addLog('error', 'Sync', msg);
+      setSaveInfo(msg);
+      return;
+    }
+
     setSyncing(true);
     try {
       const saved = await handleSave();
@@ -531,6 +668,11 @@ export default function ProjectConfigPage() {
         saveRunLogs(run.id, buildMockRunLogs(run));
       }
 
+      // Sync Now is the primary execution entry point. Route users directly to Runs.
+      if (run?.run_id || run?.id || status === 'running') {
+        navigate('/jobs');
+        return;
+      }
       if (typeof window !== 'undefined' && window.dispatchEvent) {
         window.dispatchEvent(new CustomEvent('semabridge-sync-fallback', {
           detail: {
@@ -718,7 +860,14 @@ export default function ProjectConfigPage() {
 
           <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 16 }}>
             {viewMode === 'form' ? (
-              <FormEditor value={configForm} onChange={setConfigForm} />
+              <FormEditor
+                value={configForm}
+                onChange={setConfigForm}
+                fabricAccounts={fabricAccounts}
+                fabricWorkspaces={fabricWorkspaces}
+                fabricLoading={fabricLoading}
+                onRefreshFabricWorkspaces={() => refreshFabricWorkspaces()}
+              />
             ) : (
               <div style={{ height: '100%', minHeight: 420 }}>
                 <div style={{ height: '100%', border: '1px solid var(--border-main)', borderRadius: 12, overflow: 'hidden', background: 'var(--bg-input)', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 24px rgba(0, 0, 0, 0.08)' }}>
@@ -947,8 +1096,24 @@ export default function ProjectConfigPage() {
   );
 }
 
-function FormEditor({ value, onChange }) {
+function FormEditor({
+  value,
+  onChange,
+  fabricAccounts = [],
+  fabricWorkspaces = [],
+  fabricLoading = false,
+  onRefreshFabricWorkspaces,
+}) {
   const patch = (k, v) => onChange(prev => ({ ...prev, [k]: v }));
+  const [overridePbixPath, setOverridePbixPath] = useState(false);
+  const uploadedPbixPath = String(value.pbix_uploaded_path || '').trim();
+  const pbixPathLocked = value.source_type === 'pbix' && Boolean(uploadedPbixPath) && !overridePbixPath;
+
+  useEffect(() => {
+    if (value.source_type !== 'pbix') {
+      setOverridePbixPath(false);
+    }
+  }, [value.source_type]);
 
   return (
     <div style={{ maxWidth: 1080, margin: '0 auto', padding: 4, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -956,6 +1121,7 @@ function FormEditor({ value, onChange }) {
         <div>
           <label style={LABEL}>Source Type</label>
           <select value={value.source_type} onChange={e => patch('source_type', e.target.value)} style={{ ...INPUT, cursor: 'pointer' }}>
+            <option value="pbix">pbix</option>
             <option value="fabric">fabric</option>
             <option value="snowflake">snowflake</option>
             <option value="databricks">databricks</option>
@@ -966,6 +1132,7 @@ function FormEditor({ value, onChange }) {
           <select value={value.target_type} onChange={e => patch('target_type', e.target.value)} style={{ ...INPUT, cursor: 'pointer' }}>
             <option value="snowflake">snowflake</option>
             <option value="fabric">fabric</option>
+            <option value="databricks">databricks</option>
           </select>
         </div>
       </div>
@@ -979,10 +1146,61 @@ function FormEditor({ value, onChange }) {
       </div>
 
       {value.source_type === 'fabric' && (
-        <div>
-          <label style={LABEL}>Workspace ID</label>
-          <input value={value.workspace_id} onChange={e => patch('workspace_id', e.target.value)} style={INPUT} placeholder="fabric workspace id" />
-        </div>
+        <>
+          <div>
+            <label style={LABEL}>Fabric Account</label>
+            <select
+              value={value.identity_id}
+              onChange={e => patch('identity_id', e.target.value)}
+              style={{ ...INPUT, cursor: 'pointer' }}
+            >
+              <option value="">Select account</option>
+              {fabricAccounts.map(acc => (
+                <option key={acc.id} value={acc.id}>
+                  {acc.tag || acc.identity_email || acc.id}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <label style={{ ...LABEL, margin: 0 }}>Workspace ID</label>
+              <div style={{ flex: 1 }} />
+              <button
+                type="button"
+                onClick={onRefreshFabricWorkspaces}
+                disabled={fabricLoading || !value.identity_id}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-tertiary)',
+                  cursor: fabricLoading || !value.identity_id ? 'not-allowed' : 'pointer',
+                  fontSize: 11,
+                  padding: 0,
+                }}
+              >
+                {fabricLoading ? 'Loading...' : 'Refresh'}
+              </button>
+            </div>
+            {fabricWorkspaces.length > 0 ? (
+              <select
+                value={value.workspace_id}
+                onChange={e => patch('workspace_id', e.target.value)}
+                style={{ ...INPUT, cursor: 'pointer' }}
+              >
+                <option value="">Select workspace</option>
+                {fabricWorkspaces.map(ws => (
+                  <option key={ws.id || ws.workspace_id} value={ws.id || ws.workspace_id}>
+                    {ws.name || ws.displayName || ws.id || ws.workspace_id}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input value={value.workspace_id} onChange={e => patch('workspace_id', e.target.value)} style={INPUT} placeholder="fabric workspace id" />
+            )}
+          </div>
+        </>
       )}
 
       {value.source_type === 'snowflake' && (
@@ -994,6 +1212,56 @@ function FormEditor({ value, onChange }) {
           <div>
             <label style={LABEL}>Schema</label>
             <input value={value.schema} onChange={e => patch('schema', e.target.value)} style={INPUT} placeholder="PUBLIC" />
+          </div>
+        </div>
+      )}
+
+      {value.source_type === 'pbix' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <label style={{ ...LABEL, margin: 0 }}>PBIX File Path</label>
+              {uploadedPbixPath && (
+                <button
+                  type="button"
+                  onClick={() => setOverridePbixPath(prev => !prev)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--accent-blue)',
+                    cursor: 'pointer',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    padding: 0,
+                  }}
+                >
+                  {overridePbixPath ? 'Use uploaded path' : 'Edit manually'}
+                </button>
+              )}
+            </div>
+            <input
+              value={value.pbix_path || ''}
+              onChange={e => patch('pbix_path', e.target.value)}
+              style={INPUT}
+              readOnly={pbixPathLocked}
+              placeholder="C:/models/Finance.pbix"
+            />
+            {uploadedPbixPath && (
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                {pbixPathLocked
+                  ? 'Using uploaded file path from project creation. Click Edit manually to override.'
+                  : 'Manual override enabled. You can point this to a permanent local/network path.'}
+              </div>
+            )}
+          </div>
+          <div>
+            <label style={LABEL}>PBIX Folder (optional)</label>
+            <input
+              value={value.pbix_folder || ''}
+              onChange={e => patch('pbix_folder', e.target.value)}
+              style={INPUT}
+              placeholder="C:/models"
+            />
           </div>
         </div>
       )}

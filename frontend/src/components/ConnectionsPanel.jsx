@@ -1149,6 +1149,16 @@ function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
 
 
     const isLoggedIn = authStatus?.logged_in;
+    const handleDelete = async () => {
+        if (!confirm('Remove all stored Databricks credentials?')) return;
+        try {
+            await api.deleteConnection('databricks');
+            setFormData({});
+            setTestResult(null);
+        } catch (err) { addLog('error', 'Connections', err.message); }
+    };
+
+    const isConfigured = status?.configured;
 
     return (
         <div className="rounded-xl border overflow-hidden p-4 mt-4"
@@ -1324,7 +1334,6 @@ function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
         </div>
     );
 }
-
 
 
 export default function ConnectionsPanel({ isOpen, onClose, selectedConnector }) {
