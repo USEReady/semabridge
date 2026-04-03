@@ -5,17 +5,18 @@
  * Step 2: Source + target config (with live discovery)
  * Step 3: Source browser (Fabric workspaces/models)
  * Step 4: Model mapping settings
- * Step 5: Schedule / run now
+ * Step 5: Finish and configure
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft, ArrowRight, Check, Search, X, Loader2,
-  ChevronDown, ChevronRight, CheckSquare, Square,
+  ArrowLeft, ArrowRight, Check, X, Loader2,
+  ChevronDown, ChevronRight, CheckSquare, Square, RefreshCw
 } from 'lucide-react';
 import { api } from '../utils/api';
 import { useHPSearch } from '../hooks/useHPSearch';
 import SearchableSelect from '../components/common/SearchableSelect';
+import SmartSearchBar, { matchesSmartQuery } from '../components/common/SmartSearchBar';
 import { useWorkspace } from '../context/WorkspaceContext';
 
 const STEPS = [
@@ -30,20 +31,17 @@ const CONNECTOR_TYPES = [
   { value: 'fabric', label: 'Microsoft Fabric', icon: '🔷' },
   { value: 'snowflake', label: 'Snowflake', icon: '❄️' },
   { value: 'databricks', label: 'Databricks', icon: '🧱' },
-  { value: 'postgresql', label: 'PostgreSQL', icon: '🐘' },
-  { value: 'salesforce', label: 'Salesforce', icon: '☁️' },
 ];
 
 const TARGET_CONNECTOR_TYPES = [
   { value: 'snowflake', label: 'Snowflake', icon: '❄️' },
   { value: 'fabric', label: 'Microsoft Fabric', icon: '🔷' },
+  { value: 'databricks', label: 'Databricks', icon: '🧱' },
 ];
 
 const INTERMEDIATE_FORMAT_TYPES = [
-  { value: 'atscale', label: 'AtScale' },
   { value: 'osi', label: 'OSI (Open Semantic Interchange)' },
   { value: 'sml', label: 'SML' },
-  { value: 'dax', label: 'DAX' },
 ];
 
 const INPUT = {
@@ -54,7 +52,6 @@ const INPUT = {
 };
 
 const LABEL = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 };
-
 export default function CreateProjectPage() {
   const navigate = useNavigate();
   const {
@@ -65,6 +62,7 @@ export default function CreateProjectPage() {
   } = useWorkspace();
 
   const [step, setStep] = useState(1);
+  const [showStep1Validation, setShowStep1Validation] = useState(false);
   const [saving, setSaving] = useState(false);
   const [createError, setCreateError] = useState('');
   const [runWarning, setRunWarning] = useState('');
@@ -72,10 +70,10 @@ export default function CreateProjectPage() {
   // Step 1
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [sourceConnector, setSourceConnector] = useState('fabric');
-  const [targetConnectors, setTargetConnectors] = useState(new Set(['snowflake']));
+  const [sourceConnector, setSourceConnector] = useState('');
+  const [targetConnectors, setTargetConnectors] = useState(new Set());
   const [intermediateFormat, setIntermediateFormat] = useState('osi');
-  const [configMode, setConfigMode] = useState('form');
+  const configMode = 'form';
   const [tags, setTags] = useState(new Set());
   const [tagInput, setTagInput] = useState('');
 
@@ -86,6 +84,18 @@ export default function CreateProjectPage() {
   const [targetDatabase, setTargetDatabase] = useState('');
   const [targetSchema, setTargetSchema] = useState('');
   const [domainHint, setDomainHint] = useState('');
+  const [modelQueryRegex, setModelQueryRegex] = useState(false);
+
+  // Global default workspace from Settings — fetched once on mount.
+  // This is the workspace the user saved in Settings → Connections.
+  const [globalDefaultWorkspaceId, setGlobalDefaultWorkspaceId] = useState('');
+  const [globalDefaultWorkspaceName, setGlobalDefaultWorkspaceName] = useState('');
+  const [workspaceManuallySet, setWorkspaceManuallySet] = useState(false);
+  // Workspace list returned by the backend's smart auto-detect (Tier 3).
+  // Used to populate the dropdown when the useWorkspace() hook hasn't loaded yet.
+  const [allWorkspacesFromApi, setAllWorkspacesFromApi] = useState([]);
+  // The workspace the backend recommends for this session (source: auto/saved/config).
+  const [sessionWorkspaceId, setSessionWorkspaceId] = useState('');
 
   // Step 3
   const [workspaces, setWorkspaces] = useState([]);
@@ -94,22 +104,37 @@ export default function CreateProjectPage() {
   const [wsModels, setWsModels] = useState({}); // wsid → [{id, name}]
   const [selectedModels, setSelectedModels] = useState(new Set());
   const [selectedModelNameByKey, setSelectedModelNameByKey] = useState({});
+  // Databricks Step 3 state
+  const [databricksObjects, setDatabricksObjects] = useState([]); // [{catalog, schema, table}]
+  const [databricksLoading, setDatabricksLoading] = useState(false);
+  const [selectedDatabricksTables, setSelectedDatabricksTables] = useState(new Set());
+  const [databricksQuery, setDatabricksQuery] = useState('');
+  // Fetch Databricks sources when selected in Step 3
+  useEffect(() => {
+    if (step !== 3 || sourceConnector !== 'databricks') return;
+    setDatabricksLoading(true);
+    api.getDatabricksSources()
+      .then(data => {
+        setDatabricksObjects(Array.isArray(data) ? data : []);
+      })
+      .catch(() => setDatabricksObjects([]))
+      .finally(() => setDatabricksLoading(false));
+  }, [step, sourceConnector]);
 
   // Step 4
   const [autoRelationships, setAutoRelationships] = useState(true);
-  const [includeHiddenFields, setIncludeHiddenFields] = useState(false);
   const [generateDescriptions, setGenerateDescriptions] = useState(true);
   const [detectedMappings, setDetectedMappings] = useState([]);
 
   // Step 5
-  const [runNow, setRunNow] = useState(true);
+  const [createReverseProject, setCreateReverseProject] = useState(false);
   const [createdProject, setCreatedProject] = useState(null);
 
   /* ─── HP search for model browser ─── */
   const allModels = Object.entries(wsModels).flatMap(([wsid, models]) =>
     models.map(m => ({ ...m, wsid, _id: `${wsid}::${m.id}` }))
   );
-  const { results: modelResults, query: modelQuery, setQuery: setModelQuery } = useHPSearch(
+  const { query: modelQuery, setQuery: setModelQuery } = useHPSearch(
     allModels, ['name', 'description', 'wsid'], { idField: '_id' }
   );
 
@@ -122,12 +147,122 @@ export default function CreateProjectPage() {
     .map(modelKey => selectedModelNameByKey[modelKey])
     .filter(Boolean);
 
-  useEffect(() => {
-    if (sourceConnector !== 'fabric' || fabricWorkspaceId) return;
+  const [isRefreshingWorkspaces, setIsRefreshingWorkspaces] = useState(false);
 
-    const fallbackWorkspaceId = activeWorkspaceId || availableWorkspaces[0]?.id || '';
-    if (fallbackWorkspaceId) setFabricWorkspaceId(fallbackWorkspaceId);
-  }, [sourceConnector, fabricWorkspaceId, activeWorkspaceId, availableWorkspaces]);
+  const fetchFabricWorkspaces = useCallback(async () => {
+    setIsRefreshingWorkspaces(true);
+    try {
+      const data = await api.getFabricDefaultWorkspace();
+      console.log('[SemaBridge] getFabricDefaultWorkspace raw response:', data);
+      if (data?.workspace_id) {
+        setGlobalDefaultWorkspaceId(data.workspace_id);
+        setGlobalDefaultWorkspaceName(data.workspace_name || '');
+        setSessionWorkspaceId(data.workspace_id);
+      }
+      const apiWorkspaces = (data?.all_workspaces || []).map(ws => ({
+        id: ws.id,
+        name: ws.name,
+        displayName: ws.name,
+        type: ws.type,
+      }));
+      console.log('[SemaBridge] Resolved workspace list:', apiWorkspaces);
+      if (apiWorkspaces.length > 0) {
+        setAllWorkspacesFromApi(apiWorkspaces);
+        // Purge stale localStorage key if the stored ID is no longer in the live list
+        const storedId = localStorage.getItem('semabridge_workspace_id');
+        if (storedId && !apiWorkspaces.some(w => w.id === storedId)) {
+          console.warn('[SemaBridge] Purging stale workspace from localStorage:', storedId);
+          localStorage.removeItem('semabridge_workspace_id');
+        }
+      }
+    } catch {
+      // silently ignore
+    } finally {
+      setIsRefreshingWorkspaces(false);
+    }
+  }, []);
+
+  // Fetch the global default workspace once on mount.
+  useEffect(() => {
+    fetchFabricWorkspaces();
+  }, [fetchFabricWorkspaces]);
+
+  // Re-fetch workspaces whenever entering Step 2
+  useEffect(() => {
+    if (step === 2 && sourceConnector === 'fabric') {
+      fetchFabricWorkspaces();
+    }
+  }, [step, sourceConnector, fetchFabricWorkspaces]);
+
+  // Auto-populate the workspace dropdown on step 2 when Fabric is the source.
+  // Priority: manual override > active session exact match > 'semabridge' name > global default > generic fallback.
+  useEffect(() => {
+    if (sourceConnector !== 'fabric') return;
+    if (workspaceManuallySet) return; // user made an explicit choice — never reset
+
+    // Combine both lists; prioritize availableWorkspaces (richer metadata)
+    const liveList = availableWorkspaces.length > 0 ? availableWorkspaces : allWorkspacesFromApi;
+
+    // Don't run if we have no live data yet
+    if (liveList.length === 0) return;
+
+    // If current selection is in the live list, keep it — no re-selection needed
+    if (fabricWorkspaceId && liveList.some(ws => ws.id === fabricWorkspaceId)) return;
+
+    // 1. Strict case-sensitive name match against session workspace name
+    const activeWsName = (globalDefaultWorkspaceName || '').trim();
+    const sessionMatch = liveList.find(ws =>
+      ws.id === sessionWorkspaceId ||
+      (activeWsName && ws.name?.trim() === activeWsName)
+    );
+
+    // 2. Project-named workspace ('semabridge')
+    const semabridgeWs = liveList.find(ws => ws.name?.toLowerCase() === 'semabridge');
+
+    // 3. Any non-personal workspace (exclude 'My workspace')
+    const nonPersonal = liveList.find(ws => ws.name !== 'My workspace');
+
+    const preferred =
+      sessionMatch?.id ||
+      semabridgeWs?.id ||
+      globalDefaultWorkspaceId ||
+      nonPersonal?.id ||
+      liveList[0]?.id ||
+      '';
+
+    if (preferred) {
+      console.log('[SemaBridge] Auto-selecting workspace:', preferred);
+      setFabricWorkspaceId(preferred);
+    }
+  }, [sourceConnector, fabricWorkspaceId, workspaceManuallySet, sessionWorkspaceId,
+      globalDefaultWorkspaceName, globalDefaultWorkspaceId, availableWorkspaces, allWorkspacesFromApi]);
+
+  // Ghost-purge: if the current selection no longer exists in the live list, force-clear it
+  // so the auto-select above can immediately re-run and pick the correct workspace.
+  // This eliminates the "Primary Workspace" zombie that was persisted in localStorage.
+  useEffect(() => {
+    if (!fabricWorkspaceId) return;
+    const liveList = availableWorkspaces.length > 0 ? availableWorkspaces : allWorkspacesFromApi;
+    if (liveList.length === 0) return; // don't clear before we have data
+    const stillExists = liveList.some(ws => ws.id === fabricWorkspaceId);
+    if (!stillExists) {
+      console.warn('[SemaBridge] Ghost workspace detected — force-clearing:', fabricWorkspaceId);
+      setFabricWorkspaceId('');
+      setWorkspaceManuallySet(false);
+      localStorage.removeItem('semabridge_workspace_id');
+    }
+  }, [fabricWorkspaceId, availableWorkspaces, allWorkspacesFromApi]);
+
+
+  useEffect(() => {
+    if (!sourceConnector) return;
+    setTargetConnectors(prev => {
+      if (!prev.has(sourceConnector)) return prev;
+      const next = new Set(prev);
+      next.delete(sourceConnector);
+      return next;
+    });
+  }, [sourceConnector]);
 
   useEffect(() => {
     setSelectedModels(new Set());
@@ -136,6 +271,17 @@ export default function CreateProjectPage() {
     setWsModels({});
     setModelQuery('');
   }, [fabricWorkspaceId, sourceConnector, setModelQuery]);
+
+
+  // Defensive: auto-select first available workspace if missing after loading
+  useEffect(() => {
+    if (step === 3 && sourceConnector === 'fabric' && !fabricWorkspaceId && !wsLoading) {
+      const liveList = availableWorkspaces.length > 0 ? availableWorkspaces : allWorkspacesFromApi;
+      if (liveList.length > 0) {
+        setFabricWorkspaceId(liveList[0].id);
+      }
+    }
+  }, [step, sourceConnector, fabricWorkspaceId, wsLoading, availableWorkspaces, allWorkspacesFromApi]);
 
   /* ─── Load selected Fabric workspace models on step 3 ─── */
   useEffect(() => {
@@ -151,10 +297,20 @@ export default function CreateProjectPage() {
       setWorkspaces([workspace]);
       setExpandedWs(prev => ({ ...prev, [fabricWorkspaceId]: true }));
       setWsLoading(true);
+      console.log('[SemaBridge] Discovering Fabric models for workspaceId:', fabricWorkspaceId);
       api.discoverFabricModels(fabricWorkspaceId)
-        .then(data => setWsModels({ [fabricWorkspaceId]: data ?? [] }))
-        .catch(() => setWsModels({ [fabricWorkspaceId]: [] }))
-        .finally(() => setWsLoading(false));
+        .then(data => {
+          if (!Array.isArray(data) || data.length === 0) {
+            setRunWarning('No semantic models found for this workspace. Check Fabric permissions or workspace contents.');
+          }
+          setWsModels({ [fabricWorkspaceId]: data ?? [] });
+          setWsLoading(false); // Set loading to false immediately after 200 OK
+        })
+        .catch((err) => {
+          setRunWarning('Failed to load semantic models: ' + (err?.message || 'Unknown error'));
+          setWsModels({ [fabricWorkspaceId]: [] });
+          setWsLoading(false); // Also set loading to false on error
+        });
       return;
     }
 
@@ -182,7 +338,7 @@ export default function CreateProjectPage() {
     }
 
     setWorkspaces([]);
-  }, [step, sourceConnector, fabricWorkspaceId, selectedWorkspace]);
+  }, [step, sourceConnector, fabricWorkspaceId, selectedWorkspace, availableWorkspaces, allWorkspacesFromApi]);
 
   const loadWsModels = useCallback(async (wsid) => {
     if (wsModels[wsid]) return;
@@ -259,11 +415,18 @@ export default function CreateProjectPage() {
         relationships: relationships.length > 0 ? relationships : undefined,
         mapping_options: {
           auto_detect_relationships: autoRelationships,
-          include_hidden_fields: includeHiddenFields,
           generate_descriptions: generateDescriptions,
         },
+        preferred_interface: 'ui',
         config_yaml: buildConfigYaml(source, targets),
       };
+
+      // Validation Check: Ensure selectedAccountId and selectedWorkspaceId match
+      if (sourceConnector === 'fabric' && selectedWorkspace) {
+        payload.selectedWorkspaceId = selectedWorkspace.id || fabricWorkspaceId;
+        payload.selectedAccountId = selectedWorkspace.account_id || selectedWorkspace.accountId;
+      }
+
       let project = await api.createProject(payload);
 
       // Compatibility fallback: some backend modes return create responses
@@ -284,14 +447,36 @@ export default function CreateProjectPage() {
 
       setCreatedProject(project);
       const projectId = project?.id || project?.project_id;
-      if (runNow && projectId) {
+
+      if (createReverseProject && targets.length > 0) {
+        const reverseSource = { ...targets[0] };
+        const reverseTargets = [{ type: source.type }];
+        const reverseName = `${payload.name}_${targets[0].type}_to_${source.type}`;
+
         try {
-          await api.runProjectNow(projectId);
-        } catch (err) {
-          setRunWarning(err?.message || 'Project created, but the first sync could not be started.');
+          let reverseProject = await api.createProject({
+            ...payload,
+            name: reverseName,
+            source: reverseSource,
+            targets: reverseTargets,
+            target: reverseTargets[0],
+            config_yaml: buildConfigYaml(reverseSource, reverseTargets, { projectName: reverseName }),
+          });
+
+          if (!reverseProject?.id && !reverseProject?.project_id) {
+            const allProjects = await api.listProjects();
+            const candidates = (allProjects || [])
+              .filter(p => String(p?.name || '').trim() === reverseName)
+              .sort((a, b) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')));
+            if (candidates.length > 0) reverseProject = candidates[0];
+          }
+        } catch (reverseErr) {
+          const reverseMsg = reverseErr?.message || 'Reverse project could not be created.';
+          setRunWarning(prev => {
+            const base = prev ? `${prev} ` : '';
+            return `${base}Primary project was created. Reverse project warning: ${reverseMsg}`.trim();
+          });
         }
-      } else if (runNow) {
-        setRunWarning('Project created, but the first sync could not be started because no project id was returned.');
       }
     } catch (err) {
       setCreatedProject(null);
@@ -341,9 +526,11 @@ export default function CreateProjectPage() {
     });
   };
 
-  const buildConfigYaml = (source, targets) => {
-    const lines = [`project_name: "${name.trim()}"`];
-    if (description.trim()) lines.push(`description: "${escapeYamlString(description.trim())}"`);
+  const buildConfigYaml = (source, targets, overrides = {}) => {
+    const projectName = String(overrides.projectName || name.trim() || 'Untitled Project').trim();
+    const projectDescription = overrides.description ?? description.trim();
+    const lines = [`project_name: "${escapeYamlString(projectName)}"`];
+    if (projectDescription) lines.push(`description: "${escapeYamlString(projectDescription)}"`);
 
     lines.push('source:');
     lines.push(`  type: ${source.type}`);
@@ -419,21 +606,45 @@ export default function CreateProjectPage() {
 
     lines.push('options:');
     lines.push(`  auto_relationships: ${autoRelationships}`);
-    lines.push(`  include_hidden_fields: ${includeHiddenFields}`);
     lines.push(`  generate_descriptions: ${generateDescriptions}`);
     return lines.join('\n');
   };
 
+  const modelResultsByConnector = useMemo(() => {
+    if (!modelQuery.trim()) {
+      return {
+        snowflake: (wsModels.snowflake || []).map(m => ({ ...m, _id: m.id })),
+        fabric: allModels,
+      };
+    }
+
+    return {
+      snowflake: (wsModels.snowflake || [])
+        .map(m => ({ ...m, _id: m.id }))
+        .filter(m => matchesSmartQuery(`${m.name || ''} ${m.id || ''}`, modelQuery, modelQueryRegex)),
+      fabric: allModels.filter(m =>
+        matchesSmartQuery(`${m.name || ''} ${m.description || ''} ${m.wsid || ''}`, modelQuery, modelQueryRegex)
+      ),
+    };
+  }, [allModels, modelQuery, modelQueryRegex, wsModels]);
+
   /* ─── Step validity ─── */
   const canAdvance = () => {
-    if (step === 1) return name.trim().length > 0 && !!sourceConnector && targetConnectors.size > 0 && !!intermediateFormat;
-    if (step === 2 && sourceConnector === 'fabric') return !!fabricWorkspaceId;
+    if (step === 1) return name.trim().length > 0;
     if (step === 5) return true;
     return true;
   };
 
   const goNext = () => {
     if (step === 5) { handleFinish(); return; }
+    if (step === 1) {
+      const isStep1Valid = Boolean(sourceConnector) && targetConnectors.size > 0 && Boolean(intermediateFormat);
+      if (!isStep1Valid) {
+        setShowStep1Validation(true);
+        return;
+      }
+      setShowStep1Validation(false);
+    }
     if (step === 3) {
       // Intelligent auto-detect mappings when moving from step 3 to step 4
       const mappings = [];
@@ -487,6 +698,12 @@ export default function CreateProjectPage() {
   };
   const goBack = () => setStep(s => Math.max(1, s - 1));
 
+  useEffect(() => {
+    if (step !== 1 && showStep1Validation) {
+      setShowStep1Validation(false);
+    }
+  }, [step, showStep1Validation]);
+
   /* ─── Render ─── */
   return (
     <div style={{ minHeight: '100%', background: 'var(--bg-main)', display: 'flex', flexDirection: 'column' }}>
@@ -499,7 +716,9 @@ export default function CreateProjectPage() {
           <ArrowLeft size={14} /> Projects
         </button>
         <span style={{ color: 'var(--border-main)' }}>|</span>
-        <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>New Project</span>
+        <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
+          {name.trim() ? `New Project: ${name.trim()}` : 'New Project'}
+        </span>
       </div>
 
       {/* Step indicator */}
@@ -542,9 +761,9 @@ export default function CreateProjectPage() {
             sourceConnector={sourceConnector} setSourceConnector={setSourceConnector}
             targetConnectors={targetConnectors} setTargetConnectors={setTargetConnectors}
             intermediateFormat={intermediateFormat} setIntermediateFormat={setIntermediateFormat}
-            configMode={configMode} setConfigMode={setConfigMode}
             tags={tags} setTags={setTags}
             tagInput={tagInput} setTagInput={setTagInput}
+            showValidation={showStep1Validation}
           />
         )}
         {step === 2 && (
@@ -557,8 +776,20 @@ export default function CreateProjectPage() {
             targetDatabase={targetDatabase} setTargetDatabase={setTargetDatabase}
             targetSchema={targetSchema} setTargetSchema={setTargetSchema}
             domainHint={domainHint} setDomainHint={setDomainHint}
-            workspaces={availableWorkspaces}
+            workspaces={availableWorkspaces.length > 0 ? availableWorkspaces : allWorkspacesFromApi}
             workspacesLoading={workspacesLoading}
+            globalDefaultWorkspaceId={globalDefaultWorkspaceId}
+            globalDefaultWorkspaceName={globalDefaultWorkspaceName}
+            sessionWorkspaceId={sessionWorkspaceId}
+            workspaceManuallySet={workspaceManuallySet}
+            onWorkspaceManualChange={(id) => {
+              // Mark that the user has overridden the global default.
+              setWorkspaceManuallySet(true);
+              setFabricWorkspaceId(id);
+            }}
+            isRefreshingWorkspaces={isRefreshingWorkspaces}
+            fetchFabricWorkspaces={fetchFabricWorkspaces}
+            runWarning={runWarning}
           />
         )}
         {step === 3 && (
@@ -571,29 +802,33 @@ export default function CreateProjectPage() {
             selectedModels={selectedModels} toggleModel={toggleModel}
             clearSelectedModels={clearSelectedModels}
             modelQuery={modelQuery} setModelQuery={setModelQuery}
-            modelResults={modelResults} allModels={allModels}
+            modelQueryRegex={modelQueryRegex}
+            setModelQueryRegex={setModelQueryRegex}
+            modelResults={modelResultsByConnector.fabric}
+            snowflakeResults={modelResultsByConnector.snowflake}
+            allModels={allModels}
           />
         )}
         {step === 4 && (
           <StepMappingOptions
             autoRelationships={autoRelationships} setAutoRelationships={setAutoRelationships}
-            includeHiddenFields={includeHiddenFields} setIncludeHiddenFields={setIncludeHiddenFields}
             generateDescriptions={generateDescriptions} setGenerateDescriptions={setGenerateDescriptions}
             detectedMappings={detectedMappings}
+            selectedModelNames={selectedModelNames}
           />
         )}
         {step === 5 && (
           <StepFinish
             name={name}
             saving={saving}
-            runNow={runNow} setRunNow={setRunNow}
             createdProject={createdProject}
             createError={createError}
             runWarning={runWarning}
+            createReverseProject={createReverseProject}
+            setCreateReverseProject={setCreateReverseProject}
             sourceConnector={sourceConnector}
             targetConnectors={targetConnectors}
             intermediateFormat={intermediateFormat}
-            configMode={configMode}
             selectedWorkspace={selectedWorkspace}
             navigate={navigate}
           />
@@ -652,12 +887,11 @@ function StepBasicInfo({
   setTargetConnectors,
   intermediateFormat,
   setIntermediateFormat,
-  configMode,
-  setConfigMode,
   tags,
   setTags,
   tagInput,
   setTagInput,
+  showValidation,
 }) {
   // Validation state
   const isNameEmpty = name.trim().length === 0;
@@ -682,12 +916,12 @@ function StepBasicInfo({
           placeholder="e.g. Sales Analytics Q4"
           style={{
             ...INPUT,
-            borderColor: isNameEmpty && name !== '' ? 'var(--color-error)' : 'var(--border-main)',
+            borderColor: showValidation && isNameEmpty ? 'var(--color-error)' : 'var(--border-main)',
           }}
           onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-          onBlur={e => { e.target.style.borderColor = isNameEmpty && name !== '' ? 'var(--color-error)' : 'var(--border-main)'; }}
+          onBlur={e => { e.target.style.borderColor = showValidation && isNameEmpty ? 'var(--color-error)' : 'var(--border-main)'; }}
         />
-        {isNameEmpty && (
+        {showValidation && isNameEmpty && (
           <p style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 4 }}>
             💡 Project name is required to continue
           </p>
@@ -769,19 +1003,23 @@ function StepBasicInfo({
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {CONNECTOR_TYPES.map(c => {
               const isSelected = sourceConnector === c.value;
+              const shouldDim = Boolean(sourceConnector) && !isSelected;
               return (
                 <button
                   key={c.value}
                   type="button"
                   onClick={() => setSourceConnector(c.value)}
+                  className={`transition-all duration-300 ${shouldDim ? 'text-slate-500' : ''}`}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 10,
                     padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
                     background: isSelected ? 'var(--accent-blue)14' : 'var(--bg-surface)',
                     border: isSelected ? '1.5px solid var(--accent-blue)' : '1px solid var(--border-main)',
-                    color: isSelected ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                    color: isSelected ? 'var(--accent-blue)' : shouldDim ? 'var(--text-tertiary)' : 'var(--text-secondary)',
                     fontSize: 12, fontWeight: isSelected ? 600 : 400,
                     textAlign: 'left', transition: 'all 0.2s ease',
+                    opacity: shouldDim ? 0.4 : 1,
+                    filter: shouldDim ? 'grayscale(100%)' : 'none',
                   }}
                   onMouseEnter={e => {
                     if (!isSelected) e.target.style.borderColor = 'var(--accent-blue)40';
@@ -804,7 +1042,7 @@ function StepBasicInfo({
               );
             })}
           </div>
-          {isSourceMissing && (
+          {showValidation && isSourceMissing && (
             <p style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 8 }}>
               💡 Please select one source connector to continue
             </p>
@@ -828,7 +1066,9 @@ function StepBasicInfo({
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {TARGET_CONNECTOR_TYPES.map(t => {
               const isSelected = targetConnectors.has(t.value);
+              const isDisabledBySource = Boolean(sourceConnector) && t.value === sourceConnector;
               const handleTargetClick = () => {
+                if (isDisabledBySource) return;
                 const newTargets = new Set(targetConnectors);
                 if (newTargets.has(t.value)) {
                   newTargets.delete(t.value);
@@ -842,20 +1082,26 @@ function StepBasicInfo({
                   key={t.value}
                   type="button"
                   onClick={handleTargetClick}
+                  disabled={isDisabledBySource}
+                  className={`transition-all duration-300 ${isDisabledBySource ? 'text-slate-500' : ''}`}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
+                    padding: '10px 14px', borderRadius: 8,
+                    cursor: isDisabledBySource ? 'not-allowed' : 'pointer',
                     background: isSelected ? 'var(--accent-blue)14' : 'var(--bg-surface)',
                     border: isSelected ? '1.5px solid var(--accent-blue)' : '1px solid var(--border-main)',
-                    color: isSelected ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                    color: isSelected ? 'var(--accent-blue)' : isDisabledBySource ? 'var(--text-tertiary)' : 'var(--text-secondary)',
                     fontSize: 12, fontWeight: isSelected ? 600 : 400,
                     textAlign: 'left', transition: 'all 0.2s ease',
+                    opacity: isDisabledBySource ? 0.2 : 1,
+                    filter: isDisabledBySource ? 'grayscale(100%)' : 'none',
+                    pointerEvents: isDisabledBySource ? 'none' : 'auto',
                   }}
                   onMouseEnter={e => {
-                    if (!isSelected) e.target.style.borderColor = 'var(--accent-blue)40';
+                    if (!isSelected && !isDisabledBySource) e.target.style.borderColor = 'var(--accent-blue)40';
                   }}
                   onMouseLeave={e => {
-                    if (!isSelected) e.target.style.borderColor = 'var(--border-main)';
+                    if (!isSelected && !isDisabledBySource) e.target.style.borderColor = 'var(--border-main)';
                   }}
                 >
                   {/* Checkbox indicator */}
@@ -870,12 +1116,12 @@ function StepBasicInfo({
                   </div>
                   {t.icon && <span style={{ fontSize: 16 }}>{t.icon}</span>}
                   <span style={{ flex: 1 }}>{t.label}</span>
-                  {isSelected && <span style={{ fontSize: 11, color: 'var(--accent-blue)', fontWeight: 500 }}>Added</span>}
+                  {isSelected && <span style={{ fontSize: 11, color: 'var(--accent-blue)', fontWeight: 500 }}></span>}
                 </button>
               );
             })}
           </div>
-          <p style={{ fontSize: 11, color: isTargetsMissing ? 'var(--color-error)' : 'var(--text-tertiary)', marginTop: 8 }}>
+          <p style={{ fontSize: 11, color: showValidation && isTargetsMissing ? 'var(--color-error)' : 'var(--text-tertiary)', marginTop: 8 }}>
             {isTargetsMissing ? '💡 Select at least one target to continue' : 'Choose one or more targets. Data will be synced to all selected connectors.'}
           </p>
         </div>
@@ -892,29 +1138,11 @@ function StepBasicInfo({
             />
           ))}
         </div>
-        <p style={{ fontSize: 11, color: isFormatMissing ? 'var(--color-error)' : 'var(--text-tertiary)', marginTop: 6 }}>
+        <p style={{ fontSize: 11, color: showValidation && isFormatMissing ? 'var(--color-error)' : 'var(--text-tertiary)', marginTop: 6 }}>
           {isFormatMissing ? '💡 Choose an intermediate format to continue' : 'The target connector is used for sync. The intermediate format controls which semantic artifacts are generated for review or deployment.'}
         </p>
       </div>
 
-      <div>
-        <label style={LABEL}>Project Configuration Experience</label>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <ConnectorChip
-            label="UI Friendly Form"
-            selected={configMode === 'form'}
-            onClick={() => setConfigMode('form')}
-          />
-          <ConnectorChip
-            label="YAML First"
-            selected={configMode === 'yaml'}
-            onClick={() => setConfigMode('yaml')}
-          />
-        </div>
-        <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
-          You can switch between Form and YAML later from the project configuration page.
-        </p>
-      </div>
     </div>
   );
 }
@@ -958,7 +1186,20 @@ function StepConnectorConfig({
   setDomainHint,
   workspaces,
   workspacesLoading,
+  globalDefaultWorkspaceId,
+  globalDefaultWorkspaceName,
+  sessionWorkspaceId,
+  workspaceManuallySet,
+  onWorkspaceManualChange,
+  isRefreshingWorkspaces,
+  fetchFabricWorkspaces,
+  runWarning,
 }) {
+  // True when the currently selected workspace is the one saved in Settings.
+  const isUsingGlobalDefault = Boolean(
+    globalDefaultWorkspaceId && fabricWorkspaceId === globalDefaultWorkspaceId
+  );
+
   const selectedTargets = [...targetConnectors];
   const sourceLabel = CONNECTOR_TYPES.find(c => c.value === sourceConnector)?.label || sourceConnector;
 
@@ -993,7 +1234,36 @@ function StepConnectorConfig({
 
         {sourceConnector === 'fabric' && (
           <div>
-            <label style={LABEL}>Fabric Workspace</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <label style={{ ...LABEL, margin: 0 }}>Fabric Workspace</label>
+              {isUsingGlobalDefault && (
+                <span style={{
+                  fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 999,
+                  background: 'var(--color-success-bg)', color: 'var(--color-success)',
+                  border: '1px solid var(--color-success)30', letterSpacing: '0.3px',
+                }}>
+                  ✓ Default
+                </span>
+              )}
+              <div style={{ flex: 1 }} />
+              <button 
+                onClick={fetchFabricWorkspaces} 
+                disabled={isRefreshingWorkspaces}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 4,
+                  background: 'none', border: 'none', cursor: isRefreshingWorkspaces ? 'not-allowed' : 'pointer',
+                  fontSize: 11, color: 'var(--text-tertiary)', padding: '2px 6px',
+                  borderRadius: 4, transition: 'all 0.2s ease',
+                  opacity: isRefreshingWorkspaces ? 0.6 : 1
+                }}
+                onMouseEnter={e => { if(!isRefreshingWorkspaces) e.currentTarget.style.color = 'var(--text-primary)'; }}
+                onMouseLeave={e => { if(!isRefreshingWorkspaces) e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+                title="Refresh workspaces"
+              >
+                <RefreshCw size={12} style={{ animation: isRefreshingWorkspaces ? 'spin 1s linear infinite' : 'none' }} />
+                Refresh
+              </button>
+            </div>
             <SearchableSelect
               items={workspaces}
               displayKey="name"
@@ -1001,16 +1271,31 @@ function StepConnectorConfig({
               searchFields={['name', 'id', 'workspace_id']}
               placeholder="Choose a workspace"
               value={fabricWorkspaceId}
-              onChange={item => setFabricWorkspaceId(item?.id || '')}
+              onChange={item => {
+                const newId = item?.id || '';
+                // If the user picks a different workspace, notify the parent.
+                if (newId !== fabricWorkspaceId && onWorkspaceManualChange) {
+                  onWorkspaceManualChange(newId);
+                } else {
+                  setFabricWorkspaceId(newId);
+                }
+              }}
               loading={workspacesLoading}
               clearable={false}
             />
             <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
-              Pick one workspace here. Step 3 will show models from this workspace only.
+              {isUsingGlobalDefault
+                ? `Pre-selected from your active Fabric session${globalDefaultWorkspaceName ? ` (${globalDefaultWorkspaceName})` : ''}. You can override it below.`
+                : 'Pick one workspace here. Step 3 will show models from this workspace only.'}
             </p>
             {!workspacesLoading && workspaces.length === 0 && (
               <p style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 8 }}>
                 No Fabric workspaces were found. Check connector setup in Settings.
+              </p>
+            )}
+            {runWarning && (
+              <p style={{ fontSize: 12, color: 'var(--color-error)', marginTop: 8 }}>
+                {runWarning}
               </p>
             )}
           </div>
@@ -1156,30 +1441,178 @@ function StepSourceBrowser({
   sourceConnector, selectedWorkspace, workspaces, wsLoading,
   expandedWs, toggleWorkspace, wsModels,
   selectedModels, toggleModel, clearSelectedModels,
-  modelQuery, setModelQuery, modelResults,
+  modelQuery, setModelQuery,
+  modelQueryRegex, setModelQueryRegex,
+  modelResults, snowflakeResults,
+  // Databricks props
+  databricksObjects = [],
+  databricksLoading = false,
+  selectedDatabricksTables = new Set(),
+  setSelectedDatabricksTables = () => {},
+  databricksQuery = '',
+  setDatabricksQuery = () => {},
 }) {
-  if (sourceConnector !== 'fabric' && sourceConnector !== 'snowflake') {
+
+  if (sourceConnector === 'databricks') {
+    // Flatten all tables for search
+    const allTables = (databricksObjects || []).flatMap(obj =>
+      (obj.tables || []).map(tbl => ({
+        catalog: obj.catalog,
+        schema: obj.schema,
+        table: tbl,
+        key: `${obj.catalog}.${obj.schema}.${tbl}`
+      }))
+    );
+    const filteredTables = databricksQuery
+      ? allTables.filter(t => t.table.toLowerCase().includes(databricksQuery.toLowerCase()) || t.schema.toLowerCase().includes(databricksQuery.toLowerCase()) || t.catalog.toLowerCase().includes(databricksQuery.toLowerCase()))
+      : allTables;
+
     return (
-      <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-        Source browsing is currently available for Microsoft Fabric and Snowflake.<br />
-        All available objects will be included automatically.
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div>
+          <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Select Databricks Tables</h2>
+          <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
+            Choose which Databricks tables to include. Leave all unchecked to include everything.
+          </p>
+        </div>
+        <SmartSearchBar
+          value={databricksQuery}
+          onChange={setDatabricksQuery}
+          placeholder="Search Databricks tables"
+        />
+        {selectedDatabricksTables.size > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--accent-blue)', padding: '4px 0' }}>
+            {selectedDatabricksTables.size} table{selectedDatabricksTables.size !== 1 ? 's' : ''} selected
+            <button onClick={() => setSelectedDatabricksTables(new Set())} style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 11 }}>
+              Clear
+            </button>
+          </div>
+        )}
+        <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
+          {databricksLoading ? (
+            <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
+              <Loader2 size={18} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 8px', display: 'block' }} />
+              Discovering Databricks tables…
+            </div>
+          ) : filteredTables.length === 0 ? (
+            <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
+              No Databricks tables found. Check connector setup in Settings.
+            </div>
+          ) : (
+            filteredTables.map(t => (
+              <div
+                key={t.key}
+                onClick={() => {
+                  setSelectedDatabricksTables(prev => {
+                    const s = new Set(prev);
+                    s.has(t.key) ? s.delete(t.key) : s.add(t.key);
+                    return s;
+                  });
+                }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '7px 12px', cursor: 'pointer', userSelect: 'none',
+                  background: selectedDatabricksTables.has(t.key) ? 'var(--accent-blue)0a' : 'transparent',
+                  borderBottom: '1px solid var(--border-subtle)'
+                }}
+                onMouseEnter={e => { if (!selectedDatabricksTables.has(t.key)) e.currentTarget.style.background = 'var(--bg-surface-hover)'; }}
+                onMouseLeave={e => { if (!selectedDatabricksTables.has(t.key)) e.currentTarget.style.background = 'transparent'; }}
+              >
+                {selectedDatabricksTables.has(t.key)
+                  ? <CheckSquare size={14} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />
+                  : <Square size={14} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />}
+                <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>{t.table}</span>
+                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', marginLeft: 'auto' }}>{t.catalog}.{t.schema}</span>
+              </div>
+            ))
+          )}
+        </div>
       </div>
     );
   }
 
-  if (sourceConnector === 'fabric' && !selectedWorkspace) {
+  if (sourceConnector === 'fabric') {
+    // Conditional rendering for Fabric step
+    if (!selectedWorkspace) {
+      return (
+        <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+          Choose a Fabric workspace in Connector Config before selecting models.
+        </div>
+      );
+    }
+
+    const fabricModels = wsModels[selectedWorkspace.id] || [];
+    const displayModels = modelQuery
+      ? fabricModels.filter(m => (m.name || '').toLowerCase().includes(modelQuery.toLowerCase()))
+      : fabricModels.map(m => ({ ...m, _id: m.id }));
+
+    // Show loader if loading
+    if (wsLoading) {
+      return (
+        <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
+          <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
+            <Loader2 size={18} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 8px', display: 'block' }} />
+            Discovering Fabric semantic models…
+          </div>
+        </div>
+      );
+    }
+
+    // Show models if available
+    if (displayModels.length > 0) {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div>
+            <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Select Models</h2>
+            <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
+              Choose which Fabric semantic models to include from {selectedWorkspace.name}. Leave all unchecked to include everything in this workspace.
+            </p>
+          </div>
+          <SmartSearchBar
+            value={modelQuery}
+            onChange={setModelQuery}
+            useRegex={modelQueryRegex}
+            onToggleRegex={setModelQueryRegex}
+            placeholder={`Search models in ${selectedWorkspace.name}`}
+          />
+          {selectedModels.size > 0 && (
+            <div style={{ fontSize: 11, color: 'var(--accent-blue)', padding: '4px 0' }}>
+              {selectedModels.size} model{selectedModels.size !== 1 ? 's' : ''} selected
+              <button onClick={clearSelectedModels} style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 11 }}>
+                Clear
+              </button>
+            </div>
+          )}
+          <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
+            {displayModels.map(m => {
+              const modelId = m._id || m.id;
+              return (
+                <ModelRow
+                  key={modelId}
+                  model={{ ...m, _id: modelId }}
+                  selected={selectedModels.has(modelId)}
+                  onToggle={() => toggleModel(modelId, m.name || m.id)}
+                />
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    // Show no models found placeholder
     return (
-      <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-        Choose a Fabric workspace in Connector Config before selecting models.
+      <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
+        <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
+          No Fabric semantic models found. Check connector setup in Settings.
+        </div>
       </div>
     );
   }
 
   if (sourceConnector === 'snowflake') {
     const snowflakeModels = wsModels.snowflake || [];
-    const displayModels = modelQuery
-      ? modelResults.filter(m => m.wsid === 'snowflake')
-      : snowflakeModels.map(m => ({ ...m, _id: m.id }));
+    const displayModels = modelQuery ? snowflakeResults : snowflakeModels.map(m => ({ ...m, _id: m.id }));
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -1190,16 +1623,13 @@ function StepSourceBrowser({
           </p>
         </div>
 
-        <div style={{ position: 'relative' }}>
-          <Search size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', pointerEvents: 'none' }} />
-          <input
-            value={modelQuery} onChange={e => setModelQuery(e.target.value)}
-            placeholder="Search Snowflake semantic objects…"
-            style={{ ...INPUT, paddingLeft: 30 }}
-            onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-            onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-          />
-        </div>
+        <SmartSearchBar
+          value={modelQuery}
+          onChange={setModelQuery}
+          useRegex={modelQueryRegex}
+          onToggleRegex={setModelQueryRegex}
+          placeholder="Search Snowflake semantic objects"
+        />
 
         {selectedModels.size > 0 && (
           <div style={{ fontSize: 11, color: 'var(--accent-blue)', padding: '4px 0' }}>
@@ -1250,16 +1680,13 @@ function StepSourceBrowser({
       </div>
 
       {/* Search */}
-      <div style={{ position: 'relative' }}>
-        <Search size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', pointerEvents: 'none' }} />
-        <input
-          value={modelQuery} onChange={e => setModelQuery(e.target.value)}
-          placeholder={`Search models in ${selectedWorkspace.name}…`}
-          style={{ ...INPUT, paddingLeft: 30 }}
-          onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-          onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-        />
-      </div>
+      <SmartSearchBar
+        value={modelQuery}
+        onChange={setModelQuery}
+        useRegex={modelQueryRegex}
+        onToggleRegex={setModelQueryRegex}
+        placeholder={`Search models in ${selectedWorkspace.name}`}
+      />
 
       {selectedModels.size > 0 && (
         <div style={{ fontSize: 11, color: 'var(--accent-blue)', padding: '4px 0' }}>
@@ -1380,9 +1807,16 @@ function ModelRow({ model, selected, onToggle, indent, showWs }) {
 }
 
 /* ─── Step 4: Mapping Options ─── */
-function StepMappingOptions({ autoRelationships, setAutoRelationships, includeHiddenFields, setIncludeHiddenFields, generateDescriptions, setGenerateDescriptions, detectedMappings }) {
+function StepMappingOptions({
+  autoRelationships,
+  setAutoRelationships,
+  generateDescriptions,
+  setGenerateDescriptions,
+  detectedMappings,
+  selectedModelNames,
+}) {
   const [expandedMapping, setExpandedMapping] = useState(null);
-  
+
   // Get relationships from session storage (read-only)
   const detectedRelationships = (() => {
     try {
@@ -1392,6 +1826,22 @@ function StepMappingOptions({ autoRelationships, setAutoRelationships, includeHi
       return [];
     }
   })();
+
+  const explicitTables = useMemo(() => {
+    return Array.from(new Set((selectedModelNames || []).map(name => String(name || '').trim()).filter(Boolean)));
+  }, [selectedModelNames]);
+
+  const inferredTables = useMemo(() => {
+    const explicitUpper = new Set(explicitTables.map(name => name.toUpperCase()));
+    return Array.from(new Set(
+      (detectedMappings || [])
+        .map(mapping => String(mapping?.source || '').trim())
+        .filter(Boolean)
+        .filter(name => !explicitUpper.has(name.toUpperCase()))
+    ));
+  }, [detectedMappings, explicitTables]);
+
+
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -1403,6 +1853,23 @@ function StepMappingOptions({ autoRelationships, setAutoRelationships, includeHi
       </div>
 
       {/* TABLE MAPPINGS SECTION */}
+      <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)' }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 10px' }}>
+          Scope Verification
+        </h3>
+        <p style={{ fontSize: 11, color: 'var(--text-tertiary)', margin: '0 0 10px' }}>
+          Extraction will only include explicitly selected models/tables and will always block internal/system patterns.
+        </p>
+        <div style={{ display: 'grid', gap: 8 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+            <strong>Explicitly selected:</strong> {explicitTables.length > 0 ? explicitTables.join(', ') : 'None'}
+          </div>
+          <div style={{ fontSize: 11, color: inferredTables.length > 0 ? 'var(--accent-orange)' : 'var(--text-secondary)' }}>
+            <strong>Inferred from mapping:</strong> {inferredTables.length > 0 ? inferredTables.join(', ') : 'None'}
+          </div>
+        </div>
+      </div>
+
       {detectedMappings.length > 0 && (
         <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)' }}>
           <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1486,6 +1953,8 @@ function StepMappingOptions({ autoRelationships, setAutoRelationships, includeHi
         </div>
       )}
 
+
+
       {/* RELATIONSHIPS SECTION */}
       {detectedRelationships.length > 0 && autoRelationships && (
         <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)' }}>
@@ -1541,14 +2010,8 @@ function StepMappingOptions({ autoRelationships, setAutoRelationships, includeHi
             onChange={setAutoRelationships}
           />
           <ToggleOption
-            label="Include Hidden Fields"
-            description="Include fields marked as hidden in the source model."
-            checked={includeHiddenFields}
-            onChange={setIncludeHiddenFields}
-          />
-          <ToggleOption
             label="Generate AI Descriptions"
-            description="Use the LLM to auto-generate descriptions for fields, measures, and hierarchies."
+            description="Use the LLM to auto-generate descriptions for tables and fields during sync."
             checked={generateDescriptions}
             onChange={setGenerateDescriptions}
           />
@@ -1601,15 +2064,14 @@ function ToggleOption({ label, description, checked, onChange }) {
 function StepFinish({
   name,
   saving,
-  runNow,
-  setRunNow,
+  createReverseProject,
+  setCreateReverseProject,
   createdProject,
   createError,
   runWarning,
   sourceConnector,
   targetConnectors,
   intermediateFormat,
-  configMode,
   selectedWorkspace,
   navigate,
 }) {
@@ -1637,7 +2099,7 @@ function StepFinish({
         </div>
         <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Project Created!</h2>
         <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 24 }}>
-          "{name}" has been created{runNow && !runWarning ? ' and the first run has been triggered' : ''}.
+          {`Project "${name}" has been created successfully. You can now review your configuration or start your first sync.`}
         </p>
         {runWarning && (
           <div style={{ maxWidth: 520, margin: '0 auto 20px', padding: '12px 14px', borderRadius: 10, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.5, textAlign: 'left' }}>
@@ -1647,13 +2109,12 @@ function StepFinish({
         <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
           <button onClick={() => navigate('/projects')} style={footerBtn('secondary')}>Back to Projects</button>
           {createdProjectId ? (
-            <>
-              <button onClick={() => navigate(`/projects/${createdProjectId}/config?mode=form`)} style={footerBtn(configMode === 'form' ? 'primary' : 'secondary')}>Open UI Form</button>
-              <button onClick={() => navigate(`/projects/${createdProjectId}/config?mode=yaml`)} style={footerBtn(configMode === 'yaml' ? 'primary' : 'secondary')}>Open YAML</button>
-            </>
+            <button onClick={() => navigate(`/projects/${createdProjectId}/config?mode=form`)} style={footerBtn('primary')}>
+              Configure Project
+            </button>
           ) : (
             <button disabled style={{ ...footerBtn('secondary'), opacity: 0.6, cursor: 'not-allowed' }}>
-              Open YAML (ID unavailable)
+              Configure Project (ID unavailable)
             </button>
           )}
         </div>
@@ -1676,7 +2137,7 @@ function StepFinish({
           Source: {sourceConnector} <br />
           Targets: {Array.from(targetConnectors).join(', ')} <br />
           Intermediate Format: {intermediateFormat} <br />
-          Config mode: {configMode === 'yaml' ? 'YAML' : 'UI Form'} <br />
+          Preferred Interface: UI Form <br />
           Workspace: {selectedWorkspace?.name || 'Will use saved defaults'}
         </div>
       </div>
@@ -1688,10 +2149,10 @@ function StepFinish({
       )}
 
       <ToggleOption
-        label="Run Now"
-        description="Trigger the first sync immediately after creation."
-        checked={runNow}
-        onChange={setRunNow}
+        label="Create Reverse Project"
+        description={`Also create ${name || 'the project'}_${Array.from(targetConnectors)[0] || 'target'}_to_${sourceConnector} using reversed source/target roles.`}
+        checked={createReverseProject}
+        onChange={setCreateReverseProject}
       />
     </div>
   );

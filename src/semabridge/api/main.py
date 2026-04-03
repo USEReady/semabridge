@@ -201,29 +201,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # type: ignore[
     except Exception as _e:
         logger.error("ORM table setup failed: %s", _e)
 
-    # Auto-provision the default FABRIC account row if the database is fresh.
-    # This guarantees upsert_account() always finds a row to mutate after MSAL login.
-    try:
-        from sqlalchemy import select as _select
-        from semabridge.repository.orm.models import Account as _Account
-        from semabridge.repository.orm.session_factory import db_manager as _dm
-        import uuid as _uuid
-
-        with _dm.get_session() as _sess:
-            existing = _sess.execute(
-                _select(_Account).where(_Account.connector_type == "FABRIC")
-            ).scalars().first()
-            if not existing:
-                _sess.add(_Account(
-                    id=str(_uuid.uuid4()),
-                    connector_type="FABRIC",
-                    tag="default",
-                    is_default=True,
-                ))
-                _sess.commit()
-                logger.debug("Auto-provisioned default FABRIC account row on startup.")
-    except Exception as _e:
-        logger.warning("FABRIC account auto-provisioning skipped: %s", _e)
+    # Auto-provisioning of default backend accounts has been disabled to support
+    # true multi-tenant UI tag management.
 
     # 2. MSAL warm-up (background thread -- never blocks startup)
     def _prime_msal() -> None:
@@ -262,9 +241,31 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # type: ignore[
     except Exception as _e:
         logger.error("Scheduler startup failed: %s", _e)
 
+    # 4. Background Poll Session Cleanup (Every 5 mins)
+    async def _cleanup_poll_sessions() -> None:
+        while True:
+            await asyncio.sleep(300)  # 5 minutes
+            try:
+                now = _time.time()
+                expired = []
+                with _poll_sessions_lock:
+                    for fid, state in _poll_sessions.items():
+                        if now > state.get("expires_at", 0):
+                            expired.append(fid)
+                    for fid in expired:
+                        _poll_sessions.pop(fid, None)
+                        _last_poll_time.pop(fid, None)
+                if expired:
+                    logger.debug("Cleaned up %d expired OAuth poll sessions", len(expired))
+            except Exception as e:
+                logger.error("Poll session cleanup error: %s", e)
+
+    cleanup_task = asyncio.create_task(_cleanup_poll_sessions())
+
     yield  # ------- APPLICATION IS RUNNING -----------------------------------
 
     # ------ SHUTDOWN ---------------------------------------------------------
+    cleanup_task.cancel()
 
     from semabridge.repository.orm.session_factory import db_manager as _orm_db_manager
     scheduler_service.shutdown()
@@ -683,9 +684,20 @@ async def discover_snowflake():
     try:
         from pydantic import ValidationError
         from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
-        
-        settings = get_settings()
-        
+
+        # Re-inject stored credentials and bust the settings cache so that
+        # credentials saved via the UI (Settings → Connections or SSO) are
+        # always visible to SnowflakeConfig, even if they were stored after
+        # the last server restart.
+        try:
+            from semabridge.repository.credential_manager import CredentialManager
+            from semabridge.core.settings import reload_settings
+            _cm = CredentialManager()
+            _cm.inject_credentials_to_env("snowflake")
+            settings = reload_settings()
+        except Exception:
+            settings = get_settings()
+
         # Validate Snowflake configuration exists
         try:
             snowflake_config = settings.snowflake
@@ -3803,7 +3815,7 @@ async def discover_multi_workspace(payload: Dict[str, Any]):
 # -------------------------------------------------------
 
 @app.get("/api/connections/status")
-async def get_connections_status():
+def get_connections_status():
     """Get configuration status for all supported services.
 
     Returns which services are configured, which fields are missing,
@@ -3820,7 +3832,7 @@ async def get_connections_status():
 
 
 @app.post("/api/connections/{service}")
-async def save_connection(service: str, payload: Dict[str, Any]):
+def save_connection(service: str, payload: Dict[str, Any]):
     """Save credentials for a service (fabric or snowflake).
 
     Request body: key-value pairs of configuration fields.
@@ -3856,7 +3868,7 @@ async def save_connection(service: str, payload: Dict[str, Any]):
 
 
 @app.delete("/api/connections/{service}")
-async def delete_connection(service: str):
+def delete_connection(service: str):
     """Remove stored credentials for a service."""
     from semabridge.repository.credential_manager import CredentialManager
 
@@ -3869,7 +3881,7 @@ async def delete_connection(service: str):
 
 
 @app.post("/api/connections/{service}/test")
-async def test_connection(service: str):
+def test_connection(service: str):
     """Test the stored credentials for a service by attempting authentication.
 
     Injects credentials into os.environ and tries to establish a connection.
@@ -3907,6 +3919,38 @@ async def test_connection(service: str):
             conn.cursor().execute("SELECT CURRENT_VERSION()")
             conn.close()
             return {"status": "success", "message": "Snowflake connection successful"}
+        except Exception as e:
+            return {"status": "failed", "message": str(e)}
+
+    elif service == "databricks":
+        try:
+            from semabridge.core.settings import reload_settings
+            from semabridge.connectors.databricks_publisher import DatabricksPublisher
+            cfg = reload_settings()
+
+            dbx = cfg.databricks
+            if not dbx.host or not dbx.warehouse_id:
+                return {
+                    "status": "failed",
+                    "message": "Databricks host and warehouse_id must be configured.",
+                }
+
+            publisher = DatabricksPublisher(dbx, getattr(cfg, "behavior", None))
+            
+            # Execute a simple validation query. execute_statements() handles 
+            # 401 retries and MSAL token resolution automatically.
+            try:
+                results = publisher.execute_statements(["SELECT 1 AS semabridge_test"])
+            except Exception as e:
+                # Intercept auth errors for a clearer UI message
+                if "401" in str(e) or "403" in str(e):
+                    return {
+                        "status": "failed", 
+                        "message": f"Authentication failed. Please verify credentials. ({e})"
+                    }
+                raise e
+
+            return {"status": "success", "message": "Databricks connection successful"}
         except Exception as e:
             return {"status": "failed", "message": str(e)}
 
@@ -3961,6 +4005,11 @@ async def snowflake_sso_login():
         role = row[1] if row else "N/A"
 
         logger.info(f"Snowflake SSO login successful: {username}")
+
+        # Invalidate cached settings so discovery picks up the new credentials
+        from semabridge.core.settings import reload_settings
+        reload_settings()
+
         return {
             "status": "success",
             "message": f"SSO login successful as {username} (role: {role})",
@@ -4006,6 +4055,28 @@ _POLL_SESSION_TTL = 900
 # Module-level MSAL app instance cache (keyed by authority URL)
 _msal_app_cache: Dict[str, Any] = {}
 
+# Module-level HTTP client with retries for MSAL
+_msal_http_client: Optional[Any] = None
+
+def _get_msal_http_client():
+    global _msal_http_client
+    if _msal_http_client is None:
+        import requests
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+        session = requests.Session()
+        # Retry on transient network errors (e.g. 10054 ConnectionResetError) and 5xx
+        retry = Retry(
+            total=3, read=3, connect=3, backoff_factor=0.5,
+            status_forcelist=(500, 502, 503, 504),
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        _msal_http_client = session
+    return _msal_http_client
+
+
 # Discovery result cache
 import time as _time
 _discovery_cache: Dict[str, Any] = {}
@@ -4019,6 +4090,7 @@ def _get_msal_app(authority: str):
         _msal_app_cache[authority] = msal.PublicClientApplication(
             client_id=_FABRIC_PUBLIC_CLIENT_ID,
             authority=authority,
+            http_client=_get_msal_http_client()
         )
     return _msal_app_cache[authority]
 
@@ -4225,14 +4297,6 @@ async def fabric_device_code_poll(request: Request, payload: Dict[str, Any] = No
         # Persist to DB (Account + Credential tables)
         try:
             from semabridge.repository.orm.session_factory import db_manager
-            from semabridge.repository.account_repository import AccountRepository
-
-            session = db_manager.get_session_factory()()
-            try:
-                repo = AccountRepository(session)
-                repo.upsert_account("FABRIC", state, _fabric_session_token_expires_at)
-            finally:
-                session.close()
 
             cm = CredentialManager()
             cm.save_msal_token(
@@ -4369,6 +4433,318 @@ def _clear_fabric_from_config() -> None:
 
 
 # -------------------------------------------------------
+# Databricks Native User-to-Machine (U2M) OAuth (PKCE)
+# -------------------------------------------------------
+
+@app.post("/api/connections/databricks/login")
+async def databricks_native_oauth_login(request: Request, payload: Dict[str, Any] = None):
+    """Initiate Native Databricks OAuth Authorization Code Flow with PKCE."""
+    import base64
+    import hashlib
+    import os
+    import urllib.parse
+
+    _cleanup_stale_poll_sessions()
+
+    if not payload:
+        raise HTTPException(status_code=400, detail="Missing payload")
+
+    host = payload.get("host")
+    client_id = payload.get("client_id")
+    redirect_uri = payload.get("redirect_uri")
+
+    if not host or not client_id or not redirect_uri:
+        raise HTTPException(status_code=400, detail="host, client_id, and redirect_uri are required.")
+
+    # 1. Generate PKCE verifier and challenge
+    code_verifier = base64.urlsafe_b64encode(os.urandom(32)).decode('utf-8').rstrip('=')
+    code_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(code_verifier.encode('utf-8')).digest()
+    ).decode('utf-8').rstrip('=')
+
+    # 2. Store session state
+    flow_id = str(_uuid.uuid4())
+    user_ip = _get_client_ip(request)
+
+    with _poll_sessions_lock:
+        _poll_sessions[flow_id] = {
+            "status": "polling",
+            "service": "databricks",
+            "expires_at": _time.time() + _POLL_SESSION_TTL,
+            "user_ip": user_ip,
+            "host": host,
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "code_verifier": code_verifier,
+            "warehouse_id": payload.get("warehouse_id", ""),
+            "catalog": payload.get("catalog", "main"),
+            "schema_name": payload.get("schema", "semabridge"),
+        }
+
+    # 3. Construct Authorization URL
+    auth_params = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "scope": "offline_access all-apis",
+        "state": flow_id,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256"
+    }
+
+    # Use HTTPS strictly
+    if not host.startswith("https://"):
+        host = f"https://{host}"
+
+    auth_url = f"{host}/oidc/v1/authorize?" + urllib.parse.urlencode(auth_params)
+
+    # Note: We return user_code as empty string because we are no longer using device flow.
+    return {
+        "flow_id": flow_id,
+        "verification_uri": auth_url,
+        "user_code": "", 
+        "message": "Please log in using the opened browser tab.",
+    }
+
+
+@app.get("/api/connections/databricks/callback")
+async def databricks_oauth_callback(
+    request: Request,
+    code: str = None,
+    state: str = None,
+    error: str = None,
+    error_description: str = None
+):
+    """Callback endpoint for Databricks Native OAuth redirect."""
+    from fastapi.responses import HTMLResponse
+    import requests
+
+    html_template = """
+    <html>
+        <head><title>Databricks Login</title><style>body {{ font-family: sans-serif; text-align: center; padding-top: 50px; }}</style></head>
+        <body>
+            <h2>{title}</h2>
+            <p>{message}</p>
+            <script>setTimeout(function() {{ window.close(); }}, 3000);</script>
+        </body>
+    </html>
+    """
+
+    if error:
+        return HTMLResponse(html_template.format(
+            title="Authentication Failed",
+            message=f"Databricks returned an error: {error} - {error_description}"
+        ))
+
+    if not code or not state:
+        return HTMLResponse(html_template.format(title="Error", message="Missing code or state parameter."))
+
+    # Find the local session
+    with _poll_sessions_lock:
+        session_data = _poll_sessions.get(state)
+        if not session_data or session_data.get("service") != "databricks":
+            return HTMLResponse(html_template.format(title="Error", message="Session expired or invalid. Please try logging in again."))
+
+    # Exchange code for token
+    host = session_data["host"]
+    if not host.startswith("https://"):
+        host = f"https://{host}"
+
+    token_url = f"{host}/oidc/v1/token"
+    
+    payload = {
+        "grant_type": "authorization_code",
+        "client_id": session_data["client_id"],
+        "redirect_uri": session_data["redirect_uri"],
+        "code": code,
+        "code_verifier": session_data["code_verifier"]
+    }
+
+    try:
+        resp = requests.post(
+            token_url,
+            data=payload,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=15
+        )
+        if resp.status_code != 200:
+            logger.error(f"Failed to exchange Databricks token: {resp.text}")
+            with _poll_sessions_lock:
+                _poll_sessions[state]["status"] = "failed"
+                _poll_sessions[state]["message"] = f"Token exchange failed: {resp.text[:200]}"
+            return HTMLResponse(html_template.format(title="Error", message="Failed to exchange authorization code."))
+
+        token_data = resp.json()
+        
+        # Databricks returns tokens
+        with _poll_sessions_lock:
+            _poll_sessions[state].update({
+                "status": "success",
+                "access_token": token_data.get("access_token"),
+                "refresh_token": token_data.get("refresh_token", ""),
+                "expires_in": token_data.get("expires_in", 3600),
+                "username": token_data.get("user_id", "databricks_user") # Sometimes username is not explicitly in token payload
+            })
+
+        return HTMLResponse(html_template.format(
+            title="Authentication Successful!",
+            message="You have successfully logged in. You can close this tab and return to Semabridge."
+        ))
+
+    except Exception as e:
+        logger.exception(f"Error during Databricks token exchange: {e}")
+        with _poll_sessions_lock:
+            _poll_sessions[state]["status"] = "failed"
+            _poll_sessions[state]["message"] = str(e)
+        return HTMLResponse(html_template.format(title="Error", message="Internal error during token exchange."))
+
+
+@app.post("/api/connections/databricks/poll")
+async def databricks_device_code_poll(request: Request, payload: Dict[str, Any] = None):
+    """Return the Databricks OAuth U2M flow status for a specific ``flow_id``."""
+    from semabridge.repository.credential_manager import CredentialManager
+
+    flow_id = (payload or {}).get("flow_id", "")
+    if not flow_id:
+        raise HTTPException(status_code=400, detail={"status": "error", "message": "Missing flow_id."})
+
+    # Rate limiting
+    now = _time.time()
+    if now - _last_poll_time.get(flow_id, 0) < 1.0:
+        raise HTTPException(status_code=429, detail={"status": "too_many_requests", "message": "Slow down polling."})
+    _last_poll_time[flow_id] = now
+
+    with _poll_sessions_lock:
+        state = _poll_sessions.get(flow_id, {}).copy()
+
+    if not state:
+        raise HTTPException(status_code=400, detail={"status": "expired", "message": "Unknown or expired flow_id. Please login again."})
+
+    # CSRF/IP validation
+    user_ip = _get_client_ip(request)
+    session_ip = state.get("user_ip")
+    if session_ip and session_ip != user_ip:
+        logger.warning(f"[FlowID={flow_id}] Databricks IP Mismatch! Login: {session_ip}, Poll: {user_ip}")
+
+    if state["status"] == "polling":
+        return {"status": "pending", "message": "Waiting for user to authenticate in browser..."}
+
+    if state["status"] == "success":
+        logger.info("[FlowID=%s] Databricks login success.", flow_id)
+        with _poll_sessions_lock:
+            _poll_sessions.pop(flow_id, None)
+            _last_poll_time.pop(flow_id, None)
+
+        try:
+            from semabridge.repository.orm.session_factory import db_manager
+
+            cm = CredentialManager()
+            cm.save_databricks_token(
+                access_token=state["access_token"],
+                refresh_token=state.get("refresh_token", ""),
+                account_username=state.get("username", "unknown"),
+                tenant_id="",  # N/A for native DBX
+                host=state.get("host", ""),
+                warehouse_id=state.get("warehouse_id", ""),
+                catalog=state.get("catalog", "main"),
+                schema_name=state.get("schema_name", "semabridge"),
+                expires_in=state.get("expires_in", 3600),
+            )
+            
+            # Save client_id since we need it to refresh
+            cm.save_credentials(
+                "databricks",
+                {"client_id": state.get("client_id")}
+            )
+
+            import os
+            os.environ["DATABRICKS_HOST"] = state.get("host", "")
+            os.environ["DATABRICKS_WAREHOUSE_ID"] = state.get("warehouse_id", "")
+            from semabridge.core.settings import reload_settings
+            reload_settings()
+
+        except Exception as exc:
+            logger.exception("Failed to persist Databricks OAuth token: %s", exc)
+            raise HTTPException(status_code=500, detail=f"Database write failed: {exc}")
+
+        return {
+            "status": "success",
+            "username": state.get("username", "unknown"),
+            "tenant_id": "",
+            "message": "Signed in successfully.",
+        }
+
+    # status == "failed"
+    with _poll_sessions_lock:
+        _poll_sessions.pop(flow_id, None)
+    return {"status": "failed", "message": state.get("message", "Unknown error")}
+
+
+@app.get("/api/connections/databricks/auth-status")
+def databricks_auth_status():
+    """Get the current Databricks authentication status."""
+    from semabridge.repository.credential_manager import CredentialManager
+
+    try:
+        cm = CredentialManager()
+        method = cm.get_databricks_auth_method()
+
+        if method == "pat":
+            return {
+                "auth_method": "pat",
+                "logged_in": True,
+                "token_valid": True,
+            }
+        elif method == "service_principal":
+            return {
+                "auth_method": "service_principal",
+                "logged_in": True,
+                "token_valid": True,
+            }
+        elif method != "none":
+            # Interactive MSAL login
+            creds = cm.get_credentials("databricks", mask_secrets=True)
+            return {
+                "auth_method": "interactive",
+                "logged_in": True,
+                "token_valid": True,
+                "username": creds.get("username", ""),
+            }
+        else:
+            return {
+                "auth_method": "none",
+                "logged_in": False,
+                "token_valid": False,
+            }
+    except Exception as e:
+        return {"auth_method": "none", "logged_in": False, "error": str(e)}
+
+
+@app.post("/api/connections/databricks/logout")
+def databricks_logout():
+    """Clear stored Databricks tokens (full logout)."""
+    from semabridge.repository.credential_manager import CredentialManager
+    global _databricks_session_token, _databricks_session_token_expires_at
+
+    try:
+        cm = CredentialManager()
+        cm.delete_credentials("databricks")
+        _databricks_session_token = None
+        _databricks_session_token_expires_at = 0.0
+
+        # Clear env vars
+        import os
+        for key in ["DATABRICKS_TOKEN", "DATABRICKS_HOST", "DATABRICKS_WAREHOUSE_ID"]:
+            os.environ.pop(key, None)
+
+        reload_settings()
+        logger.info("Databricks interactive session cleared")
+        return {"status": "logged_out"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------------------------------------------
 # Fabric Workspace Discovery
 # -------------------------------------------------------
 
@@ -4412,13 +4788,7 @@ def _get_valid_fabric_token() -> str:
 
     try:
         # Reuse cached MSAL app instance to avoid repeated initialization overhead
-        app_msal = _msal_app_cache.get(authority)
-        if app_msal is None:
-            app_msal = msal.PublicClientApplication(
-                client_id=_FABRIC_PUBLIC_CLIENT_ID,
-                authority=authority,
-            )
-            _msal_app_cache[authority] = app_msal
+        app_msal = _get_msal_app(authority)
 
         result = app_msal.acquire_token_by_refresh_token(
             refresh_token,
@@ -4524,9 +4894,13 @@ def _resolve_fabric_access_token(header_bearer_token: Optional[str]) -> str:
         with db_manager.get_session() as session:
             session.expire_all()
 
-            default_account = session.execute(
+            fabric_accounts = session.execute(
                 select(Account).where(Account.connector_type == "FABRIC")
-            ).scalars().first()
+            ).scalars().all()
+            
+            default_account = next((a for a in fabric_accounts if a.is_default), None)
+            if not default_account and fabric_accounts:
+                default_account = fabric_accounts[0]
 
             if default_account:
                 has_account_row = True
@@ -4624,10 +4998,7 @@ def _try_silent_refresh() -> Optional[str]:
             return None
 
         tenant_id = token_data.get("tenant_id", "organizations")
-        app_msal = msal.PublicClientApplication(
-            client_id="04b07795-8ddb-461a-bbee-02f9e1bf7b46",
-            authority=f"https://login.microsoftonline.com/{tenant_id}",
-        )
+        app_msal = _get_msal_app(f"https://login.microsoftonline.com/{tenant_id}")
         result = app_msal.acquire_token_by_refresh_token(
             token_data["refresh_token"],
             scopes=["https://analysis.windows.net/powerbi/api/.default"],

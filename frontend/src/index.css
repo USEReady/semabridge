@@ -453,3 +453,24 @@ button:disabled {
 .animate-pulse {
   animation: pulse 2s ease-in-out infinite;
 }
+
+@keyframes sync-progress-zebra {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 32px 0;
+  }
+}
+
+.sync-progress-zebra {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(59, 130, 246, 0.85) 0,
+    rgba(59, 130, 246, 0.85) 10px,
+    rgba(59, 130, 246, 0.25) 10px,
+    rgba(59, 130, 246, 0.25) 20px
+  );
+  background-size: 32px 100%;
+  animation: sync-progress-zebra 0.9s linear infinite;
+}

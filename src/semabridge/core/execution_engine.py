@@ -1852,7 +1852,7 @@ class ExecutionEngine:
         """Generate Databricks SQL artifact."""
         from semabridge.connectors.databricks_publisher import DatabricksPublisher
 
-        publisher = DatabricksPublisher(context.config.databricks)
+        publisher = DatabricksPublisher(context.config.databricks, behavior=context.behavior)
         statements = publisher.generate_sql_statements(context.sml_model)
 
         output_dir = Path("output/databricks")
@@ -1996,10 +1996,10 @@ class ExecutionEngine:
             self._sync_fabric_measures(context, emitter)
 
     def _deploy_to_databricks(self, context: RunContext) -> None:
-        """Deploy SML metadata projection to Databricks."""
+        """Deploy SML metadata projection and measure views to Databricks."""
         from semabridge.connectors.databricks_publisher import DatabricksPublisher
 
-        publisher = DatabricksPublisher(context.config.databricks)
+        publisher = DatabricksPublisher(context.config.databricks, behavior=context.behavior)
         publisher.publish(context.sml_model)
 
     def _export_inferred_osi_artifacts(self, context: RunContext) -> None:

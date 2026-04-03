@@ -137,7 +137,16 @@ class FabricConfig(BaseSettings):
 
 
 class DatabricksConfig(BaseSettings):
-    """Databricks SQL Warehouse configuration."""
+    """Databricks SQL Warehouse configuration.
+
+    Supports two authentication methods:
+        - **PAT** (default): Personal Access Token via ``DATABRICKS_TOKEN``.
+        - **Service Principal**: OAuth M2M via ``DATABRICKS_CLIENT_ID`` and
+          ``DATABRICKS_CLIENT_SECRET`` (client-credentials grant).
+
+    The ``auth_type`` field selects the active method.  Fields for the
+    inactive method can be left unset.
+    """
 
     model_config = SettingsConfigDict(
         env_prefix="DATABRICKS_",
@@ -147,7 +156,22 @@ class DatabricksConfig(BaseSettings):
     )
 
     host: str = Field(..., description="Databricks workspace host, e.g. adb-12345.11.azuredatabricks.net")
-    token: SecretStr = Field(..., description="Databricks personal access token")
+    auth_type: str = Field(
+        default="pat",
+        description="Auth method: 'pat' (Personal Access Token) or 'service_principal' (OAuth M2M)",
+    )
+    token: Optional[SecretStr] = Field(
+        default=None,
+        description="Databricks personal access token (required when auth_type=pat)",
+    )
+    client_id: Optional[str] = Field(
+        default=None,
+        description="OAuth client ID for service principal auth",
+    )
+    client_secret: Optional[SecretStr] = Field(
+        default=None,
+        description="OAuth client secret for service principal auth",
+    )
     warehouse_id: str = Field(..., description="Databricks SQL warehouse ID for statement execution")
     catalog: str = Field(default="main", description="Unity Catalog catalog name for semantic objects")
     schema_name: str = Field(default="semabridge", validation_alias="DATABRICKS_SCHEMA", description="Unity Catalog schema for semantic objects")

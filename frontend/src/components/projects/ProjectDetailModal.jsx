@@ -55,6 +55,38 @@ export default function ProjectDetailModal({ project, open, onClose, onDuplicate
   const [mappings, setMappings] = useState([]);
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
+  const [refreshingCreds, setRefreshingCreds] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState('');
+
+  const extractRunErrorText = (run) => {
+    if (!run || typeof run !== 'object') return '';
+    const direct = [run.error_message, run.error].filter(Boolean).join(' | ');
+    const summaryErrors = Array.isArray(run?.summary?.errors)
+      ? run.summary.errors.map(e => e?.message).filter(Boolean).join(' | ')
+      : '';
+    const stepMessages = Array.isArray(run?.summary?.steps_completed)
+      ? run.summary.steps_completed.map(s => s?.message).filter(Boolean).join(' | ')
+      : '';
+    return [direct, summaryErrors, stepMessages].filter(Boolean).join(' | ');
+  };
+
+  const tokenExpiredRun = runs.find((run) => {
+    const text = extractRunErrorText(run).toLowerCase();
+    return text.includes('tokenexpired') || (text.includes('401') && text.includes('access token'));
+  });
+
+  const handleRefreshCredentials = async () => {
+    setRefreshingCreds(true);
+    setRefreshMsg('');
+    try {
+      const res = await api.refreshFabricCredentials();
+      setRefreshMsg(res?.message || 'Fabric credentials refreshed. Retry Run Now.');
+    } catch (err) {
+      setRefreshMsg(err?.message || 'Credential refresh failed. Re-authenticate from Connections.');
+    } finally {
+      setRefreshingCreds(false);
+    }
+  };
 
   useEffect(() => {
     if (!open || !project) return;
@@ -154,6 +186,37 @@ export default function ProjectDetailModal({ project, open, onClose, onDuplicate
             <X size={18} />
           </button>
         </div>
+
+        {tokenExpiredRun && (
+          <div style={{
+            padding: '10px 20px',
+            borderBottom: '1px solid var(--border-main)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 10,
+            background: 'var(--color-warning-muted)',
+          }}>
+            <div style={{ fontSize: 12, color: 'var(--text-primary)' }}>
+              Detected Fabric 401/TokenExpired in recent run. Refresh credentials before retrying.
+              {refreshMsg ? ` ${refreshMsg}` : ''}
+            </div>
+            <button
+              onClick={handleRefreshCredentials}
+              disabled={refreshingCreds}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '6px 12px', borderRadius: 7,
+                background: 'var(--accent-blue)', border: 'none', color: '#fff',
+                fontSize: 12, fontWeight: 600, cursor: refreshingCreds ? 'wait' : 'pointer',
+                opacity: refreshingCreds ? 0.75 : 1,
+              }}
+            >
+              {refreshingCreds ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <AlertCircle size={13} />}
+              Refresh Credentials
+            </button>
+          </div>
+        )}
 
         {/* Tabs */}
         <div style={{ display: 'flex', borderBottom: '1px solid var(--border-main)', padding: '0 20px' }}>

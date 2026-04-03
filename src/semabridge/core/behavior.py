@@ -97,6 +97,67 @@ class CompatibilityBehavior(BaseModel):
         description="Force all identifiers to uppercase"
     )
 
+class DatabricksBehavior(BaseModel):
+    """Databricks-specific deployment behavior controls."""
+    create_measure_views: bool = Field(
+        default=True,
+        description="Generate measure views for deployed measures"
+    )
+    measure_view_type: str = Field(
+        default="auto",
+        description=(
+            "View technology to use: "
+            "'auto' (probe runtime, prefer metric_view), "
+            "'metric_view' (force native WITH METRICS YAML), "
+            "'sql_view' (plain CREATE OR REPLACE VIEW), "
+            "'none' (metadata table only)"
+        ),
+    )
+    measure_view_mode: str = Field(
+        default="per_measure",
+        description="View granularity: 'per_measure' (one view each) or 'combined' (one per dataset)"
+    )
+    view_prefix: str = Field(
+        default="mv",
+        description="Prefix for generated measure view names"
+    )
+    enable_simple_dax_translation: bool = Field(
+        default=True,
+        description="Translate simple DAX patterns (SUM, COUNT, etc.) to SQL for view creation"
+    )
+    source_table_mapping: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Explicit mapping of Fabric dataset names to Databricks tables. "
+            "Example: {'CONTINENT_1': 'analytics.raw.continent_data'}"
+        ),
+    )
+    source_catalog: str = Field(
+        default="",
+        description="Default Databricks catalog for source data tables (if not mapped)"
+    )
+    source_schema: str = Field(
+        default="",
+        description="Default Databricks schema for source data tables (if not mapped)"
+    )
+    on_missing_source: str = Field(
+        default="plan",
+        description=(
+            "Action when source table doesn't exist: "
+            "'plan' (generate SQL, save to output/, warn), "
+            "'skip' (silently skip view creation), "
+            "'fail' (raise error, halt deployment)"
+        ),
+    )
+    grant_select_to_groups: List[str] = Field(
+        default_factory=list,
+        description="Groups to GRANT SELECT on deployed metric views"
+    )
+    transfer_ownership_to: str = Field(
+        default="",
+        description="Group to transfer metric view ownership to (enables collaborative editing)"
+    )
+
 class FeatureFlags(BaseModel):
     """Safe toggles for new/experimental features."""
     enable_cortex_analyst: bool = Field(
@@ -134,6 +195,7 @@ class ConnectorBehavior(BaseModel):
     """
     snowflake: SnowflakeBehavior = Field(default_factory=SnowflakeBehavior)
     fabric: FabricBehavior = Field(default_factory=FabricBehavior)
+    databricks: DatabricksBehavior = Field(default_factory=DatabricksBehavior)
     semantic_model: SemanticModelBehavior = Field(default_factory=SemanticModelBehavior)
     compatibility: CompatibilityBehavior = Field(default_factory=CompatibilityBehavior)
     features: FeatureFlags = Field(default_factory=FeatureFlags)

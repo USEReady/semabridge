@@ -1,0 +1,35 @@
+﻿git : warning: in the working copy of 'config/config.yaml', LF will be replaced by CRLF the next time 
+Git touches it
+At line:1 char:1
++ git merge --no-commit --no-ff origin/feature/auth 2>&1 | Out-File -En ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (warning: in the... Git touches it:String) [], RemoteExce 
+   ption
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+warning: in the working copy of 'src/semabridge/connectors/databricks_publisher.py', LF will be 
+replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/test_databricks_publisher.py', LF will be replaced by CRLF the 
+next time Git touches it
+error: Your local changes to the following files would be overwritten by merge:
+	config/.semabridge_compat_store.json
+	config/behavior.yaml
+	config/config.yaml
+	config/semabridge.yaml
+	new_frontend/src/components/ConnectionsPanel.jsx
+	new_frontend/src/pages/ProjectConfigPage.jsx
+	new_frontend/src/utils/api.js
+	new_frontend/vite.config.js
+	src/semabridge/api/main.py
+	src/semabridge/core/execution_engine.py
+	src/semabridge/repository/credential_manager.py
+	tests/test_databricks_publisher.py
+Please commit your changes or stash them before you merge.
+error: The following untracked working tree files would be overwritten by merge:
+	Config/.semabridge_compat_store.json
+	Config/behavior.yaml
+	Config/config.yaml
+	Config/semabridge.yaml
+Please move or remove them before you merge.
+Aborting
+Merge with strategy ort failed.

@@ -28,6 +28,31 @@ semantic_model:
     # It should be detected as [Total Revenue] - [Revenue SPLY]
 
 # ---------------------------------------------------------------------------
+# Databricks deployment behavior.
+# ---------------------------------------------------------------------------
+databricks:
+  create_measure_views: true           # Generate measure views for deployed measures
+  measure_view_type: "auto"            # "auto" | "metric_view" | "sql_view" | "none"
+  measure_view_mode: "per_measure"     # "per_measure" (one view each) or "combined" (one per dataset)
+  view_prefix: "mv"                    # Prefix for measure view names
+  enable_simple_dax_translation: true  # Translate simple DAX (SUM, COUNT, etc.) to SQL
+
+  # Source table mapping: Fabric dataset name → actual Databricks table
+  # If not mapped, falls back to source_catalog.source_schema.dataset_name
+  source_table_mapping: {}
+  #   CONTINENT_1: "analytics_catalog.raw.continent_data"
+  #   DIM_DATE: "analytics_catalog.raw.dim_date"
+  source_catalog: ""                   # Default catalog for source data tables
+  source_schema: ""                    # Default schema for source data tables
+  on_missing_source: "plan"            # "plan" | "skip" | "fail"
+
+  # Governance: auto-grant SELECT on deployed metric views
+  grant_select_to_groups: []
+  # - "data_consumers"
+  # - "analytics_team"
+  transfer_ownership_to: ""           # Group for collaborative metric view editing
+
+# ---------------------------------------------------------------------------
 # Discovery behaviour for the Fabric ↔ Snowflake semantic sync feature.
 # ---------------------------------------------------------------------------
 discovery:
