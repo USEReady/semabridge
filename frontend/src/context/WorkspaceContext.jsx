@@ -15,8 +15,7 @@ export function WorkspaceProvider({ children }) {
 let apiLock = false;
 
     // Fetch workspaces from the DB-driven Fabric endpoint on every mount.
-    // This ensures switching the Default account in Settings is reflected
-    // immediately without a page reload or server restart.
+    // This keeps the workspace list aligned with the current Fabric account selection.
     useEffect(() => {
         const load = async () => {
             if (apiLock) return;

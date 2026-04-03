@@ -26,6 +26,34 @@ const INPUT = {
 
 const LABEL = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 };
 
+function pad2(value) {
+  return String(value).padStart(2, '0');
+}
+
+function toDateInputValue(date) {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
+
+function toTimeInputValue(date) {
+  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+}
+
+function utcIsoFromLocalInputs(dateValue, timeValue) {
+  if (!dateValue || !timeValue) return '';
+  const localDate = new Date(`${dateValue}T${timeValue}:00`);
+  return Number.isNaN(localDate.getTime()) ? '' : localDate.toISOString();
+}
+
+function localInputsFromUtcIso(isoValue) {
+  if (!isoValue) return null;
+  const parsed = new Date(isoValue);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return {
+    date: toDateInputValue(parsed),
+    time: toTimeInputValue(parsed),
+  };
+}
+
 /**
  * ProjectConfigPage — dedicated full page /projects/:id/config
  */
@@ -34,7 +62,7 @@ export default function ProjectConfigPage() {
     const [schedulerOpen, setSchedulerOpen] = useState(false);
     const [scheduleType, setScheduleType] = useState('manual');
     const [cronValue, setCronValue] = useState('0 0 * * *');
-    const [scheduleDate, setScheduleDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [scheduleDate, setScheduleDate] = useState(() => toDateInputValue(new Date()));
     const [timeValue, setTimeValue] = useState('12:00');
     const [timezoneValue, setTimezoneValue] = useState('UTC');
   const scheduleDateInputRef = useRef(null);
@@ -200,11 +228,17 @@ export default function ProjectConfigPage() {
           if (typeof schedule?.cron === 'string' && schedule.cron) {
             setCronValue(schedule.cron);
           }
-          if (typeof schedule?.date === 'string' && schedule.date) {
-            setScheduleDate(schedule.date);
-          }
-          if (typeof schedule?.time === 'string' && schedule.time) {
-            setTimeValue(schedule.time);
+          const utcSchedule = localInputsFromUtcIso(schedule?.scheduled_time || schedule?.next_run_at);
+          if (utcSchedule) {
+            setScheduleDate(utcSchedule.date);
+            setTimeValue(utcSchedule.time);
+          } else {
+            if (typeof schedule?.date === 'string' && schedule.date) {
+              setScheduleDate(schedule.date);
+            }
+            if (typeof schedule?.time === 'string' && schedule.time) {
+              setTimeValue(schedule.time);
+            }
           }
           if (typeof schedule?.timezone === 'string' && schedule.timezone) {
             setTimezoneValue(schedule.timezone);
@@ -274,7 +308,7 @@ export default function ProjectConfigPage() {
         if (!cancelled) {
           setFabricAccounts(list);
           if (!configForm.identity_id) {
-            const preferred = list.find(acc => acc.id === project?.account_id) || list.find(acc => acc.is_default) || list[0];
+            const preferred = list.find(acc => acc.id === project?.account_id);
             if (preferred?.id) {
               setConfigForm(prev => ({ ...prev, identity_id: prev.identity_id || preferred.id }));
             }
@@ -718,11 +752,13 @@ export default function ProjectConfigPage() {
   };
 
   const handleScheduleSave = async () => {
+    const scheduledTime = scheduleType === 'time' ? utcIsoFromLocalInputs(scheduleDate, timeValue) : '';
     const payload = {
       schedule_type: scheduleType,
       cron: scheduleType === 'cron' ? cronValue : '',
-      date: scheduleDate || '',
-      time: timeValue || '',
+      date: scheduleType === 'time' ? scheduleDate || '' : '',
+      time: scheduleType === 'time' ? timeValue || '' : '',
+      scheduled_time: scheduledTime,
       timezone: timezoneValue,
     };
 
@@ -1001,7 +1037,7 @@ export default function ProjectConfigPage() {
                     ref={scheduleDateInputRef}
                     type="date"
                     value={scheduleDate}
-                    min={new Date().toISOString().slice(0, 10)}
+                    min={toDateInputValue(new Date())}
                     onChange={e => setScheduleDate(e.target.value)}
                     style={{ ...modalInputStyle, paddingRight: 42 }}
                   />

@@ -291,6 +291,7 @@ def _run_single_job(
     engine_source_type: str,
     target_type: str,
     config: Dict[str, Any],
+    config_path: str,
     deploy_enabled: bool,
     resolved_workspace_id: str,
 ) -> Dict[str, Any]:
@@ -303,6 +304,7 @@ def _run_single_job(
         summary = engine.execute(
             source=engine_source_type,
             target=target_type,
+            config_path=Path(config_path),
             dataset_id=job["dataset_id"],
             pbix_path=job["pbix_path"],
             project_name=model_label,
@@ -352,6 +354,7 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
     reload_settings()
 
     _config_path, config = _load_config(normalize_yaml_windows_path_fields)
+    config_path = str(Path(_config_path).resolve())
     sync_jobs, source_type, target_type, source_cfg, target_cfg = _build_sync_jobs(config)
     settings = get_settings()
 
@@ -387,6 +390,7 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
                     engine_source_type=source_type,
                     target_type=target_type,
                     config=config,
+                    config_path=config_path,
                     deploy_enabled=deploy_enabled,
                     resolved_workspace_id=resolved_workspace_id,
                 )
@@ -400,6 +404,7 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
                     engine_source_type=source_type,
                     target_type=target_type,
                     config=config,
+                        config_path=config_path,
                     deploy_enabled=deploy_enabled,
                     resolved_workspace_id=resolved_workspace_id,
                 ): job

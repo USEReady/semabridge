@@ -252,30 +252,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # type: ignore[
     except Exception as _e:
         logger.error("ORM table setup failed: %s", _e)
 
-    # Auto-provision the default FABRIC account row if the database is fresh.
-    # This guarantees upsert_account() always finds a row to mutate after MSAL login.
-    try:
-        from sqlalchemy import select as _select
-        from semabridge.repository.orm.models import Account as _Account
-        from semabridge.repository.orm.session_factory import db_manager as _dm
-        import uuid as _uuid
-
-        with _dm.get_session() as _sess:
-            existing = _sess.execute(
-                _select(_Account).where(_Account.connector_type == "FABRIC")
-            ).scalars().first()
-            if not existing:
-                _sess.add(_Account(
-                    id=str(_uuid.uuid4()),
-                    connector_type="FABRIC",
-                    tag="default",
-                    is_default=True,
-                ))
-                _sess.commit()
-                logger.debug("Auto-provisioned default FABRIC account row on startup.")
-    except Exception as _e:
-        logger.warning("FABRIC account auto-provisioning skipped: %s", _e)
-
     # 2. MSAL warm-up (background thread -- never blocks startup)
     def _prime_msal() -> None:
         try:
@@ -669,11 +645,12 @@ async def discover_fabric_models_by_workspace(
     workspace_id: str,
     bearer_token: Optional[str] = Depends(_extract_bearer_token),
     identity_id: Optional[str] = Query(None),
+    connection_id: Optional[str] = Query(None, alias="connectionId"),
 ):
     """Compatibility route for workspace-scoped Fabric discovery."""
     return await discover_fabric_models(
         bearer_token=bearer_token,
-        identity_id=identity_id,
+        identity_id=(identity_id or connection_id),
         workspace_id=(workspace_id or "").strip() or None,
     )
 
@@ -1759,106 +1736,24 @@ async def list_workspaces(
     db: "Session" = Depends(get_db),
     identity_id: Optional[str] = Query(None),
 ):
-    """List available Fabric workspaces for the current Default account.
-
-    Identity is resolved fresh on every request from the DuckDB Account table
-    so that 'Set Default' changes in Settings are immediately reflected without
-    a server restart.
-    """
-    from sqlalchemy import select, text
-    from semabridge.repository.orm.models import Account
-    from semabridge.auth.encryption import decrypt_token
+    """List available Fabric workspaces for the selected Fabric account."""
     import httpx
 
     access_token: str | None = None
-    account_tag: str | None = None
+    if not identity_id:
+        raise HTTPException(status_code=400, detail="account_id is required")
 
-    # If a UI-selected Fabric account is supplied, honor it first.
-    if identity_id:
-        try:
-            import anyio
-            access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, None, identity_id)
-            account_tag = identity_id
-            logger.info("list_workspaces: using identity-scoped account '%s'", account_tag)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.warning("list_workspaces: identity-scoped lookup failed for %s: %s", identity_id, exc)
-
-    # Fall back to the default Fabric account when no identity was supplied.
-    if not access_token:
-        try:
-            default_account = db.execute(
-                select(Account).where(
-                    Account.connector_type == "FABRIC",
-                    Account.is_default == True,  # noqa: E712
-                )
-            ).scalar_one_or_none()
-
-            if not default_account:
-                raise HTTPException(status_code=401, detail="token_missing")
-
-            if default_account.encrypted_token:
-                # Happy path: token already persisted in Account row
-                account_tag = default_account.tag
-                logger.info("list_workspaces: using default account '%s'", account_tag)
-                access_token = decrypt_token(default_account.encrypted_token)
-                if not access_token:
-                    logger.warning("list_workspaces: token decrypt returned empty string")
-                    raise HTTPException(status_code=401, detail="token_missing")
-            else:
-                # Fallback: account exists but no token row yet (pre-atomic-write accounts).
-                # Query Credential directly to avoid DuckDB DDL locking from CredentialManager.
-                from semabridge.repository.orm.models import Credential
-                from semabridge.auth.encryption import encrypt_token as _encrypt
-                import time
-
-                rows = db.execute(
-                    select(Credential).where(Credential.service == "fabric_token")
-                ).scalars().all()
-                raw_token_data = {row.key: row.value for row in rows} if rows else {}
-                
-                raw_access_token = raw_token_data.get("access_token", "")
-                if not raw_access_token:
-                    logger.warning("list_workspaces: no token in Account row nor Credential table")
-                    raise HTTPException(status_code=401, detail="token_missing")
-                    
-                try:
-                    expires_at = int(raw_token_data.get("expires_at", "0"))
-                    if time.time() >= expires_at - 60:
-                        logger.warning("list_workspaces: Credential table token is expired")
-                        raise HTTPException(status_code=401, detail="token_missing")
-                except (ValueError, TypeError):
-                    raise HTTPException(status_code=401, detail="token_missing")
-
-                # Backfill: write the token to the Account row so next request uses DB path
-                try:
-                    default_account.encrypted_token = _encrypt(raw_access_token)
-                    default_account.identity_email = raw_token_data.get(
-                        "account_username", default_account.identity_email
-                    )
-                    db.commit()
-                    logger.info(
-                        "list_workspaces: backfilled encrypted_token for account '%s'",
-                        default_account.tag,
-                    )
-                except Exception as bf_exc:
-                    logger.warning("list_workspaces: backfill write failed (non-fatal): %s", bf_exc)
-                    db.rollback()
-
-                account_tag = default_account.tag
-                access_token = raw_access_token
-                logger.info(
-                    "list_workspaces: using CredentialManager fallback for account '%s'", account_tag
-                )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.exception("list_workspaces: unexpected DB error: %s", exc)
-            raise HTTPException(status_code=503, detail="Workspace discovery temporarily unavailable")
+    try:
+        import anyio
+        access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, None, identity_id)
+        logger.info("list_workspaces: using account '%s'", identity_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("list_workspaces: account-scoped lookup failed for %s: %s", identity_id, exc)
+        raise HTTPException(status_code=503, detail="Workspace discovery temporarily unavailable")
 
     if not access_token:
-        logger.warning("list_workspaces: no valid default account token — returning 401")
         raise HTTPException(status_code=401, detail="token_missing")
 
     # --- Call Fabric API with the live token ---
@@ -2096,6 +1991,13 @@ def _compat_project_payload(project_id: str, payload: dict) -> Dict[str, Any]:
     targets_list = payload.get("targets") if isinstance(payload.get("targets"), list) else []
     first_target_obj = targets_list[0] if targets_list and isinstance(targets_list[0], dict) else {}
     project_name = _compat_clean_project_name(payload.get("name"), f"Project {project_id[-6:]}")
+    account_id = (
+        payload.get("account_id")
+        or payload.get("selectedAccountId")
+        or source_obj.get("identity_id")
+        or payload.get("identity_id")
+        or ""
+    )
     return {
         "id": project_id,
         "project_id": project_id,
@@ -2103,6 +2005,7 @@ def _compat_project_payload(project_id: str, payload: dict) -> Dict[str, Any]:
         "description": payload.get("description") or "",
         "source": source_obj.get("type") or payload.get("source_type") or "fabric",
         "adapter": source_obj.get("type") or payload.get("source_type") or "fabric",
+        "account_id": str(account_id) if account_id else None,
         "workspace_id": source_obj.get("workspace_id") or "",
         "target_type": target_obj.get("type") or first_target_obj.get("type") or payload.get("target_type") or "snowflake",
         "folder_id": payload.get("folder_id"),
@@ -2116,11 +2019,15 @@ def _compat_default_project_yaml(project: Dict[str, Any]) -> str:
     name = _compat_clean_project_name(project.get("name"), "Untitled Project").replace('"', '\\"')
     src = project.get("source") or "fabric"
     target = project.get("target_type") or "snowflake"
+    account_id = str(project.get("account_id") or "").strip()
     lines = [
         f'project_name: "{name}"',
         "source:",
         f"  type: {src}",
     ]
+    if account_id and src == "fabric":
+        account_id_escaped = account_id.replace('"', '\\"')
+        lines.append(f'  identity_id: "{account_id_escaped}"')
     workspace_id = project.get("workspace_id")
     if workspace_id:
         workspace_id_escaped = str(workspace_id).replace('"', '\\"')
@@ -2304,6 +2211,15 @@ async def save_project_config_compat(project_id: str, payload: dict):
     if not yaml_text:
         raise HTTPException(status_code=400, detail="config_yaml is required")
     _compat_project_configs[project_id] = yaml_text
+    try:
+        parsed = yaml.safe_load(yaml_text) or {}
+    except Exception:
+        parsed = {}
+    if isinstance(parsed, dict):
+        source_cfg = parsed.get("source") if isinstance(parsed.get("source"), dict) else {}
+        account_id = str(source_cfg.get("identity_id") or "").strip()
+        if account_id and project_id in _compat_projects:
+            _compat_projects[project_id]["account_id"] = account_id
     try:
         _compat_save_repo_yaml_text(yaml_text)
     except Exception as exc:
@@ -2987,6 +2903,18 @@ def _create_project_run(project_id: str, schedule_label: str = "Manual") -> tupl
     started = _time.time()
     run_id = f"run-{int(_time.time() * 1000)}"
     project_cfg = _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(_compat_projects[project_id])
+    account_id = str(_compat_projects[project_id].get("account_id") or "").strip()
+    if account_id:
+        try:
+            parsed_cfg = yaml.safe_load(project_cfg) or {}
+        except Exception:
+            parsed_cfg = {}
+        if isinstance(parsed_cfg, dict):
+            source_cfg = parsed_cfg.get("source") if isinstance(parsed_cfg.get("source"), dict) else {}
+            if source_cfg.get("type", "fabric").lower() == "fabric" and not source_cfg.get("identity_id"):
+                source_cfg["identity_id"] = account_id
+                parsed_cfg["source"] = source_cfg
+                project_cfg = yaml.safe_dump(parsed_cfg, sort_keys=False, allow_unicode=False)
     source_type = _extract_source_type_from_project_cfg(
         project_cfg,
         fallback=str(_compat_projects[project_id].get("source") or "fabric").lower(),
@@ -3201,6 +3129,7 @@ async def save_project_schedule_compat(project_id: str, payload: dict):
             "time": schedule.get("time") or "",
             "timezone": schedule.get("timezone") or "UTC",
             "enabled": bool(schedule.get("enabled")),
+            "scheduled_time": schedule.get("scheduled_time") or "",
             "next_run_at": schedule.get("next_run_at"),
             "created_at": schedule.get("created_at") or _compat_now_iso(),
         }
@@ -3213,6 +3142,7 @@ async def save_project_schedule_compat(project_id: str, payload: dict):
         "enabled": bool(schedule.get("enabled")),
         "date": schedule.get("date") or "",
         "time": schedule.get("time") or "",
+        "scheduled_time": schedule.get("scheduled_time") or "",
     })
     _compat_save_store()
     return schedule
@@ -4177,18 +4107,9 @@ async def fabric_device_code_poll(request: Request, payload: Dict[str, Any] = No
         _fabric_session_token = state["access_token"]
         _fabric_session_token_expires_at = _time.time() + int(state.get("expires_in", 3600))
 
-        # Persist to DB (Account + Credential tables)
+        # Persist only shared auth cache artifacts. Account rows are created
+        # explicitly by the Connections save action with a unique connection_id.
         try:
-            from semabridge.repository.orm.session_factory import db_manager
-            from semabridge.repository.account_repository import AccountRepository
-
-            session = db_manager.get_session_factory()()
-            try:
-                repo = AccountRepository(session)
-                repo.upsert_account("FABRIC", state, _fabric_session_token_expires_at)
-            finally:
-                session.close()
-
             cm = CredentialManager()
             cm.save_msal_token(
                 access_token=state["access_token"],
@@ -4470,10 +4391,11 @@ def _resolve_fabric_access_token(
             logger.error(f"Fabric token validation error: {e}")
             raise HTTPException(status_code=401, detail={"status": "invalid_token", "message": "Signature or claim validation failed."})
 
-    env_token = get_fabric_access_token_from_env()
-    if env_token:
-        logger.info("Using temporary Fabric access token from .env / environment")
-        return env_token
+    if not identity_id:
+        env_token = get_fabric_access_token_from_env()
+        if env_token:
+            logger.info("Using temporary Fabric access token from .env / environment")
+            return env_token
 
     # ── Phase 1: Read everything we need from DB in ONE session ──────────
     # Variables populated by Phase 1:
@@ -4631,18 +4553,23 @@ def _try_silent_refresh() -> Optional[str]:
 async def fabric_list_workspaces(
     bearer_token: Optional[str] = Depends(_extract_bearer_token),
     identity_id: Optional[str] = Query(None),
+    connection_id: Optional[str] = Query(None, alias="connectionId"),
 ):
-    """Discover all Fabric workspaces accessible to the logged-in user.
+    """Discover all Fabric workspaces for the selected Fabric account.
 
-    Uses the stored MSAL access token (auto-refreshing if expired) to call
-    the Fabric REST API.
+    The account identifier must be supplied explicitly so workspace discovery
+    never falls back to a different identity.
     Returns a list of {id, displayName} objects.
     """
     import httpx
 
     import anyio
-    access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token, identity_id)
-    logger.info("Calling Fabric workspaces API with resolved access token (Identity: %s)", identity_id)
+    resolved_identity_id = (identity_id or connection_id or "").strip() or None
+
+    if not resolved_identity_id and not bearer_token:
+        raise HTTPException(status_code=400, detail="account_id is required")
+    access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token, resolved_identity_id)
+    logger.info("Calling Fabric workspaces API with resolved access token (Identity: %s)", resolved_identity_id)
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -4706,19 +4633,17 @@ async def fabric_get_default_workspace(
     bearer_token: Optional[str] = Depends(_extract_bearer_token),
     identity_id: Optional[str] = Query(None),
 ):
-    """Return the best-available default workspace for the project wizard from the Default account."""
-    from sqlalchemy import select
-    from semabridge.repository.orm.models import Account
-    from semabridge.auth.encryption import decrypt_token
+    """Return the primary workspace for the selected Fabric account."""
     import httpx
 
-    # --- Step 1: Identify Default Account ---
-    access_token = None
+    if not identity_id:
+        raise HTTPException(status_code=400, detail="account_id is required")
+
     import anyio
     try:
         access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token, identity_id)
     except HTTPException:
-        pass
+        raise
 
     if not access_token:
         return {

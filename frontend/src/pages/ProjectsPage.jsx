@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   FolderOpen, Plus, MoreVertical, Layers, Trash2, Edit3,
   Upload, Download, Play, Settings, Copy, Folder, FolderPlus,
-  X, Check, BarChart3,
+  X, Check,
 } from 'lucide-react';
 
 import StatusBadge from '../components/common/StatusBadge';
@@ -15,14 +15,11 @@ import EmptyState from '../components/common/EmptyState';
 import ProjectDetailModal from '../components/projects/ProjectDetailModal';
 import ImportProjectModal from '../components/projects/ImportProjectModal';
 import SmartSearchBar, { matchesSmartQuery } from '../components/common/SmartSearchBar';
+import SourceIcon from '../components/common/SourceIcon';
 import { api } from '../utils/api';
 import React, { useContext } from 'react';
 import { SyncContext } from '../context/SyncContext';
 import { DEFAULT_FILTER_OPTIONS, useUIStore } from '../store/uiStore';
-
-const SOURCE_ICONS = {
-  fabric: 'ðŸ”·', snowflake: 'â„ï¸', databricks: 'ðŸ§±', google_sheets: 'ðŸ“Š',
-};
 
 /* Use CSS variables for folder colors - mapped to semantic status colors */
 const FOLDER_COLORS = [
@@ -347,12 +344,12 @@ export default function ProjectsPage() {
             .sort()
             .map(source => {
               const sourceProjects = projects.filter(p => (p.source || p.adapter) === source);
-              const sourceIcon = SOURCE_ICONS[source] || 'ðŸ”—';
               return (
                 <SidebarItem
                   key={source}
                   color="var(--accent-blue)"
-                  label={`${sourceIcon} ${source} (${sourceProjects.length})`}
+                  label={`${source} (${sourceProjects.length})`}
+                  icon={<SourceIcon source={source} size={13} />}
                   active={selectedFolder === `source:${source}`}
                   onClick={() => updateFilterOption('selectedFolder', `source:${source}`)}
                 />
@@ -660,7 +657,7 @@ export default function ProjectsPage() {
 }
 
 /* â”€â”€â”€ Sidebar helpers â”€â”€â”€ */
-function SidebarItem({ color, label, active, onClick }) {
+function SidebarItem({ color, label, active, onClick, icon = null }) {
   return (
     <button
       onClick={onClick}
@@ -673,7 +670,7 @@ function SidebarItem({ color, label, active, onClick }) {
         textAlign: 'left',
       }}
     >
-      <Folder size={13} style={{ color }} />
+      {icon || <Folder size={13} style={{ color }} />}
       {label}
     </button>
   );
@@ -752,7 +749,6 @@ function ProjectCard({
 }) {
   const isOpen = menuOpen === project.id;
   const sourceKey = String(project.source || project.adapter || '').toLowerCase();
-  const emoji = SOURCE_ICONS[sourceKey] ?? 'ðŸ“';
   const { activeRuns } = useContext(SyncContext);
   // Debug log for troubleshooting status updates
   console.log('[ProjectCard] project.id:', project.id, 'activeRuns:', activeRuns);
@@ -808,9 +804,9 @@ function ProjectCard({
           <div style={{
             width: 40, height: 40, borderRadius: 10,
             background: 'var(--color-accent-faint)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            {sourceKey === 'pbix' ? <BarChart3 size={20} color="#F2C811" /> : emoji}
+            <SourceIcon source={sourceKey} size={20} />
           </div>
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>

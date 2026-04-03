@@ -5,6 +5,13 @@ const TOKEN_KEY = 'semabridge-token';
 const FABRIC_TOKEN_KEY = 'semabridge-fabric-token';
 const FABRIC_TOKEN_EXPIRES_KEY = 'semabridge-fabric-token-expires';
 
+function extractSnapshotList(payload) {
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload?.snapshots)) return payload.snapshots;
+    if (Array.isArray(payload?.items)) return payload.items;
+    return [];
+}
+
 function normalizeProject(project) {
     if (!project || typeof project !== 'object') return project;
 
@@ -193,13 +200,6 @@ export const api = {
         return handleResponse(res);
     },
 
-    async setDefaultAccount(accountId) {
-        const res = await authFetch(`${API_BASE_URL}/accounts/${accountId}/default`, {
-            method: 'PATCH',
-        });
-        return handleResponse(res);
-    },
-
     async linkProjectAccount(projectId, payload) {
         const res = await authFetch(`${API_BASE_URL}/accounts/project/${projectId}/link-account`, {
             method: 'PATCH',
@@ -350,7 +350,50 @@ export const api = {
 
     async getGraphSnapshots(modelId = '__all__') {
         const res = await authFetch(`${API_BASE_URL}/graph/${encodeURIComponent(modelId)}/snapshots`);
-        return handleResponse(res);
+        const directData = await handleResponse(res);
+        const directList = extractSnapshotList(directData);
+
+        // Compatibility: some backends store snapshots per project_id and return
+        // no rows for the synthetic __all__ identifier.
+        if (String(modelId) !== '__all__' || directList.length > 0) {
+            return directList;
+        }
+
+        try {
+            const projects = await this.listProjects();
+            const ids = [...new Set((projects || []).map((p) => p?.id || p?.project_id).filter(Boolean).map(String))];
+            if (!ids.length) return [];
+
+            const nestedResults = await Promise.all(
+                ids.map(async (id) => {
+                    try {
+                        const projectRes = await authFetch(`${API_BASE_URL}/graph/${encodeURIComponent(id)}/snapshots`);
+                        const projectData = await handleResponse(projectRes);
+                        return extractSnapshotList(projectData).map((row) => ({
+                            ...row,
+                            model_name: row?.model_name || id,
+                        }));
+                    } catch {
+                        return [];
+                    }
+                })
+            );
+
+            const deduped = new Map();
+            for (const list of nestedResults) {
+                for (const item of list) {
+                    const sid = String(item?.snapshot_id || '');
+                    if (!sid) continue;
+                    deduped.set(sid, item);
+                }
+            }
+
+            return [...deduped.values()].sort(
+                (a, b) => new Date(b?.timestamp || 0).getTime() - new Date(a?.timestamp || 0).getTime()
+            );
+        } catch {
+            return [];
+        }
     },
 
     async compareGraphSnapshots(modelId = '__all__', fromSnapshotId, toSnapshotId, includeSystemTables = false) {
@@ -519,8 +562,12 @@ export const api = {
     },
 
     // â”€â”€ Fabric Workspace Discovery â”€â”€â”€â”€â”€â”€
-    async fabricListWorkspaces() {
-        const res = await fetch(`${API_BASE_URL}/connections/fabric/workspaces`, {
+    async fabricListWorkspaces(accountId = '') {
+        const resolvedConnectionId = String(accountId || '').trim();
+        const query = resolvedConnectionId
+            ? `?identity_id=${encodeURIComponent(resolvedConnectionId)}&connectionId=${encodeURIComponent(resolvedConnectionId)}`
+            : '';
+        const res = await fetch(`${API_BASE_URL}/connections/fabric/workspaces${query}`, {
             headers: { ...getAuthHeaders(), ...getFabricAuthHeaders() },
         });
         return handleResponse(res);
@@ -799,6 +846,7 @@ export const api = {
                 cron: data?.cron || '',
                 date: data?.date || '',
                 time: data?.time || '',
+                scheduled_time: data?.scheduled_time || '',
                 timezone: data?.timezone || 'UTC',
                 enabled: data?.schedule_type && data.schedule_type !== 'manual',
                 message: 'Scheduler API is not available yet on the backend.',
@@ -952,12 +1000,16 @@ export const api = {
         return (data.workspaces || data || []).map(normalizeWorkspace);
     },
 
-    async discoverFabricModels(workspaceId) {
+    async discoverFabricModels(workspaceId, connectionId = '') {
         if (!workspaceId || workspaceId === 'undefined' || workspaceId === 'null') {
             throw new Error('Workspace ID is required to discover Fabric models.');
         }
+        const resolvedConnectionId = String(connectionId || '').trim();
+        const query = resolvedConnectionId
+            ? `?identity_id=${encodeURIComponent(resolvedConnectionId)}&connectionId=${encodeURIComponent(resolvedConnectionId)}`
+            : '';
         const res = await authFetch(
-            `${API_BASE_URL}/discovery/fabric/workspaces/${encodeURIComponent(workspaceId)}/models`
+            `${API_BASE_URL}/discovery/fabric/workspaces/${encodeURIComponent(workspaceId)}/models${query}`
         );
         return handleResponse(res);
     },
@@ -1060,8 +1112,9 @@ export const api = {
      * via the Settings → Connections page. Used to pre-populate the project
      * wizard without requiring the user to re-select the same workspace.
      */
-    async getFabricDefaultWorkspace() {
-        const res = await authFetch(`${API_BASE_URL}/connections/fabric/default-workspace`);
+    async getFabricDefaultWorkspace(accountId = '') {
+        const query = accountId ? `?identity_id=${encodeURIComponent(accountId)}` : '';
+        const res = await authFetch(`${API_BASE_URL}/connections/fabric/default-workspace${query}`);
         return handleResponse(res);
     },
 

@@ -1,9 +1,10 @@
 ﻿import { useState, useEffect } from 'react';
-import { Play, RefreshCw, Clock, CalendarClock, RotateCcw, ChevronDown, ChevronRight, BarChart3 } from 'lucide-react';
+import { Play, RefreshCw, Clock, CalendarClock, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
 import SearchInput from '../components/common/SearchInput';
 import { matchesSmartQuery } from '../components/common/SmartSearchBar';
+import SourceIcon from '../components/common/SourceIcon';
 import { api } from '../utils/api';
 import { buildMockRunLogs, getRunLogs, saveRunLogs } from '../utils/runLogs';
 
@@ -24,15 +25,6 @@ function formatDuration(ms) {
 function formatDate(iso) {
   if (!iso) return 'â€”';
   return new Date(iso).toLocaleString();
-}
-
-function sourceIcon(sourceType) {
-  const normalized = String(sourceType || '').toLowerCase();
-  if (normalized === 'pbix') return <BarChart3 size={14} color="#F2C811" />;
-  if (normalized === 'fabric') return 'ðŸ”·';
-  if (normalized === 'snowflake') return 'â„ï¸';
-  if (normalized === 'databricks') return 'ðŸ§±';
-  return 'ðŸ”—';
 }
 
 export default function ProjectJobsPage() {
@@ -422,7 +414,7 @@ export default function ProjectJobsPage() {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600 }}>
                       <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                        {sourceIcon(run.source_type)}
+                        <SourceIcon source={run.source_type} size={14} />
                       </span>
                       <span>{run.project_name || 'Project run'}</span>
                     </div>

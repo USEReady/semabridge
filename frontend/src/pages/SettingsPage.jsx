@@ -1,10 +1,11 @@
 ﻿import { useState, useEffect, useCallback } from 'react';
 import {
   PlugZap, RefreshCw, CheckCircle2, AlertCircle, Clock,
-  Settings2, Snowflake, Cloud, Plus, ExternalLink, Database, ChevronDown, FolderOpen,
+  Settings2, Plus, FolderOpen,
 } from 'lucide-react';
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
+import SourceIcon from '../components/common/SourceIcon';
 
 import ConnectionsPanel from '../components/ConnectionsPanel';
 import ConfigEditor from '../components/ConfigEditor';
@@ -98,7 +99,6 @@ export default function SettingsPage() {
         id: 'fabric',
         name: 'Microsoft Fabric',
         type: 'Analytics Platform',
-        icon: 'ðŸ”·',
         status: normalizeStatus(fabricStatus),
         last_sync: null,
         detail: fabricStatus === 'connected'
@@ -125,7 +125,6 @@ export default function SettingsPage() {
         id: 'snowflake',
         name: 'Snowflake',
         type: 'Data Warehouse',
-        icon: 'â„ï¸',
         status: normalizeStatus(snowStatus),
         last_sync: null,
         detail: snowStatus === 'connected'
@@ -144,7 +143,6 @@ export default function SettingsPage() {
         id: 'databricks',
         name: 'Databricks',
         type: 'Data Intelligence Platform',
-        icon: 'ðŸ§±',
         status: normalizeStatus(dbStatus),
         last_sync: null,
         detail: dbConfigured ? 'Configured' : 'Not configured',
@@ -156,7 +154,6 @@ export default function SettingsPage() {
         id: 'semabridge_api',
         name: 'SemaBridge API',
         type: 'Backend Service',
-        icon: 'âš¡',
         status: normalizeStatus(health?.status === 'ok' || health?.status === 'healthy' ? 'connected' : 'error'),
         last_sync: null,
         detail: health ? `v${health.version ?? 'â€”'} Â· port 8000` : 'Unreachable',
@@ -166,10 +163,10 @@ export default function SettingsPage() {
       setConnectors(rows);
     } catch {
       setConnectors([
-        { id: 'fabric',        name: 'Microsoft Fabric', type: 'Analytics Platform', icon: 'ðŸ”·', status: 'disconnected', last_sync: null, detail: 'Not configured', tags: ['production'] },
-        { id: 'snowflake',     name: 'Snowflake',        type: 'Data Warehouse',     icon: 'â„ï¸', status: 'disconnected', last_sync: null, detail: 'Not configured', tags: ['warehouse'] },
-        { id: 'databricks',    name: 'Databricks',       type: 'Data Intelligence Platform', icon: 'ðŸ§±', status: 'disconnected', last_sync: null, detail: 'Not configured', tags: ['warehouse'] },
-        { id: 'semabridge_api', name: 'SemaBridge API',  type: 'Backend Service',    icon: 'âš¡', status: 'error',        last_sync: null, detail: 'Unreachable', tags: ['backend'] },
+        { id: 'fabric',        name: 'Microsoft Fabric', type: 'Analytics Platform', status: 'disconnected', last_sync: null, detail: 'Not configured', tags: ['production'] },
+        { id: 'snowflake',     name: 'Snowflake',        type: 'Data Warehouse',     status: 'disconnected', last_sync: null, detail: 'Not configured', tags: ['warehouse'] },
+        { id: 'databricks',    name: 'Databricks',       type: 'Data Intelligence Platform', status: 'disconnected', last_sync: null, detail: 'Not configured', tags: ['warehouse'] },
+        { id: 'semabridge_api', name: 'SemaBridge API',  type: 'Backend Service',    status: 'error',        last_sync: null, detail: 'Unreachable', tags: ['backend'] },
       ]);
     } finally {
       setLoading(false);
@@ -409,7 +406,9 @@ export default function SettingsPage() {
                       fontSize: 18,
                     }}
                   >
-                    {conn.icon}
+                    {conn.id === 'semabridge_api'
+                      ? <PlugZap size={18} color="var(--accent-blue)" />
+                      : <SourceIcon source={conn.id} size={18} />}
                   </div>
                   <div style={{ textAlign: 'left' }}>
                     <p className="text-primary" style={{ fontWeight: 600, fontSize: 13, margin: 0 }}>{conn.name}</p>
@@ -458,7 +457,7 @@ export default function SettingsPage() {
                       fontSize: 18,
                     }}
                   >
-                    {apiConn.icon}
+                    <PlugZap size={18} color="var(--accent-blue)" />
                   </div>
                   <div>
                     <p className="text-primary" style={{ fontWeight: 500, fontSize: 12, margin: 0 }}>{apiConn.name}</p>

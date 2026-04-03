@@ -1,16 +1,16 @@
-project_name: vv
+project_name: coporate
 source:
   type: fabric
-  identity_id: 9917dd54-ff80-4e98-819a-63bd537d883f
+  identity_id: d22c081c-1eae-4a83-a3e3-3141c8cd5261
   workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
   workspace: semabridge
   models:
-    - continent
+    - Core_Finance_v1
 targets:
   - type: snowflake
 mappings:
-  - source: continent
-    target: continent_mapped
+  - source: Core_Finance_v1
+    target: core_finance_v1_mapped
     type: table
     columns:
       - source: id
@@ -32,7 +32,7 @@ ui:
   output_format: osi
 selection:
   model_ids:
-    - d32e8900-31cc-4647-872d-08a7e62bf03b
+    - bbe97d8c-bf99-457f-b322-6c5e7a948171
 options:
   auto_relationships: true
   generate_descriptions: true

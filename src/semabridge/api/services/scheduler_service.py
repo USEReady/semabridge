@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone as dt_timezone
 from threading import RLock
 from typing import Any, Awaitable, Callable, Dict, Optional
 from zoneinfo import ZoneInfo
@@ -91,6 +91,7 @@ class SchedulerService:
         schedule_type = str((payload or {}).get("schedule_type") or "").strip().lower() or "manual"
         timezone_name = str((payload or {}).get("timezone") or "UTC").strip() or "UTC"
         cron = str((payload or {}).get("cron") or "").strip()
+        scheduled_time_value = str((payload or {}).get("scheduled_time") or "").strip()
         date_value = str((payload or {}).get("date") or "").strip()
         time_value = str((payload or {}).get("time") or "").strip()
         enabled = bool((payload or {}).get("enabled", True))
@@ -118,12 +119,16 @@ class SchedulerService:
                 raise ValueError(f"Invalid cron expression: {exc}") from exc
             next_run_at = trigger.get_next_fire_time(None, datetime.now(timezone))
         elif schedule_type == "time":
-            if not date_value or not time_value:
-                raise ValueError("Schedule date and time are required.")
-            run_date = self._parse_run_date(date_value, time_value, timezone)
-            if run_date <= datetime.now(timezone):
+            if scheduled_time_value:
+                run_date = self._parse_utc_datetime(scheduled_time_value)
+            else:
+                if not date_value or not time_value:
+                    raise ValueError("Schedule date and time are required.")
+                run_date = self._parse_run_date(date_value, time_value, timezone).astimezone(dt_timezone.utc)
+
+            if run_date <= datetime.now(dt_timezone.utc):
                 raise ValueError("Scheduled time must be in the future.")
-            trigger = DateTrigger(run_date=run_date, timezone=timezone)
+            trigger = DateTrigger(run_date=run_date, timezone=dt_timezone.utc)
             next_run_at = run_date
         else:
             raise ValueError("Unsupported schedule type. Use manual, cron, or time.")
@@ -148,8 +153,9 @@ class SchedulerService:
             "time": time_value if schedule_type == "time" else "",
             "timezone": timezone_name,
             "enabled": enabled,
-            "next_run_at": next_run_at.isoformat() if next_run_at else None,
-            "created_at": datetime.utcnow().isoformat(),
+            "scheduled_time": self._to_utc_iso(next_run_at) if next_run_at else "",
+            "next_run_at": self._to_utc_iso(next_run_at) if next_run_at else None,
+            "created_at": self._to_utc_iso(datetime.now(dt_timezone.utc)),
         }
 
         with self._lock:
@@ -181,11 +187,29 @@ class SchedulerService:
             raise ValueError(f"Unsupported timezone: {timezone_name}") from exc
 
     @staticmethod
+    def _parse_utc_datetime(value: str) -> datetime:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("Invalid UTC scheduled_time.") from exc
+
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt_timezone.utc)
+        return parsed.astimezone(dt_timezone.utc)
+
+    @staticmethod
     def _parse_run_date(date_value: str, time_value: str, timezone: ZoneInfo) -> datetime:
         try:
             return datetime.fromisoformat(f"{date_value}T{time_value}:00").replace(tzinfo=timezone)
         except ValueError as exc:
             raise ValueError("Invalid schedule date or time.") from exc
+
+    @staticmethod
+    def _to_utc_iso(value: Optional[datetime]) -> Optional[str]:
+        if not value:
+            return None
+        utc_value = value.astimezone(dt_timezone.utc)
+        return utc_value.isoformat().replace("+00:00", "Z")
 
     def _with_live_next_run(self, schedule: Dict[str, Any]) -> Dict[str, Any]:
         project_id = str(schedule.get("project_id") or "")
@@ -193,7 +217,9 @@ class SchedulerService:
             return schedule
         job = self._scheduler.get_job(self._job_id(project_id))
         if job and getattr(job, "next_run_time", None):
-            schedule["next_run_at"] = job.next_run_time.isoformat()
+            schedule["next_run_at"] = self._to_utc_iso(job.next_run_time)
+            if schedule.get("schedule_type") == "time":
+                schedule["scheduled_time"] = schedule["next_run_at"]
         elif schedule.get("schedule_type") == "time":
             schedule["next_run_at"] = None
         return schedule

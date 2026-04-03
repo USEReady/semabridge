@@ -291,7 +291,7 @@ def _parse_semantic_model_from_dict(
         "measures": measures,
         "relationships": relationships,
         "status": status,
-        "file_path": f"duckdb://{model_id}",
+        "file_path": f"db://{model_id}",
     }
 
 
@@ -630,6 +630,55 @@ async def sync_repository(
     }
 
 
+@router.get("/diagnostics")
+async def get_repository_diagnostics() -> Dict[str, Any]:
+    """Return Explore/repository-map diagnostics for the active backend."""
+    diagnostics: Dict[str, Any] = {
+        "database": {},
+        "repository": {},
+        "counts": {},
+        "errors": [],
+    }
+
+    diagnostics["database"] = {
+        "mode": "orm-only",
+    }
+
+    models_path = _resolve_models_path()
+    diagnostics["repository"] = {
+        "repo_root": str(_get_repo_root()),
+        "models_path": str(models_path),
+    }
+
+    try:
+        from sqlalchemy import text
+        from semabridge.repository.orm.session_factory import db_manager
+
+        engine = db_manager.get_engine()
+        with engine.connect() as conn:
+            for key, query in {
+                "model_versions": "select count(*) from model_versions",
+                "snapshots": "select count(*) from snapshots",
+                "runs": "select count(*) from runs",
+            }.items():
+                try:
+                    diagnostics["counts"][key] = int(conn.execute(text(query)).scalar() or 0)
+                except Exception as exc:
+                    diagnostics["counts"][key] = None
+                    diagnostics["errors"].append(f"{key}: {exc}")
+    except Exception as exc:
+        diagnostics["errors"].append(f"database: {exc}")
+        diagnostics["counts"]["model_versions"] = None
+        diagnostics["counts"]["snapshots"] = None
+        diagnostics["counts"]["runs"] = None
+
+    diagnostics["explore_ready"] = bool(
+        diagnostics["counts"].get("model_versions")
+        or diagnostics["counts"].get("snapshots")
+    )
+    return diagnostics
+
+
 # -------------------------------------------------------
 # DuckDB Snapshot Explorer
 # -------------------------------------------------------
@@ -681,7 +730,7 @@ async def get_snapshot_tree(
 
         return {
             "root": {
-                "name": "DuckDB Snapshots",
+                "name": "Model Snapshots",
                 "path": "snapshots",
                 "type": "directory",
                 "icon": "folder",
@@ -690,7 +739,7 @@ async def get_snapshot_tree(
         }
     except Exception as e:
         logger.error(f"Snapshot tree failed: {e}")
-        return {"root": {"name": "DuckDB Snapshots", "path": "snapshots", "type": "directory", "icon": "folder", "children": []}}
+        return {"root": {"name": "Model Snapshots", "path": "snapshots", "type": "directory", "icon": "folder", "children": []}}
     finally:
         conn.close()
 
@@ -729,7 +778,7 @@ async def get_snapshot_file(
         content = yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
         return {
-            "path": f"duckdb://{model_id}",
+            "path": f"db://{model_id}",
             "name": f"{model_id}.yaml",
             "content": content,
             "language": "yaml",

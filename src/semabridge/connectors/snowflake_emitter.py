@@ -1420,7 +1420,7 @@ class SnowflakeEmitter(BaseEmitter):
                 try:
                     yaml_content = self.generate_cortex_yaml(sml)
                     
-                    project_root = Path(__file__).resolve().parent.parent.parent
+                    project_root = Path(__file__).resolve().parents[3]
                     safe_name = re.sub(r'[^\w\-.]', '_', sml.unique_name or sml.label or "model")
                     output_dir = project_root / "output" / "reverse" / safe_name
                     output_dir.mkdir(parents=True, exist_ok=True)
@@ -4355,7 +4355,7 @@ class SnowflakeEmitter(BaseEmitter):
                 # Step 4: Generate and Save Cortex YAML
                 try:
                     yaml_content = self.generate_cortex_yaml_from_osi(osi)
-                    project_root = Path(__file__).resolve().parent.parent.parent
+                    project_root = Path(__file__).resolve().parents[3]
                     safe_name = re.sub(r'[^\w\-.]', '_', model_name)
                     output_dir = project_root / "output" / "reverse" / safe_name
                     output_dir.mkdir(parents=True, exist_ok=True)

@@ -89,38 +89,76 @@ class FabricExtractor:
             Returns empty list if workspace has no semantic models (404 response).
         """
         workspace_id = self.resolve_workspace_id(self.config.workspace_id)
-        api_url = f"{self.config.api_base_url}/workspaces/{workspace_id}/semanticModels"
-        
-        try:
-            logger.info(f"Listing semantic models in workspace {workspace_id}...")
-            response = requests.get(api_url, headers=self._get_headers(), timeout=15)
-            
-            # Handle 404: workspace has no semantic models or endpoint not available for this workspace type
-            if response.status_code == 404:
-                logger.warning(
-                    f"Workspace {workspace_id} has no semantic models or semantic models API not available. "
-                    f"This is expected if the workspace contains only data lakehouses, notebooks, or other non-semantic-model items. "
-                    f"Returning empty list."
-                )
-                return []
-            
-            # Raise for other HTTP errors (401, 403, 500, etc.)
-            response.raise_for_status()
-            
-            data = response.json()
-            models = data.get("value", [])
-            
-            # Cache the models for quick lookup
-            for model in models:
-                self._model_cache[model.get("displayName", "").lower()] = model
-                self._model_cache[model.get("id", "")] = model
-            
-            logger.info(f"Found {len(models)} semantic models")
+
+        def _normalize_models(payload: Any) -> list[dict[str, Any]]:
+            if isinstance(payload, dict):
+                raw_models = payload.get("value")
+                if raw_models is None:
+                    raw_models = payload.get("items")
+                if raw_models is None:
+                    raw_models = payload.get("data")
+            elif isinstance(payload, list):
+                raw_models = payload
+            else:
+                raw_models = []
+
+            models: list[dict[str, Any]] = []
+            for item in raw_models or []:
+                if not isinstance(item, dict):
+                    continue
+                model_id = str(item.get("id") or item.get("datasetId") or item.get("semanticModelId") or "").strip()
+                display_name = str(item.get("displayName") or item.get("name") or item.get("title") or model_id).strip()
+                if not model_id and not display_name:
+                    continue
+                normalized = {
+                    **item,
+                    "id": model_id or display_name,
+                    "displayName": display_name or model_id,
+                }
+                models.append(normalized)
             return models
-            
-        except RequestException as e:
-            logger.error(f"Failed to list semantic models: {e}")
-            raise FabricExtractionError(f"Failed to list semantic models: {e}")
+
+        def _cache_models(models: list[dict[str, Any]]) -> None:
+            for model in models:
+                display_name = str(model.get("displayName", "")).lower()
+                model_id = str(model.get("id", ""))
+                if display_name:
+                    self._model_cache[display_name] = model
+                if model_id:
+                    self._model_cache[model_id] = model
+
+        candidate_urls = [
+            ("semanticModels", f"{self.config.api_base_url}/workspaces/{workspace_id}/semanticModels"),
+            ("items", f"{self.config.api_base_url}/workspaces/{workspace_id}/items?type=SemanticModel"),
+            ("datasets", f"{self.config.api_base_url}/workspaces/{workspace_id}/datasets"),
+        ]
+
+        last_error: Optional[str] = None
+        logger.info("Listing semantic models in workspace %s...", workspace_id)
+        for source_name, api_url in candidate_urls:
+            try:
+                response = requests.get(api_url, headers=self._get_headers(), timeout=15)
+                if response.status_code == 404:
+                    logger.warning("Fabric model list endpoint '%s' returned 404 for workspace %s", source_name, workspace_id)
+                    continue
+
+                response.raise_for_status()
+                models = _normalize_models(response.json())
+                if not models:
+                    logger.warning("Fabric model list endpoint '%s' returned no models for workspace %s", source_name, workspace_id)
+                    continue
+
+                _cache_models(models)
+                logger.info("Found %d semantic models via %s", len(models), source_name)
+                return models
+            except RequestException as e:
+                last_error = str(e)
+                logger.warning("Fabric model list endpoint '%s' failed for workspace %s: %s", source_name, workspace_id, e)
+                continue
+
+        if last_error:
+            raise FabricExtractionError(f"Failed to list semantic models: {last_error}")
+        return []
     
     def resolve_model_id(self, dataset_id_or_name: str) -> str:
         """

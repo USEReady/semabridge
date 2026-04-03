@@ -12,12 +12,13 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, ArrowRight, Check, X, Loader2,
   ChevronDown, ChevronRight, CheckSquare, Square, RefreshCw,
-  BarChart3, Activity, Snowflake, Database, Link2, Table2,
+  Table2,
 } from 'lucide-react';
 import { api } from '../utils/api';
 import { useHPSearch } from '../hooks/useHPSearch';
 import SearchableSelect from '../components/common/SearchableSelect';
 import SmartSearchBar, { matchesSmartQuery } from '../components/common/SmartSearchBar';
+import SourceIcon from '../components/common/SourceIcon';
 import { useWorkspace } from '../context/WorkspaceContext';
 import Modal from '../components/common/Modal';
 import { useLogs } from '../context/LogsContext';
@@ -63,23 +64,6 @@ const INPUT = {
 
 const LABEL = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 };
 
-function renderConnectorIcon(value, size = 16) {
-  const normalized = String(value || '').toLowerCase();
-
-  const iconStyle = { flexShrink: 0 };
-  if (normalized === 'pbix') {
-    return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#F2C811' }}>
-        <BarChart3 size={size} style={iconStyle} />
-      </span>
-    );
-  }
-  if (normalized === 'fabric') return <Activity size={size} color="#3b82f6" style={iconStyle} />;
-  if (normalized === 'snowflake') return <Snowflake size={size} color="#38bdf8" style={iconStyle} />;
-  if (normalized === 'databricks') return <Database size={size} color="#f97316" style={iconStyle} />;
-  return <Link2 size={size} color="var(--text-tertiary)" style={iconStyle} />;
-}
-
 export default function CreateProjectPage() {
   const navigate = useNavigate();
   const { addLog } = useLogs();
@@ -110,6 +94,7 @@ export default function CreateProjectPage() {
 
   // Step 2
   const [fabricAccountId, setFabricAccountId] = useState('');
+  const [selectedConnectionId, setSelectedConnectionId] = useState('');
   const [fabricAccounts, setFabricAccounts] = useState([]);
   const [fabricWorkspaceId, setFabricWorkspaceId] = useState('');
   const [snowflakeDatabase, setSnowflakeDatabase] = useState('');
@@ -136,16 +121,8 @@ export default function CreateProjectPage() {
   const [syncError, setSyncError] = useState('');
   const [syncErrorOpen, setSyncErrorOpen] = useState(false);
 
-  // Global default workspace from Settings — fetched once on mount.
-  // This is the workspace the user saved in Settings → Connections.
-  const [globalDefaultWorkspaceId, setGlobalDefaultWorkspaceId] = useState('');
-  const [globalDefaultWorkspaceName, setGlobalDefaultWorkspaceName] = useState('');
-  const [workspaceManuallySet, setWorkspaceManuallySet] = useState(false);
-  // Workspace list returned by the backend's smart auto-detect (Tier 3).
-  // Used to populate the dropdown when the useWorkspace() hook hasn't loaded yet.
+  // Workspace list returned by the backend when the selected account changes.
   const [allWorkspacesFromApi, setAllWorkspacesFromApi] = useState([]);
-  // The workspace the backend recommends for this session (source: auto/saved/config).
-  const [sessionWorkspaceId, setSessionWorkspaceId] = useState('');
 
   // Step 3
   const [workspaces, setWorkspaces] = useState([]);
@@ -315,34 +292,17 @@ export default function CreateProjectPage() {
     };
   }, [pbixSourceMode, selectedLocalFolderTag, sourceConnector, step]);
 
-  const fetchFabricWorkspaces = useCallback(async (accountId = fabricAccountId) => {
+  const fetchFabricWorkspaces = useCallback(async (accountId) => {
+    if (!accountId) {
+      setAllWorkspacesFromApi([]);
+      setWorkspaces([]);
+      return;
+    }
     setIsRefreshingWorkspaces(true);
     try {
-      const [defaultResp, listRespByIdentity, listRespByBearer] = await Promise.allSettled([
-        api.getFabricDefaultWorkspace(accountId),
-        api.fabricListWorkspaces(accountId),
-        api.fabricListWorkspaces(),
-      ]);
+      const listData = await api.fabricListWorkspaces(accountId);
 
-      const defaultData = defaultResp.status === 'fulfilled' ? defaultResp.value : null;
-      const listDataByIdentity = listRespByIdentity.status === 'fulfilled' ? listRespByIdentity.value : null;
-      const listDataByBearer = listRespByBearer.status === 'fulfilled' ? listRespByBearer.value : null;
-
-      console.log('[SemaBridge] getFabricDefaultWorkspace raw response:', defaultData);
-      console.log('[SemaBridge] fabricListWorkspaces(identity) raw response:', listDataByIdentity);
-      console.log('[SemaBridge] fabricListWorkspaces(bearer) raw response:', listDataByBearer);
-
-      if (defaultData?.workspace_id) {
-        setGlobalDefaultWorkspaceId(defaultData.workspace_id);
-        setGlobalDefaultWorkspaceName(defaultData.workspace_name || '');
-        setSessionWorkspaceId(defaultData.workspace_id);
-      }
-
-      const discovered = [
-        ...(Array.isArray(listDataByIdentity?.workspaces) ? listDataByIdentity.workspaces : []),
-        ...(Array.isArray(listDataByBearer?.workspaces) ? listDataByBearer.workspaces : []),
-        ...(defaultData?.all_workspaces || []),
-      ];
+      const discovered = Array.isArray(listData?.workspaces) ? listData.workspaces : [];
 
       const apiWorkspaces = discovered.map(ws => ({
         id: ws.id || ws.workspace_id,
@@ -360,17 +320,13 @@ export default function CreateProjectPage() {
       }
 
       console.log('[SemaBridge] Resolved workspace list:', deduped);
-      if (deduped.length > 0) {
-        setAllWorkspacesFromApi(deduped);
-      } else {
-        setAllWorkspacesFromApi([]);
-      }
+      setAllWorkspacesFromApi(deduped);
     } catch {
       setAllWorkspacesFromApi([]);
     } finally {
       setIsRefreshingWorkspaces(false);
     }
-  }, [fabricAccountId]);
+  }, []);
 
   // Fetch Fabric accounts when step 2 opens
   useEffect(() => {
@@ -381,18 +337,20 @@ export default function CreateProjectPage() {
           const res = await api.getAccounts('FABRIC');
           const list = Array.isArray(res) ? res : (res?.accounts || []);
           setFabricAccounts(list);
-          // Find default account if present
-          const defaultAccount = list.find(acc => acc.is_default);
-          if (list.length > 0 && !fabricAccountId) {
-            if (defaultAccount) {
-              setFabricAccountId(defaultAccount.id);
-              fetchFabricWorkspaces(defaultAccount.id);
-            } else {
-              setFabricAccountId(list[0].id);
-              fetchFabricWorkspaces(list[0].id);
-            }
-          } else if (fabricAccountId) {
-            fetchFabricWorkspaces(fabricAccountId);
+          if (list.length === 0) {
+            setSelectedConnectionId('');
+            setFabricAccountId('');
+            return;
+          }
+
+          const hasSelection = list.some(acc => String(acc?.id || '') === String(selectedConnectionId || ''));
+          const nextConnectionId = hasSelection
+            ? selectedConnectionId
+            : String(list[0]?.id || '');
+
+          if (nextConnectionId) {
+            setSelectedConnectionId(nextConnectionId);
+            setFabricAccountId(nextConnectionId);
           }
         } catch (e) {
           console.warn("[SemaBridge] Failed to fetch Fabric Accounts", e);
@@ -400,50 +358,22 @@ export default function CreateProjectPage() {
       };
       fetchAccounts();
     }
-  }, [step, sourceConnector, targetConnectors]); // deliberately omitting fabricAccountId/fetchFabricWorkspaces to prevent reload loops
+  }, [step, sourceConnector, targetConnectors, selectedConnectionId, fetchFabricWorkspaces]);
 
-  // Auto-populate the workspace dropdown on step 2 when Fabric is the source.
-  // Priority: manual override > active session exact match > 'semabridge' name > global default > generic fallback.
+  // Account switch is the source of truth for workspace discovery.
   useEffect(() => {
     const needsFabricWorkspaceConfig = sourceConnector === 'fabric' || targetConnectors.has('fabric');
-    if (!needsFabricWorkspaceConfig) return;
-    if (workspaceManuallySet) return; // user made an explicit choice — never reset
+    if (step !== 2 || !needsFabricWorkspaceConfig) return;
 
-    const liveList = liveFabricWorkspaces;
+    setAllWorkspacesFromApi([]);
+    setWorkspaces([]);
+    setFabricWorkspaceId('');
 
-    // Don't run if we have no live data yet
-    if (liveList.length === 0) return;
+    if (!selectedConnectionId) return;
 
-    // If current selection is in the live list, keep it — no re-selection needed
-    if (fabricWorkspaceId && liveList.some(ws => ws.id === fabricWorkspaceId)) return;
-
-    // 1. Strict case-sensitive name match against session workspace name
-    const activeWsName = (globalDefaultWorkspaceName || '').trim();
-    const sessionMatch = liveList.find(ws =>
-      ws.id === sessionWorkspaceId ||
-      (activeWsName && ws.name?.trim() === activeWsName)
-    );
-
-    // 2. Project-named workspace ('semabridge')
-    const semabridgeWs = liveList.find(ws => ws.name?.toLowerCase() === 'semabridge');
-
-    // 3. Any non-personal workspace (exclude 'My workspace')
-    const nonPersonal = liveList.find(ws => ws.name !== 'My workspace');
-
-    const preferred =
-      sessionMatch?.id ||
-      semabridgeWs?.id ||
-      globalDefaultWorkspaceId ||
-      nonPersonal?.id ||
-      liveList[0]?.id ||
-      '';
-
-    if (preferred) {
-      console.log('[SemaBridge] Auto-selecting workspace:', preferred);
-      setFabricWorkspaceId(preferred);
-    }
-  }, [sourceConnector, targetConnectors, fabricWorkspaceId, workspaceManuallySet, sessionWorkspaceId,
-      globalDefaultWorkspaceName, globalDefaultWorkspaceId, availableWorkspaces, allWorkspacesFromApi]);
+    setFabricAccountId(selectedConnectionId);
+    fetchFabricWorkspaces(selectedConnectionId);
+  }, [step, sourceConnector, targetConnectors, selectedConnectionId, fetchFabricWorkspaces]);
 
   // Ghost-purge: if the current selection no longer exists in the live list, force-clear it
   // so the auto-select above can immediately re-run and pick the correct workspace.
@@ -456,7 +386,6 @@ export default function CreateProjectPage() {
     if (!stillExists) {
       console.warn('[SemaBridge] Ghost workspace detected — force-clearing:', fabricWorkspaceId);
       setFabricWorkspaceId('');
-      setWorkspaceManuallySet(false);
       localStorage.removeItem('semabridge_workspace_id');
     }
   }, [fabricWorkspaceId, availableWorkspaces, allWorkspacesFromApi]);
@@ -506,7 +435,7 @@ export default function CreateProjectPage() {
       setExpandedWs(prev => ({ ...prev, [fabricWorkspaceId]: true }));
       setWsLoading(true);
       console.log('[SemaBridge] Discovering Fabric models for workspaceId:', fabricWorkspaceId);
-      api.discoverFabricModels(fabricWorkspaceId, fabricAccountId)
+      api.discoverFabricModels(fabricWorkspaceId, selectedConnectionId)
         .then(data => {
           if (!Array.isArray(data) || data.length === 0) {
             setRunWarning('No semantic models found for this workspace. Check Fabric permissions or workspace contents.');
@@ -548,17 +477,17 @@ export default function CreateProjectPage() {
     }
 
     setWorkspaces([]);
-  }, [step, sourceConnector, fabricWorkspaceId, fabricAccountId, selectedWorkspace, liveFabricWorkspaces]);
+  }, [step, sourceConnector, fabricWorkspaceId, selectedConnectionId, selectedWorkspace, liveFabricWorkspaces]);
 
   const loadWsModels = useCallback(async (wsid) => {
     if (wsModels[wsid]) return;
     try {
-      const models = await api.discoverFabricModels(wsid, fabricAccountId);
+      const models = await api.discoverFabricModels(wsid, selectedConnectionId);
       setWsModels(prev => ({ ...prev, [wsid]: models ?? [] }));
     } catch {
       setWsModels(prev => ({ ...prev, [wsid]: [] }));
     }
-  }, [wsModels, fabricAccountId]);
+  }, [wsModels, selectedConnectionId]);
 
   const toggleWorkspace = (wsid) => {
     const next = { ...expandedWs, [wsid]: !expandedWs[wsid] };
@@ -642,6 +571,7 @@ export default function CreateProjectPage() {
       if (sourceConnector === 'fabric' && selectedWorkspace) {
         payload.selectedWorkspaceId = selectedWorkspace.id || fabricWorkspaceId;
         payload.selectedAccountId = selectedWorkspace.account_id || selectedWorkspace.accountId;
+        payload.account_id = selectedWorkspace.account_id || selectedWorkspace.accountId;
       }
 
       let project = await api.createProject(payload);
@@ -1041,8 +971,11 @@ export default function CreateProjectPage() {
           <StepConnectorConfig
             sourceConnector={sourceConnector}
             targetConnectors={targetConnectors}
-            fabricAccountId={fabricAccountId}
-            setFabricAccountId={setFabricAccountId}
+            fabricAccountId={selectedConnectionId}
+            setFabricAccountId={(nextId) => {
+              setSelectedConnectionId(nextId);
+              setFabricAccountId(nextId);
+            }}
             fabricAccounts={fabricAccounts}
             fabricWorkspaceId={fabricWorkspaceId}
             setFabricWorkspaceId={setFabricWorkspaceId}
@@ -1070,17 +1003,8 @@ export default function CreateProjectPage() {
             }}
             workspaces={liveFabricWorkspaces}
             workspacesLoading={workspacesLoading}
-            globalDefaultWorkspaceId={globalDefaultWorkspaceId}
-            globalDefaultWorkspaceName={globalDefaultWorkspaceName}
-            sessionWorkspaceId={sessionWorkspaceId}
-            workspaceManuallySet={workspaceManuallySet}
-            onWorkspaceManualChange={(id) => {
-              // Mark that the user has overridden the global default.
-              setWorkspaceManuallySet(true);
-              setFabricWorkspaceId(id);
-            }}
             isRefreshingWorkspaces={isRefreshingWorkspaces}
-            fetchFabricWorkspaces={() => fetchFabricWorkspaces(fabricAccountId)}
+            fetchFabricWorkspaces={() => fetchFabricWorkspaces(selectedConnectionId)}
             runWarning={runWarning}
           />
         )}
@@ -1352,7 +1276,7 @@ function StepBasicInfo({
                     background: isSelected ? 'var(--accent-blue)20' : 'transparent',
                     transition: 'all 0.2s ease',
                   }} />
-                  {renderConnectorIcon(c.value, 16)}
+                  <SourceIcon source={c.value} size={16} />
                   <span style={{ flex: 1 }}>{c.label}</span>
                   {isSelected && <Check size={14} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />}
                 </button>
@@ -1431,7 +1355,7 @@ function StepBasicInfo({
                   }}>
                     {isSelected && <Check size={12} color="white" />}
                   </div>
-                  {renderConnectorIcon(t.value, 16)}
+                  <SourceIcon source={t.value} size={16} />
                   <span style={{ flex: 1 }}>{t.label}</span>
                   {isSelected && <Check size={14} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />}
                 </button>
@@ -1521,11 +1445,6 @@ function StepConnectorConfig({
   onUploadSuccess,
   workspaces,
   workspacesLoading,
-  globalDefaultWorkspaceId,
-  globalDefaultWorkspaceName,
-  sessionWorkspaceId,
-  workspaceManuallySet,
-  onWorkspaceManualChange,
   isRefreshingWorkspaces,
   fetchFabricWorkspaces,
   runWarning,
@@ -1563,11 +1482,6 @@ function StepConnectorConfig({
     const droppedFile = event.dataTransfer?.files?.[0] || null;
     if (droppedFile) await uploadPbixFile(droppedFile);
   };
-
-  // True when the currently selected workspace is the one saved in Settings.
-  const isUsingGlobalDefault = Boolean(
-    globalDefaultWorkspaceId && fabricWorkspaceId === globalDefaultWorkspaceId
-  );
 
   const selectedTargets = [...targetConnectors];
   const sourceLabel = CONNECTOR_TYPES.find(c => c.value === sourceConnector)?.label || sourceConnector;
@@ -1612,14 +1526,13 @@ function StepConnectorConfig({
                 onChange={e => {
                   setFabricAccountId(e.target.value);
                   setFabricWorkspaceId(''); // reset workspace when account changes
-                  fetchFabricWorkspaces(e.target.value);
                 }}
                 style={INPUT}
               >
                 {fabricAccounts.length === 0 && <option value="" disabled>No accounts available</option>}
                 {fabricAccounts.length > 0 && fabricAccounts.map(acc => (
                   <option key={acc.id} value={acc.id}>
-                    {(acc.is_default ? 'Default' : (acc.tag || ''))} ({acc.identity_email})
+                    {(acc.tag || acc.identity_email || acc.id)} ({acc.identity_email || 'N/A'})
                   </option>
                 ))}
               </select>
@@ -1632,15 +1545,6 @@ function StepConnectorConfig({
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                 <label style={{ ...LABEL, margin: 0 }}>Fabric Workspace</label>
-                {isUsingGlobalDefault && (
-                  <span style={{
-                    fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 999,
-                    background: 'var(--color-success-bg)', color: 'var(--color-success)',
-                    border: '1px solid var(--color-success)30', letterSpacing: '0.3px',
-                  }}>
-                    ✓ Default
-                  </span>
-                )}
                 <div style={{ flex: 1 }} />
                 <button 
                   onClick={() => fetchFabricWorkspaces(fabricAccountId)} 
@@ -1669,19 +1573,13 @@ function StepConnectorConfig({
                 value={fabricWorkspaceId}
                 onChange={item => {
                   const newId = item?.id || '';
-                  if (newId !== fabricWorkspaceId && onWorkspaceManualChange) {
-                    onWorkspaceManualChange(newId);
-                  } else {
-                    setFabricWorkspaceId(newId);
-                  }
+                  setFabricWorkspaceId(newId);
                 }}
                 loading={workspacesLoading || isRefreshingWorkspaces}
                 clearable={false}
               />
               <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
-                {isUsingGlobalDefault
-                  ? `Pre-selected from your active Fabric session${globalDefaultWorkspaceName ? ` (${globalDefaultWorkspaceName})` : ''}. You can override it below.`
-                  : 'Pick one workspace here. Step 3 will show models from this workspace only.'}
+                Pick one workspace here. Step 3 will show models from this workspace only.
               </p>
               {!workspacesLoading && !isRefreshingWorkspaces && workspaces.length === 0 && fabricAccountId && (
                 <p style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 8 }}>
@@ -1882,7 +1780,7 @@ function StepConnectorConfig({
                   }}
                 >
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                      {renderConnectorIcon(targetMeta.value ?? target, 16)}
+                      <SourceIcon source={targetMeta.value ?? target} size={16} />
                     {targetMeta.label} Target Configuration
                   </span>
                   <ChevronDown size={14} />
@@ -1944,14 +1842,13 @@ function StepConnectorConfig({
                             const nextAccountId = e.target.value;
                             setFabricAccountId(nextAccountId);
                             setFabricWorkspaceId('');
-                            fetchFabricWorkspaces(nextAccountId);
                           }}
                           style={INPUT}
                         >
                           {fabricAccounts.length === 0 && <option value="" disabled>No accounts available</option>}
                           {fabricAccounts.length > 0 && fabricAccounts.map(acc => (
                             <option key={acc.id} value={acc.id}>
-                              {(acc.is_default ? 'Default' : (acc.tag || ''))} ({acc.identity_email})
+                              {(acc.tag || acc.identity_email || acc.id)} ({acc.identity_email || 'N/A'})
                             </option>
                           ))}
                         </select>
@@ -1963,15 +1860,6 @@ function StepConnectorConfig({
                       <div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                           <label style={{ ...LABEL, margin: 0 }}>Target Fabric Workspace</label>
-                          {isUsingGlobalDefault && (
-                            <span style={{
-                              fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 999,
-                              background: 'var(--color-success-bg)', color: 'var(--color-success)',
-                              border: '1px solid var(--color-success)30', letterSpacing: '0.3px',
-                            }}>
-                              ✓ Default
-                            </span>
-                          )}
                           <div style={{ flex: 1 }} />
                           <button
                             onClick={() => fetchFabricWorkspaces(fabricAccountId)}
@@ -1999,11 +1887,7 @@ function StepConnectorConfig({
                           value={fabricWorkspaceId}
                           onChange={item => {
                             const newId = item?.id || '';
-                            if (newId !== fabricWorkspaceId && onWorkspaceManualChange) {
-                              onWorkspaceManualChange(newId);
-                            } else {
-                              setFabricWorkspaceId(newId);
-                            }
+                            setFabricWorkspaceId(newId);
                           }}
                           loading={workspacesLoading || isRefreshingWorkspaces}
                           clearable={false}
@@ -2904,13 +2788,9 @@ function StepFinish({
           </div>
           <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Project Created!</h2>
           <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 24 }}>
-            {`Project "${name}" has been created successfully.`}
-          </p>
-        </div>
-        <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Project Created!</h2>
-        <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 24 }}>
-          {`Project "${name}" has been created successfully. You can now review your configuration or start your first sync.`}
+            {`Project "${name}" has been created successfully. You can now review your configuration or start your first sync.`}
         </p>
+        </div>
         {runWarning && (
           <div style={{ maxWidth: 640, margin: '0 auto', padding: '12px 14px', borderRadius: 10, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.5, textAlign: 'left' }}>
             {runWarning}
