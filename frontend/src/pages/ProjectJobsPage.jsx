@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Play, RefreshCw, Clock, CalendarClock, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
+﻿import { useState, useEffect } from 'react';
+import { Play, RefreshCw, Clock, CalendarClock, RotateCcw, ChevronDown, ChevronRight, BarChart3 } from 'lucide-react';
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
 import SearchInput from '../components/common/SearchInput';
@@ -14,7 +14,7 @@ const DEFAULT_CONFIG = { schedule_type: 'Manual Trigger Only', cron: '0 0 * * *'
 const REFRESH_INTERVAL_MS = 4000;
 
 function formatDuration(ms) {
-  if (!ms) return '—';
+  if (!ms) return 'â€”';
   if (ms < 1000) return `${ms}ms`;
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
@@ -22,8 +22,17 @@ function formatDuration(ms) {
 }
 
 function formatDate(iso) {
-  if (!iso) return '—';
+  if (!iso) return 'â€”';
   return new Date(iso).toLocaleString();
+}
+
+function sourceIcon(sourceType) {
+  const normalized = String(sourceType || '').toLowerCase();
+  if (normalized === 'pbix') return <BarChart3 size={14} color="#F2C811" />;
+  if (normalized === 'fabric') return 'ðŸ”·';
+  if (normalized === 'snowflake') return 'â„ï¸';
+  if (normalized === 'databricks') return 'ðŸ§±';
+  return 'ðŸ”—';
 }
 
 export default function ProjectJobsPage() {
@@ -158,7 +167,7 @@ export default function ProjectJobsPage() {
         title="Runs"
         description="Configure execution schedules and monitor run history."
         action={{
-          label: running ? 'Running…' : 'Run Now',
+          label: running ? 'Runningâ€¦' : 'Run Now',
           icon: running ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />,
           onClick: handleRunNow,
         }}
@@ -259,7 +268,7 @@ export default function ProjectJobsPage() {
             }}
           >
             {configSaving ? <RefreshCw size={13} className="animate-spin" /> : <RotateCcw size={13} />}
-            {configSaving ? 'Saving…' : 'Update Configuration'}
+            {configSaving ? 'Savingâ€¦' : 'Update Configuration'}
           </button>
         </div>
       </div>
@@ -326,7 +335,7 @@ export default function ProjectJobsPage() {
                     opacity: scheduleDeletingId === String(schedule.project_id) ? 0.6 : 1,
                   }}
                 >
-                  {scheduleDeletingId === String(schedule.project_id) ? 'Cancelling…' : 'Cancel'}
+                  {scheduleDeletingId === String(schedule.project_id) ? 'Cancellingâ€¦' : 'Cancel'}
                 </button>
               </div>
             ))}
@@ -345,7 +354,7 @@ export default function ProjectJobsPage() {
             onToggleRegex={setSearchUseRegex}
             allowRegex
             helperText={searchUseRegex ? 'Regex examples: ^run_\\d+$ or failed|running' : 'Tip: enable regex to use patterns like ^run_\\d+$'}
-            placeholder="Filter runs…"
+            placeholder="Filter runsâ€¦"
             width={220}
           />
           <select
@@ -411,7 +420,12 @@ export default function ProjectJobsPage() {
                         {String(run.id ?? '-').substring(0, 12)}
                       </span>
                     </div>
-                    <div style={{ fontSize: 13, fontWeight: 600 }}>{run.project_name || 'Project run'}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600 }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {sourceIcon(run.source_type)}
+                      </span>
+                      <span>{run.project_name || 'Project run'}</span>
+                    </div>
                     <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{run.schedule || 'Manual'}</div>
                     <div style={{ display: 'flex', justifyContent: 'center' }}>
                       <StatusBadge status={run.status || 'draft'} />
@@ -431,6 +445,7 @@ export default function ProjectJobsPage() {
                         <InfoCard label="Started" value={formatDate(run.started_at)} />
                         <InfoCard label="Duration" value={formatDuration(run.duration_ms)} mono />
                         <InfoCard label="Status" value={String(run.status || 'draft')} />
+                        <InfoCard label="Message" value={run.message || run.error || 'â€”'} />
                       </div>
 
                       <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>
@@ -475,7 +490,7 @@ function InfoCard({ label, value, mono = false }) {
     >
       <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 6 }}>{label}</div>
       <div style={{ fontSize: 12, color: 'var(--text-primary)', fontFamily: mono ? 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' : 'inherit' }}>
-        {value || '—'}
+        {value || 'â€”'}
       </div>
     </div>
   );

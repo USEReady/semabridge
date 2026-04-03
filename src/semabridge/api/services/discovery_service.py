@@ -8,6 +8,7 @@ import json
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from semabridge.core.env import get_fabric_access_token_from_env
 from semabridge.core.settings import get_settings
 from semabridge.repository.credential_manager import CredentialManager
 from semabridge.connectors.fabric_extractor import FabricExtractor
@@ -39,7 +40,7 @@ async def discover_fabric_models():
         cm = CredentialManager()
         auth_method = cm.get_fabric_auth_method()
 
-        env_token = os.environ.get("FABRIC_ACCESS_TOKEN", "").strip()
+        env_token = get_fabric_access_token_from_env()
         if env_token and auth_method == "none":
             auth_method = "env_token"
 

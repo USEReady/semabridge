@@ -16,6 +16,7 @@ from typing import Any, Optional
 import httpx
 import msal
 
+from semabridge.core.env import get_fabric_access_token_from_env
 from semabridge.core.settings import FabricConfig
 from semabridge.connectors.tmsl_generator import TMSLGenerator
 from semabridge.sml.models import SMLModel
@@ -71,8 +72,7 @@ class FabricPublisher:
         logger.debug("Acquiring new access token for Fabric API...")
 
         # --- Pre-issued token from environment variable (CI / automation) ---
-        import os
-        env_token = os.environ.get("FABRIC_ACCESS_TOKEN")
+        env_token = get_fabric_access_token_from_env()
         if env_token:
             self._access_token = env_token
             self._token_expiry = current_time + 3600

@@ -1,4 +1,4 @@
-import { createElement, useState } from 'react';
+import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   Map, FolderOpen, PlayCircle, Settings, GitBranch,
@@ -25,6 +25,29 @@ const NAV_ITEMS = [
   { to: '/model-mapping', label: 'Model Mapping',   icon: GitBranch },
   { to: '/settings',      label: 'Settings',        icon: Settings },
 ];
+
+function SidebarNavIcon({ icon: Icon, active }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 20,
+        height: 20,
+        flexShrink: 0,
+        color: active ? 'var(--accent-blue)' : 'var(--text-secondary)',
+      }}
+    >
+      <Icon
+        size={18}
+        strokeWidth={active ? 2.5 : 2}
+        style={{ pointerEvents: 'none' }}
+      />
+    </span>
+  );
+}
 
 export default function DashboardLayout() {
   const { user, logout } = useAuth();
@@ -121,11 +144,7 @@ export default function DashboardLayout() {
               >
                 {({ isActive }) => (
                   <>
-                    {createElement(icon, {
-                      size: 18,
-                      strokeWidth: isActive ? 2.5 : 2,
-                      style: { flexShrink: 0, color: isActive ? 'var(--accent-blue)' : 'var(--text-secondary)' },
-                    })}
+                    <SidebarNavIcon icon={icon} active={isActive} />
                     {!collapsed && (
                       <span
                         className="text-sm font-medium"

@@ -78,6 +78,9 @@ export default function ProjectConfigPage() {
     source_type: 'fabric',
     target_type: 'snowflake',
     output_format: 'osi',
+    pbix_path: '',
+    pbix_folder: '',
+    pbix_uploaded_path: '',
     identity_id: '',
     workspace_id: '',
     database: '',
@@ -398,6 +401,9 @@ export default function ProjectConfigPage() {
           source_type: fallbackSource,
           target_type: fallbackTarget,
           output_format: 'osi',
+          pbix_path: '',
+          pbix_folder: '',
+          pbix_uploaded_path: '',
           identity_id: '',
           workspace_id: '',
           database: '',
@@ -441,6 +447,9 @@ export default function ProjectConfigPage() {
         source_type: String(source.type || fallbackSource),
         target_type: String(target.type || fallbackTarget),
         output_format: String(ui.intermediate_format || ui.output_format || 'osi'),
+        pbix_path: String(source.pbix_path || source.pbix_file_path || source.source_path || source.file_path || ''),
+        pbix_folder: String(source.pbix_folder || ''),
+        pbix_uploaded_path: String(projectMeta?.pbix_file_path || source.pbix_file_path || source.pbix_path || ''),
         identity_id: String(source.identity_id || ''),
         workspace_id: String(source.workspace_id || ''),
         database: String(source.database || ''),
@@ -491,21 +500,56 @@ export default function ProjectConfigPage() {
       if (configForm.identity_id) nextTree.source.identity_id = configForm.identity_id;
       else delete nextTree.source.identity_id;
       nextTree.source.workspace_id = configForm.workspace_id || '';
+      delete nextTree.source.pbix_path;
+      delete nextTree.source.pbix_folder;
+      delete nextTree.source.source_path;
+      delete nextTree.source.file_path;
       delete nextTree.source.database;
       delete nextTree.source.schema;
     } else if (configForm.source_type === 'snowflake') {
       delete nextTree.source.identity_id;
       nextTree.source.database = configForm.database || '';
       nextTree.source.schema = configForm.schema || '';
+      delete nextTree.source.pbix_path;
+      delete nextTree.source.pbix_folder;
+      delete nextTree.source.source_path;
+      delete nextTree.source.file_path;
       delete nextTree.source.workspace_id;
+    } else if (configForm.source_type === 'pbix') {
+      delete nextTree.source.identity_id;
+      delete nextTree.source.workspace_id;
+      delete nextTree.source.database;
+      delete nextTree.source.schema;
+      if (configForm.pbix_path?.trim()) {
+        nextTree.source.pbix_path = configForm.pbix_path.trim();
+        nextTree.source.pbix_file_path = configForm.pbix_path.trim();
+      } else {
+        delete nextTree.source.pbix_path;
+        delete nextTree.source.pbix_file_path;
+      }
+      if (configForm.pbix_folder?.trim()) {
+        nextTree.source.pbix_folder = configForm.pbix_folder.trim();
+      } else {
+        delete nextTree.source.pbix_folder;
+      }
+      delete nextTree.source.source_path;
+      delete nextTree.source.file_path;
     } else {
       delete nextTree.source.identity_id;
       delete nextTree.source.workspace_id;
       delete nextTree.source.database;
       delete nextTree.source.schema;
+      delete nextTree.source.pbix_path;
+      delete nextTree.source.pbix_folder;
+      delete nextTree.source.source_path;
+      delete nextTree.source.file_path;
     }
 
-    if (configForm.source_type === 'fabric') {
+    if (configForm.source_type === 'pbix') {
+      // PBIX extraction resolves model from file path/folder; do not force model fields.
+      delete nextTree.source.model;
+      delete nextTree.source.models;
+    } else if (configForm.source_type === 'fabric') {
       if (allow.length) {
         nextTree.source.models = allow;
       } else {
@@ -600,6 +644,17 @@ export default function ProjectConfigPage() {
   };
 
   const handleRunNow = async () => {
+    if (
+      String(configForm.source_type || '').toLowerCase() === 'pbix'
+      && !String(configForm.pbix_path || '').trim()
+      && !String(configForm.pbix_folder || '').trim()
+    ) {
+      const msg = 'PBIX source requires PBIX File Path or PBIX Folder before Sync Now.';
+      addLog('error', 'Sync', msg);
+      setSaveInfo(msg);
+      return;
+    }
+
     setSyncing(true);
     try {
       const saved = await handleSave();
@@ -612,6 +667,12 @@ export default function ProjectConfigPage() {
       const status = String(run?.status || '').toLowerCase();
       if (run?.id) {
         saveRunLogs(run.id, buildMockRunLogs(run));
+      }
+
+      // Sync Now is the primary execution entry point. Route users directly to Runs.
+      if (run?.run_id || run?.id || status === 'running') {
+        navigate('/jobs');
+        return;
       }
 
       if (typeof window !== 'undefined' && window.dispatchEvent) {
@@ -1046,6 +1107,15 @@ function FormEditor({
   onRefreshFabricWorkspaces,
 }) {
   const patch = (k, v) => onChange(prev => ({ ...prev, [k]: v }));
+  const [overridePbixPath, setOverridePbixPath] = useState(false);
+  const uploadedPbixPath = String(value.pbix_uploaded_path || '').trim();
+  const pbixPathLocked = value.source_type === 'pbix' && Boolean(uploadedPbixPath) && !overridePbixPath;
+
+  useEffect(() => {
+    if (value.source_type !== 'pbix') {
+      setOverridePbixPath(false);
+    }
+  }, [value.source_type]);
 
   return (
     <div style={{ maxWidth: 1080, margin: '0 auto', padding: 4, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -1053,6 +1123,7 @@ function FormEditor({
         <div>
           <label style={LABEL}>Source Type</label>
           <select value={value.source_type} onChange={e => patch('source_type', e.target.value)} style={{ ...INPUT, cursor: 'pointer' }}>
+            <option value="pbix">pbix</option>
             <option value="fabric">fabric</option>
             <option value="snowflake">snowflake</option>
             <option value="databricks">databricks</option>
@@ -1143,6 +1214,56 @@ function FormEditor({
           <div>
             <label style={LABEL}>Schema</label>
             <input value={value.schema} onChange={e => patch('schema', e.target.value)} style={INPUT} placeholder="PUBLIC" />
+          </div>
+        </div>
+      )}
+
+      {value.source_type === 'pbix' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <label style={{ ...LABEL, margin: 0 }}>PBIX File Path</label>
+              {uploadedPbixPath && (
+                <button
+                  type="button"
+                  onClick={() => setOverridePbixPath(prev => !prev)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--accent-blue)',
+                    cursor: 'pointer',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    padding: 0,
+                  }}
+                >
+                  {overridePbixPath ? 'Use uploaded path' : 'Edit manually'}
+                </button>
+              )}
+            </div>
+            <input
+              value={value.pbix_path || ''}
+              onChange={e => patch('pbix_path', e.target.value)}
+              style={INPUT}
+              readOnly={pbixPathLocked}
+              placeholder="C:/models/Finance.pbix"
+            />
+            {uploadedPbixPath && (
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                {pbixPathLocked
+                  ? 'Using uploaded file path from project creation. Click Edit manually to override.'
+                  : 'Manual override enabled. You can point this to a permanent local/network path.'}
+              </div>
+            )}
+          </div>
+          <div>
+            <label style={LABEL}>PBIX Folder (optional)</label>
+            <input
+              value={value.pbix_folder || ''}
+              onChange={e => patch('pbix_folder', e.target.value)}
+              style={INPUT}
+              placeholder="C:/models"
+            />
           </div>
         </div>
       )}

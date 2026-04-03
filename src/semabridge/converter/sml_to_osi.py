@@ -75,6 +75,12 @@ class SMLToOSIConverter(BaseConverter):
             
             # 1. Convert Datasets
             for sml_ds in sml_model.datasets:
+                logger.info(
+                    "Converting SML dataset to OSI logical table: %s (columns=%s, hidden=%s)",
+                    sml_ds.unique_name,
+                    len(sml_ds.columns),
+                    sml_ds.is_hidden,
+                )
                 osi.datasets.append(self._convert_dataset_to_osi(sml_ds))
             
             # 2. Convert Dimensions
@@ -114,6 +120,12 @@ class SMLToOSIConverter(BaseConverter):
     def _convert_dataset_to_osi(self, sml_ds: SMLDataset) -> OSIDataset:
         """Convert SMLDataset to OSIDataset."""
         columns = [self._convert_column_to_osi(c) for c in sml_ds.columns]
+
+        if not columns:
+            logger.warning(
+                "Retaining logical table '%s' with no columns in OSI output",
+                sml_ds.unique_name,
+            )
         
         return OSIDataset(
             unique_name=sml_ds.unique_name,

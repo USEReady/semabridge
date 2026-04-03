@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 import requests
 from requests.exceptions import RequestException
 
+from semabridge.core.env import get_fabric_access_token_from_env
 from semabridge.core.exceptions import ConnectorError, RateLimitError
 from semabridge.utils.logger import get_logger
 
@@ -359,10 +360,8 @@ class MultiWorkspaceOrchestrator:
         Falls back to a silent refresh via the stored refresh_token when the
         access_token has expired.  Raises ConnectorError if no valid token exists.
         """
-        import os
-
-        # Check FABRIC_ACCESS_TOKEN env var first (CI / pre-issued tokens).
-        env_token = os.environ.get("FABRIC_ACCESS_TOKEN")
+        # Check FABRIC_ACCESS_TOKEN from env or repo .env first (temporary auth).
+        env_token = get_fabric_access_token_from_env()
         if env_token:
             self._access_token = env_token
             self._token_expiry = time.time() + 3600

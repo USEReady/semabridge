@@ -232,6 +232,29 @@ class Account(Base):
         return f"<Account(id={self.id!r}, tag={self.tag!r}, connector_type={self.connector_type!r})>"
 
 
+class LocalFolder(Base):
+    """Named local filesystem location that can be reused across projects."""
+
+    __tablename__ = "local_folders"
+    __table_args__ = (
+        Index("ix_local_folders_tag_name", "tag_name", unique=True),
+        Index("ix_local_folders_is_active", "is_active"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tag_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    absolute_path: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<LocalFolder(id={self.id!r}, tag_name={self.tag_name!r}, "
+            f"absolute_path={self.absolute_path!r}, is_active={self.is_active!r})>"
+        )
+
+
 class Project(Base):
     """Registered semantic project.
 

@@ -1,5 +1,5 @@
-/**
- * ProjectsPage — Folder-grouped projects with HP search, drag-drop, and import/export.
+﻿/**
+ * ProjectsPage â€” Folder-grouped projects with HP search, drag-drop, and import/export.
  */
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   FolderOpen, Plus, MoreVertical, Layers, Trash2, Edit3,
   Upload, Download, Play, Settings, Copy, Folder, FolderPlus,
-  X, Check,
+  X, Check, BarChart3,
 } from 'lucide-react';
 
 import StatusBadge from '../components/common/StatusBadge';
@@ -21,7 +21,7 @@ import { SyncContext } from '../context/SyncContext';
 import { DEFAULT_FILTER_OPTIONS, useUIStore } from '../store/uiStore';
 
 const SOURCE_ICONS = {
-  fabric: '🔷', snowflake: '❄️', databricks: '🧱', google_sheets: '📊',
+  fabric: 'ðŸ”·', snowflake: 'â„ï¸', databricks: 'ðŸ§±', google_sheets: 'ðŸ“Š',
 };
 
 /* Use CSS variables for folder colors - mapped to semantic status colors */
@@ -35,7 +35,7 @@ const FOLDER_COLORS = [
   'var(--accent-orange)',
 ];
 
-/* ─── Main Page ─── */
+/* â”€â”€â”€ Main Page â”€â”€â”€ */
 export default function ProjectsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -161,7 +161,7 @@ export default function ProjectsPage() {
       })
     : folderFiltered;
 
-  /* ── Folder actions ── */
+  /* â”€â”€ Folder actions â”€â”€ */
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return;
     const color = FOLDER_COLORS[folders.length % FOLDER_COLORS.length];
@@ -186,7 +186,7 @@ export default function ProjectsPage() {
     setProjects(prev => prev.map(p => p.folder_id === id ? { ...p, folder_id: null } : p));
   };
 
-  /* ── Drag-and-drop ── */
+  /* â”€â”€ Drag-and-drop â”€â”€ */
   const handleDragStart = (e, projectId) => {
     e.dataTransfer.setData('projectId', String(projectId));
   };
@@ -200,7 +200,7 @@ export default function ProjectsPage() {
     setProjects(prev => prev.map(p => p.id === projectId ? { ...p, folder_id: folderId } : p));
   };
 
-  /* ── Project actions ── */
+  /* â”€â”€ Project actions â”€â”€ */
   const handleDelete = async (project) => {
     if (!confirm(`Delete project "${project.name}"?`)) return;
     try {
@@ -271,11 +271,11 @@ export default function ProjectsPage() {
     }
   }, [setProjects]);
 
-  /* ── Render ── */
+  /* â”€â”€ Render â”€â”€ */
   return (
     <div style={{ display: 'flex', flexDirection: 'row-reverse', height: '100%', overflow: 'hidden' }}>
 
-      {/* ── Folder/Adapter Sidebar ── */}
+      {/* â”€â”€ Folder/Adapter Sidebar â”€â”€ */}
       <aside style={{
         width: 220, flexShrink: 0,
         borderLeft: '1px solid var(--border-main)',
@@ -347,7 +347,7 @@ export default function ProjectsPage() {
             .sort()
             .map(source => {
               const sourceProjects = projects.filter(p => (p.source || p.adapter) === source);
-              const sourceIcon = SOURCE_ICONS[source] || '🔗';
+              const sourceIcon = SOURCE_ICONS[source] || 'ðŸ”—';
               return (
                 <SidebarItem
                   key={source}
@@ -406,7 +406,7 @@ export default function ProjectsPage() {
         </div>
       </aside>
 
-      {/* ── Main content ── */}
+      {/* â”€â”€ Main content â”€â”€ */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {/* Header */}
         <div style={{ padding: '20px 28px 0', flexShrink: 0 }}>
@@ -589,7 +589,7 @@ export default function ProjectsPage() {
                       onMouseEnter={e => { e.currentTarget.style.background = 'var(--color-error)30'; }}
                       onMouseLeave={e => { e.currentTarget.style.background = 'var(--color-error)20'; }}
                     >
-                      ✕ Clear All
+                      âœ• Clear All
                     </button>
                   </div>
                 )}
@@ -606,7 +606,7 @@ export default function ProjectsPage() {
         >
           {loading ? (
             <div style={{ padding: '80px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-              Loading projects…
+              Loading projectsâ€¦
             </div>
           ) : filtered.length === 0 && !searchQuery ? (
             <EmptyState
@@ -659,7 +659,7 @@ export default function ProjectsPage() {
   );
 }
 
-/* ─── Sidebar helpers ─── */
+/* â”€â”€â”€ Sidebar helpers â”€â”€â”€ */
 function SidebarItem({ color, label, active, onClick }) {
   return (
     <button
@@ -744,14 +744,15 @@ function SidebarFolder({
   );
 }
 
-/* ─── Project Card ─── */
+/* â”€â”€â”€ Project Card â”€â”€â”€ */
 function ProjectCard({
   project, menuOpen, onMenuToggle,
   onViewDetail, onConfigure, onRunNow, isRunning = false, onDuplicate, onExport, onDelete,
   onDragStart,
 }) {
   const isOpen = menuOpen === project.id;
-  const emoji = SOURCE_ICONS[project.source || project.adapter] ?? '📁';
+  const sourceKey = String(project.source || project.adapter || '').toLowerCase();
+  const emoji = SOURCE_ICONS[sourceKey] ?? 'ðŸ“';
   const { activeRuns } = useContext(SyncContext);
   // Debug log for troubleshooting status updates
   console.log('[ProjectCard] project.id:', project.id, 'activeRuns:', activeRuns);
@@ -809,14 +810,14 @@ function ProjectCard({
             background: 'var(--color-accent-faint)',
             display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20,
           }}>
-            {emoji}
+            {sourceKey === 'pbix' ? <BarChart3 size={20} color="#F2C811" /> : emoji}
           </div>
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>
               {project.name}
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>
-              {project.source || project.adapter || '—'}
+              {project.source || project.adapter || 'â€”'}
             </div>
           </div>
         </div>
@@ -919,7 +920,7 @@ function IconBtn({ title, onClick, disabled = false, children }) {
   );
 }
 
-/* ─── Project context menu ─── */
+/* â”€â”€â”€ Project context menu â”€â”€â”€ */
 function ProjectMenu({ onViewDetail, onConfigure, onRunNow, onDuplicate, onExport, onDelete, onClose }) {
   useEffect(() => {
     const h = () => onClose();
@@ -973,7 +974,7 @@ function ProjectMenu({ onViewDetail, onConfigure, onRunNow, onDuplicate, onExpor
   );
 }
 
-/* ─── Shared button style helper ─── */
+/* â”€â”€â”€ Shared button style helper â”€â”€â”€ */
 function btnStyle(variant) {
   return {
     display: 'inline-flex', alignItems: 'center', gap: 5,

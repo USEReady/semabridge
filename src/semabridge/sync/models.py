@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # =============================================================================
@@ -363,10 +363,22 @@ class SyncConfig(BaseModel):
     # PBIX source/target
     pbix_folder: Optional[str] = Field(default=None, description="Folder with PBIX files")
     pbix_pattern: str = Field(default="*.pbix", description="Glob pattern for PBIX files")
+    source_path: Optional[str] = Field(
+        default=None,
+        description="Single PBIX file path for PBIX_TO_SNOWFLAKE runs",
+    )
+    file_path: Optional[str] = Field(
+        default=None,
+        description="Alias for source_path",
+    )
 
     # Snowflake target/source
     snowflake_database: Optional[str] = Field(default=None, description="Target Snowflake DB")
     snowflake_schema: Optional[str] = Field(default=None, description="Target Snowflake schema")
+    target_snowflake_schema: Optional[str] = Field(
+        default=None,
+        description="Alias for snowflake_schema used by external callers",
+    )
 
     # Power BI / Fabric target
     fabric_workspace_id: Optional[str] = Field(
@@ -405,3 +417,18 @@ class SyncConfig(BaseModel):
     )
 
     model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def normalize_aliases_and_requirements(self) -> "SyncConfig":
+        """Normalize legacy/new aliases and validate direction-specific requirements."""
+        if self.file_path and not self.source_path:
+            self.source_path = self.file_path
+        if self.target_snowflake_schema and not self.snowflake_schema:
+            self.snowflake_schema = self.target_snowflake_schema
+
+        if self.direction == SyncDirection.PBIX_TO_SNOWFLAKE:
+            if not (self.source_path or self.pbix_folder):
+                raise ValueError(
+                    "PBIX_TO_SNOWFLAKE requires either source_path/file_path or pbix_folder"
+                )
+        return self

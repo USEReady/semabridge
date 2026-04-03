@@ -1106,103 +1106,59 @@ class ExecutionEngine:
         from semabridge.connectors.local_pbix_connector import LocalPBIXConnector
 
         if not pbix_path:
+            source_cfg = getattr(context.config, "source", None)
+            pbix_path = (
+                str(getattr(source_cfg, "pbix_path", "") or "").strip()
+                or str(getattr(source_cfg, "source_path", "") or "").strip()
+                or str(getattr(source_cfg, "file_path", "") or "").strip()
+            )
+
+        if not pbix_path:
             raise ExtractionError(
                 "pbix_path is required for PBIX source. "
-                "Provide a path to a .pbix file."
+                "Provide it directly or via source.pbix_path/source.source_path/source.file_path."
             )
+
+        pbix_path = str(pbix_path).strip()
+        if len(pbix_path) >= 2 and (
+            (pbix_path[0] == '"' and pbix_path[-1] == '"')
+            or (pbix_path[0] == "'" and pbix_path[-1] == "'")
+        ):
+            pbix_path = pbix_path[1:-1].strip()
+        pbix_path = os.path.expandvars(os.path.expanduser(pbix_path))
 
         p = Path(pbix_path)
         if not p.exists():
             raise ExtractionError(f"PBIX file not found: {pbix_path}")
 
         connector = LocalPBIXConnector({"pbix_path": pbix_path})
-        connector.authenticate()
-        discovered = connector.discover()  # may populate _data_model_schema or fallback metadata
-
-        # The raw DataModelSchema is structurally identical to Fabric TMSL
-        tmsl = connector._data_model_schema
-        if tmsl and "model" not in tmsl and isinstance(tmsl.get("tables"), list):
-            tmsl = {"model": tmsl}
-
-        if not tmsl:
-            # Fallback path (pbixray): build a minimal TMSL-compatible structure
-            model_info = (discovered.get("models") or [{}])[0]
-            model_name = model_info.get("name") or p.stem
-
-            table_entries: list[dict[str, Any]] = []
-            for table in discovered.get("tables", []):
-                table_entries.append(
-                    {
-                        "name": table.get("name", ""),
-                        "description": table.get("description", ""),
-                        "isHidden": table.get("is_hidden", False),
-                        "columns": [
-                            {
-                                "name": col.get("name", ""),
-                                "dataType": col.get("data_type", "string"),
-                                "isHidden": col.get("is_hidden", False),
-                                "sourceColumn": col.get("source_column", ""),
-                                "type": col.get("type", "data"),
-                            }
-                            for col in table.get("columns", [])
-                        ],
-                        "partitions": [],
-                        "measures": [],
-                    }
-                )
-
-            table_index = {t.get("name"): t for t in table_entries}
-            for measure in discovered.get("measures", []):
-                table_name = measure.get("table", "")
-                if table_name not in table_index:
-                    table_index[table_name] = {
-                        "name": table_name,
-                        "description": "",
-                        "isHidden": False,
-                        "columns": [],
-                        "partitions": [],
-                        "measures": [],
-                    }
-                    table_entries.append(table_index[table_name])
-
-                table_index[table_name]["measures"].append(
-                    {
-                        "name": measure.get("name", ""),
-                        "expression": measure.get("expression", ""),
-                        "formatString": measure.get("format_string", ""),
-                        "description": measure.get("description", ""),
-                        "isHidden": measure.get("is_hidden", False),
-                        "displayFolder": measure.get("display_folder", ""),
-                    }
-                )
-
-            relationships = [
-                {
-                    "name": rel.get("name", ""),
-                    "fromTable": rel.get("from_table", ""),
-                    "fromColumn": rel.get("from_column", ""),
-                    "toTable": rel.get("to_table", ""),
-                    "toColumn": rel.get("to_column", ""),
-                    "crossFilteringBehavior": rel.get("cross_filtering_behavior", "oneDirection"),
-                    "isActive": rel.get("is_active", True),
-                    "fromCardinality": "many" if str(rel.get("cardinality", "many-to-one")).startswith("many") else "one",
-                    "toCardinality": "one" if str(rel.get("cardinality", "many-to-one")).endswith("one") else "many",
-                }
-                for rel in discovered.get("relationships", [])
-            ]
-
-            tmsl = {
-                "model": {
-                    "name": model_name,
-                    "tables": table_entries,
-                    "relationships": relationships,
-                }
-            }
+        discovered = connector.discover()
+        tmsl = connector.extract() if discovered.get("raw_tmsl") is None else discovered.get("raw_tmsl")
 
         if not tmsl:
             raise ExtractionError(
                 f"Could not extract DataModelSchema from {pbix_path}"
             )
+
+        logger.debug(
+            "PBIX -> TMSL transition complete for %s (%s tables)",
+            pbix_path,
+            len(tmsl.get("model", {}).get("tables", [])),
+        )
+        try:
+            model_obj = tmsl.get("model", {})
+            table_defs = model_obj.get("tables", []) or []
+            table_names = [str(t.get("name", "")).strip() or "<unnamed>" for t in table_defs]
+            measure_count = sum(len((t.get("measures", []) or [])) for t in table_defs if isinstance(t, dict))
+            logger.info(
+                "PBIX extraction debug: model=%s, tables=%s, measures=%s, table_names=%s",
+                model_obj.get("name", "<unnamed-model>"),
+                len(table_defs),
+                measure_count,
+                table_names,
+            )
+        except Exception as exc:
+            logger.debug("PBIX extraction debug summary skipped: %s", exc)
 
         source_format = from_pbix_tmsl(
             project_id=context.project_id,
@@ -1738,7 +1694,7 @@ class ExecutionEngine:
         sf = context.source_format
         # PBIX has no workspace/dataset IDs — use sentinel values
         ws_id = "local"
-        ds_id = sf.pbix_path or context.project_id
+        ds_id = context.project_id
 
         # Load metric overrides and alias map from the behavior policy
         metric_overrides: Dict[str, str] = context.behavior.semantic_model.metric_overrides
@@ -1756,12 +1712,28 @@ class ExecutionEngine:
             f"PBIX OSI intermediate: {len(osi_model.datasets)} datasets, "
             f"{len(osi_model.metrics)} metrics"
         )
+        logger.info(
+            "PBIX OSI datasets: %s",
+            [ds.unique_name for ds in osi_model.datasets],
+        )
+        logger.info(
+            "PBIX OSI metrics: %s",
+            [m.unique_name for m in osi_model.metrics],
+        )
 
         # Phase 2: OSI → SML
         sml_model = OSIToSMLConverter().from_osi(
             osi_model,
             metric_overrides=metric_overrides,
             override_alias_map=override_alias_map,
+        )
+        logger.info(
+            "PBIX SML datasets: %s",
+            [ds.unique_name for ds in sml_model.datasets],
+        )
+        logger.info(
+            "PBIX SML metrics: %s",
+            [m.unique_name for m in sml_model.metrics],
         )
 
         self._record_step(
@@ -2088,6 +2060,20 @@ class ExecutionEngine:
 
             if not context.sml_model:
                 return
+
+            logger.info(
+                "Pre-export SML summary: datasets=%s, metrics=%s",
+                len(context.sml_model.datasets),
+                len(context.sml_model.metrics),
+            )
+            logger.info(
+                "Pre-export dataset names: %s",
+                [ds.unique_name for ds in context.sml_model.datasets],
+            )
+            logger.info(
+                "Pre-export metric names: %s",
+                [m.unique_name for m in context.sml_model.metrics],
+            )
 
             osi_model = SMLToOSIConverter().to_osi(context.sml_model)
             context.osi_model = osi_model

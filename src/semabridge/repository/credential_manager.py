@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import select, delete
 from sqlalchemy.orm import Session
 
+from semabridge.core.env import get_fabric_access_token_from_env
 from semabridge.core.exceptions import RepositoryError
 from semabridge.repository.orm.base import Base
 from semabridge.repository.orm.models import Credential
@@ -492,6 +493,9 @@ class CredentialManager:
 
     def get_fabric_auth_method(self) -> str:
         """Determine how Fabric is authenticated."""
+        if get_fabric_access_token_from_env():
+            return "env_token"
+
         token = self.get_msal_token()
         if token and token.get("access_token"):
             return "interactive"
