@@ -56,7 +56,15 @@ _ENV_MAP: Dict[str, Dict[str, str]] = {
     },
     "databricks": {
         "host": "DATABRICKS_HOST",
+        "auth_type": "DATABRICKS_AUTH_TYPE",
         "token": "DATABRICKS_TOKEN",
+        "access_token": "DATABRICKS_ACCESS_TOKEN",
+        "refresh_token": "DATABRICKS_REFRESH_TOKEN",
+        "expires_at": "DATABRICKS_TOKEN_EXPIRES_AT",
+        "account_username": "DATABRICKS_ACCOUNT_USERNAME",
+        "tenant_id": "DATABRICKS_TENANT_ID",
+        "client_id": "DATABRICKS_CLIENT_ID",
+        "client_secret": "DATABRICKS_CLIENT_SECRET",
         "warehouse_id": "DATABRICKS_WAREHOUSE_ID",
         "catalog": "DATABRICKS_CATALOG",
         "schema_name": "DATABRICKS_SCHEMA",
@@ -301,6 +309,12 @@ class CredentialManager:
             if service == "snowflake":
                 svc_status["auth_type"] = stored.get("auth_type", "password")
 
+            # Databricks-specific: include auth_type and auth_method
+            if service == "databricks":
+                auth_method = self.get_databricks_auth_method()
+                svc_status["auth_method"] = auth_method
+                svc_status["auth_type"] = stored.get("auth_type", "pat")
+
             # Add standardized status field
             svc_status["status"] = "connected" if is_configured else "disconnected"
 
@@ -348,6 +362,14 @@ class CredentialManager:
             if not has_service_principal:
                 skip_keys.update({"tenant_id", "client_id", "client_secret"})
 
+        if service == "databricks":
+            # Ephemeral MSAL tokens must never land in env vars.
+            # DatabricksPublisher reads them via CredentialManager.
+            auth_type = credentials.get("auth_type", "pat")
+            if auth_type == "interactive":
+                skip_keys = {"access_token", "refresh_token", "expires_at",
+                             "account_username", "tenant_id"}
+
         for key, value in credentials.items():
             if key in skip_keys:
                 continue
@@ -382,7 +404,7 @@ class CredentialManager:
             "fabric": {"client_secret", "access_token", "refresh_token"},
             "snowflake": {"password", "private_key", "private_key_passphrase"},
             "fabric_token": {"access_token", "refresh_token"},
-            "databricks": {"token"},
+            "databricks": {"token", "client_secret", "access_token", "refresh_token"},
         }
         return secret_map.get(service, set())
 
@@ -412,7 +434,13 @@ class CredentialManager:
                 return base + ["password"]
 
         if service == "databricks":
-            return ["host", "token", "warehouse_id"]
+            base = ["host", "warehouse_id"]
+            auth_type = (credentials or {}).get("auth_type", "pat")
+            if auth_type == "interactive":
+                return base + ["access_token"]
+            if auth_type == "service_principal":
+                return base + ["client_id", "client_secret"]
+            return base + ["token"]
 
         return []
 
@@ -517,5 +545,177 @@ class CredentialManager:
 
         return "none"
 
+    def get_databricks_auth_method(self) -> str:
+        """Determine how Databricks is authenticated.
 
+        Returns:
+            One of ``'interactive'``, ``'pat'``, ``'service_principal'``, or ``'none'``.
+        """
+        creds = self.get_credentials("databricks", mask_secrets=False)
+        auth_type = creds.get("auth_type", "pat")
 
+        # Interactive MSAL login (device code flow)
+        if auth_type == "interactive" and creds.get("access_token"):
+            return "interactive"
+
+        if (
+            auth_type == "service_principal"
+            and creds.get("client_id")
+            and creds.get("client_secret")
+        ):
+            return "service_principal"
+        if creds.get("token"):
+            return "pat"
+        return "none"
+
+    # ------------------------------------------------------------------
+    # Databricks MSAL Token Management
+    # ------------------------------------------------------------------
+
+    def save_databricks_token(
+        self,
+        access_token: str,
+        refresh_token: str,
+        account_username: str,
+        tenant_id: str,
+        host: str,
+        warehouse_id: str = "",
+        catalog: str = "main",
+        schema_name: str = "semabridge",
+        expires_in: int = 3600,
+    ) -> None:
+        """Store Databricks MSAL tokens from an interactive device code login.
+
+        Args:
+            access_token: The Azure AD access token scoped to Databricks.
+            refresh_token: The refresh token for silent re-auth.
+            account_username: Azure AD user principal name.
+            tenant_id: Azure AD tenant ID.
+            host: Databricks workspace hostname.
+            warehouse_id: SQL Warehouse ID.
+            catalog: Unity Catalog name.
+            schema_name: Target schema name.
+            expires_in: Token lifetime in seconds.
+        """
+        import time
+
+        token_data = {
+            "auth_type": "interactive",
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "account_username": account_username,
+            "tenant_id": tenant_id,
+            "expires_at": str(int(time.time()) + expires_in),
+            "host": host,
+            "warehouse_id": warehouse_id,
+            "catalog": catalog,
+            "schema_name": schema_name,
+        }
+
+        self.save_credentials("databricks", token_data)
+        logger.info(
+            "Saved Databricks MSAL tokens for user '%s' (tenant: %s)",
+            account_username,
+            tenant_id[:8] + "..." if len(tenant_id) > 8 else tenant_id,
+        )
+
+    def get_databricks_token(self) -> Optional[Dict[str, str]]:
+        """Retrieve stored Databricks MSAL token data.
+
+        Returns:
+            Dictionary with access_token, refresh_token, expires_at, etc.
+            or None if no interactive token exists.
+        """
+        creds = self.get_credentials("databricks", mask_secrets=False)
+        if creds.get("auth_type") != "interactive":
+            return None
+        if not creds.get("access_token"):
+            return None
+        return creds
+
+    def is_databricks_token_expired(self) -> bool:
+        """Check if the stored Databricks MSAL token is expired.
+
+        Uses a 60-second safety buffer to avoid using tokens that are
+        about to expire.
+
+        Returns:
+            True if expired or no token exists, False if valid.
+        """
+        import time
+
+        token = self.get_databricks_token()
+        if not token:
+            return True
+        try:
+            expires_at = int(token.get("expires_at", "0"))
+            return time.time() > expires_at - 60
+        except (ValueError, TypeError):
+            return True
+
+    def refresh_databricks_token(self) -> Optional[Dict[str, str]]:
+        """Attempt to silently refresh the Databricks OAuth token.
+
+        Uses the stored refresh_token to acquire a new access_token
+        from Databricks Native OAuth without user interaction.
+
+        Returns:
+            Updated token data dict on success, None on failure.
+        """
+        import requests
+        
+        token = self.get_databricks_token()
+        if not token or not token.get("refresh_token") or not token.get("host"):
+            logger.warning("No Databricks refresh token or host available")
+            return None
+
+        # Fetch client_id which we stored separately during the login flow
+        oauth_creds = self.get_credentials("databricks_oauth", mask_secrets=False)
+        client_id = oauth_creds.get("client_id")
+        
+        if not client_id:
+            logger.warning("Databricks Native OAuth refresh failed: Missing client_id")
+            return None
+
+        try:
+            host = token["host"]
+            if not host.startswith("https://"):
+                host = f"https://{host}"
+                
+            token_url = f"{host}/oidc/v1/token"
+            
+            payload = {
+                "grant_type": "refresh_token",
+                "client_id": client_id,
+                "refresh_token": token["refresh_token"]
+            }
+            
+            resp = requests.post(
+                token_url,
+                data=payload,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=15
+            )
+            
+            if resp.status_code == 200:
+                result = resp.json()
+                self.save_databricks_token(
+                    access_token=result["access_token"],
+                    refresh_token=result.get("refresh_token", token["refresh_token"]),
+                    account_username=token.get("account_username", "unknown"),
+                    tenant_id="",  # N/A for native DBX
+                    host=token["host"],
+                    warehouse_id=token.get("warehouse_id", ""),
+                    catalog=token.get("catalog", "main"),
+                    schema_name=token.get("schema_name", "semabridge"),
+                    expires_in=result.get("expires_in", 3600),
+                )
+                logger.info("Databricks Native OAuth token refreshed successfully")
+                return self.get_databricks_token()
+            else:
+                logger.error("Databricks token refresh failed: %s", resp.text)
+                return None
+
+        except Exception as exc:
+            logger.exception("Databricks token refresh error: %s", exc)
+            return None

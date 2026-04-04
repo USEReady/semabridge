@@ -582,9 +582,40 @@ export const api = {
         return handleResponse(res);
     },
 
-    // â”€â”€ Snowflake SSO â”€â”€â”€â”€â”€â”€
+    // ── Snowflake SSO ──────
     async snowflakeSsoLogin() {
         const res = await authFetch(`${API_BASE_URL}/connections/snowflake/sso-login`, {
+            method: 'POST',
+        });
+        return handleResponse(res);
+    },
+
+    // ── Databricks Native OAuth (U2M / PKCE) ──────
+    async databricksLogin(host, clientId, redirectUri) {
+        const res = await authFetch(`${API_BASE_URL}/connections/databricks/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ host, client_id: clientId, redirect_uri: redirectUri }),
+        });
+        return handleResponse(res);
+    },
+
+    async databricksPoll(flowId, connectionConfig = {}) {
+        const res = await authFetch(`${API_BASE_URL}/connections/databricks/poll`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ flow_id: flowId, ...connectionConfig }),
+        });
+        return handleResponse(res);
+    },
+
+    async databricksAuthStatus() {
+        const res = await authFetch(`${API_BASE_URL}/connections/databricks/auth-status`);
+        return handleResponse(res);
+    },
+
+    async databricksLogout() {
+        const res = await authFetch(`${API_BASE_URL}/connections/databricks/logout`, {
             method: 'POST',
         });
         return handleResponse(res);
@@ -733,7 +764,7 @@ export const api = {
         return handleResponse(res);
     },
 
-   
+
     async getJobConfig(projectId) {
         const url = projectId
             ? `${API_BASE_URL}/jobs/config?project_id=${projectId}`
@@ -882,19 +913,6 @@ export const api = {
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
             method: 'POST',
         });
-        return handleResponse(res);
-    },
-
-    async startUiSyncJob(formData) {
-        const res = await authFetch(`${API_BASE_URL}/ui/sync-jobs`, {
-            method: 'POST',
-            body: formData,
-        });
-        return handleResponse(res);
-    },
-
-    async getUiSyncJob(jobId) {
-        const res = await authFetch(`${API_BASE_URL}/ui/sync-jobs/${encodeURIComponent(jobId)}`);
         return handleResponse(res);
     },
 
@@ -1075,33 +1093,6 @@ export const api = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
         });
-        return handleResponse(res);
-    },
-
-    async listLocalFolders(includeInactive = false) {
-        const query = includeInactive ? '?include_inactive=true' : '';
-        const res = await authFetch(`${API_BASE_URL}/settings/local-folders${query}`);
-        const data = await handleResponse(res);
-        return (Array.isArray(data) ? data : []).map(normalizeLocalFolder);
-    },
-
-    async saveLocalFolder(data) {
-        const res = await authFetch(`${API_BASE_URL}/settings/local-folders`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
-        });
-        return normalizeLocalFolder(await handleResponse(res));
-    },
-
-    async getLocalFolderFiles(tag) {
-        const res = await authFetch(`${API_BASE_URL}/folders/${encodeURIComponent(tag)}/files`);
-        return handleResponse(res);
-    },
-
-    async browseDirectory(basePath = '') {
-        const query = basePath ? `?base_path=${encodeURIComponent(basePath)}` : '';
-        const res = await authFetch(`${API_BASE_URL}/utils/browse-directory${query}`);
         return handleResponse(res);
     },
 

@@ -292,7 +292,6 @@ export default function ProjectConfigPage() {
 
     setProjectConfigDraft(id, nextDraft);
   }, [id, isInvalidProjectId, loading, viewMode, yamlText, configForm, setProjectConfigDraft, stableDraftKey]);
-
   useEffect(() => {
     if (configForm.source_type !== 'fabric') {
       setFabricAccounts([]);
@@ -478,9 +477,9 @@ export default function ProjectConfigPage() {
     return {
       tree,
       form: {
-        source_type: String(source.type || fallbackSource),
-        target_type: String(target.type || fallbackTarget),
-        output_format: String(ui.intermediate_format || ui.output_format || 'osi'),
+        source_type: String(source.type || fallbackSource).toLowerCase(),
+        target_type: String(target.type || fallbackTarget).toLowerCase(),
+        output_format: String(ui.intermediate_format || ui.output_format || 'osi').toLowerCase(),
         pbix_path: String(source.pbix_path || source.pbix_file_path || source.source_path || source.file_path || ''),
         pbix_folder: String(source.pbix_folder || ''),
         pbix_uploaded_path: String(projectMeta?.pbix_file_path || source.pbix_file_path || source.pbix_path || ''),
@@ -708,7 +707,6 @@ export default function ProjectConfigPage() {
         navigate('/jobs');
         return;
       }
-
       if (typeof window !== 'undefined' && window.dispatchEvent) {
         window.dispatchEvent(new CustomEvent('semabridge-sync-fallback', {
           detail: {

@@ -1,5 +1,10 @@
+<<<<<<< HEAD
 ﻿import { useState, useEffect } from 'react';
 import { Play, RefreshCw, Clock, CalendarClock, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
+=======
+import { useState, useEffect } from 'react';
+import { Play, RefreshCw, Clock, CalendarClock, RotateCcw, ChevronDown, ChevronRight, BarChart3 } from 'lucide-react';
+>>>>>>> feature/auth
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
 import SearchInput from '../components/common/SearchInput';
@@ -327,7 +332,7 @@ export default function ProjectJobsPage() {
                     opacity: scheduleDeletingId === String(schedule.project_id) ? 0.6 : 1,
                   }}
                 >
-                  {scheduleDeletingId === String(schedule.project_id) ? 'Cancellingâ€¦' : 'Cancel'}
+                  {scheduleDeletingId === String(schedule.project_id) ? 'Cancelling...' : 'Cancel'}
                 </button>
               </div>
             ))}
@@ -437,7 +442,7 @@ export default function ProjectJobsPage() {
                         <InfoCard label="Started" value={formatDate(run.started_at)} />
                         <InfoCard label="Duration" value={formatDuration(run.duration_ms)} mono />
                         <InfoCard label="Status" value={String(run.status || 'draft')} />
-                        <InfoCard label="Message" value={run.message || run.error || 'â€”'} />
+                        <InfoCard label="Message" value={run.message || run.error || '—'} />
                       </div>
 
                       <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>
@@ -482,7 +487,7 @@ function InfoCard({ label, value, mono = false }) {
     >
       <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 6 }}>{label}</div>
       <div style={{ fontSize: 12, color: 'var(--text-primary)', fontFamily: mono ? 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' : 'inherit' }}>
-        {value || 'â€”'}
+        {value || '—'}
       </div>
     </div>
   );

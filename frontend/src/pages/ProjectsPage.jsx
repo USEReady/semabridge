@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ProjectsPage â€” Folder-grouped projects with HP search, drag-drop, and import/export.
  */
 import { useState, useEffect, useCallback } from 'react';
@@ -21,6 +21,13 @@ import React, { useContext } from 'react';
 import { SyncContext } from '../context/SyncContext';
 import { DEFAULT_FILTER_OPTIONS, useUIStore } from '../store/uiStore';
 
+<<<<<<< HEAD
+=======
+const SOURCE_ICONS = {
+  fabric: '🔷', snowflake: '❄️', databricks: '🧱', google_sheets: '📊',
+};
+
+>>>>>>> feature/auth
 /* Use CSS variables for folder colors - mapped to semantic status colors */
 const FOLDER_COLORS = [
   'var(--accent-blue)',
@@ -748,7 +755,11 @@ function ProjectCard({
   onDragStart,
 }) {
   const isOpen = menuOpen === project.id;
+<<<<<<< HEAD
   const sourceKey = String(project.source || project.adapter || '').toLowerCase();
+=======
+  const emoji = SOURCE_ICONS[project.source || project.adapter] ?? '📁';
+>>>>>>> feature/auth
   const { activeRuns } = useContext(SyncContext);
   // Debug log for troubleshooting status updates
   console.log('[ProjectCard] project.id:', project.id, 'activeRuns:', activeRuns);

@@ -12,10 +12,10 @@ semantic_model:
   # FACT."REVENUE" → factsales."REVENUE" before DDL generation.
   # Set each value to the exact logical name of the corresponding dataset.
   override_alias_map:
-    FACT: "Fact_Sales"
-    PRODUCT: "ProductDim"
-    CALENDAR: "CalendarDim"
-    SCENARIO: "ScenarioDim"
+    FACT: "Fact"
+    PRODUCT: "Product"
+    CALENDAR: "Calendar"
+    SCENARIO: "Scenario"
 
   metric_overrides:
     # Explicit override for Time Intelligence
@@ -26,6 +26,66 @@ semantic_model:
     
     # Just to prove branching works, I WON'T override 'YoY Rev Var'. 
     # It should be detected as [Total Revenue] - [Revenue SPLY]
+
+    # Cross-table join-safe fallback templates (Databricks SQL)
+    "Total Customer Revenue": "SUM(COALESCE(FACT.\"REVENUE\", 0))"
+    "Active Customer Count": "COUNT(DISTINCT CASE WHEN CUSTOMER.\"IS_ACTIVE\" = true THEN CUSTOMER.\"CUSTOMER KEY\" END)"
+    "Revenue by Industry": "SUM(CASE WHEN INDUSTRY.\"INDUSTRY\" IS NOT NULL THEN FACT.\"REVENUE\" ELSE 0 END)"
+    "Revenue by Executive": "SUM(CASE WHEN EXECUTIVE.\"EXECUTIVE\" IS NOT NULL THEN FACT.\"REVENUE\" ELSE 0 END)"
+    "Revenue by State": "SUM(CASE WHEN STATE.\"STATE\" IS NOT NULL THEN FACT.\"REVENUE\" ELSE 0 END)"
+
+    # Time-intelligence fallback templates
+    "Revenue YTD": "SUM(FACT.\"REVENUE\") OVER (PARTITION BY YEAR(CALENDAR.\"DATE\") ORDER BY CALENDAR.\"DATE\")"
+    "Revenue MTD": "SUM(FACT.\"REVENUE\") OVER (PARTITION BY YEAR(CALENDAR.\"DATE\"), MONTH(CALENDAR.\"DATE\") ORDER BY CALENDAR.\"DATE\")"
+    "Revenue Rank": "RANK() OVER (ORDER BY SUM(FACT.\"REVENUE\") DESC)"
+
+# ---------------------------------------------------------------------------
+# Databricks deployment behavior.
+# ---------------------------------------------------------------------------
+databricks:
+  create_metadata_table: false         # OSI-first deploy: skip Semabridge metadata Delta table
+  create_measure_views: true           # Generate measure views for deployed measures
+  measure_view_type: "metric_view"  # "auto" | "metric_view" | "materialized_view" | "sql_view" | "none"
+  measure_view_mode: "combined"        # "per_measure" (one view each) or "combined" (single model-level joined view)
+  view_prefix: "mv"                    # Prefix for measure view names
+  enable_simple_dax_translation: true  # Translate simple DAX (SUM, COUNT, etc.) to SQL
+  enable_cross_table_joins: true        # Build explicit joins from model relationships when measures span datasets
+  enable_low_confidence_drafts: true    # Emit draft placeholders for low-confidence measures instead of dropping them
+  emit_metric_views_for_all_datasets: true  # Create fallback metric views for dimension-only datasets
+
+  # Source table mapping: Fabric dataset name → actual Databricks table
+  # If not mapped, falls back to source_catalog.source_schema.dataset_name
+  source_table_mapping:
+    DEVICE_INVENTORY: "semabridge.public.device_inventory"
+    Date: "semabridge.public.dim_date"
+    Fact: "semabridge.public.fact"
+    BU: "semabridge.public.bu"
+    Calendar: "semabridge.public.calendar"
+    Customer: "semabridge.public.customer"
+    Scenario: "semabridge.public.scenario"
+    Product: "semabridge.public.product"
+    Industry: "semabridge.public.industry"
+    Executive: "semabridge.public.executive"
+    State: "semabridge.public.state"
+  # Optional semantic-column to physical-column overrides when warehouse names
+  # differ from Fabric-friendly semantic names.
+  # source_column_mapping:
+  #   Fact:
+  #     "Customer Key": "customer_key"
+  #   Customer:
+  #     "Customer": "name"
+  #   "Customer.Industry ID": "industry_id"
+  #   CONTINENT_1: "analytics_catalog.raw.continent_data"
+  #   DIM_DATE: "analytics_catalog.raw.dim_date"
+  source_catalog: "semabridge"         # Default catalog for source data tables
+  source_schema: "public"              # Default schema for source data tables
+  on_missing_source: "plan"            # "plan" | "skip" | "fail"
+
+  # Governance: auto-grant SELECT on deployed metric views
+  grant_select_to_groups: []
+  # - "data_consumers"
+  # - "analytics_team"
+  transfer_ownership_to: ""           # Group for collaborative metric view editing
 
 # ---------------------------------------------------------------------------
 # Discovery behaviour for the Fabric ↔ Snowflake semantic sync feature.

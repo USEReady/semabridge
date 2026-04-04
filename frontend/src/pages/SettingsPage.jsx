@@ -21,7 +21,7 @@ function isLikelyAbsolutePath(value) {
 }
 
 function formatRelative(iso) {
-  if (!iso) return 'â€”';
+  if (!iso) return '—€”';
   const diff = Date.now() - new Date(iso).getTime();
   const min = Math.floor(diff / 60000);
   if (min < 1) return 'just now';
@@ -99,12 +99,16 @@ export default function SettingsPage() {
         id: 'fabric',
         name: 'Microsoft Fabric',
         type: 'Analytics Platform',
+<<<<<<< HEAD
+=======
+        icon: '”·',
+>>>>>>> feature/auth
         status: normalizeStatus(fabricStatus),
         last_sync: null,
         detail: fabricStatus === 'connected'
           ? `Workspace: ${fabricConn.credentials.workspace_id}`
           : fabricStatus === 'configured'
-            ? `Workspace set Â· ${fabricHasAuth ? '' : 'Auth required'}`
+            ? `Workspace set · ${fabricHasAuth ? '' : 'Auth required'}`
             : 'Not configured',
         tags: ['production', 'analytics'],
       });
@@ -125,10 +129,14 @@ export default function SettingsPage() {
         id: 'snowflake',
         name: 'Snowflake',
         type: 'Data Warehouse',
+<<<<<<< HEAD
+=======
+        icon: '—„ï¸',
+>>>>>>> feature/auth
         status: normalizeStatus(snowStatus),
         last_sync: null,
         detail: snowStatus === 'connected'
-          ? `${snowAccount}${snowAuthType ? ` Â· ${snowAuthType}` : ''}`
+          ? `${snowAccount}${snowAuthType ? ` · ${snowAuthType}` : ''}`
           : snowStatus === 'configured'
             ? `Missing: ${snowMissing.join(', ')}`
             : 'Not configured',
@@ -143,6 +151,10 @@ export default function SettingsPage() {
         id: 'databricks',
         name: 'Databricks',
         type: 'Data Intelligence Platform',
+<<<<<<< HEAD
+=======
+        icon: '§±',
+>>>>>>> feature/auth
         status: normalizeStatus(dbStatus),
         last_sync: null,
         detail: dbConfigured ? 'Configured' : 'Not configured',
@@ -154,19 +166,30 @@ export default function SettingsPage() {
         id: 'semabridge_api',
         name: 'SemaBridge API',
         type: 'Backend Service',
+<<<<<<< HEAD
+=======
+        icon: '¡',
+>>>>>>> feature/auth
         status: normalizeStatus(health?.status === 'ok' || health?.status === 'healthy' ? 'connected' : 'error'),
         last_sync: null,
-        detail: health ? `v${health.version ?? 'â€”'} Â· port 8000` : 'Unreachable',
+        detail: health ? `v${health.version ?? '—€”'} · port 8000` : 'Unreachable',
         tags: ['backend'],
       });
 
       setConnectors(rows);
     } catch {
       setConnectors([
+<<<<<<< HEAD
         { id: 'fabric',        name: 'Microsoft Fabric', type: 'Analytics Platform', status: 'disconnected', last_sync: null, detail: 'Not configured', tags: ['production'] },
         { id: 'snowflake',     name: 'Snowflake',        type: 'Data Warehouse',     status: 'disconnected', last_sync: null, detail: 'Not configured', tags: ['warehouse'] },
         { id: 'databricks',    name: 'Databricks',       type: 'Data Intelligence Platform', status: 'disconnected', last_sync: null, detail: 'Not configured', tags: ['warehouse'] },
         { id: 'semabridge_api', name: 'SemaBridge API',  type: 'Backend Service',    status: 'error',        last_sync: null, detail: 'Unreachable', tags: ['backend'] },
+=======
+        { id: 'fabric',        name: 'Microsoft Fabric', type: 'Analytics Platform', icon: '”·', status: 'disconnected', last_sync: null, detail: 'Not configured', tags: ['production'] },
+        { id: 'snowflake',     name: 'Snowflake',        type: 'Data Warehouse',     icon: '—„ï¸', status: 'disconnected', last_sync: null, detail: 'Not configured', tags: ['warehouse'] },
+        { id: 'databricks',    name: 'Databricks',       type: 'Data Intelligence Platform', icon: '§±', status: 'disconnected', last_sync: null, detail: 'Not configured', tags: ['warehouse'] },
+        { id: 'semabridge_api', name: 'SemaBridge API',  type: 'Backend Service',    icon: '¡', status: 'error',        last_sync: null, detail: 'Unreachable', tags: ['backend'] },
+>>>>>>> feature/auth
       ]);
     } finally {
       setLoading(false);
@@ -352,7 +375,7 @@ export default function SettingsPage() {
             <tbody>
               {localFoldersLoading ? (
                 <tr>
-                  <td colSpan="3" style={{ padding: '20px 16px', color: 'var(--text-tertiary)', fontSize: 12 }}>Loading local foldersâ€¦</td>
+                  <td colSpan="3" style={{ padding: '20px 16px', color: 'var(--text-tertiary)', fontSize: 12 }}>Loading local folders—€¦</td>
                 </tr>
               ) : localFolders.length === 0 ? (
                 <tr>
@@ -501,7 +524,7 @@ export default function SettingsPage() {
               disabled={localFolderSubmitting}
               style={{ background: 'var(--accent-blue)', border: 'none', color: '#fff', borderRadius: 8, padding: '8px 12px', cursor: localFolderSubmitting ? 'not-allowed' : 'pointer', opacity: localFolderSubmitting ? 0.7 : 1 }}
             >
-              {localFolderSubmitting ? 'Savingâ€¦' : 'Save Folder'}
+              {localFolderSubmitting ? 'Saving—€¦' : 'Save Folder'}
             </button>
           </>
         )}
