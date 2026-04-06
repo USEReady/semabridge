@@ -1672,6 +1672,7 @@ class ExecutionEngine:
             osi_model,
             metric_overrides=metric_overrides,
             override_alias_map=override_alias_map,
+            row_counts=sf.row_counts,
         )
 
         self._record_step(
@@ -1726,6 +1727,7 @@ class ExecutionEngine:
             osi_model,
             metric_overrides=metric_overrides,
             override_alias_map=override_alias_map,
+            row_counts=sf.row_counts,
         )
         logger.info(
             "PBIX SML datasets: %s",
@@ -1899,19 +1901,43 @@ class ExecutionEngine:
         context.target_artifact_path = str(ddl_path)
 
     def _convert_to_databricks_target(self, context: RunContext) -> None:
-        """Generate Databricks SQL artifact."""
+        """Generate a Databricks metric-view YAML artifact."""
+        import yaml
         from semabridge.connectors.databricks_publisher import DatabricksPublisher
 
         publisher = DatabricksPublisher(context.config.databricks, behavior=context.behavior)
-        statements = publisher.generate_sql_statements(context.sml_model)
+        statements, created, skipped, skipped_details = publisher.generate_measure_view_statements(
+            context.sml_model,
+            view_type_override="metric_view",
+        )
 
         output_dir = self._model_output_dir("databricks", model_name=context.project_id)
-        sql_path = output_dir / "semantic_model.sql"
+        yaml_path = output_dir / "databricks_metric_views.yaml"
 
-        with open(sql_path, "w", encoding="utf-8") as f:
-            f.write(";\n\n".join(statements) + ";\n")
+        metric_view_defs: list[dict[str, Any]] = []
+        for stmt in statements:
+            view_match = re.search(r"CREATE OR REPLACE VIEW\s+(`[^`]+`\.`[^`]+`\.`[^`]+`)", stmt)
+            yaml_match = re.search(r"WITH METRICS LANGUAGE YAML AS \$\$\n(.*)\n\$\$", stmt, re.S)
+            metric_view_defs.append({
+                "view_name": view_match.group(1) if view_match else "unknown",
+                "yaml_definition": yaml_match.group(1) if yaml_match else stmt,
+            })
 
-        context.target_artifact_path = str(sql_path)
+        with open(yaml_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(
+                {
+                    "object_type": "metric_view",
+                    "created": created,
+                    "skipped": skipped,
+                    "skipped_details": skipped_details,
+                    "views": metric_view_defs,
+                },
+                f,
+                sort_keys=False,
+                allow_unicode=False,
+            )
+
+        context.target_artifact_path = str(yaml_path)
     
     # =========================================================================
     # Step 9: Deploy to Target (Optional)

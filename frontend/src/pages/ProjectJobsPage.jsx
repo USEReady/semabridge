@@ -1,15 +1,9 @@
-<<<<<<< HEAD
-﻿import { useState, useEffect } from 'react';
-import { Play, RefreshCw, Clock, CalendarClock, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
-=======
 import { useState, useEffect } from 'react';
-import { Play, RefreshCw, Clock, CalendarClock, RotateCcw, ChevronDown, ChevronRight, BarChart3 } from 'lucide-react';
->>>>>>> feature/auth
+import { Play, RefreshCw, Clock, CalendarClock, RotateCcw, ChevronDown, ChevronRight, BarChart3, Cloud, Snowflake, Database, Link2 } from 'lucide-react';
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
 import SearchInput from '../components/common/SearchInput';
 import { matchesSmartQuery } from '../components/common/SmartSearchBar';
-import SourceIcon from '../components/common/SourceIcon';
 import { api } from '../utils/api';
 import { buildMockRunLogs, getRunLogs, saveRunLogs } from '../utils/runLogs';
 
@@ -20,7 +14,7 @@ const DEFAULT_CONFIG = { schedule_type: 'Manual Trigger Only', cron: '0 0 * * *'
 const REFRESH_INTERVAL_MS = 4000;
 
 function formatDuration(ms) {
-  if (!ms) return 'â€”';
+  if (!ms) return '—';
   if (ms < 1000) return `${ms}ms`;
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
@@ -28,8 +22,48 @@ function formatDuration(ms) {
 }
 
 function formatDate(iso) {
-  if (!iso) return 'â€”';
-  return new Date(iso).toLocaleString();
+  if (!iso) return '—';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  }).format(date);
+}
+
+function normalizeSourceKey(value) {
+  if (!value) return '';
+
+  let key = '';
+  if (typeof value === 'string') {
+    key = value.toLowerCase().trim();
+  } else if (typeof value === 'object') {
+    key = String(
+      value.type || value.adapter || value.source || value.source_type || value.connector || ''
+    ).toLowerCase().trim();
+  }
+
+  if (!key) return '';
+  if (key.includes('pbix') || key.includes('powerbi') || key.includes('power bi') || key === 'pbi') return 'pbix';
+  if (key.includes('fabric')) return 'fabric';
+  if (key.includes('snowflake')) return 'snowflake';
+  if (key.includes('databricks')) return 'databricks';
+  return key;
+}
+
+function sourceIcon(sourceType) {
+  const normalized = normalizeSourceKey(sourceType);
+
+  if (normalized.includes('pbix')) return <BarChart3 size={14} color="#F2C811" />;
+  if (normalized.includes('fabric')) return <Cloud size={14} color="#3b82f6" />;
+  if (normalized.includes('snowflake')) return <Snowflake size={14} color="#38bdf8" />;
+  if (normalized.includes('databricks')) return <Database size={14} color="#f97316" />;
+  return <Link2 size={14} color="var(--text-tertiary)" />;
 }
 
 export default function ProjectJobsPage() {
@@ -164,7 +198,7 @@ export default function ProjectJobsPage() {
         title="Runs"
         description="Configure execution schedules and monitor run history."
         action={{
-          label: running ? 'Runningâ€¦' : 'Run Now',
+          label: running ? 'Running…' : 'Run Now',
           icon: running ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />,
           onClick: handleRunNow,
         }}
@@ -265,7 +299,7 @@ export default function ProjectJobsPage() {
             }}
           >
             {configSaving ? <RefreshCw size={13} className="animate-spin" /> : <RotateCcw size={13} />}
-            {configSaving ? 'Savingâ€¦' : 'Update Configuration'}
+            {configSaving ? 'Saving…' : 'Update Configuration'}
           </button>
         </div>
       </div>
@@ -332,7 +366,7 @@ export default function ProjectJobsPage() {
                     opacity: scheduleDeletingId === String(schedule.project_id) ? 0.6 : 1,
                   }}
                 >
-                  {scheduleDeletingId === String(schedule.project_id) ? 'Cancelling...' : 'Cancel'}
+                  {scheduleDeletingId === String(schedule.project_id) ? 'Cancelling…' : 'Cancel'}
                 </button>
               </div>
             ))}
@@ -351,7 +385,7 @@ export default function ProjectJobsPage() {
             onToggleRegex={setSearchUseRegex}
             allowRegex
             helperText={searchUseRegex ? 'Regex examples: ^run_\\d+$ or failed|running' : 'Tip: enable regex to use patterns like ^run_\\d+$'}
-            placeholder="Filter runsâ€¦"
+            placeholder="Filter runs…"
             width={220}
           />
           <select
@@ -419,7 +453,7 @@ export default function ProjectJobsPage() {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600 }}>
                       <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <SourceIcon source={run.source_type} size={14} />
+                        {sourceIcon(run.source_type)}
                       </span>
                       <span>{run.project_name || 'Project run'}</span>
                     </div>

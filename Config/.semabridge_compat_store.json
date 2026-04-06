@@ -528,6 +528,51 @@
       "status": "draft",
       "created_at": "2026-04-04T13:53:42.962175",
       "updated_at": "2026-04-04T13:53:46.140905"
+    },
+    "proj-1775363317610": {
+      "id": "proj-1775363317610",
+      "project_id": "proj-1775363317610",
+      "name": "hello",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "account_id": "b3ab728b-0333-4b38-987e-199891a62c1b",
+      "workspace_id": "d875c0c3-59e9-4d55-a7f0-99595b756718",
+      "target_type": "databricks",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-05T04:28:37.610225",
+      "updated_at": "2026-04-05T04:28:40.940276"
+    },
+    "proj-1775452451439": {
+      "id": "proj-1775452451439",
+      "project_id": "proj-1775452451439",
+      "name": "device_d",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "account_id": "b3ab728b-0333-4b38-987e-199891a62c1b",
+      "workspace_id": "d875c0c3-59e9-4d55-a7f0-99595b756718",
+      "target_type": "databricks",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-06T05:14:11.439142",
+      "updated_at": "2026-04-06T05:14:14.558727"
+    },
+    "proj-1775452818447": {
+      "id": "proj-1775452818447",
+      "project_id": "proj-1775452818447",
+      "name": "competitive_d",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "account_id": "b3ab728b-0333-4b38-987e-199891a62c1b",
+      "workspace_id": "d875c0c3-59e9-4d55-a7f0-99595b756718",
+      "target_type": "databricks",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-04-06T05:20:18.447107",
+      "updated_at": "2026-04-06T05:20:21.750252"
     }
   },
   "project_configs": {
@@ -567,10 +612,312 @@
     "proj-1775297176437": "project_name: con\nsource:\n  type: fabric\n  identity_id: b3ab728b-0333-4b38-987e-199891a62c1b\n  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718\n  workspace: semabridge\n  models:\n    - continent\ntargets:\n  - type: databricks\nmappings:\n  - source: continent\n    target: continent_mapped\n    type: table\n    columns:\n      - source: id\n        target: id\n        type: INT\n        primary_key: true\n      - source: name\n        target: name\n        type: VARCHAR(255)\n      - source: created_at\n        target: created_at\n        type: TIMESTAMP\n      - source: updated_at\n        target: updated_at\n        type: TIMESTAMP\nui:\n  intermediate_format: osi\n  editor_mode: form\n  output_format: osi\nselection:\n  model_ids:\n    - d32e8900-31cc-4647-872d-08a7e62bf03b\noptions:\n  auto_relationships: true\n  generate_descriptions: true\ntarget:\n  type: databricks",
     "proj-1775307162751": "project_name: ggg\nsource:\n  type: fabric\n  identity_id: b3ab728b-0333-4b38-987e-199891a62c1b\n  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718\n  workspace: semabridge\n  models:\n    - annual\ntargets:\n  - type: databricks\nmappings:\n  - source: annual\n    target: annual_mapped\n    type: table\n    columns:\n      - source: id\n        target: id\n        type: INT\n        primary_key: true\n      - source: name\n        target: name\n        type: VARCHAR(255)\n      - source: created_at\n        target: created_at\n        type: TIMESTAMP\n      - source: updated_at\n        target: updated_at\n        type: TIMESTAMP\nui:\n  intermediate_format: osi\n  editor_mode: form\n  output_format: osi\nselection:\n  model_ids:\n    - a3eb7be8-2df8-482b-872b-9d661659895a\noptions:\n  auto_relationships: true\n  generate_descriptions: true\ntarget:\n  type: databricks",
     "proj-1775307500447": "project_name: client\nsource:\n  type: fabric\n  identity_id: b3ab728b-0333-4b38-987e-199891a62c1b\n  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718\n  workspace: semabridge\n  models:\n    - Client Data\ntargets:\n  - type: snowflake\nmappings:\n  - source: Client Data\n    target: client data_mapped\n    type: table\n    columns:\n      - source: id\n        target: id\n        type: INT\n        primary_key: true\n      - source: name\n        target: name\n        type: VARCHAR(255)\n      - source: created_at\n        target: created_at\n        type: TIMESTAMP\n      - source: updated_at\n        target: updated_at\n        type: TIMESTAMP\nui:\n  intermediate_format: osi\n  editor_mode: form\n  output_format: osi\nselection:\n  model_ids:\n    - 0794fdcc-d85f-4d93-a42c-8bacaad04819\noptions:\n  auto_relationships: true\n  generate_descriptions: true\ntarget:\n  type: snowflake",
-    "proj-1775310822962": "project_name: ccvcc\nsource:\n  type: fabric\n  identity_id: b3ab728b-0333-4b38-987e-199891a62c1b\n  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718\n  workspace: semabridge\n  models:\n    - industry\ntargets:\n  - type: databricks\nmappings:\n  - source: industry\n    target: industry_mapped\n    type: table\n    columns:\n      - source: id\n        target: id\n        type: INT\n        primary_key: true\n      - source: name\n        target: name\n        type: VARCHAR(255)\n      - source: created_at\n        target: created_at\n        type: TIMESTAMP\n      - source: updated_at\n        target: updated_at\n        type: TIMESTAMP\nui:\n  intermediate_format: osi\n  editor_mode: form\n  output_format: osi\nselection:\n  model_ids:\n    - 115c5eb0-f2df-40a5-821e-9e5b07216778\noptions:\n  auto_relationships: true\n  generate_descriptions: true\ntarget:\n  type: databricks"
+    "proj-1775310822962": "project_name: ccvcc\nsource:\n  type: fabric\n  identity_id: b3ab728b-0333-4b38-987e-199891a62c1b\n  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718\n  workspace: semabridge\n  models:\n    - industry\ntargets:\n  - type: databricks\nmappings:\n  - source: industry\n    target: industry_mapped\n    type: table\n    columns:\n      - source: id\n        target: id\n        type: INT\n        primary_key: true\n      - source: name\n        target: name\n        type: VARCHAR(255)\n      - source: created_at\n        target: created_at\n        type: TIMESTAMP\n      - source: updated_at\n        target: updated_at\n        type: TIMESTAMP\nui:\n  intermediate_format: osi\n  editor_mode: form\n  output_format: osi\nselection:\n  model_ids:\n    - 115c5eb0-f2df-40a5-821e-9e5b07216778\noptions:\n  auto_relationships: true\n  generate_descriptions: true\ntarget:\n  type: databricks",
+    "proj-1775363317610": "project_name: hello\nsource:\n  type: fabric\n  identity_id: b3ab728b-0333-4b38-987e-199891a62c1b\n  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718\n  workspace: semabridge\n  models:\n    - Competitive Marketing Analysis\ntargets:\n  - type: databricks\nmappings:\n  - source: Competitive Marketing Analysis\n    target: competitive marketing analysis_mapped\n    type: table\n    columns:\n      - source: id\n        target: id\n        type: INT\n        primary_key: true\n      - source: name\n        target: name\n        type: VARCHAR(255)\n      - source: created_at\n        target: created_at\n        type: TIMESTAMP\n      - source: updated_at\n        target: updated_at\n        type: TIMESTAMP\nui:\n  intermediate_format: osi\n  editor_mode: form\n  output_format: osi\nselection:\n  model_ids:\n    - f65e2eeb-b9d8-4695-aaf8-504fc15aa936\noptions:\n  auto_relationships: true\n  generate_descriptions: true\ntarget:\n  type: databricks",
+    "proj-1775452451439": "project_name: device_d\nsource:\n  type: fabric\n  identity_id: b3ab728b-0333-4b38-987e-199891a62c1b\n  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718\n  workspace: semabridge\n  models:\n    - Device\ntargets:\n  - type: databricks\nmappings:\n  - source: Device\n    target: device_mapped\n    type: table\n    columns:\n      - source: id\n        target: id\n        type: INT\n        primary_key: true\n      - source: name\n        target: name\n        type: VARCHAR(255)\n      - source: created_at\n        target: created_at\n        type: TIMESTAMP\n      - source: updated_at\n        target: updated_at\n        type: TIMESTAMP\nui:\n  intermediate_format: osi\n  editor_mode: form\n  output_format: osi\nselection:\n  model_ids:\n    - 974e7d48-4a76-4518-99d7-6ea751e37ce8\noptions:\n  auto_relationships: true\n  generate_descriptions: true\ntarget:\n  type: databricks",
+    "proj-1775452818447": "project_name: competitive_d\nsource:\n  type: fabric\n  identity_id: b3ab728b-0333-4b38-987e-199891a62c1b\n  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718\n  workspace: semabridge\n  models:\n    - Competitive Marketing Analysis\ntargets:\n  - type: databricks\nmappings:\n  - source: Competitive Marketing Analysis\n    target: competitive marketing analysis_mapped\n    type: table\n    columns:\n      - source: id\n        target: id\n        type: INT\n        primary_key: true\n      - source: name\n        target: name\n        type: VARCHAR(255)\n      - source: created_at\n        target: created_at\n        type: TIMESTAMP\n      - source: updated_at\n        target: updated_at\n        type: TIMESTAMP\nui:\n  intermediate_format: osi\n  editor_mode: form\n  output_format: osi\nselection:\n  model_ids:\n    - f65e2eeb-b9d8-4695-aaf8-504fc15aa936\noptions:\n  auto_relationships: true\n  generate_descriptions: true\ntarget:\n  type: databricks"
   },
   "project_runs": {
     "Client Data": [
+      {
+        "run_id": "run-1775452015648",
+        "id": "run-1775452015648",
+        "project_id": "Client Data",
+        "project_name": "tb",
+        "schedule": "Manual",
+        "status": "success",
+        "source_type": "fabric",
+        "message": "Execution completed successfully.",
+        "logs": [
+          "SUCCESS Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS Stage 3: Resolve Authentication - Authentication resolved from ENV",
+          "SUCCESS Stage 4: Extract from Source - Extracted TMSL definition",
+          "SUCCESS Stage 5: Validate & Parse Source Format - Source format valid",
+          "SUCCESS Stage 6: Convert to Canonical SML - 2 datasets, 0 metrics (via OSI)",
+          "SUCCESS Stage 7: Persist Artifacts - Snapshot 076427eb... committed",
+          "SUCCESS Stage 8: Convert to Target Format - Target format generated",
+          "SUCCESS Stage 9: Deploy to Target - Deployment complete",
+          "SUCCESS Stage 10: Finalize Run - Status: SUCCESS",
+          "SUCCESS [Device] Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS [Device] Stage 3: Resolve Authentication - Authentication resolved from ENV",
+          "SUCCESS [Device] Stage 4: Extract from Source - Extracted TMSL definition",
+          "SUCCESS [Device] Stage 5: Validate & Parse Source Format - Source format valid",
+          "SUCCESS [Device] Stage 6: Convert to Canonical SML - 2 datasets, 0 metrics (via OSI)",
+          "SUCCESS [Device] Stage 7: Persist Artifacts - Snapshot 076427eb... committed",
+          "SUCCESS [Device] Stage 8: Convert to Target Format - Target format generated",
+          "SUCCESS [Device] Stage 9: Deploy to Target - Deployment complete",
+          "SUCCESS [Device] Stage 10: Finalize Run - Status: SUCCESS"
+        ],
+        "stage_states": [
+          {
+            "id": "extraction",
+            "label": "Extraction",
+            "status": "success"
+          },
+          {
+            "id": "osi_conversion",
+            "label": "OSI Conversion",
+            "status": "success"
+          },
+          {
+            "id": "sml_generation",
+            "label": "SML Generation",
+            "status": "success"
+          },
+          {
+            "id": "snowflake_deployment",
+            "label": "Snowflake Deployment",
+            "status": "success"
+          }
+        ],
+        "duration_ms": 57444,
+        "started_at": "2026-04-06T05:06:55.652591",
+        "summary": {
+          "project_id": "Device",
+          "run_id": "cf1bcf6c-c4e8-4ab5-a247-806890b6e081",
+          "status": "SUCCESS",
+          "started_at": "2026-04-06T05:06:55.998844",
+          "completed_at": "2026-04-06T05:07:53.041740",
+          "duration_ms": 57042,
+          "source_type": "fabric",
+          "target_type": "snowflake",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:06:55.998844",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:06:56.025556",
+              "duration_ms": null,
+              "message": "Authentication resolved from ENV",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:07:31.151223",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:07:31.151223",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:07:31.196982",
+              "duration_ms": null,
+              "message": "2 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:07:31.268712",
+              "duration_ms": null,
+              "message": "Snapshot 076427eb... committed",
+              "artifact_ids": [
+                "076427eb-a149-47a3-aa6b-eaee0140183c",
+                "3f362f62-b77f-417f-a6a1-faaa22bae79d"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:07:31.287486",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:07:53.040700",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:07:53.041740",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "3f362f62-b77f-417f-a6a1-faaa22bae79d",
+          "sml_snapshot_id": "076427eb-a149-47a3-aa6b-eaee0140183c",
+          "target_artifact_path": "output\\reverse\\Device\\semantic_view.sql",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Device",
+            "status": "success",
+            "summary": {
+              "project_id": "Device",
+              "run_id": "cf1bcf6c-c4e8-4ab5-a247-806890b6e081",
+              "status": "SUCCESS",
+              "started_at": "2026-04-06T05:06:55.998844",
+              "completed_at": "2026-04-06T05:07:53.041740",
+              "duration_ms": 57042,
+              "source_type": "fabric",
+              "target_type": "snowflake",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:06:55.998844",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:06:56.025556",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from ENV",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:07:31.151223",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:07:31.151223",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:07:31.196982",
+                  "duration_ms": null,
+                  "message": "2 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:07:31.268712",
+                  "duration_ms": null,
+                  "message": "Snapshot 076427eb... committed",
+                  "artifact_ids": [
+                    "076427eb-a149-47a3-aa6b-eaee0140183c",
+                    "3f362f62-b77f-417f-a6a1-faaa22bae79d"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:07:31.287486",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:07:53.040700",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:07:53.041740",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "3f362f62-b77f-417f-a6a1-faaa22bae79d",
+              "sml_snapshot_id": "076427eb-a149-47a3-aa6b-eaee0140183c",
+              "target_artifact_path": "output\\reverse\\Device\\semantic_view.sql",
+              "errors": []
+            },
+            "console": {
+              "lines": [
+                "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated",
+                "[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from ENV",
+                "[SUCCESS] Step 4: Extract from Source - Extracted TMSL definition",
+                "[SUCCESS] Step 5: Validate & Parse Source Format - Source format valid",
+                "[SUCCESS] Step 6: Convert to Canonical SML - 2 datasets, 0 metrics (via OSI)",
+                "[SUCCESS] Step 7: Persist Artifacts - Snapshot 076427eb... committed",
+                "[SUCCESS] Step 8: Convert to Target Format - Target format generated",
+                "[SUCCESS] Step 9: Deploy to Target - Deployment complete",
+                "[SUCCESS] Step 10: Finalize Run - Status: SUCCESS"
+              ],
+              "text": "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated\n[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from ENV\n[SUCCESS] Step 4: Extract from Source - Extracted TMSL definition\n[SUCCESS] Step 5: Validate & Parse Source Format - Source format valid\n[SUCCESS] Step 6: Convert to Canonical SML - 2 datasets, 0 metrics (via OSI)\n[SUCCESS] Step 7: Persist Artifacts - Snapshot 076427eb... committed\n[SUCCESS] Step 8: Convert to Target Format - Target format generated\n[SUCCESS] Step 9: Deploy to Target - Deployment complete\n[SUCCESS] Step 10: Finalize Run - Status: SUCCESS"
+            },
+            "run_id": "cf1bcf6c-c4e8-4ab5-a247-806890b6e081"
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      },
       {
         "run_id": "run-1775307396974",
         "id": "run-1775307396974",
@@ -17352,41 +17699,640 @@
     ],
     "proj-1775292637197": [
       {
-        "run_id": "run-1775328533262",
-        "id": "run-1775328533262",
+        "run_id": "run-1775357579281",
+        "id": "run-1775357579281",
         "project_id": "proj-1775292637197",
         "project_name": "client_d",
         "schedule": "Manual",
-        "status": "running",
+        "status": "failed",
         "source_type": "fabric",
-        "message": "Execution started.",
+        "message": "Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"550bd738-8983-4e39-ba7c-45c51dd63c7a\",\"serving_data\":\"\"}]}",
         "logs": [
-          "LIVE Run queued. Waiting for execution engine..."
+          "SUCCESS Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS Stage 3: Resolve Authentication - Authentication resolved from DB identity",
+          "SUCCESS Stage 4: Extract from Source - Extracted TMSL definition",
+          "SUCCESS Stage 5: Validate & Parse Source Format - Source format valid",
+          "SUCCESS Stage 6: Convert to Canonical SML - 26 datasets, 288 metrics (via OSI)",
+          "SUCCESS Stage 7: Persist Artifacts - Snapshot f615fcc8... committed",
+          "SUCCESS Stage 8: Convert to Target Format - Target format generated",
+          "FAILED Stage 9: Deploy to Target - Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"550bd738-8983-4e39-ba7c-45c51dd63c7a\",\"serving_data\":\"\"}]}",
+          "SUCCESS Stage 10: Finalize Run - Status: FAILED",
+          "ERROR Stage 9 (Deploy to Target) - Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"550bd738-8983-4e39-ba7c-45c51dd63c7a\",\"serving_data\":\"\"}]}",
+          "SUCCESS [Client Data] Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS [Client Data] Stage 3: Resolve Authentication - Authentication resolved from DB identity",
+          "SUCCESS [Client Data] Stage 4: Extract from Source - Extracted TMSL definition",
+          "SUCCESS [Client Data] Stage 5: Validate & Parse Source Format - Source format valid",
+          "SUCCESS [Client Data] Stage 6: Convert to Canonical SML - 26 datasets, 288 metrics (via OSI)",
+          "SUCCESS [Client Data] Stage 7: Persist Artifacts - Snapshot f615fcc8... committed",
+          "SUCCESS [Client Data] Stage 8: Convert to Target Format - Target format generated",
+          "FAILED [Client Data] Stage 9: Deploy to Target - Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"550bd738-8983-4e39-ba7c-45c51dd63c7a\",\"serving_data\":\"\"}]}",
+          "SUCCESS [Client Data] Stage 10: Finalize Run - Status: FAILED",
+          "ERROR [Client Data] Stage 9 (Deploy to Target) - Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"550bd738-8983-4e39-ba7c-45c51dd63c7a\",\"serving_data\":\"\"}]}"
         ],
         "stage_states": [
           {
             "id": "extraction",
             "label": "Extraction",
-            "status": "running"
+            "status": "success"
           },
           {
             "id": "osi_conversion",
             "label": "OSI Conversion",
-            "status": "pending"
+            "status": "success"
           },
           {
             "id": "sml_generation",
             "label": "SML Generation",
-            "status": "pending"
+            "status": "success"
           },
           {
             "id": "snowflake_deployment",
             "label": "Snowflake Deployment",
-            "status": "pending"
+            "status": "failed"
           }
         ],
-        "duration_ms": 0,
-        "started_at": "2026-04-04T18:48:53.276569"
+        "duration_ms": 4871076,
+        "started_at": "2026-04-05T02:52:59.308826",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "b67ad535-5996-4917-a00d-404bdae46797",
+          "status": "FAILED",
+          "started_at": "2026-04-05T02:52:59.794797",
+          "completed_at": "2026-04-05T04:14:10.327579",
+          "duration_ms": 4870532,
+          "source_type": "fabric",
+          "target_type": "databricks",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T02:52:59.794797",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T02:53:02.039125",
+              "duration_ms": null,
+              "message": "Authentication resolved from DB identity",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T02:53:43.285950",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T02:53:43.285950",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T02:53:43.430872",
+              "duration_ms": null,
+              "message": "26 datasets, 288 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T02:53:43.901728",
+              "duration_ms": null,
+              "message": "Snapshot f615fcc8... committed",
+              "artifact_ids": [
+                "f615fcc8-b24a-43cf-9ddc-e8a4415d69ca",
+                "ffd641cf-5a74-4bf3-a9c4-49a2228320aa"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T03:32:19.519751",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-04-05T04:14:10.324569",
+              "duration_ms": null,
+              "message": "Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"550bd738-8983-4e39-ba7c-45c51dd63c7a\",\"serving_data\":\"\"}]}",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T04:14:10.327579",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "ffd641cf-5a74-4bf3-a9c4-49a2228320aa",
+          "sml_snapshot_id": "f615fcc8-b24a-43cf-9ddc-e8a4415d69ca",
+          "target_artifact_path": "output\\databricks\\Client_Data\\databricks_metric_views.yaml",
+          "errors": [
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "error_type": "DeploymentError",
+              "message": "Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"550bd738-8983-4e39-ba7c-45c51dd63c7a\",\"serving_data\":\"\"}]}",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1961, in _step9_deploy\n    self._deploy_to_databricks(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 2078, in _deploy_to_databricks\n    publisher.publish(context.sml_model)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2784, in publish\n    self.execute_statements(metadata_stmts)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2732, in execute_statements\n    results.append(_fire_request())\n                   ^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2720, in _fire_request\n    raise DatabricksPublishError(\nsemabridge.connectors.databricks_publisher.DatabricksPublishError: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"550bd738-8983-4e39-ba7c-45c51dd63c7a\",\"serving_data\":\"\"}]}\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 328, in execute\n    self._step9_deploy(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1979, in _step9_deploy\n    raise DeploymentError(f\"Deployment failed: {e}\") from e\nsemabridge.core.execution_engine.DeploymentError: Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"550bd738-8983-4e39-ba7c-45c51dd63c7a\",\"serving_data\":\"\"}]}\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "b67ad535-5996-4917-a00d-404bdae46797",
+              "status": "FAILED",
+              "started_at": "2026-04-05T02:52:59.794797",
+              "completed_at": "2026-04-05T04:14:10.327579",
+              "duration_ms": 4870532,
+              "source_type": "fabric",
+              "target_type": "databricks",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T02:52:59.794797",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T02:53:02.039125",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from DB identity",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T02:53:43.285950",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T02:53:43.285950",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T02:53:43.430872",
+                  "duration_ms": null,
+                  "message": "26 datasets, 288 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T02:53:43.901728",
+                  "duration_ms": null,
+                  "message": "Snapshot f615fcc8... committed",
+                  "artifact_ids": [
+                    "f615fcc8-b24a-43cf-9ddc-e8a4415d69ca",
+                    "ffd641cf-5a74-4bf3-a9c4-49a2228320aa"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T03:32:19.519751",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T04:14:10.324569",
+                  "duration_ms": null,
+                  "message": "Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"550bd738-8983-4e39-ba7c-45c51dd63c7a\",\"serving_data\":\"\"}]}",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T04:14:10.327579",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "ffd641cf-5a74-4bf3-a9c4-49a2228320aa",
+              "sml_snapshot_id": "f615fcc8-b24a-43cf-9ddc-e8a4415d69ca",
+              "target_artifact_path": "output\\databricks\\Client_Data\\databricks_metric_views.yaml",
+              "errors": [
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "error_type": "DeploymentError",
+                  "message": "Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"550bd738-8983-4e39-ba7c-45c51dd63c7a\",\"serving_data\":\"\"}]}",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1961, in _step9_deploy\n    self._deploy_to_databricks(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 2078, in _deploy_to_databricks\n    publisher.publish(context.sml_model)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2784, in publish\n    self.execute_statements(metadata_stmts)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2732, in execute_statements\n    results.append(_fire_request())\n                   ^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2720, in _fire_request\n    raise DatabricksPublishError(\nsemabridge.connectors.databricks_publisher.DatabricksPublishError: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"550bd738-8983-4e39-ba7c-45c51dd63c7a\",\"serving_data\":\"\"}]}\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 328, in execute\n    self._step9_deploy(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1979, in _step9_deploy\n    raise DeploymentError(f\"Deployment failed: {e}\") from e\nsemabridge.core.execution_engine.DeploymentError: Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"550bd738-8983-4e39-ba7c-45c51dd63c7a\",\"serving_data\":\"\"}]}\n"
+                }
+              ]
+            },
+            "console": {
+              "lines": [
+                "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated",
+                "[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from DB identity",
+                "[SUCCESS] Step 4: Extract from Source - Extracted TMSL definition",
+                "[SUCCESS] Step 5: Validate & Parse Source Format - Source format valid",
+                "[SUCCESS] Step 6: Convert to Canonical SML - 26 datasets, 288 metrics (via OSI)",
+                "[SUCCESS] Step 7: Persist Artifacts - Snapshot f615fcc8... committed",
+                "[SUCCESS] Step 8: Convert to Target Format - Target format generated",
+                "[FAILED] Step 9: Deploy to Target - Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"550bd738-8983-4e39-ba7c-45c51dd63c7a\",\"serving_data\":\"\"}]}",
+                "[SUCCESS] Step 10: Finalize Run - Status: FAILED",
+                "[ERROR] Step 9: Deploy to Target - Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"550bd738-8983-4e39-ba7c-45c51dd63c7a\",\"serving_data\":\"\"}]}"
+              ],
+              "text": "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated\n[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from DB identity\n[SUCCESS] Step 4: Extract from Source - Extracted TMSL definition\n[SUCCESS] Step 5: Validate & Parse Source Format - Source format valid\n[SUCCESS] Step 6: Convert to Canonical SML - 26 datasets, 288 metrics (via OSI)\n[SUCCESS] Step 7: Persist Artifacts - Snapshot f615fcc8... committed\n[SUCCESS] Step 8: Convert to Target Format - Target format generated\n[FAILED] Step 9: Deploy to Target - Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"550bd738-8983-4e39-ba7c-45c51dd63c7a\",\"serving_data\":\"\"}]}\n[SUCCESS] Step 10: Finalize Run - Status: FAILED\n[ERROR] Step 9: Deploy to Target - Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"550bd738-8983-4e39-ba7c-45c51dd63c7a\",\"serving_data\":\"\"}]}"
+            },
+            "run_id": "b67ad535-5996-4917-a00d-404bdae46797"
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
+      {
+        "run_id": "run-1775328533262",
+        "id": "run-1775328533262",
+        "project_id": "proj-1775292637197",
+        "project_name": "client_d",
+        "schedule": "Manual",
+        "status": "failed",
+        "source_type": "fabric",
+        "message": "Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"1544fc00-e180-4b9e-a002-e4e1b9d5de06\",\"serving_data\":\"\"}]}",
+        "logs": [
+          "SUCCESS Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS Stage 3: Resolve Authentication - Authentication resolved from DB identity",
+          "SUCCESS Stage 4: Extract from Source - Extracted TMSL definition",
+          "SUCCESS Stage 5: Validate & Parse Source Format - Source format valid",
+          "SUCCESS Stage 6: Convert to Canonical SML - 26 datasets, 288 metrics (via OSI)",
+          "SUCCESS Stage 7: Persist Artifacts - Snapshot 357ad627... committed",
+          "SUCCESS Stage 8: Convert to Target Format - Target format generated",
+          "FAILED Stage 9: Deploy to Target - Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"1544fc00-e180-4b9e-a002-e4e1b9d5de06\",\"serving_data\":\"\"}]}",
+          "SUCCESS Stage 10: Finalize Run - Status: FAILED",
+          "ERROR Stage 9 (Deploy to Target) - Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"1544fc00-e180-4b9e-a002-e4e1b9d5de06\",\"serving_data\":\"\"}]}",
+          "SUCCESS [Client Data] Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS [Client Data] Stage 3: Resolve Authentication - Authentication resolved from DB identity",
+          "SUCCESS [Client Data] Stage 4: Extract from Source - Extracted TMSL definition",
+          "SUCCESS [Client Data] Stage 5: Validate & Parse Source Format - Source format valid",
+          "SUCCESS [Client Data] Stage 6: Convert to Canonical SML - 26 datasets, 288 metrics (via OSI)",
+          "SUCCESS [Client Data] Stage 7: Persist Artifacts - Snapshot 357ad627... committed",
+          "SUCCESS [Client Data] Stage 8: Convert to Target Format - Target format generated",
+          "FAILED [Client Data] Stage 9: Deploy to Target - Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"1544fc00-e180-4b9e-a002-e4e1b9d5de06\",\"serving_data\":\"\"}]}",
+          "SUCCESS [Client Data] Stage 10: Finalize Run - Status: FAILED",
+          "ERROR [Client Data] Stage 9 (Deploy to Target) - Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"1544fc00-e180-4b9e-a002-e4e1b9d5de06\",\"serving_data\":\"\"}]}"
+        ],
+        "stage_states": [
+          {
+            "id": "extraction",
+            "label": "Extraction",
+            "status": "success"
+          },
+          {
+            "id": "osi_conversion",
+            "label": "OSI Conversion",
+            "status": "success"
+          },
+          {
+            "id": "sml_generation",
+            "label": "SML Generation",
+            "status": "success"
+          },
+          {
+            "id": "snowflake_deployment",
+            "label": "Snowflake Deployment",
+            "status": "failed"
+          }
+        ],
+        "duration_ms": 6178508,
+        "started_at": "2026-04-04T18:48:53.276569",
+        "summary": {
+          "project_id": "Client Data",
+          "run_id": "87c0161a-7971-4103-b027-3288c2e7d893",
+          "status": "FAILED",
+          "started_at": "2026-04-04T18:48:53.547228",
+          "completed_at": "2026-04-04T20:31:51.728761",
+          "duration_ms": 6178181,
+          "source_type": "fabric",
+          "target_type": "databricks",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-04T18:48:53.547228",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-04T18:48:55.951389",
+              "duration_ms": null,
+              "message": "Authentication resolved from DB identity",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-04T18:49:34.757342",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-04T18:49:34.757342",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-04T18:49:34.959117",
+              "duration_ms": null,
+              "message": "26 datasets, 288 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-04T18:49:35.499584",
+              "duration_ms": null,
+              "message": "Snapshot 357ad627... committed",
+              "artifact_ids": [
+                "357ad627-bbce-434e-9925-45a2ec507f93",
+                "69ca06f7-e745-4ecd-99b2-4d0493e5eb49"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-04T19:41:44.166699",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-04-04T20:31:51.711685",
+              "duration_ms": null,
+              "message": "Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"1544fc00-e180-4b9e-a002-e4e1b9d5de06\",\"serving_data\":\"\"}]}",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-04T20:31:51.728761",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "69ca06f7-e745-4ecd-99b2-4d0493e5eb49",
+          "sml_snapshot_id": "357ad627-bbce-434e-9925-45a2ec507f93",
+          "target_artifact_path": "output\\databricks\\Client_Data\\databricks_metric_views.yaml",
+          "errors": [
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "error_type": "DeploymentError",
+              "message": "Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"1544fc00-e180-4b9e-a002-e4e1b9d5de06\",\"serving_data\":\"\"}]}",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1961, in _step9_deploy\n    self._deploy_to_databricks(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 2078, in _deploy_to_databricks\n    publisher.publish(context.sml_model)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2784, in publish\n    self.execute_statements(metadata_stmts)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2732, in execute_statements\n    results.append(_fire_request())\n                   ^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2720, in _fire_request\n    raise DatabricksPublishError(\nsemabridge.connectors.databricks_publisher.DatabricksPublishError: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"1544fc00-e180-4b9e-a002-e4e1b9d5de06\",\"serving_data\":\"\"}]}\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 328, in execute\n    self._step9_deploy(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1979, in _step9_deploy\n    raise DeploymentError(f\"Deployment failed: {e}\") from e\nsemabridge.core.execution_engine.DeploymentError: Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"1544fc00-e180-4b9e-a002-e4e1b9d5de06\",\"serving_data\":\"\"}]}\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Client Data",
+            "status": "failed",
+            "summary": {
+              "project_id": "Client Data",
+              "run_id": "87c0161a-7971-4103-b027-3288c2e7d893",
+              "status": "FAILED",
+              "started_at": "2026-04-04T18:48:53.547228",
+              "completed_at": "2026-04-04T20:31:51.728761",
+              "duration_ms": 6178181,
+              "source_type": "fabric",
+              "target_type": "databricks",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-04T18:48:53.547228",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-04T18:48:55.951389",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from DB identity",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-04T18:49:34.757342",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-04T18:49:34.757342",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-04T18:49:34.959117",
+                  "duration_ms": null,
+                  "message": "26 datasets, 288 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-04T18:49:35.499584",
+                  "duration_ms": null,
+                  "message": "Snapshot 357ad627... committed",
+                  "artifact_ids": [
+                    "357ad627-bbce-434e-9925-45a2ec507f93",
+                    "69ca06f7-e745-4ecd-99b2-4d0493e5eb49"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-04T19:41:44.166699",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-04-04T20:31:51.711685",
+                  "duration_ms": null,
+                  "message": "Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"1544fc00-e180-4b9e-a002-e4e1b9d5de06\",\"serving_data\":\"\"}]}",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-04T20:31:51.728761",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "69ca06f7-e745-4ecd-99b2-4d0493e5eb49",
+              "sml_snapshot_id": "357ad627-bbce-434e-9925-45a2ec507f93",
+              "target_artifact_path": "output\\databricks\\Client_Data\\databricks_metric_views.yaml",
+              "errors": [
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "error_type": "DeploymentError",
+                  "message": "Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"1544fc00-e180-4b9e-a002-e4e1b9d5de06\",\"serving_data\":\"\"}]}",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1961, in _step9_deploy\n    self._deploy_to_databricks(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 2078, in _deploy_to_databricks\n    publisher.publish(context.sml_model)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2784, in publish\n    self.execute_statements(metadata_stmts)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2732, in execute_statements\n    results.append(_fire_request())\n                   ^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2720, in _fire_request\n    raise DatabricksPublishError(\nsemabridge.connectors.databricks_publisher.DatabricksPublishError: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"1544fc00-e180-4b9e-a002-e4e1b9d5de06\",\"serving_data\":\"\"}]}\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 328, in execute\n    self._step9_deploy(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1979, in _step9_deploy\n    raise DeploymentError(f\"Deployment failed: {e}\") from e\nsemabridge.core.execution_engine.DeploymentError: Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"1544fc00-e180-4b9e-a002-e4e1b9d5de06\",\"serving_data\":\"\"}]}\n"
+                }
+              ]
+            },
+            "console": {
+              "lines": [
+                "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated",
+                "[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from DB identity",
+                "[SUCCESS] Step 4: Extract from Source - Extracted TMSL definition",
+                "[SUCCESS] Step 5: Validate & Parse Source Format - Source format valid",
+                "[SUCCESS] Step 6: Convert to Canonical SML - 26 datasets, 288 metrics (via OSI)",
+                "[SUCCESS] Step 7: Persist Artifacts - Snapshot 357ad627... committed",
+                "[SUCCESS] Step 8: Convert to Target Format - Target format generated",
+                "[FAILED] Step 9: Deploy to Target - Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"1544fc00-e180-4b9e-a002-e4e1b9d5de06\",\"serving_data\":\"\"}]}",
+                "[SUCCESS] Step 10: Finalize Run - Status: FAILED",
+                "[ERROR] Step 9: Deploy to Target - Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"1544fc00-e180-4b9e-a002-e4e1b9d5de06\",\"serving_data\":\"\"}]}"
+              ],
+              "text": "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated\n[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from DB identity\n[SUCCESS] Step 4: Extract from Source - Extracted TMSL definition\n[SUCCESS] Step 5: Validate & Parse Source Format - Source format valid\n[SUCCESS] Step 6: Convert to Canonical SML - 26 datasets, 288 metrics (via OSI)\n[SUCCESS] Step 7: Persist Artifacts - Snapshot 357ad627... committed\n[SUCCESS] Step 8: Convert to Target Format - Target format generated\n[FAILED] Step 9: Deploy to Target - Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"1544fc00-e180-4b9e-a002-e4e1b9d5de06\",\"serving_data\":\"\"}]}\n[SUCCESS] Step 10: Finalize Run - Status: FAILED\n[ERROR] Step 9: Deploy to Target - Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"1544fc00-e180-4b9e-a002-e4e1b9d5de06\",\"serving_data\":\"\"}]}"
+            },
+            "run_id": "87c0161a-7971-4103-b027-3288c2e7d893"
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
       },
       {
         "run_id": "run-1775295776397",
@@ -19298,6 +20244,324 @@
       }
     ],
     "proj-1775296615837": [
+      {
+        "run_id": "run-1775364400797",
+        "id": "run-1775364400797",
+        "project_id": "proj-1775296615837",
+        "project_name": "cus",
+        "schedule": "Manual",
+        "status": "failed",
+        "source_type": "fabric",
+        "message": "Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"b75ecfb0-0760-414e-872b-545c20cb8527\",\"serving_data\":\"\"}]}",
+        "logs": [
+          "SUCCESS Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS Stage 3: Resolve Authentication - Authentication resolved from DB identity",
+          "SUCCESS Stage 4: Extract from Source - Extracted TMSL definition",
+          "SUCCESS Stage 5: Validate & Parse Source Format - Source format valid",
+          "SUCCESS Stage 6: Convert to Canonical SML - 9 datasets, 59 metrics (via OSI)",
+          "SUCCESS Stage 7: Persist Artifacts - Snapshot b57da005... committed",
+          "SUCCESS Stage 8: Convert to Target Format - Target format generated",
+          "FAILED Stage 9: Deploy to Target - Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"b75ecfb0-0760-414e-872b-545c20cb8527\",\"serving_data\":\"\"}]}",
+          "SUCCESS Stage 10: Finalize Run - Status: FAILED",
+          "ERROR Stage 9 (Deploy to Target) - Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"b75ecfb0-0760-414e-872b-545c20cb8527\",\"serving_data\":\"\"}]}",
+          "SUCCESS [Customer Profitability] Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS [Customer Profitability] Stage 3: Resolve Authentication - Authentication resolved from DB identity",
+          "SUCCESS [Customer Profitability] Stage 4: Extract from Source - Extracted TMSL definition",
+          "SUCCESS [Customer Profitability] Stage 5: Validate & Parse Source Format - Source format valid",
+          "SUCCESS [Customer Profitability] Stage 6: Convert to Canonical SML - 9 datasets, 59 metrics (via OSI)",
+          "SUCCESS [Customer Profitability] Stage 7: Persist Artifacts - Snapshot b57da005... committed",
+          "SUCCESS [Customer Profitability] Stage 8: Convert to Target Format - Target format generated",
+          "FAILED [Customer Profitability] Stage 9: Deploy to Target - Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"b75ecfb0-0760-414e-872b-545c20cb8527\",\"serving_data\":\"\"}]}",
+          "SUCCESS [Customer Profitability] Stage 10: Finalize Run - Status: FAILED",
+          "ERROR [Customer Profitability] Stage 9 (Deploy to Target) - Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"b75ecfb0-0760-414e-872b-545c20cb8527\",\"serving_data\":\"\"}]}"
+        ],
+        "stage_states": [
+          {
+            "id": "extraction",
+            "label": "Extraction",
+            "status": "success"
+          },
+          {
+            "id": "osi_conversion",
+            "label": "OSI Conversion",
+            "status": "success"
+          },
+          {
+            "id": "sml_generation",
+            "label": "SML Generation",
+            "status": "success"
+          },
+          {
+            "id": "snowflake_deployment",
+            "label": "Snowflake Deployment",
+            "status": "failed"
+          }
+        ],
+        "duration_ms": 428744,
+        "started_at": "2026-04-05T04:46:40.811684",
+        "summary": {
+          "project_id": "Customer Profitability",
+          "run_id": "4badeace-65e3-4617-a955-e840355cac5d",
+          "status": "FAILED",
+          "started_at": "2026-04-05T04:46:41.167431",
+          "completed_at": "2026-04-05T04:53:49.517793",
+          "duration_ms": 428350,
+          "source_type": "fabric",
+          "target_type": "databricks",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T04:46:41.167431",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T04:46:42.938462",
+              "duration_ms": null,
+              "message": "Authentication resolved from DB identity",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T04:47:16.085784",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T04:47:16.085784",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T04:47:16.119782",
+              "duration_ms": null,
+              "message": "9 datasets, 59 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T04:47:16.214139",
+              "duration_ms": null,
+              "message": "Snapshot b57da005... committed",
+              "artifact_ids": [
+                "b57da005-7437-4ca3-9e6a-8702be8429d7",
+                "4d6270ef-0a70-414f-9329-7aadcafacd35"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T04:50:01.202924",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-04-05T04:53:49.514786",
+              "duration_ms": null,
+              "message": "Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"b75ecfb0-0760-414e-872b-545c20cb8527\",\"serving_data\":\"\"}]}",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T04:53:49.517793",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "4d6270ef-0a70-414f-9329-7aadcafacd35",
+          "sml_snapshot_id": "b57da005-7437-4ca3-9e6a-8702be8429d7",
+          "target_artifact_path": "output\\databricks\\Customer_Profitability\\databricks_metric_views.yaml",
+          "errors": [
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "error_type": "DeploymentError",
+              "message": "Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"b75ecfb0-0760-414e-872b-545c20cb8527\",\"serving_data\":\"\"}]}",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1961, in _step9_deploy\n    self._deploy_to_databricks(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 2078, in _deploy_to_databricks\n    publisher.publish(context.sml_model)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2784, in publish\n    self.execute_statements(metadata_stmts)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2732, in execute_statements\n    results.append(_fire_request())\n                   ^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2720, in _fire_request\n    raise DatabricksPublishError(\nsemabridge.connectors.databricks_publisher.DatabricksPublishError: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"b75ecfb0-0760-414e-872b-545c20cb8527\",\"serving_data\":\"\"}]}\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 328, in execute\n    self._step9_deploy(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1979, in _step9_deploy\n    raise DeploymentError(f\"Deployment failed: {e}\") from e\nsemabridge.core.execution_engine.DeploymentError: Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"b75ecfb0-0760-414e-872b-545c20cb8527\",\"serving_data\":\"\"}]}\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Customer Profitability",
+            "status": "failed",
+            "summary": {
+              "project_id": "Customer Profitability",
+              "run_id": "4badeace-65e3-4617-a955-e840355cac5d",
+              "status": "FAILED",
+              "started_at": "2026-04-05T04:46:41.167431",
+              "completed_at": "2026-04-05T04:53:49.517793",
+              "duration_ms": 428350,
+              "source_type": "fabric",
+              "target_type": "databricks",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T04:46:41.167431",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T04:46:42.938462",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from DB identity",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T04:47:16.085784",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T04:47:16.085784",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T04:47:16.119782",
+                  "duration_ms": null,
+                  "message": "9 datasets, 59 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T04:47:16.214139",
+                  "duration_ms": null,
+                  "message": "Snapshot b57da005... committed",
+                  "artifact_ids": [
+                    "b57da005-7437-4ca3-9e6a-8702be8429d7",
+                    "4d6270ef-0a70-414f-9329-7aadcafacd35"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T04:50:01.202924",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T04:53:49.514786",
+                  "duration_ms": null,
+                  "message": "Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"b75ecfb0-0760-414e-872b-545c20cb8527\",\"serving_data\":\"\"}]}",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T04:53:49.517793",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "4d6270ef-0a70-414f-9329-7aadcafacd35",
+              "sml_snapshot_id": "b57da005-7437-4ca3-9e6a-8702be8429d7",
+              "target_artifact_path": "output\\databricks\\Customer_Profitability\\databricks_metric_views.yaml",
+              "errors": [
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "error_type": "DeploymentError",
+                  "message": "Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"b75ecfb0-0760-414e-872b-545c20cb8527\",\"serving_data\":\"\"}]}",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1961, in _step9_deploy\n    self._deploy_to_databricks(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 2078, in _deploy_to_databricks\n    publisher.publish(context.sml_model)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2784, in publish\n    self.execute_statements(metadata_stmts)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2732, in execute_statements\n    results.append(_fire_request())\n                   ^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2720, in _fire_request\n    raise DatabricksPublishError(\nsemabridge.connectors.databricks_publisher.DatabricksPublishError: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"b75ecfb0-0760-414e-872b-545c20cb8527\",\"serving_data\":\"\"}]}\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 328, in execute\n    self._step9_deploy(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1979, in _step9_deploy\n    raise DeploymentError(f\"Deployment failed: {e}\") from e\nsemabridge.core.execution_engine.DeploymentError: Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"b75ecfb0-0760-414e-872b-545c20cb8527\",\"serving_data\":\"\"}]}\n"
+                }
+              ]
+            },
+            "console": {
+              "lines": [
+                "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated",
+                "[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from DB identity",
+                "[SUCCESS] Step 4: Extract from Source - Extracted TMSL definition",
+                "[SUCCESS] Step 5: Validate & Parse Source Format - Source format valid",
+                "[SUCCESS] Step 6: Convert to Canonical SML - 9 datasets, 59 metrics (via OSI)",
+                "[SUCCESS] Step 7: Persist Artifacts - Snapshot b57da005... committed",
+                "[SUCCESS] Step 8: Convert to Target Format - Target format generated",
+                "[FAILED] Step 9: Deploy to Target - Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"b75ecfb0-0760-414e-872b-545c20cb8527\",\"serving_data\":\"\"}]}",
+                "[SUCCESS] Step 10: Finalize Run - Status: FAILED",
+                "[ERROR] Step 9: Deploy to Target - Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"b75ecfb0-0760-414e-872b-545c20cb8527\",\"serving_data\":\"\"}]}"
+              ],
+              "text": "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated\n[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from DB identity\n[SUCCESS] Step 4: Extract from Source - Extracted TMSL definition\n[SUCCESS] Step 5: Validate & Parse Source Format - Source format valid\n[SUCCESS] Step 6: Convert to Canonical SML - 9 datasets, 59 metrics (via OSI)\n[SUCCESS] Step 7: Persist Artifacts - Snapshot b57da005... committed\n[SUCCESS] Step 8: Convert to Target Format - Target format generated\n[FAILED] Step 9: Deploy to Target - Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"b75ecfb0-0760-414e-872b-545c20cb8527\",\"serving_data\":\"\"}]}\n[SUCCESS] Step 10: Finalize Run - Status: FAILED\n[ERROR] Step 9: Deploy to Target - Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"b75ecfb0-0760-414e-872b-545c20cb8527\",\"serving_data\":\"\"}]}"
+            },
+            "run_id": "4badeace-65e3-4617-a955-e840355cac5d"
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      },
       {
         "run_id": "run-1775327788426",
         "id": "run-1775327788426",
@@ -32210,6 +33474,928 @@
               "text": "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated\n[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from DB identity\n[SUCCESS] Step 4: Extract from Source - Extracted TMSL definition\n[SUCCESS] Step 5: Validate & Parse Source Format - Source format valid\n[SUCCESS] Step 6: Convert to Canonical SML - 2 datasets, 0 metrics (via OSI)\n[SUCCESS] Step 7: Persist Artifacts - Snapshot 0f0799d7... committed\n[SUCCESS] Step 8: Convert to Target Format - Target format generated\n[SUCCESS] Step 9: Deploy to Target - Deployment complete\n[SUCCESS] Step 10: Finalize Run - Status: SUCCESS"
             },
             "run_id": "dfdacf12-3f09-4edd-adee-d61c8259f025"
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      }
+    ],
+    "proj-1775363317610": [
+      {
+        "run_id": "run-1775363321141",
+        "id": "run-1775363321141",
+        "project_id": "proj-1775363317610",
+        "project_name": "hello",
+        "schedule": "Manual",
+        "status": "failed",
+        "source_type": "fabric",
+        "message": "Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"84911db0-80e3-4965-ab25-88ea51766c8e\",\"serving_data\":\"\"}]}",
+        "logs": [
+          "SUCCESS Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS Stage 3: Resolve Authentication - Authentication resolved from DB identity",
+          "SUCCESS Stage 4: Extract from Source - Extracted TMSL definition",
+          "SUCCESS Stage 5: Validate & Parse Source Format - Source format valid",
+          "SUCCESS Stage 6: Convert to Canonical SML - 9 datasets, 1 metrics (via OSI)",
+          "SUCCESS Stage 7: Persist Artifacts - Snapshot be64347a... committed",
+          "SUCCESS Stage 8: Convert to Target Format - Target format generated",
+          "FAILED Stage 9: Deploy to Target - Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"84911db0-80e3-4965-ab25-88ea51766c8e\",\"serving_data\":\"\"}]}",
+          "SUCCESS Stage 10: Finalize Run - Status: FAILED",
+          "ERROR Stage 9 (Deploy to Target) - Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"84911db0-80e3-4965-ab25-88ea51766c8e\",\"serving_data\":\"\"}]}",
+          "SUCCESS [Competitive Marketing Analysis] Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS [Competitive Marketing Analysis] Stage 3: Resolve Authentication - Authentication resolved from DB identity",
+          "SUCCESS [Competitive Marketing Analysis] Stage 4: Extract from Source - Extracted TMSL definition",
+          "SUCCESS [Competitive Marketing Analysis] Stage 5: Validate & Parse Source Format - Source format valid",
+          "SUCCESS [Competitive Marketing Analysis] Stage 6: Convert to Canonical SML - 9 datasets, 1 metrics (via OSI)",
+          "SUCCESS [Competitive Marketing Analysis] Stage 7: Persist Artifacts - Snapshot be64347a... committed",
+          "SUCCESS [Competitive Marketing Analysis] Stage 8: Convert to Target Format - Target format generated",
+          "FAILED [Competitive Marketing Analysis] Stage 9: Deploy to Target - Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"84911db0-80e3-4965-ab25-88ea51766c8e\",\"serving_data\":\"\"}]}",
+          "SUCCESS [Competitive Marketing Analysis] Stage 10: Finalize Run - Status: FAILED",
+          "ERROR [Competitive Marketing Analysis] Stage 9 (Deploy to Target) - Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"84911db0-80e3-4965-ab25-88ea51766c8e\",\"serving_data\":\"\"}]}"
+        ],
+        "stage_states": [
+          {
+            "id": "extraction",
+            "label": "Extraction",
+            "status": "success"
+          },
+          {
+            "id": "osi_conversion",
+            "label": "OSI Conversion",
+            "status": "success"
+          },
+          {
+            "id": "sml_generation",
+            "label": "SML Generation",
+            "status": "success"
+          },
+          {
+            "id": "snowflake_deployment",
+            "label": "Snowflake Deployment",
+            "status": "failed"
+          }
+        ],
+        "duration_ms": 507975,
+        "started_at": "2026-04-05T04:28:41.209777",
+        "summary": {
+          "project_id": "Competitive Marketing Analysis",
+          "run_id": "6ab89357-fb8c-4bbb-85ef-f693a40200f5",
+          "status": "FAILED",
+          "started_at": "2026-04-05T04:28:41.568538",
+          "completed_at": "2026-04-05T04:37:09.095402",
+          "duration_ms": 507526,
+          "source_type": "fabric",
+          "target_type": "databricks",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T04:28:41.568538",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T04:28:42.032055",
+              "duration_ms": null,
+              "message": "Authentication resolved from DB identity",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T04:29:16.136933",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T04:29:16.136933",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T04:29:16.167913",
+              "duration_ms": null,
+              "message": "9 datasets, 1 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T04:29:16.527375",
+              "duration_ms": null,
+              "message": "Snapshot be64347a... committed",
+              "artifact_ids": [
+                "be64347a-985d-4505-9d1b-96f5c8112018",
+                "efe1668e-7ad6-4285-b8f3-ed78669d8ca3"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T04:32:49.569881",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "failed",
+              "started_at": null,
+              "completed_at": "2026-04-05T04:37:09.093175",
+              "duration_ms": null,
+              "message": "Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"84911db0-80e3-4965-ab25-88ea51766c8e\",\"serving_data\":\"\"}]}",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-05T04:37:09.095402",
+              "duration_ms": null,
+              "message": "Status: FAILED",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "efe1668e-7ad6-4285-b8f3-ed78669d8ca3",
+          "sml_snapshot_id": "be64347a-985d-4505-9d1b-96f5c8112018",
+          "target_artifact_path": "output\\databricks\\Competitive_Marketing_Analysis\\databricks_metric_views.yaml",
+          "errors": [
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "error_type": "DeploymentError",
+              "message": "Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"84911db0-80e3-4965-ab25-88ea51766c8e\",\"serving_data\":\"\"}]}",
+              "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1961, in _step9_deploy\n    self._deploy_to_databricks(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 2078, in _deploy_to_databricks\n    publisher.publish(context.sml_model)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2784, in publish\n    self.execute_statements(metadata_stmts)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2732, in execute_statements\n    results.append(_fire_request())\n                   ^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2720, in _fire_request\n    raise DatabricksPublishError(\nsemabridge.connectors.databricks_publisher.DatabricksPublishError: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"84911db0-80e3-4965-ab25-88ea51766c8e\",\"serving_data\":\"\"}]}\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 328, in execute\n    self._step9_deploy(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1979, in _step9_deploy\n    raise DeploymentError(f\"Deployment failed: {e}\") from e\nsemabridge.core.execution_engine.DeploymentError: Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"84911db0-80e3-4965-ab25-88ea51766c8e\",\"serving_data\":\"\"}]}\n"
+            }
+          ]
+        },
+        "results": [
+          {
+            "model": "Competitive Marketing Analysis",
+            "status": "failed",
+            "summary": {
+              "project_id": "Competitive Marketing Analysis",
+              "run_id": "6ab89357-fb8c-4bbb-85ef-f693a40200f5",
+              "status": "FAILED",
+              "started_at": "2026-04-05T04:28:41.568538",
+              "completed_at": "2026-04-05T04:37:09.095402",
+              "duration_ms": 507526,
+              "source_type": "fabric",
+              "target_type": "databricks",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T04:28:41.568538",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T04:28:42.032055",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from DB identity",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T04:29:16.136933",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T04:29:16.136933",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T04:29:16.167913",
+                  "duration_ms": null,
+                  "message": "9 datasets, 1 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T04:29:16.527375",
+                  "duration_ms": null,
+                  "message": "Snapshot be64347a... committed",
+                  "artifact_ids": [
+                    "be64347a-985d-4505-9d1b-96f5c8112018",
+                    "efe1668e-7ad6-4285-b8f3-ed78669d8ca3"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T04:32:49.569881",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "failed",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T04:37:09.093175",
+                  "duration_ms": null,
+                  "message": "Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"84911db0-80e3-4965-ab25-88ea51766c8e\",\"serving_data\":\"\"}]}",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-05T04:37:09.095402",
+                  "duration_ms": null,
+                  "message": "Status: FAILED",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "efe1668e-7ad6-4285-b8f3-ed78669d8ca3",
+              "sml_snapshot_id": "be64347a-985d-4505-9d1b-96f5c8112018",
+              "target_artifact_path": "output\\databricks\\Competitive_Marketing_Analysis\\databricks_metric_views.yaml",
+              "errors": [
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "error_type": "DeploymentError",
+                  "message": "Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"84911db0-80e3-4965-ab25-88ea51766c8e\",\"serving_data\":\"\"}]}",
+                  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1961, in _step9_deploy\n    self._deploy_to_databricks(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 2078, in _deploy_to_databricks\n    publisher.publish(context.sml_model)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2784, in publish\n    self.execute_statements(metadata_stmts)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2732, in execute_statements\n    results.append(_fire_request())\n                   ^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\connectors\\databricks_publisher.py\", line 2720, in _fire_request\n    raise DatabricksPublishError(\nsemabridge.connectors.databricks_publisher.DatabricksPublishError: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"84911db0-80e3-4965-ab25-88ea51766c8e\",\"serving_data\":\"\"}]}\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 328, in execute\n    self._step9_deploy(context)\n  File \"C:\\Users\\Premasai\\Documents\\workspace\\pbix\\semabridge\\src\\semabridge\\core\\execution_engine.py\", line 1979, in _step9_deploy\n    raise DeploymentError(f\"Deployment failed: {e}\") from e\nsemabridge.core.execution_engine.DeploymentError: Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"84911db0-80e3-4965-ab25-88ea51766c8e\",\"serving_data\":\"\"}]}\n"
+                }
+              ]
+            },
+            "console": {
+              "lines": [
+                "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated",
+                "[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from DB identity",
+                "[SUCCESS] Step 4: Extract from Source - Extracted TMSL definition",
+                "[SUCCESS] Step 5: Validate & Parse Source Format - Source format valid",
+                "[SUCCESS] Step 6: Convert to Canonical SML - 9 datasets, 1 metrics (via OSI)",
+                "[SUCCESS] Step 7: Persist Artifacts - Snapshot be64347a... committed",
+                "[SUCCESS] Step 8: Convert to Target Format - Target format generated",
+                "[FAILED] Step 9: Deploy to Target - Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"84911db0-80e3-4965-ab25-88ea51766c8e\",\"serving_data\":\"\"}]}",
+                "[SUCCESS] Step 10: Finalize Run - Status: FAILED",
+                "[ERROR] Step 9: Deploy to Target - Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"84911db0-80e3-4965-ab25-88ea51766c8e\",\"serving_data\":\"\"}]}"
+              ],
+              "text": "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated\n[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from DB identity\n[SUCCESS] Step 4: Extract from Source - Extracted TMSL definition\n[SUCCESS] Step 5: Validate & Parse Source Format - Source format valid\n[SUCCESS] Step 6: Convert to Canonical SML - 9 datasets, 1 metrics (via OSI)\n[SUCCESS] Step 7: Persist Artifacts - Snapshot be64347a... committed\n[SUCCESS] Step 8: Convert to Target Format - Target format generated\n[FAILED] Step 9: Deploy to Target - Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"84911db0-80e3-4965-ab25-88ea51766c8e\",\"serving_data\":\"\"}]}\n[SUCCESS] Step 10: Finalize Run - Status: FAILED\n[ERROR] Step 9: Deploy to Target - Deployment failed: Databricks statement failed (400): {\"error_code\":\"BAD_REQUEST\",\"message\":\"The request could not be processed by the warehouse.\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RequestInfo\",\"request_id\":\"84911db0-80e3-4965-ab25-88ea51766c8e\",\"serving_data\":\"\"}]}"
+            },
+            "run_id": "6ab89357-fb8c-4bbb-85ef-f693a40200f5"
+          }
+        ],
+        "models_synced": 0,
+        "total_models": 1
+      }
+    ],
+    "proj-1775452451439": [
+      {
+        "run_id": "run-1775452454688",
+        "id": "run-1775452454688",
+        "project_id": "proj-1775452451439",
+        "project_name": "device_d",
+        "schedule": "Manual",
+        "status": "success",
+        "source_type": "fabric",
+        "message": "Execution completed successfully.",
+        "logs": [
+          "SUCCESS Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS Stage 3: Resolve Authentication - Authentication resolved from DB identity",
+          "SUCCESS Stage 4: Extract from Source - Extracted TMSL definition",
+          "SUCCESS Stage 5: Validate & Parse Source Format - Source format valid",
+          "SUCCESS Stage 6: Convert to Canonical SML - 2 datasets, 0 metrics (via OSI)",
+          "SUCCESS Stage 7: Persist Artifacts - Snapshot 7c5b5fcf... committed",
+          "SUCCESS Stage 8: Convert to Target Format - Target format generated",
+          "SUCCESS Stage 9: Deploy to Target - Deployment complete",
+          "SUCCESS Stage 10: Finalize Run - Status: SUCCESS",
+          "SUCCESS [Device] Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS [Device] Stage 3: Resolve Authentication - Authentication resolved from DB identity",
+          "SUCCESS [Device] Stage 4: Extract from Source - Extracted TMSL definition",
+          "SUCCESS [Device] Stage 5: Validate & Parse Source Format - Source format valid",
+          "SUCCESS [Device] Stage 6: Convert to Canonical SML - 2 datasets, 0 metrics (via OSI)",
+          "SUCCESS [Device] Stage 7: Persist Artifacts - Snapshot 7c5b5fcf... committed",
+          "SUCCESS [Device] Stage 8: Convert to Target Format - Target format generated",
+          "SUCCESS [Device] Stage 9: Deploy to Target - Deployment complete",
+          "SUCCESS [Device] Stage 10: Finalize Run - Status: SUCCESS"
+        ],
+        "stage_states": [
+          {
+            "id": "extraction",
+            "label": "Extraction",
+            "status": "success"
+          },
+          {
+            "id": "osi_conversion",
+            "label": "OSI Conversion",
+            "status": "success"
+          },
+          {
+            "id": "sml_generation",
+            "label": "SML Generation",
+            "status": "success"
+          },
+          {
+            "id": "snowflake_deployment",
+            "label": "Snowflake Deployment",
+            "status": "success"
+          }
+        ],
+        "duration_ms": 266953,
+        "started_at": "2026-04-06T05:14:14.699390",
+        "summary": {
+          "project_id": "Device",
+          "run_id": "1fb22b1f-6e83-4470-86ec-e828651ffff2",
+          "status": "SUCCESS",
+          "started_at": "2026-04-06T05:14:15.079747",
+          "completed_at": "2026-04-06T05:18:41.503033",
+          "duration_ms": 266423,
+          "source_type": "fabric",
+          "target_type": "databricks",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:14:15.079747",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:14:15.532564",
+              "duration_ms": null,
+              "message": "Authentication resolved from DB identity",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:14:47.098267",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:14:47.098267",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:14:47.104097",
+              "duration_ms": null,
+              "message": "2 datasets, 0 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:14:47.147254",
+              "duration_ms": null,
+              "message": "Snapshot 7c5b5fcf... committed",
+              "artifact_ids": [
+                "7c5b5fcf-e779-46b5-8b22-a9df7821bbf1",
+                "74f131ac-6a04-4ed2-8ec4-783baf226c15"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:16:30.737083",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:18:41.503033",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:18:41.503033",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "74f131ac-6a04-4ed2-8ec4-783baf226c15",
+          "sml_snapshot_id": "7c5b5fcf-e779-46b5-8b22-a9df7821bbf1",
+          "target_artifact_path": "output\\databricks\\Device\\databricks_metric_views.yaml",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Device",
+            "status": "success",
+            "summary": {
+              "project_id": "Device",
+              "run_id": "1fb22b1f-6e83-4470-86ec-e828651ffff2",
+              "status": "SUCCESS",
+              "started_at": "2026-04-06T05:14:15.079747",
+              "completed_at": "2026-04-06T05:18:41.503033",
+              "duration_ms": 266423,
+              "source_type": "fabric",
+              "target_type": "databricks",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:14:15.079747",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:14:15.532564",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from DB identity",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:14:47.098267",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:14:47.098267",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:14:47.104097",
+                  "duration_ms": null,
+                  "message": "2 datasets, 0 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:14:47.147254",
+                  "duration_ms": null,
+                  "message": "Snapshot 7c5b5fcf... committed",
+                  "artifact_ids": [
+                    "7c5b5fcf-e779-46b5-8b22-a9df7821bbf1",
+                    "74f131ac-6a04-4ed2-8ec4-783baf226c15"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:16:30.737083",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:18:41.503033",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:18:41.503033",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "74f131ac-6a04-4ed2-8ec4-783baf226c15",
+              "sml_snapshot_id": "7c5b5fcf-e779-46b5-8b22-a9df7821bbf1",
+              "target_artifact_path": "output\\databricks\\Device\\databricks_metric_views.yaml",
+              "errors": []
+            },
+            "console": {
+              "lines": [
+                "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated",
+                "[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from DB identity",
+                "[SUCCESS] Step 4: Extract from Source - Extracted TMSL definition",
+                "[SUCCESS] Step 5: Validate & Parse Source Format - Source format valid",
+                "[SUCCESS] Step 6: Convert to Canonical SML - 2 datasets, 0 metrics (via OSI)",
+                "[SUCCESS] Step 7: Persist Artifacts - Snapshot 7c5b5fcf... committed",
+                "[SUCCESS] Step 8: Convert to Target Format - Target format generated",
+                "[SUCCESS] Step 9: Deploy to Target - Deployment complete",
+                "[SUCCESS] Step 10: Finalize Run - Status: SUCCESS"
+              ],
+              "text": "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated\n[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from DB identity\n[SUCCESS] Step 4: Extract from Source - Extracted TMSL definition\n[SUCCESS] Step 5: Validate & Parse Source Format - Source format valid\n[SUCCESS] Step 6: Convert to Canonical SML - 2 datasets, 0 metrics (via OSI)\n[SUCCESS] Step 7: Persist Artifacts - Snapshot 7c5b5fcf... committed\n[SUCCESS] Step 8: Convert to Target Format - Target format generated\n[SUCCESS] Step 9: Deploy to Target - Deployment complete\n[SUCCESS] Step 10: Finalize Run - Status: SUCCESS"
+            },
+            "run_id": "1fb22b1f-6e83-4470-86ec-e828651ffff2"
+          }
+        ],
+        "models_synced": 1,
+        "total_models": 1
+      }
+    ],
+    "proj-1775452818447": [
+      {
+        "run_id": "run-1775452821879",
+        "id": "run-1775452821879",
+        "project_id": "proj-1775452818447",
+        "project_name": "competitive_d",
+        "schedule": "Manual",
+        "status": "success",
+        "source_type": "fabric",
+        "message": "Execution completed successfully.",
+        "logs": [
+          "SUCCESS Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS Stage 3: Resolve Authentication - Authentication resolved from DB identity",
+          "SUCCESS Stage 4: Extract from Source - Extracted TMSL definition",
+          "SUCCESS Stage 5: Validate & Parse Source Format - Source format valid",
+          "SUCCESS Stage 6: Convert to Canonical SML - 9 datasets, 1 metrics (via OSI)",
+          "SUCCESS Stage 7: Persist Artifacts - Snapshot db38b636... committed",
+          "SUCCESS Stage 8: Convert to Target Format - Target format generated",
+          "SUCCESS Stage 9: Deploy to Target - Deployment complete",
+          "SUCCESS Stage 10: Finalize Run - Status: SUCCESS",
+          "SUCCESS [Competitive Marketing Analysis] Stage 1: Load & Validate Configuration - Configuration validated",
+          "SUCCESS [Competitive Marketing Analysis] Stage 3: Resolve Authentication - Authentication resolved from DB identity",
+          "SUCCESS [Competitive Marketing Analysis] Stage 4: Extract from Source - Extracted TMSL definition",
+          "SUCCESS [Competitive Marketing Analysis] Stage 5: Validate & Parse Source Format - Source format valid",
+          "SUCCESS [Competitive Marketing Analysis] Stage 6: Convert to Canonical SML - 9 datasets, 1 metrics (via OSI)",
+          "SUCCESS [Competitive Marketing Analysis] Stage 7: Persist Artifacts - Snapshot db38b636... committed",
+          "SUCCESS [Competitive Marketing Analysis] Stage 8: Convert to Target Format - Target format generated",
+          "SUCCESS [Competitive Marketing Analysis] Stage 9: Deploy to Target - Deployment complete",
+          "SUCCESS [Competitive Marketing Analysis] Stage 10: Finalize Run - Status: SUCCESS"
+        ],
+        "stage_states": [
+          {
+            "id": "extraction",
+            "label": "Extraction",
+            "status": "success"
+          },
+          {
+            "id": "osi_conversion",
+            "label": "OSI Conversion",
+            "status": "success"
+          },
+          {
+            "id": "sml_generation",
+            "label": "SML Generation",
+            "status": "success"
+          },
+          {
+            "id": "snowflake_deployment",
+            "label": "Snowflake Deployment",
+            "status": "success"
+          }
+        ],
+        "duration_ms": 695127,
+        "started_at": "2026-04-06T05:20:21.890436",
+        "summary": {
+          "project_id": "Competitive Marketing Analysis",
+          "run_id": "9a3ffc26-e2b4-48a8-9315-0cf55d14ed2d",
+          "status": "SUCCESS",
+          "started_at": "2026-04-06T05:20:22.110739",
+          "completed_at": "2026-04-06T05:31:56.941225",
+          "duration_ms": 694830,
+          "source_type": "fabric",
+          "target_type": "databricks",
+          "steps_completed": [
+            {
+              "step_number": 1,
+              "step_name": "Load & Validate Configuration",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:20:22.110739",
+              "duration_ms": null,
+              "message": "Configuration validated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 3,
+              "step_name": "Resolve Authentication",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:20:22.606256",
+              "duration_ms": null,
+              "message": "Authentication resolved from DB identity",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 4,
+              "step_name": "Extract from Source",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:20:54.701941",
+              "duration_ms": null,
+              "message": "Extracted TMSL definition",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 5,
+              "step_name": "Validate & Parse Source Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:20:54.701941",
+              "duration_ms": null,
+              "message": "Source format valid",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 6,
+              "step_name": "Convert to Canonical SML",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:20:54.723148",
+              "duration_ms": null,
+              "message": "9 datasets, 1 metrics (via OSI)",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 7,
+              "step_name": "Persist Artifacts",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:20:54.819683",
+              "duration_ms": null,
+              "message": "Snapshot db38b636... committed",
+              "artifact_ids": [
+                "db38b636-007a-4d15-8f48-3a1296f6565a",
+                "21f089f3-f42b-4c83-b17b-0a537aab51bd"
+              ]
+            },
+            {
+              "step_number": 8,
+              "step_name": "Convert to Target Format",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:22:37.905097",
+              "duration_ms": null,
+              "message": "Target format generated",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 9,
+              "step_name": "Deploy to Target",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:31:56.941225",
+              "duration_ms": null,
+              "message": "Deployment complete",
+              "artifact_ids": []
+            },
+            {
+              "step_number": 10,
+              "step_name": "Finalize Run",
+              "status": "success",
+              "started_at": null,
+              "completed_at": "2026-04-06T05:31:56.941225",
+              "duration_ms": null,
+              "message": "Status: SUCCESS",
+              "artifact_ids": []
+            }
+          ],
+          "last_successful_step": 10,
+          "total_steps": 10,
+          "source_artifact_id": "21f089f3-f42b-4c83-b17b-0a537aab51bd",
+          "sml_snapshot_id": "db38b636-007a-4d15-8f48-3a1296f6565a",
+          "target_artifact_path": "output\\databricks\\Competitive_Marketing_Analysis\\databricks_metric_views.yaml",
+          "errors": []
+        },
+        "results": [
+          {
+            "model": "Competitive Marketing Analysis",
+            "status": "success",
+            "summary": {
+              "project_id": "Competitive Marketing Analysis",
+              "run_id": "9a3ffc26-e2b4-48a8-9315-0cf55d14ed2d",
+              "status": "SUCCESS",
+              "started_at": "2026-04-06T05:20:22.110739",
+              "completed_at": "2026-04-06T05:31:56.941225",
+              "duration_ms": 694830,
+              "source_type": "fabric",
+              "target_type": "databricks",
+              "steps_completed": [
+                {
+                  "step_number": 1,
+                  "step_name": "Load & Validate Configuration",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:20:22.110739",
+                  "duration_ms": null,
+                  "message": "Configuration validated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 3,
+                  "step_name": "Resolve Authentication",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:20:22.606256",
+                  "duration_ms": null,
+                  "message": "Authentication resolved from DB identity",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 4,
+                  "step_name": "Extract from Source",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:20:54.701941",
+                  "duration_ms": null,
+                  "message": "Extracted TMSL definition",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 5,
+                  "step_name": "Validate & Parse Source Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:20:54.701941",
+                  "duration_ms": null,
+                  "message": "Source format valid",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 6,
+                  "step_name": "Convert to Canonical SML",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:20:54.723148",
+                  "duration_ms": null,
+                  "message": "9 datasets, 1 metrics (via OSI)",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 7,
+                  "step_name": "Persist Artifacts",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:20:54.819683",
+                  "duration_ms": null,
+                  "message": "Snapshot db38b636... committed",
+                  "artifact_ids": [
+                    "db38b636-007a-4d15-8f48-3a1296f6565a",
+                    "21f089f3-f42b-4c83-b17b-0a537aab51bd"
+                  ]
+                },
+                {
+                  "step_number": 8,
+                  "step_name": "Convert to Target Format",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:22:37.905097",
+                  "duration_ms": null,
+                  "message": "Target format generated",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 9,
+                  "step_name": "Deploy to Target",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:31:56.941225",
+                  "duration_ms": null,
+                  "message": "Deployment complete",
+                  "artifact_ids": []
+                },
+                {
+                  "step_number": 10,
+                  "step_name": "Finalize Run",
+                  "status": "success",
+                  "started_at": null,
+                  "completed_at": "2026-04-06T05:31:56.941225",
+                  "duration_ms": null,
+                  "message": "Status: SUCCESS",
+                  "artifact_ids": []
+                }
+              ],
+              "last_successful_step": 10,
+              "total_steps": 10,
+              "source_artifact_id": "21f089f3-f42b-4c83-b17b-0a537aab51bd",
+              "sml_snapshot_id": "db38b636-007a-4d15-8f48-3a1296f6565a",
+              "target_artifact_path": "output\\databricks\\Competitive_Marketing_Analysis\\databricks_metric_views.yaml",
+              "errors": []
+            },
+            "console": {
+              "lines": [
+                "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated",
+                "[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from DB identity",
+                "[SUCCESS] Step 4: Extract from Source - Extracted TMSL definition",
+                "[SUCCESS] Step 5: Validate & Parse Source Format - Source format valid",
+                "[SUCCESS] Step 6: Convert to Canonical SML - 9 datasets, 1 metrics (via OSI)",
+                "[SUCCESS] Step 7: Persist Artifacts - Snapshot db38b636... committed",
+                "[SUCCESS] Step 8: Convert to Target Format - Target format generated",
+                "[SUCCESS] Step 9: Deploy to Target - Deployment complete",
+                "[SUCCESS] Step 10: Finalize Run - Status: SUCCESS"
+              ],
+              "text": "[SUCCESS] Step 1: Load & Validate Configuration - Configuration validated\n[SUCCESS] Step 3: Resolve Authentication - Authentication resolved from DB identity\n[SUCCESS] Step 4: Extract from Source - Extracted TMSL definition\n[SUCCESS] Step 5: Validate & Parse Source Format - Source format valid\n[SUCCESS] Step 6: Convert to Canonical SML - 9 datasets, 1 metrics (via OSI)\n[SUCCESS] Step 7: Persist Artifacts - Snapshot db38b636... committed\n[SUCCESS] Step 8: Convert to Target Format - Target format generated\n[SUCCESS] Step 9: Deploy to Target - Deployment complete\n[SUCCESS] Step 10: Finalize Run - Status: SUCCESS"
+            },
+            "run_id": "9a3ffc26-e2b4-48a8-9315-0cf55d14ed2d"
           }
         ],
         "models_synced": 1,

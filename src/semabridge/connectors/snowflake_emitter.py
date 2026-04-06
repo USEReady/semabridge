@@ -172,6 +172,36 @@ class SnowflakeEmitter(BaseEmitter):
 
         return None
 
+    def _should_use_direct_metric_aggregation(self, metric: Any) -> bool:
+        """Prefer deterministic aggregation SQL for simple source-column metrics.
+
+        Some auto-generated metrics carry both ``source_column`` and
+        ``sql_expression``. The generic sql-expression rewrite path can mangle
+        those simple measures when names contain spaces or symbols, so for
+        low-complexity direct aggregations we intentionally rebuild the SQL as
+        ``AGG(alias."COLUMN")`` from structured metadata.
+        """
+        if not getattr(metric, "source_column", None) or not getattr(metric, "aggregation", None):
+            return False
+
+        complexity_tier = getattr(metric, "complexity_tier", 1) or 1
+        if complexity_tier > 1:
+            return False
+
+        expr = (getattr(metric, "expression", None) or "").strip().upper()
+        if not expr:
+            return True
+
+        simple_patterns = (
+            "SUM(",
+            "COUNT(",
+            "DISTINCTCOUNT(",
+            "AVERAGE(",
+            "MIN(",
+            "MAX(",
+        )
+        return expr.startswith(simple_patterns)
+
     def _build_schema_validation_map(self, sml: SMLModel) -> Dict[str, set[str]]:
         """
         Build a schema validation map from SML model.
@@ -2854,7 +2884,9 @@ class SnowflakeEmitter(BaseEmitter):
             )
             
             # Use source_column aggregation if available (safest for sanitization)
-            if metric.source_column and metric.aggregation and not metric.sql_expression:
+            if metric.source_column and metric.aggregation and (
+                not metric.sql_expression or self._should_use_direct_metric_aggregation(metric)
+            ):
                 # Physical column must use sanitized name (underscores) to match Snowflake
                 col_name = self._sanitize_col_name(metric.source_column)
                 agg = metric.aggregation.value.upper()
@@ -4852,7 +4884,9 @@ class SnowflakeEmitter(BaseEmitter):
                 metric.unique_name,
             )
 
-            if metric.source_column and metric.aggregation and not metric.sql_expression:
+            if metric.source_column and metric.aggregation and (
+                not metric.sql_expression or self._should_use_direct_metric_aggregation(metric)
+            ):
                 col_name = self._sanitize_col_name(metric.source_column)
                 agg = metric.aggregation.value.upper()
                 known_cols = dataset_col_lookup.get(metric.dataset, set())

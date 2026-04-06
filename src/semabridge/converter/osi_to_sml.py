@@ -43,6 +43,8 @@ from semabridge.sml.models import (
     SourcePlatform,
 )
 from semabridge.converter.dax_translator import DAXTranslator
+from semabridge.connectors.inference_engine import SmlInferenceEngine
+from semabridge.connectors.measure_detector import MeasureDetector
 from semabridge.utils.logger import get_logger
 from semabridge.utils.naming import (
     to_alias,
@@ -85,6 +87,7 @@ class OSIToSMLConverter(BaseConverter):
         osi_model: OSIModel,
         metric_overrides: Optional[Dict[str, str]] = None,
         override_alias_map: Optional[Dict[str, str]] = None,
+        row_counts: Optional[Dict[str, int]] = None,
     ) -> SMLModel:
         """
         Convert OSIModel object to SMLModel object.
@@ -204,6 +207,11 @@ class OSIToSMLConverter(BaseConverter):
                 sml_rel = self._convert_relationship(osi_rel)
                 if sml_rel:
                     sml.relationships.append(sml_rel)
+
+            # 4b. Fabric/PBIX extractions can legitimately surface 0 explicit
+            # measures in TMSL. Reuse the older heuristic detector so downstream
+            # publishers still have simple metrics to materialize.
+            self._auto_detect_metrics(sml, row_counts=row_counts)
 
             # 5. Inject Calendar Dimension if missing (SML Requirement for Cortex)
             self._inject_calendar_dimension(sml)
@@ -370,4 +378,94 @@ class OSIToSMLConverter(BaseConverter):
             is_fact=False
         )
         sml.datasets.append(date_ds)
+
+    def _auto_detect_metrics(
+        self,
+        sml: SMLModel,
+        row_counts: Optional[Dict[str, int]] = None,
+    ) -> None:
+        """Backfill simple metrics when the source provided none explicitly."""
+        if sml.metrics:
+            return
+
+        tables_meta = {
+            ds.unique_name: {"row_count": (row_counts or {}).get(ds.unique_name, 0)}
+            for ds in sml.datasets
+        }
+        columns_meta = {
+            ds.unique_name: [
+                {"name": col.unique_name, "data_type": col.data_type.value}
+                for col in ds.columns
+            ]
+            for ds in sml.datasets
+        }
+        relationships_meta = [
+            {
+                "from_table": rel.from_dataset,
+                "from_column": rel.from_columns[0] if rel.from_columns else "",
+                "to_table": rel.to_dataset,
+                "to_column": rel.to_columns[0] if rel.to_columns else "",
+            }
+            for rel in sml.relationships
+            if rel.from_columns and rel.to_columns
+        ]
+
+        classifier = SmlInferenceEngine(
+            tables=tables_meta,
+            columns=columns_meta,
+            relationships=relationships_meta,
+            primary_keys={},
+        )
+        scores = classifier.classify()
+
+        classification_map: Dict[str, str] = {}
+        for ds in sml.datasets:
+            score = scores.get(ds.unique_name)
+            if score:
+                ds.is_fact = score.classification == "FACT"
+                classification_map[ds.unique_name] = score.classification
+            else:
+                classification_map[ds.unique_name] = "FACT" if ds.is_fact else "DIMENSION"
+
+        detector = MeasureDetector(
+            tables=tables_meta,
+            columns=columns_meta,
+            relationships=relationships_meta,
+        )
+        detected = detector.detect_all_measures(classification=classification_map)
+        existing_metrics = {metric.unique_name.upper() for metric in sml.metrics}
+
+        added = 0
+        for table_name, measures in detected.items():
+            for measure in measures:
+                measure_name = str(measure.get("name", "")).strip()
+                column_name = str(measure.get("column", "")).strip()
+                if not measure_name or not column_name:
+                    continue
+                if measure_name.upper() in existing_metrics:
+                    continue
+
+                agg = SMLAggregationType(measure["aggregation"])
+                aggregation_sql = agg.value.upper()
+                table_alias = to_alias(table_name)
+
+                sml.metrics.append(
+                    SMLMetric(
+                        unique_name=measure_name,
+                        label=measure_name,
+                        dataset=table_name,
+                        source_column=column_name,
+                        expression=f"{aggregation_sql}([{column_name}])",
+                        sql_expression=f'{aggregation_sql}({table_alias}."{column_name}")',
+                        aggregation=agg,
+                        confidence=float(measure.get("confidence", 0.7)),
+                        sync_enabled=True,
+                        complexity_tier=1,
+                    )
+                )
+                existing_metrics.add(measure_name.upper())
+                added += 1
+
+        if added:
+            logger.info("Auto-detected %d simple metrics because OSI contained no explicit measures", added)
 

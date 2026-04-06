@@ -8,6 +8,7 @@ intermediate representation.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, List, Optional
 
 from semabridge.sml.models import (
@@ -41,6 +42,50 @@ class TMSLTransformer:
     
     def __init__(self):
         self.dax_translator = DAXTranslator()
+
+    def _sanitize_sql_identifier(self, value: str) -> str:
+        """Normalize SQL identifiers for generated Databricks SQL fragments."""
+        safe = re.sub(r"[^0-9A-Za-z_]", "_", str(value or "").strip())
+        safe = re.sub(r"_+", "_", safe).strip("_")
+        return safe or "unnamed"
+
+    def _translate_known_complex_dax(self, dax_expression: str) -> Optional[str]:
+        """Translate selected complex DAX patterns to Databricks SQL templates."""
+        expr = " ".join(str(dax_expression or "").split())
+
+        totalytd_pattern = re.compile(
+            r"(?i)^TOTALYTD\(\s*(SUM|AVERAGE|COUNT|MIN|MAX)\(\s*(?:'[^']+'|[A-Za-z_][A-Za-z0-9_]*\s*)?\[([^\]]+)\]\s*\)\s*,\s*(?:'[^']+'|[A-Za-z_][A-Za-z0-9_]*\s*)?\[([^\]]+)\]\s*\)$"
+        )
+        rankx_pattern = re.compile(
+            r"(?i)^RANKX\(\s*ALL\(\s*(?:'[^']+'|[A-Za-z_][A-Za-z0-9_]*)\s*\)\s*,\s*(?:\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))"
+        )
+
+        totalytd_match = totalytd_pattern.match(expr)
+        if totalytd_match:
+            agg = totalytd_match.group(1).upper()
+            value_col = self._sanitize_sql_identifier(totalytd_match.group(2))
+            date_col = self._sanitize_sql_identifier(totalytd_match.group(3))
+            agg_map = {
+                "SUM": "SUM",
+                "AVERAGE": "AVG",
+                "COUNT": "COUNT",
+                "MIN": "MIN",
+                "MAX": "MAX",
+            }
+            sql_agg = agg_map.get(agg, "SUM")
+            return (
+                f"{sql_agg}(`{value_col}`) OVER ("
+                f"PARTITION BY YEAR(`{date_col}`) ORDER BY `{date_col}`"
+                ")"
+            )
+
+        rankx_match = rankx_pattern.match(expr)
+        if rankx_match:
+            measure_ref = rankx_match.group(1) or rankx_match.group(2) or "rank_metric"
+            order_ref = self._sanitize_sql_identifier(measure_ref)
+            return f"RANK() OVER (ORDER BY `{order_ref}` DESC)"
+
+        return None
     
     def transform(self, tmsl_json: Dict[str, Any], workspace_id: str, dataset_id: str, row_counts: Dict[str, int] = None, metric_overrides: Dict[str, str] = None, behavior: Optional[ConnectorBehavior] = None) -> SMLModel:
         """
@@ -668,27 +713,29 @@ class TMSLTransformer:
         complexity = self.dax_translator.analyze_complexity(dax)
         required_dims = self.dax_translator.get_required_dimensions(dax)
         
-        # EDGE CASE 3: Detect unsupported DAX patterns upfront
+        # EDGE CASE 3: Known complex DAX transpiler (window-function templates)
+        known_complex_sql = self._translate_known_complex_dax(dax)
+
+        # EDGE CASE 4: Detect unsupported DAX patterns upfront
         unsupported_patterns = {
-            "TOTALYTD": "Complex Time Intelligence (TOTALYTD) requires manual override",
             "TOTALMTD": "Complex Time Intelligence (TOTALMTD) requires manual override",
             "TOTALQTD": "Complex Time Intelligence (TOTALQTD) requires manual override",
             "SAMEPERIODLASTYEAR": "Complex Time Intelligence (SAMEPERIODLASTYEAR) requires manual override",
             "PREVIOUSYEAR": "Complex Time Intelligence (PREVIOUSYEAR) requires manual override",
             "PREVIOUSMONTH": "Complex Time Intelligence (PREVIOUSMONTH) requires manual override",
             "DATEADD": "Complex Time Intelligence (DATEADD) requires manual override",
-            "RANKX": "Ranking functions (RANKX) cannot be translated to standard SQL",
             "EARLIER": "Row context functions (EARLIER) cannot be translated",
             "USERELATIONSHIP": "Dynamic relationship functions (USERELATIONSHIP) require manual override",
         }
         
         unsupported_reason = None
-        for pattern, reason in unsupported_patterns.items():
-            if pattern.upper() in dax.upper():
-                unsupported_reason = reason
-                complexity["sync_enabled"] = False
-                complexity["failure_reason"] = reason
-                break
+        if not known_complex_sql:
+            for pattern, reason in unsupported_patterns.items():
+                if pattern.upper() in dax.upper():
+                    unsupported_reason = reason
+                    complexity["sync_enabled"] = False
+                    complexity["failure_reason"] = reason
+                    break
         
         metric = SMLMetric(
             unique_name=measure_def["name"],
@@ -710,6 +757,14 @@ class TMSLTransformer:
             # Default partition to Year for Time Intelligence measures
             partition_dimension="'Date'[Year]" if complexity["requires_time_intel"] else None,
         )
+
+        # Apply direct transpiler output before standard translator path.
+        if known_complex_sql:
+            metric.sql_expression = known_complex_sql
+            metric.complexity_tier = max(metric.complexity_tier, 4)
+            metric.sync_enabled = True
+            metric.sync_failure_reason = None
+            return metric
         
         # Attempt Translation — use centralized alias that matches the emitter
         safe_alias = to_alias(table_name)
