@@ -709,7 +709,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                             }}
                             title="Choose model filter"
                         >
-                            <option value="__all__">All models</option>
+                            <option value="__all__">Select model</option>
                             {modelOptions.map(m => (
                                 <option key={m.id} value={m.id}>{m.label}</option>
                             ))}
@@ -731,11 +731,24 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                                 }}
                                 title="Choose table"
                             >
-                                <option value="__all__">All tables</option>
+                                <option value="__all__">{selectedModelId === '__all__' ? 'Select model first' : 'Select table'}</option>
                                 {tableOptions.map(t => (
                                     <option key={t.id} value={t.id}>{t.schema}.{t.name} · {t.model}</option>
                                 ))}
                             </select>
+                        )}
+                        {selectedModelId !== '__all__' && (
+                            <span style={{
+                                fontSize: 10,
+                                color: '#818CF8',
+                                border: '1px solid rgba(129,140,248,.35)',
+                                background: 'rgba(129,140,248,.10)',
+                                padding: '4px 8px',
+                                borderRadius: 999,
+                                whiteSpace: 'nowrap',
+                            }}>
+                                {selectedTableId !== '__all__' ? 'Model + table filtered' : 'Model filtered'}
+                            </span>
                         )}
                     </div>
                 )}
