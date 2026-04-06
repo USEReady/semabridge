@@ -128,6 +128,12 @@ function getFabricAuthHeaders() {
     return {};
 }
 
+function hasValidFabricToken() {
+    const token = localStorage.getItem(FABRIC_TOKEN_KEY);
+    const expiresAt = parseInt(localStorage.getItem(FABRIC_TOKEN_EXPIRES_KEY) || '0', 10);
+    return Boolean(token && Date.now() < expiresAt);
+}
+
 async function handleResponse(res) {
     if (res.status === 401) {
         try {
@@ -564,6 +570,9 @@ export const api = {
     // â”€â”€ Fabric Workspace Discovery â”€â”€â”€â”€â”€â”€
     async fabricListWorkspaces(accountId = '') {
         const resolvedConnectionId = String(accountId || '').trim();
+        if (!resolvedConnectionId && !hasValidFabricToken()) {
+            return { workspaces: [] };
+        }
         const query = resolvedConnectionId
             ? `?identity_id=${encodeURIComponent(resolvedConnectionId)}&connectionId=${encodeURIComponent(resolvedConnectionId)}`
             : '';

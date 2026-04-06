@@ -1,40 +1,19 @@
-project_name: competitive_d
+project_name: f
 source:
   type: fabric
-  identity_id: b3ab728b-0333-4b38-987e-199891a62c1b
   workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
   workspace: semabridge
   models:
-    - Competitive Marketing Analysis
-targets:
-  - type: databricks
-mappings:
-  - source: Competitive Marketing Analysis
-    target: competitive marketing analysis_mapped
-    type: table
-    columns:
-      - source: id
-        target: id
-        type: INT
-        primary_key: true
-      - source: name
-        target: name
-        type: VARCHAR(255)
-      - source: created_at
-        target: created_at
-        type: TIMESTAMP
-      - source: updated_at
-        target: updated_at
-        type: TIMESTAMP
+    - Device
+target:
+  type: snowflake
 ui:
-  intermediate_format: osi
-  editor_mode: form
   output_format: osi
 selection:
   model_ids:
-    - f65e2eeb-b9d8-4695-aaf8-504fc15aa936
+    - 974e7d48-4a76-4518-99d7-6ea751e37ce8
 options:
   auto_relationships: true
   generate_descriptions: true
 target:
-  type: databricks
+  type: snowflake
