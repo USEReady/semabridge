@@ -1,4 +1,4 @@
-from semabridge.api.legacy_main import (
+from semabridge.api.services.project_domain_service import (
     compare_model_versions,
     delete_model_versions,
     get_version_snapshot,

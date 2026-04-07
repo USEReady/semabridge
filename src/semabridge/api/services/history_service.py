@@ -1,1 +1,2 @@
-from semabridge.api.legacy_main import compare_versions, get_history, rollback_version
+from semabridge.api.services.core_domain_service import get_history
+from semabridge.api.services.project_domain_service import compare_versions, rollback_version

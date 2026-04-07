@@ -1,4 +1,4 @@
-from semabridge.api.legacy_main import (
+from semabridge.api.services.connection_domain_service import (
     debug_token_header,
     fabric_auth_status,
     fabric_device_code_login,

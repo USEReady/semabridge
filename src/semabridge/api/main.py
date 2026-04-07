@@ -20,6 +20,8 @@ try:
 except ImportError:
     auth_router = None
 
+# Keep the entrypoint intentionally thin: startup hooks live in app_setup,
+# and feature routes are composed from the modular router packages.
 app = FastAPI(
     title='SemaBridge API',
     version='2.0.0',
@@ -29,6 +31,8 @@ app = FastAPI(
 )
 configure_app(app)
 
+# Mount legacy top-level routers plus the newer domain routers on one app
+# so the refactor can stay backward compatible while modules are cleaned up.
 for router in [
     repo_router,
     sync_router,

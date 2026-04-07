@@ -5,7 +5,7 @@ This module stays as a bridge so existing imports keep working during the
 incremental refactor.
 """
 
-from semabridge.api.legacy_main import (
+from semabridge.api.services.core_domain_service import (
     _discovery_cache,
     _last_snapshot_hash,
     _normalize_yaml_windows_path_fields,

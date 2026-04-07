@@ -15,6 +15,12 @@ import { api } from '../../utils/api';
 
 const TABS = ['Runs', 'Config', 'Mappings'];
 
+function openRunsPage() {
+  if (typeof window !== 'undefined') {
+    window.location.assign('/jobs');
+  }
+}
+
 function RunRow({ run }) {
   const duration = run.duration_ms
     ? run.duration_ms < 1000
@@ -113,6 +119,11 @@ export default function ProjectDetailModal({ project, open, onClose, onDuplicate
     try {
       const result = await api.runProjectNow(project.project_id);
       setRuns(prev => [{ run_id: result.run_id, status: 'running', started_at: new Date().toISOString() }, ...prev]);
+      const status = String(result?.status || '').toLowerCase();
+      if (result?.run_id || result?.id || status === 'running') {
+        onClose?.();
+        openRunsPage();
+      }
     } catch (err) {
       console.error('Run failed:', err);
     } finally {

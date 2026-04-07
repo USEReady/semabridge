@@ -1,4 +1,4 @@
-from semabridge.api.legacy_main import (
+from semabridge.api.services.core_domain_service import (
     generate_config,
     get_config,
     get_global_config,

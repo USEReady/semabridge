@@ -1,4 +1,4 @@
-from semabridge.api.legacy_main import (
+from semabridge.api.services.project_domain_service import (
     delete_project_schedule_compat,
     get_jobs_config_compat,
     get_project_schedule_compat,

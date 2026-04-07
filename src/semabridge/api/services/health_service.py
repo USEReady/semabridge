@@ -1,1 +1,1 @@
-from semabridge.api.legacy_main import health_check
+from semabridge.api.services.core_domain_service import health_check

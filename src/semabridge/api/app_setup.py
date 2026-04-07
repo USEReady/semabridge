@@ -136,6 +136,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.warning('Startup credential injection skipped: %s', exc)
 
     try:
+        # Restore scheduler state after settings/env/bootstrap work is done so
+        # scheduled project runs reuse the same execution path as manual runs.
         scheduler_service.configure(_execute_project_run, _compat_clear_project_schedule)
         scheduler_service.start()
         _compat_ensure_loaded()
@@ -208,6 +210,7 @@ class RequestResponseLoggingMiddleware(BaseHTTPMiddleware):
 
 
 def configure_app(app: FastAPI) -> FastAPI:
+    # Middleware stays centralized here so main.py only wires the app together.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=['*'],

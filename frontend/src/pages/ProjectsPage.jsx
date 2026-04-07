@@ -20,6 +20,12 @@ import React, { useContext } from 'react';
 import { SyncContext } from '../context/SyncContext';
 import { DEFAULT_FILTER_OPTIONS, useUIStore } from '../store/uiStore';
 
+function openRunsPage() {
+  if (typeof window !== 'undefined') {
+    window.location.assign('/jobs');
+  }
+}
+
 function normalizeSourceKey(value) {
   if (!value) return '';
 
@@ -291,6 +297,11 @@ export default function ProjectsPage() {
       if (updatedProject?.id || updatedProject?.project_id) {
         const pid = updatedProject.id || updatedProject.project_id;
         setProjects(prev => prev.map(p => (p.id === pid || p.project_id === pid) ? { ...p, ...updatedProject } : p));
+      }
+      const status = String(result?.status || '').toLowerCase();
+      if (result?.run_id || result?.id || status === 'running') {
+        openRunsPage();
+        return result;
       }
       // Fallback: force progress bar to 100% and status to 'success' if POST returns 200
       if (result && typeof window !== 'undefined' && window.dispatchEvent) {

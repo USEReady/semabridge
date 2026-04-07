@@ -1,1 +1,1 @@
-from semabridge.api.legacy_main import get_model, save_model
+from semabridge.api.services.core_domain_service import get_model, save_model

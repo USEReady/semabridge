@@ -5,7 +5,7 @@ directly. This module remains as a bridge for legacy imports and shared
 startup hooks.
 """
 
-from semabridge.api.legacy_main import (
+from semabridge.api.services.connection_domain_service import (
     _extract_bearer_token,
     _get_msal_app,
     _last_poll_time,

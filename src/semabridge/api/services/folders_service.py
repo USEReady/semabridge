@@ -1,4 +1,4 @@
-from semabridge.api.legacy_main import (
+from semabridge.api.services.project_domain_service import (
     create_folder_compat,
     delete_folder_compat,
     list_folders_compat,

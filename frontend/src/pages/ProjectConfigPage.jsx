@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Save, Play, CalendarClock, CalendarDays, Settings2, FileCode2, SlidersHorizontal, Loader2, CheckCircle2 } from 'lucide-react';
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import { parseDocument as parseYamlDocument, stringify as stringifyYaml } from 'yaml';
 import CodeMirror from '@uiw/react-codemirror';
 import { yaml as yamlLang } from '@codemirror/lang-yaml';
 
@@ -152,20 +152,19 @@ export default function ProjectConfigPage() {
 
     return projectRuns.sort((a, b) => getRunTs(b) - getRunTs(a))[0] || null;
   }, [runs, normalizedProjectId]);
+  const hasLiveSyncState = String(currentSyncId || '') === normalizedProjectId;
   const projectSyncStatus = String(
-    (normalizedProjectId && projectStatusById?.[normalizedProjectId])
-      || latestProjectRun?.status
-      || (String(currentSyncId || '') === normalizedProjectId ? currentSyncStatus : '')
-      || ''
+    hasLiveSyncState
+      ? currentSyncStatus
+      : ''
   ).toLowerCase();
   const projectSyncProgress = Number(
-    (normalizedProjectId && projectProgressById?.[normalizedProjectId])
-      ?? latestProjectRun?.progress_pct
-      ?? 0
+    hasLiveSyncState
+      ? (projectProgressById?.[normalizedProjectId] ?? latestProjectRun?.progress_pct ?? 0)
+      : 0
   );
-  const isProjectSyncing = projectSyncStatus === 'running'
-    || (String(currentSyncId || '') === normalizedProjectId && currentSyncStatus === 'running');
-  const isProjectSynced = !isProjectSyncing && projectSyncStatus === 'success';
+  const isProjectSyncing = projectSyncStatus === 'running';
+  const isProjectSynced = hasLiveSyncState && !isProjectSyncing && projectSyncStatus === 'success';
 
   useEffect(() => {
     if (!normalizedProjectId) return;
@@ -453,7 +452,11 @@ export default function ProjectConfigPage() {
       throw new Error('Input is not valid semabridge.yaml content');
     }
 
-    const parsed = parseYaml(raw);
+    const parsedDoc = parseYamlDocument(raw, {
+      uniqueKeys: false,
+      prettyErrors: true,
+    });
+    const parsed = parsedDoc.toJS ? parsedDoc.toJS() : {};
     const tree = parsed && typeof parsed === 'object' ? parsed : {};
 
     const source = tree.source && typeof tree.source === 'object' ? tree.source : {};
@@ -629,9 +632,18 @@ export default function ProjectConfigPage() {
         nextYaml = stringifyYaml(normalizedTree, { lineWidth: 0 });
       } else {
         nextYaml = buildYamlFromForm();
-        const parsed = parseProjectYaml(nextYaml, project);
-        setConfigTree(normalizeConfigTreeForApi(parsed.tree || {}));
-        setConfigForm(parsed.form);
+        try {
+          const parsed = parseProjectYaml(nextYaml, project);
+          setConfigTree(normalizeConfigTreeForApi(parsed.tree || {}));
+          setConfigForm(parsed.form);
+        } catch (parseErr) {
+          console.warn('Form-generated project YAML could not be round-tripped locally:', parseErr);
+          addLog(
+            'warning',
+            'Project Config',
+            `Generated YAML skipped local round-trip validation: ${parseErr?.message || 'Unknown parse error'}`,
+          );
+        }
       }
 
       const response = await api.saveProjectConfig(id, nextYaml);
@@ -644,8 +656,9 @@ export default function ProjectConfigPage() {
       }
       return true;
     } catch (err) {
-      setSaveInfo(`Invalid semabridge.yaml format: ${err?.message || 'Unable to parse YAML'}`);
-      addLog('error', 'Project Config', `Save failed: ${err?.message || 'Invalid semabridge.yaml format'}`);
+      const message = err?.message || 'Unable to parse YAML';
+      setSaveInfo(`Invalid semabridge.yaml format: ${message}`);
+      addLog('error', 'Project Config', `Save failed: ${message}`);
       return false;
     } finally {
       setSaving(false);

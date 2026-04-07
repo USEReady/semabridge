@@ -1,4 +1,4 @@
-from semabridge.api.legacy_main import (
+from semabridge.api.services.project_domain_service import (
     create_project_compat,
     delete_project_compat,
     get_project_compat,

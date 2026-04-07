@@ -5,7 +5,7 @@ directly. This module exists to keep older imports stable while the split
 is completed safely.
 """
 
-from semabridge.api.legacy_main import (
+from semabridge.api.services.project_domain_service import (
     _compat_clear_project_schedule,
     _compat_ensure_loaded,
     _compat_project_schedules,

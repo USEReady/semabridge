@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 from fastapi import File, HTTPException, UploadFile
 
-from semabridge.api.legacy_main import (
+from semabridge.api.services.project_domain_service import (
     _compat_default_project_yaml,
     _compat_ensure_loaded,
     _compat_load_repo_yaml_text,
