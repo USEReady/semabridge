@@ -1,19 +1,40 @@
-project_name: f
+project_name: fabtodatabricks
 source:
   type: fabric
+  identity_id: 8d13f780-a354-4e6e-85dd-2727f5795b72
   workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
   workspace: semabridge
   models:
-    - Device
-target:
-  type: snowflake
+    - Client Data
+targets:
+  - type: databricks
+mappings:
+  - source: Client Data
+    target: client data_mapped
+    type: table
+    columns:
+      - source: id
+        target: id
+        type: INT
+        primary_key: true
+      - source: name
+        target: name
+        type: VARCHAR(255)
+      - source: created_at
+        target: created_at
+        type: TIMESTAMP
+      - source: updated_at
+        target: updated_at
+        type: TIMESTAMP
 ui:
+  intermediate_format: osi
+  editor_mode: form
   output_format: osi
 selection:
   model_ids:
-    - 974e7d48-4a76-4518-99d7-6ea751e37ce8
+    - 0794fdcc-d85f-4d93-a42c-8bacaad04819
 options:
   auto_relationships: true
   generate_descriptions: true
 target:
-  type: snowflake
+  type: databricks

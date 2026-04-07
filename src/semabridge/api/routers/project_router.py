@@ -1,0 +1,92 @@
+﻿from fastapi import APIRouter
+
+from semabridge.api.services.project_api_service import (
+    auto_map_compat,
+    browse_pbix_files,
+    compare_graph_snapshots_compat,
+    compare_model_versions,
+    compare_versions,
+    create_folder_compat,
+    create_project_compat,
+    delete_folder_compat,
+    delete_mappings_compat,
+    delete_model_versions,
+    delete_project_compat,
+    delete_project_schedule_compat,
+    get_all_composite_links,
+    get_impact_analysis,
+    get_jobs_config_compat,
+    get_project_compat,
+    get_project_config_compat,
+    get_project_runs_compat,
+    get_project_schedule_compat,
+    get_version_snapshot,
+    graph_snapshot_compat,
+    graph_snapshots_compat,
+    import_pbix,
+    list_folders_compat,
+    list_job_runs_compat,
+    list_job_schedules_compat,
+    list_mappings_compat,
+    list_model_versions,
+    list_projects_compat,
+    move_project_to_folder_compat,
+    patch_project_compat,
+    register_composite_report,
+    rename_folder_compat,
+    rollback_model_version,
+    rollback_version,
+    run_project_now_compat,
+    save_project_config_compat,
+    save_project_schedule_compat,
+    trigger_job_compat,
+    update_jobs_config_compat,
+    update_mapping_compat,
+    upload_pbix_temp,
+    upload_project_pbix,
+)
+
+router = APIRouter()
+router.get('/api/projects')(list_projects_compat)
+router.post('/api/projects')(create_project_compat)
+router.get('/api/projects/{project_id}')(get_project_compat)
+router.patch('/api/projects/{project_id}')(patch_project_compat)
+router.delete('/api/projects/{project_id}')(delete_project_compat)
+router.get('/api/projects/{project_id}/config')(get_project_config_compat)
+router.put('/api/projects/{project_id}/config')(save_project_config_compat)
+router.get('/api/graph/{model_name}/snapshots')(graph_snapshots_compat)
+router.get('/api/graph/{model_name}/snapshot/{snapshot_id}')(graph_snapshot_compat)
+router.get('/api/graph/{model_name}/compare')(compare_graph_snapshots_compat)
+router.get('/api/projects/{project_id}/runs')(get_project_runs_compat)
+router.post('/api/projects/{project_id}/run')(run_project_now_compat)
+router.get('/api/folders')(list_folders_compat)
+router.post('/api/folders')(create_folder_compat)
+router.patch('/api/folders/{folder_id}')(rename_folder_compat)
+router.delete('/api/folders/{folder_id}')(delete_folder_compat)
+router.patch('/api/projects/{project_id}/folder')(move_project_to_folder_compat)
+router.get('/api/jobs/runs')(list_job_runs_compat)
+router.get('/api/jobs/config')(get_jobs_config_compat)
+router.get('/api/jobs/schedules')(list_job_schedules_compat)
+router.get('/api/projects/{project_id}/schedule')(get_project_schedule_compat)
+router.post('/api/projects/{project_id}/schedule')(save_project_schedule_compat)
+router.delete('/api/projects/{project_id}/schedule')(delete_project_schedule_compat)
+router.put('/api/jobs/config')(update_jobs_config_compat)
+router.post('/api/jobs/trigger')(trigger_job_compat)
+router.get('/api/mappings')(list_mappings_compat)
+router.post('/api/mappings/auto')(auto_map_compat)
+router.put('/api/mappings/{mapping_id}')(update_mapping_compat)
+router.delete('/api/mappings')(delete_mappings_compat)
+router.get('/api/model-versions')(list_model_versions)
+router.get('/api/model-versions/compare')(compare_model_versions)
+router.delete('/api/model-versions')(delete_model_versions)
+router.get('/api/model-versions/snapshot')(get_version_snapshot)
+router.post('/api/model-versions/rollback')(rollback_model_version)
+router.get('/api/history/compare')(compare_versions)
+router.post('/api/history/rollback')(rollback_version)
+router.post('/api/upload')(upload_pbix_temp)
+router.post('/api/projects/{project_id}/upload')(upload_project_pbix)
+router.post('/api/pbix/import')(import_pbix)
+router.get('/api/pbix/browse')(browse_pbix_files)
+router.post('/api/composite/register')(register_composite_report)
+router.get('/api/composite/impact/{model_guid}')(get_impact_analysis)
+router.get('/api/composite/links')(get_all_composite_links)
