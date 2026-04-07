@@ -1,4 +1,4 @@
-project_name: fabtodatabricks
+project_name: checkimhh
 source:
   type: fabric
   identity_id: 8d13f780-a354-4e6e-85dd-2727f5795b72
@@ -7,7 +7,7 @@ source:
   models:
     - Client Data
 targets:
-  - type: databricks
+  - type: snowflake
 mappings:
   - source: Client Data
     target: client data_mapped
@@ -37,4 +37,4 @@ options:
   auto_relationships: true
   generate_descriptions: true
 target:
-  type: databricks
+  type: snowflake
