@@ -297,6 +297,11 @@ class ExecutionEngine:
                 status=StepStatus.SUCCESS,
                 message="Configuration validated",
             )
+            logger.info(
+                "Stage 1: %s - %s",
+                STEP_NAMES.get(1, "Load Configuration"),
+                "Configuration validated",
+            )
             
             # Step 3: Resolve Authentication
             self._step3_resolve_auth(context)
@@ -366,10 +371,23 @@ class ExecutionEngine:
     ) -> None:
         """Record step result in summary."""
         self._current_step = step_number
+        step_name = STEP_NAMES.get(step_number, f"Step {step_number}")
+        status_text = str(getattr(status, "value", status)).upper()
+        log_msg = f"Stage {step_number}: {step_name}"
+        if message:
+            log_msg += f" - {message}"
+
+        if status_text == "FAILED":
+            logger.error(log_msg)
+        elif status_text == "SKIPPED":
+            logger.warning(log_msg)
+        else:
+            logger.info(log_msg)
+
         if self._summary:
             self._summary.add_step(
                 step_number=step_number,
-                step_name=STEP_NAMES.get(step_number, f"Step {step_number}"),
+                step_name=step_name,
                 status=status,
                 message=message,
                 artifact_ids=artifact_ids,

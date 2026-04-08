@@ -73,6 +73,34 @@ def _build_console_details(summary_data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _log_model_console_trace(result: Dict[str, Any]) -> None:
+    """Emit a compact per-model console trace into the main terminal log.
+
+    This keeps batch runs easy to follow even when jobs are executed in a
+    process pool, where child-process stdout/loggers are not always visible in
+    the parent terminal.
+    """
+    model_label = str(result.get("model") or "unknown")
+    status = str(result.get("status") or "unknown").upper()
+    run_id = str(result.get("run_id") or "").strip()
+    console = result.get("console") if isinstance(result.get("console"), dict) else {}
+    lines = console.get("lines") or []
+
+    header = f"Console trace for model '{model_label}' [status={status}"
+    if run_id:
+        header += f", run_id={run_id[:8]}...]"
+    else:
+        header += "]"
+    logger.info(header)
+
+    if not lines:
+        logger.info("  (no console lines captured)")
+        return
+
+    for line in lines:
+        logger.info("  %s", line)
+
+
 def _write_content_if_provided(payload: Dict[str, Any], normalize_yaml_windows_path_fields) -> None:
     content = payload.get("content")
     if not content:
@@ -433,17 +461,17 @@ def _run_parallel_jobs(
 
     if effective_parallelism <= 1:
         for job in sync_jobs:
-            per_model_results.append(
-                _run_single_job(
-                    job,
-                    engine_source_type=source_type,
-                    target_type=target_type,
-                    config=config,
-                    config_path=config_path,
-                    deploy_enabled=deploy_enabled,
-                    resolved_workspace_id=resolved_workspace_id,
-                )
+            result = _run_single_job(
+                job,
+                engine_source_type=source_type,
+                target_type=target_type,
+                config=config,
+                config_path=config_path,
+                deploy_enabled=deploy_enabled,
+                resolved_workspace_id=resolved_workspace_id,
             )
+            per_model_results.append(result)
+            _log_model_console_trace(result)
         return per_model_results
 
     executor_cls = ProcessPoolExecutor if executor_kind == "process" else ThreadPoolExecutor
@@ -464,7 +492,9 @@ def _run_parallel_jobs(
         for future in as_completed(future_to_job):
             job = future_to_job[future]
             try:
-                per_model_results.append(future.result())
+                result = future.result()
+                per_model_results.append(result)
+                _log_model_console_trace(result)
             except Exception as exc:  # noqa: BLE001
                 model_label = str(job.get("model_label") or "unknown")
                 logger.exception("Parallel worker crashed for model '%s': %s", model_label, exc)
@@ -487,6 +517,7 @@ def _run_parallel_jobs(
                         "run_id": None,
                     }
                 )
+                _log_model_console_trace(per_model_results[-1])
 
     return per_model_results
 
@@ -518,6 +549,17 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
         max_parallel_models=max_parallel_models,
         is_fabric_bound=is_fabric_bound,
         executor_kind=executor_kind,
+    )
+
+    logger.info(
+        "Batch sync start: source=%s target=%s models=%d executor=%s parallelism=%d workspace=%s deploy=%s",
+        source_type,
+        target_type,
+        len(sync_jobs),
+        executor_kind,
+        effective_parallelism,
+        resolved_workspace_id,
+        deploy_enabled,
     )
 
     try:
