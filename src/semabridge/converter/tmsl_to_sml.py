@@ -8,7 +8,10 @@ intermediate representation.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
+import unicodedata
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from semabridge.sml.models import (
@@ -103,6 +106,7 @@ class TMSLTransformer:
         try:
             model_obj = tmsl_json.get("model", {})
             name = model_obj.get("name", "FabricModel")
+            self._dump_measure_audit(model_obj, dataset_id, phase="tmsl_to_sml_pre")
             
             # Initialize SML Model
             sml = SMLModel(
@@ -138,11 +142,6 @@ class TMSLTransformer:
                 if table.get("calculationGroup"):
                     logger.info("Skipping calculation group table: %s", table_name or "<unnamed>")
                     continue
-                # Skip internal auto-generated date tables
-                if table_name.startswith("DateTableTemplate") or table_name.startswith("LocalDateTable"):
-                    logger.info("Skipping auto-generated date table: %s", table_name)
-                    continue
-
                 if "#ERROR" in json.dumps(table, ensure_ascii=False, default=str).upper():
                     logger.warning(
                         "Table '%s' contains #ERROR metadata; retaining it as a logical table",
@@ -176,6 +175,7 @@ class TMSLTransformer:
                 for short_prefix, logical_name in behavior.semantic_model.override_alias_map.items():
                     declared_extra[short_prefix.upper()] = to_alias(logical_name)
             raw_overrides: Dict[str, str] = metric_overrides or {}
+            unresolved_prefixes: set[str] = set()
             if raw_overrides:
                 discovered = extract_prefixes_from_expressions(list(raw_overrides.values()))
                 known_map = build_alias_rewrite_map(dataset_aliases)
@@ -187,28 +187,39 @@ class TMSLTransformer:
                     inferred = infer_override_alias_map(unknown, dataset_aliases)
                     for prefix, alias_val in inferred.items():
                         declared_extra.setdefault(prefix, alias_val)
-                    for prefix in unknown - set(inferred):
-                        logger.warning(
-                            f"metric_overrides: prefix '{prefix}' could not be resolved. "
-                            f"Add it to semantic_model.override_alias_map in behavior.yaml."
+                    unresolved_prefixes = unknown - set(inferred)
+                    if unresolved_prefixes:
+                        logger.info(
+                            "metric_overrides: unresolved prefixes %s. "
+                            "Overrides that reference these prefixes will be skipped for this run.",
+                            sorted(unresolved_prefixes),
                         )
             extra_prefix_map: Optional[Dict[str, str]] = declared_extra if declared_extra else None
-            sanitized_overrides: Dict[str, str] = {
-                name: sanitize_sql_expression(
+            sanitized_overrides: Dict[str, str] = {}
+            for name, sql in raw_overrides.items():
+                if unresolved_prefixes:
+                    expr_prefixes = extract_prefixes_from_expressions([sql])
+                    bad_prefixes = {p for p in expr_prefixes if p in unresolved_prefixes}
+                    if bad_prefixes:
+                        logger.info(
+                            "metric_overrides: skipping override '%s' due to unresolved prefixes %s",
+                            name,
+                            sorted(bad_prefixes),
+                        )
+                        continue
+                sanitized_overrides[name] = sanitize_sql_expression(
                     expr=sql,
                     dataset_aliases=dataset_aliases,
                     extra_prefix_map=extra_prefix_map,
                     force_uppercase=True,
                 )
-                for name, sql in raw_overrides.items()
-            }
 
             # Pass 2: Process Measures (Metrics) with fully-sanitized overrides
             # Step 2a: Parse all measures and identify those needing Tier 5 LLM translation
             tier5_candidates = []  # (metric_name, dax, table_alias, dataset_name)
             
             for table, ds in tables_to_process:
-                for measure in self._iter_table_measures(table):
+                for measure in self._iter_table_measures_with_stable_names(table):
                         metric = self._parse_measure(
                             measure,
                             ds.unique_name,
@@ -243,16 +254,22 @@ class TMSLTransformer:
                             logger.debug(f"✓ Applied batch translation for '{metric.unique_name}'")
             
             # 3. Process Relationships
-            # Build set of valid dataset names (excluding filtered-out tables like LocalDateTable_*)
-            valid_datasets = {ds.unique_name for ds in sml.datasets}
+            # Build case-insensitive map of valid datasets so relationship
+            # endpoints can be canonicalized before filtering.
+            valid_dataset_map = {
+                str(ds.unique_name).casefold(): ds.unique_name for ds in sml.datasets
+            }
             
             if "relationships" in model_obj:
                 for rel in model_obj["relationships"]:
                     sml_rel = self._parse_relationship(rel, sml)
                     if sml_rel:
+                        from_dataset = valid_dataset_map.get(str(sml_rel.from_dataset).casefold())
+                        to_dataset = valid_dataset_map.get(str(sml_rel.to_dataset).casefold())
                         # Only add relationship if both referenced tables exist
-                        if (sml_rel.from_dataset in valid_datasets and 
-                            sml_rel.to_dataset in valid_datasets):
+                        if from_dataset and to_dataset:
+                            sml_rel.from_dataset = from_dataset
+                            sml_rel.to_dataset = to_dataset
                             sml.relationships.append(sml_rel)
                         else:
                             # Skip relationships to excluded tables (e.g., LocalDateTable_*)
@@ -689,13 +706,14 @@ class TMSLTransformer:
         dax = self._extract_measure_expression(measure_def)
         if isinstance(dax, list):
             dax = "\n".join(dax)  # TMSL expressions can be arrays of strings
+        display_name = self._measure_display_name(measure_def)
         
         # EDGE CASE 1: Handle empty/null expressions
         if not dax or not dax.strip():
             logger.warning(f"Measure '{measure_def.get('name', 'Unknown')}' in table '{table_name}' has empty expression")
             return SMLMetric(
                 unique_name=measure_def["name"],
-                label=measure_def["name"],
+                label=display_name or measure_def["name"],
                 dataset=table_name,
                 is_hidden=measure_def.get("isHidden", False),
                 sync_enabled=False,
@@ -739,7 +757,7 @@ class TMSLTransformer:
         
         metric = SMLMetric(
             unique_name=measure_def["name"],
-            label=measure_def["name"],
+            label=display_name or measure_def["name"],
             description=measure_def.get("description", ""),
             dataset=table_name,
             expression=dax,
@@ -837,6 +855,146 @@ class TMSLTransformer:
         return measures
 
     @staticmethod
+    def _normalize_measure_name_key(name: str) -> str:
+        """Normalize measure names for robust duplicate detection."""
+        normalized = unicodedata.normalize("NFKC", str(name or ""))
+        normalized = " ".join(normalized.split())
+        return normalized.casefold()
+
+    @staticmethod
+    def _measure_display_name(measure_def: Dict[str, Any]) -> str:
+        """Return user-visible measure display name when available."""
+        return str(
+            measure_def.get("displayName")
+            or measure_def.get("caption")
+            or measure_def.get("label")
+            or measure_def.get("name")
+            or ""
+        ).strip()
+
+    def _dump_measure_audit(self, model_obj: Dict[str, Any], dataset_id: str, phase: str) -> None:
+        """Write strict raw measure audit before conversion for duplicate tracing."""
+        try:
+            tables = model_obj.get("tables") or []
+            audit_tables: List[Dict[str, Any]] = []
+            for table in tables:
+                table_name = str(table.get("name") or "")
+                measures = self._iter_table_measures(table)
+                if not measures:
+                    continue
+
+                name_totals: Dict[str, int] = {}
+                display_totals: Dict[str, int] = {}
+                for m in measures:
+                    raw_name = str(m.get("name") or "").strip()
+                    display_name = self._measure_display_name(m)
+                    nk = self._normalize_measure_name_key(raw_name)
+                    dk = self._normalize_measure_name_key(display_name)
+                    if nk:
+                        name_totals[nk] = name_totals.get(nk, 0) + 1
+                    if dk:
+                        display_totals[dk] = display_totals.get(dk, 0) + 1
+
+                duplicate_name_groups = [k for k, v in name_totals.items() if v > 1]
+                duplicate_display_groups = [k for k, v in display_totals.items() if v > 1]
+                is_project_measures = table_name.strip().casefold() == "project measures"
+                if not (is_project_measures or duplicate_name_groups or duplicate_display_groups):
+                    continue
+
+                rows: List[Dict[str, Any]] = []
+                for idx, m in enumerate(measures, start=1):
+                    raw_name = str(m.get("name") or "").strip()
+                    display_name = self._measure_display_name(m)
+                    expr = self._extract_measure_expression(m)
+                    expr_norm = " ".join(str(expr or "").split())
+                    expr_hash = hashlib.sha1(expr_norm.encode("utf-8")).hexdigest()[:16]
+                    rows.append(
+                        {
+                            "index": idx,
+                            "name": raw_name,
+                            "display_name": display_name,
+                            "name_key": self._normalize_measure_name_key(raw_name),
+                            "display_key": self._normalize_measure_name_key(display_name),
+                            "is_hidden": bool(m.get("isHidden", False)),
+                            "expression_hash": expr_hash,
+                        }
+                    )
+
+                audit_tables.append(
+                    {
+                        "table": table_name,
+                        "measure_count": len(measures),
+                        "duplicate_name_groups": duplicate_name_groups,
+                        "duplicate_display_groups": duplicate_display_groups,
+                        "measures": rows,
+                    }
+                )
+
+            if not audit_tables:
+                return
+
+            safe_dataset = re.sub(r"[^A-Za-z0-9_.-]", "_", str(dataset_id or "model"))
+            safe_dataset = re.sub(r"_+", "_", safe_dataset).strip("._") or "model"
+            out_dir = Path("output") / "debug" / safe_dataset
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_file = out_dir / f"{phase}_measure_audit.json"
+            payload = {
+                "dataset_id": dataset_id,
+                "phase": phase,
+                "tables": audit_tables,
+            }
+            out_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            logger.info("Wrote measure audit artifact: %s", out_file)
+        except Exception as exc:
+            logger.warning("Failed writing measure audit artifact: %s", exc)
+
+    def _iter_table_measures_with_stable_names(self, table_def: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Return measures with deterministic numbering for duplicate names.
+
+        Duplicate/near-duplicate Fabric measure names are preserved by adding
+        stable ``_1``, ``_2`` suffixes before metric parsing.
+        """
+        measures = self._iter_table_measures(table_def)
+        if not measures:
+            return measures
+
+        name_totals: Dict[str, int] = {}
+        display_totals: Dict[str, int] = {}
+        for measure in measures:
+            raw_name = str(measure.get("name") or "").strip()
+            key = self._normalize_measure_name_key(raw_name)
+            if key:
+                name_totals[key] = name_totals.get(key, 0) + 1
+            display_name = self._measure_display_name(measure)
+            display_key = self._normalize_measure_name_key(display_name)
+            if display_key:
+                display_totals[display_key] = display_totals.get(display_key, 0) + 1
+
+        name_seen: Dict[str, int] = {}
+        output: List[Dict[str, Any]] = []
+        for measure in measures:
+            cloned = dict(measure)
+            raw_name = str(cloned.get("name") or "").strip()
+            key = self._normalize_measure_name_key(raw_name)
+            total = name_totals.get(key, 0)
+            if total > 1 and raw_name:
+                idx = name_seen.get(key, 0) + 1
+                name_seen[key] = idx
+                cloned["name"] = f"{raw_name}_{idx}"
+                cloned.setdefault("displayName", raw_name)
+            output.append(cloned)
+
+        display_dup_count = sum(1 for c in display_totals.values() if c > 1)
+        if display_dup_count:
+            logger.info(
+                "Detected %d duplicate measure display-name group(s) on table '%s'",
+                display_dup_count,
+                table_def.get("name", "<unnamed>"),
+            )
+
+        return output
+
+    @staticmethod
     def _extract_measure_expression(measure_def: Dict[str, Any]) -> Any:
         """Read the raw DAX expression from a TMSL measure definition."""
         for key in ("expression", "formula", "dax", "value"):
@@ -852,13 +1010,37 @@ class TMSLTransformer:
         # TMSL: fromTable, fromColumn, toTable, toColumn
         
         try:
+             def _normalize_rel_identifier(value: str) -> str:
+                 text = str(value or "").strip()
+                 if (text.startswith("[") and text.endswith("]")) and len(text) >= 2:
+                     text = text[1:-1].strip()
+                 if (text.startswith("'") and text.endswith("'")) and len(text) >= 2:
+                     text = text[1:-1].strip()
+                 if (text.startswith('"') and text.endswith('"')) and len(text) >= 2:
+                     text = text[1:-1].strip()
+                 return text
+
+             def _get_rel_field(*names: str) -> Optional[str]:
+                 for key in names:
+                     for actual_key, value in rel_def.items():
+                         if actual_key.lower() == key.lower() and value not in (None, ""):
+                             return _normalize_rel_identifier(str(value))
+                 return None
+
+             from_table = _get_rel_field("fromTable", "from_table", "sourceTable")
+             from_column = _get_rel_field("fromColumn", "from_column", "sourceColumn")
+             to_table = _get_rel_field("toTable", "to_table", "targetTable")
+             to_column = _get_rel_field("toColumn", "to_column", "targetColumn")
+             if not (from_table and from_column and to_table and to_column):
+                 raise ValueError("Relationship endpoints missing required fields")
+
              # Normalize all relationship names to a deterministic canonical
              # format so GUID/system names cannot leak into downstream models.
              name = generate_relationship_name(
-                 rel_def["fromTable"],
-                 rel_def["fromColumn"],
-                 rel_def["toTable"],
-                 rel_def["toColumn"],
+                 from_table,
+                 from_column,
+                 to_table,
+                 to_column,
              )
              
              card_map = {
@@ -871,10 +1053,10 @@ class TMSLTransformer:
              
              return SMLRelationship(
                  unique_name=name,
-                 from_dataset=rel_def["fromTable"],
-                 from_columns=[rel_def["fromColumn"]],
-                 to_dataset=rel_def["toTable"],
-                 to_columns=[rel_def["toColumn"]],
+                 from_dataset=from_table,
+                 from_columns=[from_column],
+                 to_dataset=to_table,
+                 to_columns=[to_column],
                  cardinality=card_map.get(raw_card, Cardinality.MANY_TO_ONE),
                  is_active=rel_def.get("isActive", True)
              )

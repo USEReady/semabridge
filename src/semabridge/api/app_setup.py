@@ -66,6 +66,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     from pathlib import Path
                     from alembic import command as alembic_cmd
                     from alembic.config import Config as AlembicConfig
+                    from alembic.runtime.migration import MigrationContext
+                    from alembic.script import ScriptDirectory
 
                     repo_root = Path(__file__).resolve().parents[3]
                     ini = repo_root / 'config' / 'alembic.ini'
@@ -74,8 +76,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     alembic_cfg = AlembicConfig(str(ini))
                     alembic_cfg.set_main_option('script_location', str(repo_root / 'src' / 'semabridge' / 'migrations'))
                     alembic_cfg.set_main_option('sqlalchemy.url', str(orm_engine.url))
-                    alembic_cmd.upgrade(alembic_cfg, 'head')
-                    logger.debug('Alembic migrations applied (dialect: %s)', dialect)
+
+                    script = ScriptDirectory.from_config(alembic_cfg)
+                    head_revision = script.get_current_head()
+                    current_revision = None
+                    try:
+                        with orm_engine.connect() as conn:
+                            current_revision = MigrationContext.configure(conn).get_current_revision()
+                    except Exception as rev_exc:
+                        logger.debug('Could not read current Alembic revision; will run upgrade: %s', rev_exc)
+
+                    if current_revision and head_revision and current_revision == head_revision:
+                        logger.info('Alembic already at head revision %s; skipping upgrade', head_revision)
+                    else:
+                        alembic_cmd.upgrade(alembic_cfg, 'head')
+                        logger.debug(
+                            'Alembic migrations applied (dialect: %s, current=%s, head=%s)',
+                            dialect,
+                            current_revision,
+                            head_revision,
+                        )
                 return
             except Exception as exc:
                 error_str = str(exc).lower()
@@ -168,6 +188,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 logger.error('Poll session cleanup error: %s', exc)
 
     cleanup_task = asyncio.create_task(_cleanup_poll_sessions())
+    logger.info('SemaBridge API startup complete; application is ready')
     yield
     cleanup_task.cancel()
 

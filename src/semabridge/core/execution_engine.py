@@ -2274,4 +2274,3 @@ class ExecutionEngine:
             logger.error(f"Measure sync failed: {e}")
             # Don't fail the deployment, just log warning
             logger.warning("Continuing despite measure sync failure")
-

@@ -1,4 +1,3 @@
-
 snowflake:
   apply_inferred_types: true
 
@@ -16,42 +15,46 @@ semantic_model:
     PRODUCT: "Product"
     CALENDAR: "Calendar"
     SCENARIO: "Scenario"
+    CUSTOMER: "Customer"
+    INDUSTRY: "Industry"
+    EXECUTIVE: "Executive"
+    STATE: "State"
 
   metric_overrides:
     # Explicit override for Time Intelligence
-    "Revenue SPLY": "LAG(SUM(FACT.\"REVENUE\"), 12) OVER (PARTITION BY PRODUCT.\"PRODUCT KEY\" ORDER BY CALENDAR.\"YEARPERIOD\")"
-    
+    "Revenue SPLY": 'LAG(SUM(FACT."REVENUE"), 12) OVER (PARTITION BY PRODUCT."PRODUCT KEY" ORDER BY CALENDAR."YEARPERIOD")'
+
     # Explicit override for simple filter
-    "Revenue Budget": "SUM(CASE WHEN SCENARIO.\"SCENARIO\" = 'Budget' THEN FACT.\"REVENUE\" ELSE 0 END)"
-    
-    # Just to prove branching works, I WON'T override 'YoY Rev Var'. 
+    "Revenue Budget": 'SUM(CASE WHEN SCENARIO."SCENARIO" = ''Budget'' THEN FACT."REVENUE" ELSE 0 END)'
+
+    # Just to prove branching works, I WON'T override 'YoY Rev Var'.
     # It should be detected as [Total Revenue] - [Revenue SPLY]
 
     # Cross-table join-safe fallback templates (Databricks SQL)
-    "Total Customer Revenue": "SUM(COALESCE(FACT.\"REVENUE\", 0))"
-    "Active Customer Count": "COUNT(DISTINCT CASE WHEN CUSTOMER.\"IS_ACTIVE\" = true THEN CUSTOMER.\"CUSTOMER KEY\" END)"
-    "Revenue by Industry": "SUM(CASE WHEN INDUSTRY.\"INDUSTRY\" IS NOT NULL THEN FACT.\"REVENUE\" ELSE 0 END)"
-    "Revenue by Executive": "SUM(CASE WHEN EXECUTIVE.\"EXECUTIVE\" IS NOT NULL THEN FACT.\"REVENUE\" ELSE 0 END)"
-    "Revenue by State": "SUM(CASE WHEN STATE.\"STATE\" IS NOT NULL THEN FACT.\"REVENUE\" ELSE 0 END)"
+    "Total Customer Revenue": 'SUM(COALESCE(FACT."REVENUE", 0))'
+    "Active Customer Count": 'COUNT(DISTINCT CASE WHEN CUSTOMER."IS_ACTIVE" = true THEN CUSTOMER."CUSTOMER KEY" END)'
+    "Revenue by Industry": 'SUM(CASE WHEN INDUSTRY."INDUSTRY" IS NOT NULL THEN FACT."REVENUE" ELSE 0 END)'
+    "Revenue by Executive": 'SUM(CASE WHEN EXECUTIVE."EXECUTIVE" IS NOT NULL THEN FACT."REVENUE" ELSE 0 END)'
+    "Revenue by State": 'SUM(CASE WHEN STATE."STATE" IS NOT NULL THEN FACT."REVENUE" ELSE 0 END)'
 
     # Time-intelligence fallback templates
-    "Revenue YTD": "SUM(FACT.\"REVENUE\") OVER (PARTITION BY YEAR(CALENDAR.\"DATE\") ORDER BY CALENDAR.\"DATE\")"
-    "Revenue MTD": "SUM(FACT.\"REVENUE\") OVER (PARTITION BY YEAR(CALENDAR.\"DATE\"), MONTH(CALENDAR.\"DATE\") ORDER BY CALENDAR.\"DATE\")"
-    "Revenue Rank": "RANK() OVER (ORDER BY SUM(FACT.\"REVENUE\") DESC)"
+    "Revenue YTD": 'SUM(FACT."REVENUE") OVER (PARTITION BY YEAR(CALENDAR."DATE") ORDER BY CALENDAR."DATE")'
+    "Revenue MTD": 'SUM(FACT."REVENUE") OVER (PARTITION BY YEAR(CALENDAR."DATE"), MONTH(CALENDAR."DATE") ORDER BY CALENDAR."DATE")'
+    "Revenue Rank": 'RANK() OVER (ORDER BY SUM(FACT."REVENUE") DESC)'
 
 # ---------------------------------------------------------------------------
 # Databricks deployment behavior.
 # ---------------------------------------------------------------------------
 databricks:
-  create_metadata_table: false         # OSI-first deploy: skip Semabridge metadata Delta table
-  create_measure_views: true           # Generate measure views for deployed measures
-  measure_view_type: "metric_view"  # "auto" | "metric_view" | "materialized_view" | "sql_view" | "none"
-  measure_view_mode: "combined"        # "per_measure" (one view each) or "combined" (single model-level joined view)
-  view_prefix: "mv"                    # Prefix for measure view names
-  enable_simple_dax_translation: true  # Translate simple DAX (SUM, COUNT, etc.) to SQL
-  enable_cross_table_joins: true        # Build explicit joins from model relationships when measures span datasets
-  enable_low_confidence_drafts: true    # Emit draft placeholders for low-confidence measures instead of dropping them
-  emit_metric_views_for_all_datasets: true  # Create fallback metric views for dimension-only datasets
+  create_metadata_table: false # OSI-first deploy: skip Semabridge metadata Delta table
+  create_measure_views: true # Generate measure views for deployed measures
+  measure_view_type: "metric_view" # "auto" | "metric_view" | "materialized_view" | "sql_view" | "none"
+  measure_view_mode: "combined" # "per_measure" (one view each) or "combined" (single model-level joined view)
+  view_prefix: "mv" # Prefix for measure view names
+  enable_simple_dax_translation: true # Translate simple DAX (SUM, COUNT, etc.) to SQL
+  enable_cross_table_joins: true # Build explicit joins from model relationships when measures span datasets
+  enable_low_confidence_drafts: true # Emit draft placeholders for low-confidence measures instead of dropping them
+  emit_metric_views_for_all_datasets: true # Create fallback metric views for dimension-only datasets
 
   # Source table mapping: Fabric dataset name → actual Databricks table
   # If not mapped, falls back to source_catalog.source_schema.dataset_name
@@ -77,15 +80,15 @@ databricks:
   #   "Customer.Industry ID": "industry_id"
   #   CONTINENT_1: "analytics_catalog.raw.continent_data"
   #   DIM_DATE: "analytics_catalog.raw.dim_date"
-  source_catalog: "semabridge"         # Default catalog for source data tables
-  source_schema: "public"              # Default schema for source data tables
-  on_missing_source: "plan"            # "plan" | "skip" | "fail"
+  source_catalog: "semabridge" # Default catalog for source data tables
+  source_schema: "public" # Default schema for source data tables
+  on_missing_source: "plan" # "plan" | "skip" | "fail"
 
   # Governance: auto-grant SELECT on deployed metric views
   grant_select_to_groups: []
   # - "data_consumers"
   # - "analytics_team"
-  transfer_ownership_to: ""           # Group for collaborative metric view editing
+  transfer_ownership_to: "" # Group for collaborative metric view editing
 
 # ---------------------------------------------------------------------------
 # Discovery behaviour for the Fabric ↔ Snowflake semantic sync feature.

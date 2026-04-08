@@ -128,21 +128,36 @@ class OSIToSMLConverter(BaseConverter):
                 p for p in discovered
                 if p not in declared_extra and p not in known_map
             }
+            unresolved_prefixes = set()
             if unknown:
                 inferred = infer_override_alias_map(unknown, dataset_aliases)
                 for prefix, alias_val in inferred.items():
                     declared_extra.setdefault(prefix, alias_val)
-                for prefix in unknown - set(inferred):
-                    logger.warning(
-                        f"metric_overrides: prefix '{prefix}' could not be resolved. "
-                        f"Add it to semantic_model.override_alias_map in behavior.yaml."
+                unresolved_prefixes = unknown - set(inferred)
+                if unresolved_prefixes:
+                    logger.info(
+                        "metric_overrides: unresolved prefixes %s. "
+                        "Overrides that reference these prefixes will be skipped for this run.",
+                        sorted(unresolved_prefixes),
                     )
+        else:
+            unresolved_prefixes = set()
 
         extra_prefix_map: Optional[Dict[str, str]] = declared_extra if declared_extra else None
 
         # Sanitize each override expression
         overrides: Dict[str, str] = {}
         for name, sql in raw_overrides.items():
+            if unresolved_prefixes:
+                expr_prefixes = extract_prefixes_from_expressions([sql])
+                bad_prefixes = {p for p in expr_prefixes if p in unresolved_prefixes}
+                if bad_prefixes:
+                    logger.info(
+                        "metric_overrides: skipping override '%s' due to unresolved prefixes %s",
+                        name,
+                        sorted(bad_prefixes),
+                    )
+                    continue
             sanitized = sanitize_sql_expression(
                 expr=sql,
                 dataset_aliases=dataset_aliases,
@@ -468,4 +483,3 @@ class OSIToSMLConverter(BaseConverter):
 
         if added:
             logger.info("Auto-detected %d simple metrics because OSI contained no explicit measures", added)
-

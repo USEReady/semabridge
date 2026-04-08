@@ -5,7 +5,7 @@ from fastapi import HTTPException, Request
 from semabridge.core.settings import reload_settings
 from semabridge.utils.logger import setup_logging
 
-from semabridge.api.services.connection_domain_service import (
+from semabridge.api.services.connection_session_store import (
     _POLL_SESSION_TTL,
     _cleanup_stale_poll_sessions,
     _get_client_ip,

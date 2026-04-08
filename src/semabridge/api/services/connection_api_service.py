@@ -8,10 +8,12 @@ startup hooks.
 from semabridge.api.services.connection_domain_service import (
     _extract_bearer_token,
     _get_msal_app,
+    _resolve_fabric_access_token,
+)
+from semabridge.api.services.connection_session_store import (
     _last_poll_time,
     _poll_sessions,
     _poll_sessions_lock,
-    _resolve_fabric_access_token,
 )
 from semabridge.api.services.connections_service import (
     delete_connection,

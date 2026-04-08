@@ -48,6 +48,7 @@ if os.name == "nt":
         pass
 
 # Core imports
+from semabridge.core.env import get_fabric_access_token_from_env
 from semabridge.core.settings import get_settings, reload_settings
 from semabridge.repository.model_repository import ModelRepository
 from semabridge.core.execution_engine import ExecutionEngine
@@ -62,6 +63,16 @@ from semabridge.api.semantic_models import SemanticSyncRequest, SemanticRefreshR
 from semabridge.api.services.scheduler_service import SchedulerService
 from semabridge.api.services.sync_execution_service import execute_sync_request
 from semabridge.api.services.version_control_service import VersionControlService
+from semabridge.api.services.connection_session_store import (
+    _POLL_SESSION_TTL,
+    _cleanup_stale_poll_sessions,
+    _get_client_ip,
+    _last_poll_time,
+    _poll_sessions,
+    _poll_sessions_lock,
+    _time,
+    _uuid,
+)
 from sqlalchemy.orm import Session
 from semabridge.api.deps import get_db
 
@@ -130,103 +141,22 @@ async def list_workspaces(
     db: "Session" = Depends(get_db),
     identity_id: Optional[str] = Query(None),
 ):
-    """List available Fabric workspaces for the current Default account.
-
-    Identity is resolved fresh on every request from the DuckDB Account table
-    so that 'Set Default' changes in Settings are immediately reflected without
-    a server restart.
-    """
-    from sqlalchemy import select, text
-    from semabridge.repository.orm.models import Account
-    from semabridge.auth.encryption import decrypt_token
+    """List available Fabric workspaces for the selected Fabric account."""
     import httpx
 
     access_token: str | None = None
-    account_tag: str | None = None
+    if not identity_id:
+        raise HTTPException(status_code=400, detail="account_id is required")
 
-    # If a UI-selected Fabric account is supplied, honor it first.
-    if identity_id:
-        try:
-            import anyio
-            access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, None, identity_id)
-            account_tag = identity_id
-            logger.info("list_workspaces: using identity-scoped account '%s'", account_tag)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.warning("list_workspaces: identity-scoped lookup failed for %s: %s", identity_id, exc)
-
-    # Fall back to the default Fabric account when no identity was supplied.
-    if not access_token:
-        try:
-            default_account = db.execute(
-                select(Account).where(
-                    Account.connector_type == "FABRIC",
-                    Account.is_default == True,  # noqa: E712
-                )
-            ).scalar_one_or_none()
-
-            if not default_account:
-                raise HTTPException(status_code=401, detail="token_missing")
-
-            if default_account.encrypted_token:
-                # Happy path: token already persisted in Account row
-                account_tag = default_account.tag
-                logger.info("list_workspaces: using default account '%s'", account_tag)
-                access_token = decrypt_token(default_account.encrypted_token)
-                if not access_token:
-                    logger.warning("list_workspaces: token decrypt returned empty string")
-                    raise HTTPException(status_code=401, detail="token_missing")
-            else:
-                # Fallback: account exists but no token row yet (pre-atomic-write accounts).
-                # Query Credential directly to avoid DuckDB DDL locking from CredentialManager.
-                from semabridge.repository.orm.models import Credential
-                from semabridge.auth.encryption import encrypt_token as _encrypt
-                import time
-
-                rows = db.execute(
-                    select(Credential).where(Credential.service == "fabric_token")
-                ).scalars().all()
-                raw_token_data = {row.key: row.value for row in rows} if rows else {}
-                
-                raw_access_token = raw_token_data.get("access_token", "")
-                if not raw_access_token:
-                    logger.warning("list_workspaces: no token in Account row nor Credential table")
-                    raise HTTPException(status_code=401, detail="token_missing")
-                    
-                try:
-                    expires_at = int(raw_token_data.get("expires_at", "0"))
-                    if time.time() >= expires_at - 60:
-                        logger.warning("list_workspaces: Credential table token is expired")
-                        raise HTTPException(status_code=401, detail="token_missing")
-                except (ValueError, TypeError):
-                    raise HTTPException(status_code=401, detail="token_missing")
-
-                # Backfill: write the token to the Account row so next request uses DB path
-                try:
-                    default_account.encrypted_token = _encrypt(raw_access_token)
-                    default_account.identity_email = raw_token_data.get(
-                        "account_username", default_account.identity_email
-                    )
-                    db.commit()
-                    logger.info(
-                        "list_workspaces: backfilled encrypted_token for account '%s'",
-                        default_account.tag,
-                    )
-                except Exception as bf_exc:
-                    logger.warning("list_workspaces: backfill write failed (non-fatal): %s", bf_exc)
-                    db.rollback()
-
-                account_tag = default_account.tag
-                access_token = raw_access_token
-                logger.info(
-                    "list_workspaces: using CredentialManager fallback for account '%s'", account_tag
-                )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.exception("list_workspaces: unexpected DB error: %s", exc)
-            raise HTTPException(status_code=503, detail="Workspace discovery temporarily unavailable")
+    try:
+        import anyio
+        access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, None, identity_id)
+        logger.info("list_workspaces: using account '%s'", identity_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("list_workspaces: account-scoped lookup failed for %s: %s", identity_id, exc)
+        raise HTTPException(status_code=503, detail="Workspace discovery temporarily unavailable")
 
     if not access_token:
         logger.warning("list_workspaces: no valid default account token — returning 401")
@@ -268,34 +198,39 @@ _FABRIC_SCOPES = ["https://analysis.windows.net/powerbi/api/.default"]
 # Each /login call issues a UUID flow_id. Background threads write results
 # to _poll_sessions[flow_id].  This prevents concurrent logins from
 # different users/tabs from overwriting each other.
-import threading as _threading
-import uuid as _uuid
-_poll_sessions: Dict[str, Dict[str, Any]] = {}
-_poll_sessions_lock = _threading.Lock()
-_last_poll_time: Dict[str, float] = {}
-
-# Fabric and Databricks interactive auth both reuse this in-memory poll state
-# so browser/device flows can be coordinated without duplicating session logic.
-def _get_client_ip(request: Request) -> str:
-    """Extract client IP, preferring X-Forwarded-For to handle reverse proxies."""
-    x_forward = request.headers.get("X-Forwarded-For")
-    if x_forward:
-        return x_forward.split(",")[0].strip()
-    return request.client.host if request.client else "127.0.0.1"
-
 # Legacy single-value kept ONLY for CLI/background-sync fallback.
 _fabric_session_token: Optional[str] = None
 _fabric_session_token_expires_at: float = 0.0
-# TTL for cleaning up abandoned poll sessions (15 minutes).
-_POLL_SESSION_TTL = 900
 
 # Module-level MSAL app instance cache (keyed by authority URL)
 _msal_app_cache: Dict[str, Any] = {}
+_msal_http_client: Optional[Any] = None
 
 # Discovery result cache
-import time as _time
 _discovery_cache: Dict[str, Any] = {}
 _DISCOVERY_CACHE_TTL = 60  # seconds
+
+
+def _get_msal_http_client():
+    global _msal_http_client
+    if _msal_http_client is None:
+        import requests
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+
+        session = requests.Session()
+        retry = Retry(
+            total=3,
+            read=3,
+            connect=3,
+            backoff_factor=0.5,
+            status_forcelist=(500, 502, 503, 504),
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        _msal_http_client = session
+    return _msal_http_client
 
 
 def _get_msal_app(authority: str):
@@ -305,6 +240,7 @@ def _get_msal_app(authority: str):
         _msal_app_cache[authority] = msal.PublicClientApplication(
             client_id=_FABRIC_PUBLIC_CLIENT_ID,
             authority=authority,
+            http_client=_get_msal_http_client(),
         )
     return _msal_app_cache[authority]
 
@@ -320,17 +256,6 @@ def clear_msal_cache():
     _fabric_session_token_expires_at = 0.0
     with _poll_sessions_lock:
         _poll_sessions.clear()
-
-
-def _cleanup_stale_poll_sessions() -> None:
-    """Remove poll sessions older than their explicit expires_at timestamp."""
-    now = _time.time()
-    with _poll_sessions_lock:
-        stale = [fid for fid, s in _poll_sessions.items() if s.get("expires_at", 0) < now]
-        for fid in stale:
-            del _poll_sessions[fid]
-            _last_poll_time.pop(fid, None)
-
 
 
 def _run_background_msal_poll(
@@ -667,7 +592,6 @@ def _get_valid_fabric_token() -> str:
     Raises:
         HTTPException: If no token exists or refresh fails.
     """
-    import msal
     from semabridge.repository.credential_manager import CredentialManager
 
     cm = CredentialManager()
@@ -694,13 +618,7 @@ def _get_valid_fabric_token() -> str:
 
     try:
         # Reuse cached MSAL app instance to avoid repeated initialization overhead
-        app_msal = _msal_app_cache.get(authority)
-        if app_msal is None:
-            app_msal = msal.PublicClientApplication(
-                client_id=_FABRIC_PUBLIC_CLIENT_ID,
-                authority=authority,
-            )
-            _msal_app_cache[authority] = app_msal
+        app_msal = _get_msal_app(authority)
 
         result = app_msal.acquire_token_by_refresh_token(
             refresh_token,
@@ -777,7 +695,7 @@ def _resolve_fabric_access_token(
     2. Authorization header bearer token from current request.
     3. Default stored MSAL token from interactive Connections login flow.
        - If expired, silently refresh using the stored refresh_token.
-    4. FABRIC_ACCESS_TOKEN environment variable (dev/CI fallback).
+    4. FABRIC_ACCESS_TOKEN environment variable from the process or .env file.
 
     Explicit ``identity_id`` selection wins over any ambient bearer token so
     the UI-selected account is always honored.
@@ -796,6 +714,12 @@ def _resolve_fabric_access_token(
         except Exception as e:
             logger.error(f"Fabric token validation error: {e}")
             raise HTTPException(status_code=401, detail={"status": "invalid_token", "message": "Signature or claim validation failed."})
+
+    if not identity_id:
+        env_token = get_fabric_access_token_from_env()
+        if env_token:
+            logger.info("Using temporary Fabric access token from .env / environment")
+            return env_token
 
     # ── Phase 1: Read everything we need from DB in ONE session ──────────
     # Variables populated by Phase 1:
@@ -820,9 +744,12 @@ def _resolve_fabric_access_token(
                     )
                 ).scalars().first()
             else:
-                default_account = session.execute(
+                fabric_accounts = session.execute(
                     select(Account).where(Account.connector_type == "FABRIC")
-                ).scalars().first()
+                ).scalars().all()
+                default_account = next((account for account in fabric_accounts if account.is_default), None)
+                if not default_account and fabric_accounts:
+                    default_account = fabric_accounts[0]
 
             if default_account:
                 has_account_row = True
@@ -894,7 +821,7 @@ def _resolve_fabric_access_token(
         if not encrypted_token and not credential_token_data:
             raise HTTPException(status_code=401, detail={"error": "reauth_required"})
 
-    logger.warning("No valid Fabric access token available (bypassed .env fallback to respect UI state)")
+    logger.warning("No valid Fabric access token available")
     raise HTTPException(
         status_code=401,
         detail={"error": "reauth_required"}
@@ -920,10 +847,7 @@ def _try_silent_refresh() -> Optional[str]:
             return None
 
         tenant_id = token_data.get("tenant_id", "organizations")
-        app_msal = msal.PublicClientApplication(
-            client_id="04b07795-8ddb-461a-bbee-02f9e1bf7b46",
-            authority=f"https://login.microsoftonline.com/{tenant_id}",
-        )
+        app_msal = _get_msal_app(f"https://login.microsoftonline.com/{tenant_id}")
         result = app_msal.acquire_token_by_refresh_token(
             token_data["refresh_token"],
             scopes=["https://analysis.windows.net/powerbi/api/.default"],
@@ -952,18 +876,17 @@ def _try_silent_refresh() -> Optional[str]:
 async def fabric_list_workspaces(
     bearer_token: Optional[str] = Depends(_extract_bearer_token),
     identity_id: Optional[str] = Query(None),
+    connection_id: Optional[str] = Query(None, alias="connectionId"),
 ):
-    """Discover all Fabric workspaces accessible to the logged-in user.
-
-    Uses the stored MSAL access token (auto-refreshing if expired) to call
-    the Fabric REST API.
-    Returns a list of {id, displayName} objects.
-    """
+    """Discover all Fabric workspaces for the selected Fabric account."""
     import httpx
 
     import anyio
-    access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token, identity_id)
-    logger.info("Calling Fabric workspaces API with resolved access token (Identity: %s)", identity_id)
+    resolved_identity_id = (identity_id or connection_id or "").strip() or None
+    if not resolved_identity_id and not bearer_token:
+        raise HTTPException(status_code=400, detail="account_id is required")
+    access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token, resolved_identity_id)
+    logger.info("Calling Fabric workspaces API with resolved access token (Identity: %s)", resolved_identity_id)
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -1025,19 +948,13 @@ async def fabric_get_default_workspace(
     bearer_token: Optional[str] = Depends(_extract_bearer_token),
     identity_id: Optional[str] = Query(None),
 ):
-    """Return the best-available default workspace for the project wizard from the Default account."""
-    from sqlalchemy import select
-    from semabridge.repository.orm.models import Account
-    from semabridge.auth.encryption import decrypt_token
+    """Return the primary workspace for the selected Fabric account."""
     import httpx
 
-    # --- Step 1: Identify Default Account ---
-    access_token = None
     import anyio
-    try:
-        access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token, identity_id)
-    except HTTPException:
-        pass
+    if not identity_id:
+        raise HTTPException(status_code=400, detail="account_id is required")
+    access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token, identity_id)
 
     if not access_token:
         return {
