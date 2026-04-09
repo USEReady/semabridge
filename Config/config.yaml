@@ -1,7 +1,7 @@
 core:
   intermediate_format: OSI
-  repository_path: D:\bolt\semabridge\semabridge.db
-  local_models_path: D:\bolt\semabridge\models
+  repository_path: C:\Users\MANOJ\semabridge\semabridge-merged\semabridge.db
+  local_models_path: C:\Users\MANOJ\semabridge\semabridge-merged\models
   backup_retention: 5
 database:
   backend: orm
@@ -18,10 +18,10 @@ logging:
   format: text
   dir: ./logs
   redact_secrets: true
-  log_file: D:\bolt\semabridge\semabridge.log
+  log_file: C:\Users\MANOJ\semabridge\semabridge-merged\semabridge.log
 concurrency:
   max_concurrent_models: 4
   thread_pool_size: 8
 options:
   global_exclude_models: []
-config_path: Config/semabridge.yaml
+config_path: C:\Users\MANOJ\semabridge\semabridge-merged\config.yaml

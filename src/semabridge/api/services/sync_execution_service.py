@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import logging
-import os
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -25,8 +24,6 @@ _TYPE_ALIASES = {
 MAX_BATCH_MODELS = 10
 DEFAULT_MAX_PARALLEL_MODELS = 10
 DEFAULT_MAX_PARALLEL_FABRIC_JOBS = 3
-DEFAULT_PROCESS_MAX_WORKERS = 8
-DEFAULT_EXECUTOR = "thread"
 
 
 def _normalize_connector_type(raw_type: Any, default: str) -> str:
@@ -71,34 +68,6 @@ def _build_console_details(summary_data: Dict[str, Any]) -> Dict[str, Any]:
         "lines": lines,
         "text": "\n".join(lines),
     }
-
-
-def _log_model_console_trace(result: Dict[str, Any]) -> None:
-    """Emit a compact per-model console trace into the main terminal log.
-
-    This keeps batch runs easy to follow even when jobs are executed in a
-    process pool, where child-process stdout/loggers are not always visible in
-    the parent terminal.
-    """
-    model_label = str(result.get("model") or "unknown")
-    status = str(result.get("status") or "unknown").upper()
-    run_id = str(result.get("run_id") or "").strip()
-    console = result.get("console") if isinstance(result.get("console"), dict) else {}
-    lines = console.get("lines") or []
-
-    header = f"Console trace for model '{model_label}' [status={status}"
-    if run_id:
-        header += f", run_id={run_id[:8]}...]"
-    else:
-        header += "]"
-    logger.info(header)
-
-    if not lines:
-        logger.info("  (no console lines captured)")
-        return
-
-    for line in lines:
-        logger.info("  %s", line)
 
 
 def _write_content_if_provided(payload: Dict[str, Any], normalize_yaml_windows_path_fields) -> None:
@@ -380,148 +349,6 @@ def _run_single_job(
         }
 
 
-def _resolve_requested_parallelism(payload: Dict[str, Any]) -> int:
-    if "max_parallel_models" in payload:
-        requested_parallelism = payload.get("max_parallel_models")
-    elif "max_workers" in payload:
-        requested_parallelism = payload.get("max_workers")
-    else:
-        requested_parallelism = os.getenv("SEMABRIDGE_MAX_PARALLEL_MODELS", str(DEFAULT_MAX_PARALLEL_MODELS))
-    try:
-        return max(1, min(int(requested_parallelism), DEFAULT_MAX_PARALLEL_MODELS))
-    except (TypeError, ValueError):
-        return DEFAULT_MAX_PARALLEL_MODELS
-
-
-def _resolve_executor_kind(payload: Dict[str, Any], is_fabric_bound: bool) -> str:
-    # Process workers are disabled for Fabric-bound runs to avoid auth token/session
-    # cross-process issues and preserve stability under API throttling.
-    requested = str(
-        payload.get("executor")
-        or payload.get("concurrency_executor")
-        or os.getenv("SEMABRIDGE_SYNC_EXECUTOR", DEFAULT_EXECUTOR)
-    ).strip().lower()
-
-    if requested not in {"thread", "process"}:
-        requested = DEFAULT_EXECUTOR
-
-    if is_fabric_bound and requested == "process":
-        logger.info("Process executor requested but run is Fabric-bound; falling back to thread executor")
-        return "thread"
-
-    return requested
-
-
-def _resolve_effective_parallelism(
-    *,
-    sync_jobs: List[Dict[str, Any]],
-    payload: Dict[str, Any],
-    max_parallel_models: int,
-    is_fabric_bound: bool,
-    executor_kind: str,
-) -> int:
-    effective_parallelism = min(len(sync_jobs), max_parallel_models)
-    if is_fabric_bound:
-        fabric_limit_raw = payload.get("max_parallel_fabric_jobs")
-        if fabric_limit_raw in (None, ""):
-            fabric_limit_raw = os.getenv("SEMABRIDGE_MAX_PARALLEL_FABRIC_JOBS", str(DEFAULT_MAX_PARALLEL_FABRIC_JOBS))
-        try:
-            fabric_limit = max(1, int(fabric_limit_raw))
-        except ValueError:
-            fabric_limit = DEFAULT_MAX_PARALLEL_FABRIC_JOBS
-        effective_parallelism = min(effective_parallelism, fabric_limit)
-
-    if executor_kind == "process":
-        cpu_count = os.cpu_count() or 4
-        process_ceiling_raw = payload.get("process_max_workers")
-        if process_ceiling_raw in (None, ""):
-            process_ceiling_raw = os.getenv("SEMABRIDGE_PROCESS_MAX_WORKERS", str(DEFAULT_PROCESS_MAX_WORKERS))
-        try:
-            process_ceiling = max(1, int(process_ceiling_raw))
-        except ValueError:
-            process_ceiling = DEFAULT_PROCESS_MAX_WORKERS
-        effective_parallelism = min(effective_parallelism, max(1, min(cpu_count, process_ceiling)))
-
-    return max(1, effective_parallelism)
-
-
-def _run_parallel_jobs(
-    *,
-    sync_jobs: List[Dict[str, Any]],
-    effective_parallelism: int,
-    executor_kind: str,
-    source_type: str,
-    target_type: str,
-    config: Dict[str, Any],
-    config_path: str,
-    deploy_enabled: bool,
-    resolved_workspace_id: str,
-) -> List[Dict[str, Any]]:
-    per_model_results: List[Dict[str, Any]] = []
-
-    if effective_parallelism <= 1:
-        for job in sync_jobs:
-            result = _run_single_job(
-                job,
-                engine_source_type=source_type,
-                target_type=target_type,
-                config=config,
-                config_path=config_path,
-                deploy_enabled=deploy_enabled,
-                resolved_workspace_id=resolved_workspace_id,
-            )
-            per_model_results.append(result)
-            _log_model_console_trace(result)
-        return per_model_results
-
-    executor_cls = ProcessPoolExecutor if executor_kind == "process" else ThreadPoolExecutor
-    with executor_cls(max_workers=effective_parallelism) as executor:
-        future_to_job = {
-            executor.submit(
-                _run_single_job,
-                job,
-                engine_source_type=source_type,
-                target_type=target_type,
-                config=config,
-                config_path=config_path,
-                deploy_enabled=deploy_enabled,
-                resolved_workspace_id=resolved_workspace_id,
-            ): job
-            for job in sync_jobs
-        }
-        for future in as_completed(future_to_job):
-            job = future_to_job[future]
-            try:
-                result = future.result()
-                per_model_results.append(result)
-                _log_model_console_trace(result)
-            except Exception as exc:  # noqa: BLE001
-                model_label = str(job.get("model_label") or "unknown")
-                logger.exception("Parallel worker crashed for model '%s': %s", model_label, exc)
-                summary_data = {
-                    "errors": [
-                        {
-                            "step_number": 0,
-                            "step_name": "Execution",
-                            "message": str(exc),
-                            "error_type": type(exc).__name__,
-                        }
-                    ]
-                }
-                per_model_results.append(
-                    {
-                        "model": model_label,
-                        "status": "failed",
-                        "summary": summary_data,
-                        "console": _build_console_details(summary_data),
-                        "run_id": None,
-                    }
-                )
-                _log_model_console_trace(per_model_results[-1])
-
-    return per_model_results
-
-
 def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fields) -> Dict[str, Any]:
     _write_content_if_provided(payload, normalize_yaml_windows_path_fields)
     reload_settings()
@@ -540,70 +367,54 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
     )
     deploy_enabled = bool((target_cfg or {}).get("deploy", True))
 
-    max_parallel_models = _resolve_requested_parallelism(payload)
-    is_fabric_bound = source_type == "fabric" or target_type == "fabric"
-    executor_kind = _resolve_executor_kind(payload, is_fabric_bound)
-    effective_parallelism = _resolve_effective_parallelism(
-        sync_jobs=sync_jobs,
-        payload=payload,
-        max_parallel_models=max_parallel_models,
-        is_fabric_bound=is_fabric_bound,
-        executor_kind=executor_kind,
-    )
-
-    logger.info(
-        "Batch sync start: source=%s target=%s models=%d executor=%s parallelism=%d workspace=%s deploy=%s",
-        source_type,
-        target_type,
-        len(sync_jobs),
-        executor_kind,
-        effective_parallelism,
-        resolved_workspace_id,
-        deploy_enabled,
-    )
-
+    requested_parallelism = payload.get("max_parallel_models") or payload.get("max_workers") or DEFAULT_MAX_PARALLEL_MODELS
     try:
-        per_model_results = _run_parallel_jobs(
-            sync_jobs=sync_jobs,
-            effective_parallelism=effective_parallelism,
-            executor_kind=executor_kind,
-            source_type=source_type,
-            target_type=target_type,
-            config=config,
-            config_path=config_path,
-            deploy_enabled=deploy_enabled,
-            resolved_workspace_id=resolved_workspace_id,
-        )
-    except Exception as exc:  # noqa: BLE001
-        if executor_kind == "process":
-            logger.exception(
-                "Process executor failed for batch sync; retrying with thread executor. Error: %s",
-                exc,
-            )
-            executor_kind = "thread"
-            effective_parallelism = _resolve_effective_parallelism(
-                sync_jobs=sync_jobs,
-                payload=payload,
-                max_parallel_models=max_parallel_models,
-                is_fabric_bound=is_fabric_bound,
-                executor_kind=executor_kind,
-            )
-            per_model_results = _run_parallel_jobs(
-                sync_jobs=sync_jobs,
-                effective_parallelism=effective_parallelism,
-                executor_kind=executor_kind,
-                source_type=source_type,
-                target_type=target_type,
-                config=config,
-                config_path=config_path,
-                deploy_enabled=deploy_enabled,
-                resolved_workspace_id=resolved_workspace_id,
-            )
-        else:
-            raise
+        max_parallel_models = max(1, min(int(requested_parallelism), DEFAULT_MAX_PARALLEL_MODELS))
+    except (TypeError, ValueError):
+        max_parallel_models = DEFAULT_MAX_PARALLEL_MODELS
 
-    job_order = {str(job["model_label"]): index for index, job in enumerate(sync_jobs)}
-    per_model_results.sort(key=lambda item: job_order.get(str(item.get("model") or ""), 0))
+    is_fabric_bound = source_type == "fabric" or target_type == "fabric"
+    effective_parallelism = min(len(sync_jobs), max_parallel_models)
+    if is_fabric_bound:
+        effective_parallelism = min(effective_parallelism, DEFAULT_MAX_PARALLEL_FABRIC_JOBS)
+
+    effective_parallelism = max(1, effective_parallelism)
+
+    per_model_results: List[Dict[str, Any]] = []
+
+    if effective_parallelism == 1:
+        for job in sync_jobs:
+            per_model_results.append(
+                _run_single_job(
+                    job,
+                    engine_source_type=source_type,
+                    target_type=target_type,
+                    config=config,
+                    config_path=config_path,
+                    deploy_enabled=deploy_enabled,
+                    resolved_workspace_id=resolved_workspace_id,
+                )
+            )
+    else:
+        with ThreadPoolExecutor(max_workers=effective_parallelism, thread_name_prefix="sync-model") as executor:
+            future_to_job = {
+                executor.submit(
+                    _run_single_job,
+                    job,
+                    engine_source_type=source_type,
+                    target_type=target_type,
+                    config=config,
+                        config_path=config_path,
+                    deploy_enabled=deploy_enabled,
+                    resolved_workspace_id=resolved_workspace_id,
+                ): job
+                for job in sync_jobs
+            }
+            for future in as_completed(future_to_job):
+                per_model_results.append(future.result())
+
+        job_order = {str(job["model_label"]): index for index, job in enumerate(sync_jobs)}
+        per_model_results.sort(key=lambda item: job_order.get(str(item.get("model") or ""), 0))
 
     succeeded = [result for result in per_model_results if result["status"] == "success"]
     if len(succeeded) == len(per_model_results):
@@ -619,12 +430,11 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
     )
 
     logger.info(
-        "Sync complete: %d/%d models succeeded (status=%s, parallelism=%d, executor=%s)",
+        "Sync complete: %d/%d models succeeded (status=%s, parallelism=%d)",
         len(succeeded),
         len(per_model_results),
         overall_status,
         effective_parallelism,
-        executor_kind,
     )
 
     return {
@@ -637,7 +447,6 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
             "max_batch_models": MAX_BATCH_MODELS,
             "requested_parallelism": max_parallel_models,
             "effective_parallelism": effective_parallelism,
-            "executor": executor_kind,
             "fabric_limited": bool(is_fabric_bound and effective_parallelism < max_parallel_models),
         },
     }

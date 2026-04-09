@@ -12,10 +12,6 @@ export const SyncProvider = ({ children }) => {
     const pollGlobalRuns = async () => {
       try {
         const response = await fetch('/api/jobs/runs');
-        if (!response.ok) {
-          const body = await response.text();
-          throw new Error(`Polling failed ${response.status}: ${body || response.statusText}`);
-        }
         const data = await response.json();
         if (isMounted) {
           setActiveRuns(data);
