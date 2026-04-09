@@ -1,4 +1,4 @@
-project_name: myjio
+project_name: mpp
 source:
   type: fabric
   identity_id: 8d13f780-a354-4e6e-85dd-2727f5795b72
@@ -10,22 +10,22 @@ targets:
 - type: snowflake
 mappings:
 - source: Client Data
-  target: client data_mapped
+  target: CLIENT_DATA
   type: table
   columns:
   - source: id
-    target: id
-    type: INT
+    target: ID
+    type: integer
     primary_key: true
   - source: name
-    target: name
-    type: VARCHAR(255)
+    target: NAME
+    type: string
   - source: created_at
-    target: created_at
-    type: TIMESTAMP
+    target: CREATED_AT
+    type: timestamp
   - source: updated_at
-    target: updated_at
-    type: TIMESTAMP
+    target: UPDATED_AT
+    type: timestamp
 ui:
   intermediate_format: osi
   editor_mode: form

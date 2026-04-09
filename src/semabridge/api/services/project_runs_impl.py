@@ -1,6 +1,7 @@
 import uuid
 
 from semabridge.api.services.project_shared import *
+from semabridge.api.services.project_mapping_engine import build_entity_mappings
 
 
 def _compat_parse_project_cfg_dict(project_cfg: str) -> Dict[str, Any]:
@@ -309,6 +310,7 @@ async def list_project_snapshots_compat(
     role: Optional[str] = Query(default=None),
     stage: Optional[str] = Query(default=None),
     origin: Optional[str] = Query(default=None),
+    run_id: Optional[str] = Query(default=None),
     group_id: Optional[str] = Query(default=None),
     include_state: bool = Query(default=False),
     limit: int = Query(default=200, ge=1, le=500),
@@ -323,6 +325,8 @@ async def list_project_snapshots_compat(
         if stage and str(row.get("stage") or row.get("timing") or "").lower() != str(stage).lower():
             continue
         if origin and str(row.get("snapshot_origin") or "").upper() != str(origin).upper():
+            continue
+        if run_id and str(row.get("run_id") or "") != str(run_id):
             continue
         if group_id and str(row.get("snapshot_group_id") or "") != str(group_id):
             continue
@@ -344,6 +348,11 @@ async def capture_manual_snapshots_compat(project_id: str, payload: Dict[str, An
     _compat_ensure_loaded()
     if project_id not in _compat_projects:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    # Older compat-store files may have a project row without initialized
+    # snapshot/group collections. Seed them defensively before inserts.
+    _compat_project_snapshots.setdefault(project_id, [])
+    _compat_snapshot_groups.setdefault(project_id, [])
 
     project_cfg = _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(_compat_projects[project_id])
     scope = payload.get("scope") if isinstance(payload.get("scope"), dict) else {}
@@ -394,8 +403,44 @@ async def compare_project_snapshots_compat(
     diff = _compat_diff_states(left_state, right_state, max_changes=max_changes)
     payload: Dict[str, Any] = {
         "project_id": project_id,
-        "from_snapshot": {"snapshot_id": from_snapshot_id, "role": from_row.get("role"), "origin": from_row.get("snapshot_origin"), "created_at": from_row.get("created_at"), "format": from_row.get("intermediate_format")},
-        "to_snapshot": {"snapshot_id": to_snapshot_id, "role": to_row.get("role"), "origin": to_row.get("snapshot_origin"), "created_at": to_row.get("created_at"), "format": to_row.get("intermediate_format")},
+        "from_snapshot": {
+            "snapshot_id": from_snapshot_id,
+            "project_id": project_id,
+            "run_id": from_row.get("run_id"),
+            "role": from_row.get("role"),
+            "stage": from_row.get("stage"),
+            "timing": from_row.get("timing"),
+            "origin": from_row.get("snapshot_origin"),
+            "group_id": from_row.get("snapshot_group_id"),
+            "created_at": from_row.get("created_at"),
+            "format": from_row.get("intermediate_format"),
+            "connector": from_row.get("connector"),
+            "connector_type": from_row.get("connector_type") or from_row.get("connector"),
+            "connector_identifier": from_row.get("connector_identifier"),
+            "target_id": from_row.get("target_id"),
+            "target_index": from_row.get("target_index"),
+            "system_role": from_row.get("system_role"),
+            "project_config_yaml": from_row.get("project_config_yaml") or "",
+        },
+        "to_snapshot": {
+            "snapshot_id": to_snapshot_id,
+            "project_id": project_id,
+            "run_id": to_row.get("run_id"),
+            "role": to_row.get("role"),
+            "stage": to_row.get("stage"),
+            "timing": to_row.get("timing"),
+            "origin": to_row.get("snapshot_origin"),
+            "group_id": to_row.get("snapshot_group_id"),
+            "created_at": to_row.get("created_at"),
+            "format": to_row.get("intermediate_format"),
+            "connector": to_row.get("connector"),
+            "connector_type": to_row.get("connector_type") or to_row.get("connector"),
+            "connector_identifier": to_row.get("connector_identifier"),
+            "target_id": to_row.get("target_id"),
+            "target_index": to_row.get("target_index"),
+            "system_role": to_row.get("system_role"),
+            "project_config_yaml": to_row.get("project_config_yaml") or "",
+        },
         **diff,
     }
     if include_states:
@@ -685,50 +730,247 @@ async def trigger_job_compat(payload: dict, background_tasks: BackgroundTasks):
     return run
 
 
-async def list_mappings_compat(project_id: Optional[str] = None):
+def _compat_mapping_project_ids(project_id: str = "") -> List[str]:
     pid = str(project_id or "").strip()
-
-    def _seed_for_project(seed_project_id: str) -> Dict[str, Any]:
-        source_fields = [{"name": "transaction_id", "type": "uuid"}, {"name": "amount", "type": "decimal"}, {"name": "customer_ref", "type": "string"}, {"name": "created_at", "type": "timestamp"}, {"name": "status_code", "type": "integer"}, {"name": "contact_email", "type": "string"}, {"name": "region_id", "type": "integer"}]
-        target_fields = [{"name": "txn_id", "type": "varchar"}, {"name": "sale_amount", "type": "float"}, {"name": "customer_key", "type": "varchar"}, {"name": "sale_date", "type": "date"}, {"name": "order_status", "type": "integer"}, {"name": "email_address", "type": "varchar"}, {"name": "region_key", "type": "integer"}]
-        seeded = []
-        for idx, src in enumerate(source_fields):
-            tgt = target_fields[idx] if idx < len(target_fields) else None
-            mapping_id = f"{seed_project_id}-map-{idx + 1}"
-            existing = _compat_mappings.get(mapping_id, {})
-            mapping = {"id": mapping_id, "project_id": seed_project_id, "source_field": src["name"], "source_type": src["type"], "target_field": tgt["name"] if tgt else None, "target_type": tgt["type"] if tgt else None, "status": existing.get("status") or "auto", "transform": existing.get("transform") or "", "validation": existing.get("validation") or "None"}
-            _compat_mappings[mapping_id] = mapping
-            seeded.append(mapping)
-        return {"source_fields": source_fields, "target_fields": target_fields, "mappings": seeded}
-
     if pid:
-        mappings = [m for m in _compat_mappings.values() if str(m.get("project_id") or "") == pid]
-        if not mappings:
-            return _seed_for_project(pid)
-        return {"source_fields": [], "target_fields": [], "mappings": mappings}
-    if not _compat_mappings:
-        return _seed_for_project("default")
-    return {"source_fields": [], "target_fields": [], "mappings": list(_compat_mappings.values())}
+        return [pid]
+    return [str(row.get("project_id") or row.get("id") or "").strip() for row in _compat_projects.values() if str(row.get("project_id") or row.get("id") or "").strip()]
 
 
-async def auto_map_compat(payload: dict):
-    project_id = str((payload or {}).get("project_id") or "default")
-    data = await list_mappings_compat(project_id=project_id)
-    mappings = data.get("mappings", []) if isinstance(data, dict) else []
-    for mapping in mappings:
+def _compat_existing_entity_mappings(project_id: str) -> Dict[str, Dict[str, Any]]:
+    existing: Dict[str, Dict[str, Any]] = {}
+    for mapping in _compat_mappings.values():
+        if not isinstance(mapping, dict):
+            continue
+        if str(mapping.get("project_id") or "") != str(project_id):
+            continue
+        source_path = str(mapping.get("source_path") or "").strip()
+        if not source_path:
+            continue
+        existing[source_path] = dict(mapping)
+    return existing
+
+
+def _compat_build_project_entity_mappings(project_id: str) -> Dict[str, Any]:
+    _compat_ensure_loaded()
+    if project_id not in _compat_projects:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    latest_model = _compat_latest_sml_state(project_id)
+    if not latest_model:
+        project_cfg = _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(_compat_projects[project_id])
+        parsed_cfg = _compat_parse_project_cfg_dict(project_cfg)
+        fallback_model_name = str(parsed_cfg.get("project_name") or _compat_projects[project_id].get("name") or "model")
+        fallback_models = parsed_cfg.get("models") if isinstance(parsed_cfg.get("models"), list) else []
+        fallback_model_names = [str(item).strip() for item in fallback_models if str(item).strip()]
+        latest_model = {
+            "unique_name": fallback_model_name,
+            "datasets": [{"unique_name": model_name, "columns": []} for model_name in fallback_model_names],
+            "metrics": [],
+        }
+
+    built = build_entity_mappings(
+        project_id=project_id,
+        model=latest_model,
+        existing_mappings=_compat_existing_entity_mappings(project_id),
+        session_key=f"{project_id}-mapping-session",
+    )
+
+    persisted: List[Dict[str, Any]] = []
+    for mapping in built.get("mappings", []):
         mapping_id = str(mapping.get("id") or "")
         if not mapping_id:
             continue
-        mapping["status"] = "auto"
-        _compat_mappings[mapping_id] = mapping
-    return {"source_fields": data.get("source_fields", []) if isinstance(data, dict) else [], "target_fields": data.get("target_fields", []) if isinstance(data, dict) else [], "mappings": mappings, "status": "ok"}
+        existing = _compat_mappings.get(mapping_id, {})
+        merged = {**existing, **mapping}
+        if existing.get("is_user_edited"):
+            manual_target = str(existing.get("target_name") or "").strip()
+            if manual_target:
+                merged["target_name"] = manual_target
+                merged["status"] = "manual"
+                merged["is_user_edited"] = True
+        _compat_mappings[mapping_id] = merged
+        persisted.append(merged)
+
+    _compat_save_store()
+    return {
+        "project_id": project_id,
+        "session_key": built.get("session_key"),
+        "model_name": built.get("model_name"),
+        "source_fields": built.get("source_fields", []),
+        "target_fields": built.get("target_fields", []),
+        "mappings": persisted,
+        "collisions": built.get("collisions", []),
+    }
+
+
+def _compat_preview_model_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    selected_model_names = payload.get("selected_model_names") if isinstance(payload.get("selected_model_names"), list) else []
+    normalized_model_names = [str(item or "").strip() for item in selected_model_names if str(item or "").strip()]
+    project_name = str(payload.get("project_name") or payload.get("name") or "model").strip() or "model"
+
+    datasets = []
+    for raw_name in normalized_model_names:
+        datasets.append({
+            "unique_name": raw_name,
+            "columns": [
+                {"unique_name": "id", "data_type": "integer"},
+                {"unique_name": "name", "data_type": "string"},
+                {"unique_name": "created_at", "data_type": "timestamp"},
+                {"unique_name": "updated_at", "data_type": "timestamp"},
+            ],
+        })
+
+    return {
+        "unique_name": project_name,
+        "datasets": datasets,
+        "metrics": [],
+    }
+
+
+def _compat_format_mapping_groups(mapping_payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for row in mapping_payload.get("mappings", []):
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("entity_kind") or "") == "table":
+            source_path = str(row.get("source_path") or "")
+            grouped[source_path] = {
+                "id": row.get("id"),
+                "source": row.get("source_name"),
+                "target": row.get("target_name"),
+                "source_path": source_path,
+                "type": "table",
+                "status": "manual" if row.get("is_user_edited") else "auto-detected",
+                "collision_detected": bool(row.get("collision_detected")),
+                "columns": [],
+            }
+
+    for row in mapping_payload.get("mappings", []):
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("entity_kind") or "") != "column":
+            continue
+        parent_key = str(row.get("parent_source_path") or "")
+        parent = grouped.get(parent_key)
+        if not parent:
+            continue
+        parent["columns"].append({
+            "source": row.get("source_name"),
+            "target": row.get("target_name"),
+            "source_path": row.get("source_path"),
+            "type": row.get("target_data_type") or row.get("source_data_type") or "unknown",
+            "key": str(row.get("source_name") or "").lower() == "id",
+            "collision_detected": bool(row.get("collision_detected")),
+        })
+
+    return list(grouped.values())
+
+
+async def list_mappings_compat(project_id: Optional[str] = None):
+    _compat_ensure_loaded()
+    project_ids = _compat_mapping_project_ids(str(project_id or "").strip())
+    if not project_ids:
+        raise HTTPException(status_code=400, detail="project_id is required")
+
+    if len(project_ids) == 1:
+        data = _compat_build_project_entity_mappings(project_ids[0])
+        return {
+            "project_id": data.get("project_id"),
+            "session_key": data.get("session_key"),
+            "model_name": data.get("model_name"),
+            "source_fields": data.get("source_fields", []),
+            "target_fields": data.get("target_fields", []),
+            "mappings": _compat_format_mapping_groups(data),
+            "entity_mappings": data.get("mappings", []),
+            "collisions": data.get("collisions", []),
+        }
+
+    combined_mappings: List[Dict[str, Any]] = []
+    combined_source_fields: List[Dict[str, Any]] = []
+    combined_target_fields: List[Dict[str, Any]] = []
+    collisions: List[Dict[str, Any]] = []
+    for pid in project_ids:
+        data = _compat_build_project_entity_mappings(pid)
+        combined_mappings.extend(data.get("mappings", []))
+        combined_source_fields.extend(data.get("source_fields", []))
+        combined_target_fields.extend(data.get("target_fields", []))
+        collisions.extend(data.get("collisions", []))
+    return {
+        "project_id": None,
+        "source_fields": combined_source_fields,
+        "target_fields": combined_target_fields,
+        "mappings": combined_mappings,
+        "entity_mappings": combined_mappings,
+        "collisions": collisions,
+    }
+
+
+async def auto_map_compat(payload: dict):
+    project_id = str((payload or {}).get("project_id") or "").strip()
+    selected_model_names = (payload or {}).get("selected_model_names") if isinstance((payload or {}).get("selected_model_names"), list) else []
+
+    if not project_id and not selected_model_names and _compat_projects:
+        project_id = next(iter(_compat_projects.keys()))
+    if not project_id and not selected_model_names:
+        raise HTTPException(status_code=400, detail="project_id or selected_model_names is required")
+
+    reset_manual = bool((payload or {}).get("reset_manual", False))
+    if project_id:
+        for mapping_id, mapping in list(_compat_mappings.items()):
+            if str(mapping.get("project_id") or "") != project_id:
+                continue
+            if reset_manual:
+                _compat_mappings.pop(mapping_id, None)
+                continue
+            mapping["status"] = "auto"
+            mapping["is_user_edited"] = False
+            mapping["target_name"] = ""
+
+        data = _compat_build_project_entity_mappings(project_id)
+    else:
+        preview_project_id = f"preview-{uuid.uuid5(uuid.NAMESPACE_DNS, '|'.join(str(item) for item in selected_model_names)).hex[:12]}"
+        preview_model = _compat_preview_model_from_payload(payload or {})
+        data = build_entity_mappings(
+            project_id=preview_project_id,
+            model=preview_model,
+            existing_mappings={},
+            session_key=f"{preview_project_id}-mapping-session",
+        )
+        data = {
+            "project_id": preview_project_id,
+            "session_key": data.get("session_key"),
+            "model_name": data.get("model_name"),
+            "source_fields": data.get("source_fields", []),
+            "target_fields": data.get("target_fields", []),
+            "mappings": data.get("mappings", []),
+            "collisions": data.get("collisions", []),
+        }
+
+    grouped_mappings = _compat_format_mapping_groups(data)
+    return {
+        "project_id": data.get("project_id") or project_id,
+        "source_fields": data.get("source_fields", []),
+        "target_fields": data.get("target_fields", []),
+        "mappings": grouped_mappings,
+        "entity_mappings": data.get("mappings", []),
+        "collisions": data.get("collisions", []),
+        "status": "ok",
+    }
 
 
 async def update_mapping_compat(mapping_id: str, payload: dict):
+    _compat_ensure_loaded()
     existing = _compat_mappings.get(mapping_id, {"id": mapping_id, "project_id": (payload or {}).get("project_id")})
     existing.update(payload or {})
     existing["id"] = mapping_id
+    if "target_name" in (payload or {}):
+        existing["target_name"] = str((payload or {}).get("target_name") or "").strip()
+        existing["status"] = "manual"
+        existing["is_user_edited"] = True
+    existing["updated_at"] = _compat_now_iso()
     _compat_mappings[mapping_id] = existing
+    _compat_save_store()
     return existing
 
 
@@ -738,4 +980,5 @@ async def delete_mappings_compat(project_id: Optional[str] = None):
             _compat_mappings.pop(mapping_id, None)
     else:
         _compat_mappings.clear()
+    _compat_save_store()
     return Response(status_code=204)

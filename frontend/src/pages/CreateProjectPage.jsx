@@ -153,6 +153,9 @@ export default function CreateProjectPage() {
   const [autoRelationships, setAutoRelationships] = useState(true);
   const [generateDescriptions, setGenerateDescriptions] = useState(true);
   const [detectedMappings, setDetectedMappings] = useState([]);
+  const [detectedEntityMappings, setDetectedEntityMappings] = useState([]);
+  const [mappingLoading, setMappingLoading] = useState(false);
+  const [mappingError, setMappingError] = useState('');
 
   // Step 5
   const [createReverseProject, setCreateReverseProject] = useState(false);
@@ -595,6 +598,25 @@ export default function CreateProjectPage() {
       setCreatedProject(project);
       const projectId = project?.id || project?.project_id;
 
+      if (projectId && detectedEntityMappings.length > 0) {
+        try {
+          await api.deleteMappings(projectId);
+          for (const mapping of detectedEntityMappings) {
+            const payloadMapping = {
+              ...mapping,
+              project_id: projectId,
+            };
+            await api.updateMapping(String(mapping.id), payloadMapping);
+          }
+        } catch (mappingPersistErr) {
+          const persistMsg = mappingPersistErr?.message || 'Mappings could not be fully persisted.';
+          setRunWarning(prev => {
+            const base = prev ? `${prev} ` : '';
+            return `${base}${persistMsg}`.trim();
+          });
+        }
+      }
+
       if (sourceConnector === 'pbix' && projectId && pbixFile) {
         try {
           const uploadResp = await api.uploadProjectPbix(projectId, pbixFile);
@@ -836,7 +858,7 @@ export default function CreateProjectPage() {
     return true;
   };
 
-  const goNext = () => {
+  const goNext = async () => {
     if (step === 5) { handleFinish(); return; }
     if (step === 1) {
       const isStep1Valid = Boolean(sourceConnector) && targetConnectors.size > 0 && Boolean(intermediateFormat);
@@ -847,57 +869,81 @@ export default function CreateProjectPage() {
       setShowStep1Validation(false);
     }
     if (step === 3) {
-      // Intelligent auto-detect mappings when moving from step 3 to step 4
-      const mappings = [];
-      const relationships = [];
-      const modelNames = selectedModelNames;
-      
-      if (modelNames.length > 0) {
-        // Map each selected model to its target equivalent
-        modelNames.forEach((modelName, idx) => {
-          const tableName = modelName.toLowerCase();
-          
-          // Smart mapping: create target table name with intelligent naming
-          const targetName = `${tableName}_mapped`;
-          
-          mappings.push({
-            id: `mapping_${idx}`,
-            source: modelName,
-            target: targetName,
-            type: 'table',
-            status: 'auto-detected',
-            columns: [
-              { source: 'id', target: 'id', type: 'INT', key: true },
-              { source: 'name', target: 'name', type: 'VARCHAR(255)', key: false },
-              { source: 'created_at', target: 'created_at', type: 'TIMESTAMP', key: false },
-              { source: 'updated_at', target: 'updated_at', type: 'TIMESTAMP', key: false },
-            ],
+      setMappingError('');
+      setDetectedMappings([]);
+      setDetectedEntityMappings([]);
+      sessionStorage.removeItem('detectedRelationships');
+
+      if (selectedModelNames.length > 0) {
+        setMappingLoading(true);
+        try {
+          const response = await api.autoMap({
+            project_name: name.trim() || 'Untitled Project',
+            source_connector: sourceConnector,
+            target_connectors: [...targetConnectors],
+            intermediate_format: intermediateFormat,
+            selected_model_names: selectedModelNames,
+            reset_manual: true,
           });
-
-          // Auto-detect relationships using naming conventions
-          if (idx > 0) {
-            const prevModel = modelNames[idx - 1].toLowerCase();
-            relationships.push({
-              id: `rel_${idx}`,
-              source: `${prevModel}_mapped`,
-              target: targetName,
-              joinType: 'LEFT JOIN',
-              condition: `${prevModel}_mapped.id = ${tableName}_mapped.${prevModel}_id`,
-              confidence: 'high',
-            });
+          const mappings = Array.isArray(response?.mappings) ? response.mappings : [];
+          const entityMappings = Array.isArray(response?.entity_mappings) ? response.entity_mappings : [];
+          setDetectedMappings(mappings);
+          setDetectedEntityMappings(entityMappings);
+          if (Array.isArray(response?.collisions) && response.collisions.length > 0) {
+            addLog('warning', 'Mapping', `${response.collisions.length} naming collision(s) auto-resolved with deterministic hash suffixes.`);
           }
-        });
-
-        setDetectedMappings(mappings);
-        // Store relationships in a new state or alongside mappings
-        if (relationships.length > 0) {
-          sessionStorage.setItem('detectedRelationships', JSON.stringify(relationships));
+        } catch (err) {
+          const msg = err?.message || 'Failed to generate mappings.';
+          setMappingError(msg);
+          addLog('error', 'Mapping', msg);
+        } finally {
+          setMappingLoading(false);
         }
       }
     }
     setStep(s => Math.min(5, s + 1));
   };
   const goBack = () => setStep(s => Math.max(1, s - 1));
+
+  const updateTableMappingTarget = useCallback((mappingId, nextTarget) => {
+    const normalized = String(nextTarget || '').trim();
+    setDetectedMappings(prev => prev.map((mapping) => (
+      mapping.id === mappingId
+        ? { ...mapping, target: normalized, status: 'manual' }
+        : mapping
+    )));
+    setDetectedEntityMappings(prev => prev.map((mapping) => (
+      mapping.id === mappingId
+        ? { ...mapping, target_name: normalized, is_user_edited: true, status: 'manual' }
+        : mapping
+    )));
+  }, []);
+
+  const updateColumnMappingTarget = useCallback((tableMappingId, sourceColumnName, nextTarget) => {
+    const normalized = String(nextTarget || '').trim();
+    let updatedSourcePath = '';
+    setDetectedMappings(prev => prev.map((mapping) => {
+      if (mapping.id !== tableMappingId) return mapping;
+      updatedSourcePath = String(mapping.source_path || '');
+      return {
+        ...mapping,
+        status: 'manual',
+        columns: (mapping.columns || []).map((column) => (
+          String(column.source || '') === String(sourceColumnName || '')
+            ? { ...column, target: normalized }
+            : column
+        )),
+      };
+    }));
+    setDetectedEntityMappings(prev => prev.map((mapping) => {
+      const isMatchingColumn = String(mapping.entity_kind || '') === 'column'
+        && String(mapping.parent_source_path || '') === String(updatedSourcePath || '')
+        && String(mapping.source_name || '') === String(sourceColumnName || '');
+      return isMatchingColumn
+        ? { ...mapping, target_name: normalized, is_user_edited: true, status: 'manual' }
+        : mapping;
+    }));
+  }, []);
 
   useEffect(() => {
     if (step !== 1 && showStep1Validation) {
@@ -1045,7 +1091,11 @@ export default function CreateProjectPage() {
             autoRelationships={autoRelationships} setAutoRelationships={setAutoRelationships}
             generateDescriptions={generateDescriptions} setGenerateDescriptions={setGenerateDescriptions}
             detectedMappings={detectedMappings}
+            mappingLoading={mappingLoading}
+            mappingError={mappingError}
             selectedModelNames={selectedModelNames}
+            onUpdateTableTarget={updateTableMappingTarget}
+            onUpdateColumnTarget={updateColumnMappingTarget}
           />
         )}
         {step === 5 && (
@@ -1087,16 +1137,16 @@ export default function CreateProjectPage() {
           </button>
           <button
             onClick={goNext}
-            disabled={!canAdvance() || saving}
+            disabled={!canAdvance() || saving || mappingLoading}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 5,
               padding: '8px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600,
-              cursor: !canAdvance() || saving ? 'not-allowed' : 'pointer',
+              cursor: !canAdvance() || saving || mappingLoading ? 'not-allowed' : 'pointer',
               background: 'var(--accent-blue)', border: 'none', color: '#fff',
-              opacity: !canAdvance() ? 0.5 : 1,
+              opacity: !canAdvance() || saving || mappingLoading ? 0.5 : 1,
             }}
           >
-            {saving && <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />}
+            {(saving || mappingLoading) && <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />}
             {step === 5 ? (saving ? 'Creating…' : 'Create Project') : <>Continue <ArrowRight size={13} /></>}
           </button>
         </div>
@@ -1252,7 +1302,7 @@ function StepBasicInfo({
                   onClick={() => setSourceConnector(c.value)}
                   className={`transition-all duration-300 ${shouldDim ? 'text-slate-500' : ''}`}
                   style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
+                    display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
                     padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
                     background: isSelected ? 'var(--accent-blue)14' : 'var(--bg-surface)',
                     border: isSelected ? '1.5px solid var(--accent-blue)' : '1px solid var(--border-main)',
@@ -2498,9 +2548,17 @@ function StepMappingOptions({
   generateDescriptions,
   setGenerateDescriptions,
   detectedMappings,
+  mappingLoading,
+  mappingError,
   selectedModelNames,
+  onUpdateTableTarget,
+  onUpdateColumnTarget,
 }) {
   const [expandedMapping, setExpandedMapping] = useState(null);
+  const [mappingSearch, setMappingSearch] = useState('');
+  const [showOnlyCollisions, setShowOnlyCollisions] = useState(false);
+  const [showOnlyEdited, setShowOnlyEdited] = useState(false);
+  const [showOnlyExpandedColumns, setShowOnlyExpandedColumns] = useState(true);
 
   // Get relationships from session storage (read-only)
   const detectedRelationships = (() => {
@@ -2525,6 +2583,65 @@ function StepMappingOptions({
         .filter(name => !explicitUpper.has(name.toUpperCase()))
     ));
   }, [detectedMappings, explicitTables]);
+
+  const collisionCount = useMemo(() => {
+    let total = 0;
+    (detectedMappings || []).forEach((mapping) => {
+      if (mapping?.collision_detected) total += 1;
+      (mapping?.columns || []).forEach((column) => {
+        if (column?.collision_detected) total += 1;
+      });
+    });
+    return total;
+  }, [detectedMappings]);
+
+  const editedCount = useMemo(() => (
+    (detectedMappings || []).filter((mapping) => String(mapping?.status || '').toLowerCase() === 'manual').length
+  ), [detectedMappings]);
+
+  const filteredMappings = useMemo(() => {
+    const query = String(mappingSearch || '').trim().toLowerCase();
+
+    return (detectedMappings || []).filter((mapping) => {
+      const mappingText = [
+        mapping?.source,
+        mapping?.target,
+        ...(Array.isArray(mapping?.columns)
+          ? mapping.columns.flatMap((column) => [column?.source, column?.target, column?.type])
+          : []),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+
+      if (query && !mappingText.includes(query)) return false;
+      if (showOnlyCollisions) {
+        const hasCollision = Boolean(mapping?.collision_detected)
+          || (mapping?.columns || []).some((column) => column?.collision_detected);
+        if (!hasCollision) return false;
+      }
+      if (showOnlyEdited && String(mapping?.status || '').toLowerCase() !== 'manual') {
+        return false;
+      }
+      return true;
+    });
+  }, [detectedMappings, mappingSearch, showOnlyCollisions, showOnlyEdited]);
+
+  const filterButtonStyle = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    padding: '8px 12px',
+    borderRadius: 8,
+    border: '1px solid var(--border-main)',
+    background: 'transparent',
+    color: 'var(--text-secondary)',
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: 'pointer',
+    minWidth: 0,
+  };
 
 
 
@@ -2555,19 +2672,86 @@ function StepMappingOptions({
         </div>
       </div>
 
-      {detectedMappings.length > 0 && (
+      {mappingLoading && (
+        <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)', fontSize: 12, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+          Generating mappings from backend...
+        </div>
+      )}
+
+      {mappingError && !mappingLoading && (
+        <div style={{ borderRadius: 10, border: '1px solid var(--color-error)', padding: 16, background: 'var(--color-error-bg)', fontSize: 12, color: 'var(--text-primary)' }}>
+          {mappingError}
+        </div>
+      )}
+
+      {detectedMappings.length > 0 && !mappingLoading && (
         <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)' }}>
-          <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 12 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               <Table2 size={16} color="var(--accent-blue)" />
               Table Mappings
             </span>
             <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--accent-blue)', background: 'var(--accent-blue)20', padding: '2px 8px', borderRadius: 4 }}>
-              {detectedMappings.length} detected
+              {filteredMappings.length} visible
             </span>
-          </h3>
+            <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-secondary)', background: 'var(--border-main)20', padding: '2px 8px', borderRadius: 4 }}>
+              {detectedMappings.length} total
+            </span>
+            {editedCount > 0 && (
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-success)', background: 'var(--color-success-bg)', padding: '2px 8px', borderRadius: 4 }}>
+                {editedCount} edited
+              </span>
+            )}
+            {collisionCount > 0 && (
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent-orange)', background: 'rgba(245, 158, 11, 0.14)', padding: '2px 8px', borderRadius: 4 }}>
+                {collisionCount} collisions auto-resolved
+              </span>
+            )}
+            </h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, alignItems: 'center' }}>
+              <input
+                value={mappingSearch}
+                onChange={(e) => setMappingSearch(e.target.value)}
+                placeholder="Search tables, columns, targets..."
+                style={{ ...INPUT, minWidth: 0 }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowOnlyCollisions((prev) => !prev)}
+                style={{
+                  ...filterButtonStyle,
+                  background: showOnlyCollisions ? 'rgba(245, 158, 11, 0.14)' : 'transparent',
+                  color: showOnlyCollisions ? 'var(--accent-orange)' : 'var(--text-secondary)',
+                  border: showOnlyCollisions ? '1px solid rgba(245, 158, 11, 0.35)' : filterButtonStyle.border,
+                }}
+              >
+                Only Collisions
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowOnlyEdited((prev) => !prev)}
+                style={{
+                  ...filterButtonStyle,
+                  background: showOnlyEdited ? 'var(--color-success-bg)' : 'transparent',
+                  color: showOnlyEdited ? 'var(--color-success)' : 'var(--text-secondary)',
+                  border: showOnlyEdited ? '1px solid rgba(34, 197, 94, 0.35)' : filterButtonStyle.border,
+                }}
+              >
+                Only Edited
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowOnlyExpandedColumns((prev) => !prev)}
+                style={filterButtonStyle}
+              >
+                {showOnlyExpandedColumns ? 'Compact Columns' : 'Show All Columns'}
+              </button>
+            </div>
+          </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {detectedMappings.map(mapping => (
+            {filteredMappings.map(mapping => (
               <div key={mapping.id}>
                 <button
                   onClick={() => setExpandedMapping(expandedMapping === mapping.id ? null : mapping.id)}
@@ -2581,15 +2765,29 @@ function StepMappingOptions({
                   onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent-blue)40'; }}
                   onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-main)'; }}
                 >
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, minWidth: 180 }}>
                     <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 3 }}>
                       {mapping.source}
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', overflowWrap: 'anywhere' }}>
                       <span>→</span> {mapping.target}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <div style={{ fontSize: 10, color: 'var(--text-tertiary)', background: 'var(--border-main)20', padding: '3px 8px', borderRadius: 4 }}>
+                      {(mapping.columns || []).length} columns
+                    </div>
+                    {mapping.collision_detected && (
+                      <div
+                        style={{
+                          padding: '3px 10px', borderRadius: 4,
+                          background: 'rgba(245, 158, 11, 0.14)', color: 'var(--accent-orange)',
+                          fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+                        }}
+                      >
+                        Collision
+                      </div>
+                    )}
                     <div
                       style={{
                         padding: '3px 10px', borderRadius: 4,
@@ -2612,29 +2810,57 @@ function StepMappingOptions({
                     marginTop: 8, padding: '12px', borderRadius: 6,
                     background: 'var(--bg-main)', border: '1px solid var(--accent-blue)20',
                   }}>
+                    {mapping.collision_detected && (
+                      <div style={{ marginBottom: 10, fontSize: 11, color: 'var(--accent-orange)', lineHeight: 1.4 }}>
+                        Destination table name collided after sanitization, so a deterministic hash suffix was added automatically.
+                      </div>
+                    )}
                     <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8, textTransform: 'uppercase' }}>
                       Column Mappings
                     </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
+                      <label style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>Destination table name</label>
+                      <input
+                        value={mapping.target || ''}
+                        onChange={(e) => onUpdateTableTarget?.(mapping.id, e.target.value)}
+                        style={{ ...INPUT, fontSize: 11, padding: '6px 8px', maxWidth: 320 }}
+                      />
+                    </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {mapping.columns.map((col, idx) => (
-                        <div key={idx} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 8, alignItems: 'center', fontSize: 11 }}>
-                          <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{col.source}</span>
+                      {(showOnlyExpandedColumns ? mapping.columns : mapping.columns.slice(0, 6)).map((col, idx) => (
+                        <div key={idx} style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1fr) auto minmax(180px, 1.3fr)', gap: 8, alignItems: 'center', fontSize: 11 }}>
+                          <span style={{ color: 'var(--text-secondary)', fontWeight: 500, overflowWrap: 'anywhere' }}>{col.source}</span>
                           <span style={{ color: 'var(--text-tertiary)', textAlign: 'center' }}>→</span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{col.target}</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <input
+                              value={col.target || ''}
+                              onChange={(e) => onUpdateColumnTarget?.(mapping.id, col.source, e.target.value)}
+                              style={{ ...INPUT, fontSize: 11, padding: '4px 8px', minWidth: 140, flex: '1 1 180px' }}
+                            />
                             <span style={{ fontSize: 10, color: 'var(--text-tertiary)', background: 'var(--border-main)20', padding: '1px 6px', borderRadius: 3 }}>
                               {col.type}
                             </span>
+                            {col.collision_detected && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--accent-orange)' }}>COLLISION</span>}
                             {col.key && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--accent-blue)' }}>🔑 PRIMARY KEY</span>}
                           </div>
                         </div>
                       ))}
+                      {!showOnlyExpandedColumns && (mapping.columns || []).length > 6 && (
+                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                          +{mapping.columns.length - 6} more columns. Switch to "Show All Columns" when you need the full list.
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
               </div>
             ))}
           </div>
+          {filteredMappings.length === 0 && (
+            <div style={{ padding: 16, borderRadius: 8, background: 'var(--bg-main)', border: '1px dashed var(--border-main)', fontSize: 12, color: 'var(--text-tertiary)' }}>
+              No mappings match the current filters. Clear search or toggles to see more results.
+            </div>
+          )}
           <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 12, marginBottom: 0 }}>
             ℹ️ These mappings were automatically detected from your selected models. Review each mapping to ensure accuracy before proceeding.
           </p>

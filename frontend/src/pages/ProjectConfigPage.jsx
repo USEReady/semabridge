@@ -99,6 +99,9 @@ export default function ProjectConfigPage() {
   const [yamlPath, setYamlPath] = useState('');
   const [saveInfo, setSaveInfo] = useState('');
   const [configTree, setConfigTree] = useState({});
+  const [projectMappings, setProjectMappings] = useState([]);
+  const [projectMappingsLoading, setProjectMappingsLoading] = useState(false);
+  const [projectMappingsError, setProjectMappingsError] = useState('');
 
   const [viewMode, setViewMode] = useState('form'); // form | yaml
   const [yamlText, setYamlText] = useState('');
@@ -322,6 +325,34 @@ export default function ProjectConfigPage() {
 
     setProjectConfigDraft(id, nextDraft);
   }, [id, isInvalidProjectId, loading, viewMode, yamlText, configForm, setProjectConfigDraft, stableDraftKey]);
+
+  useEffect(() => {
+    if (!id || isInvalidProjectId || loading) return;
+
+    let cancelled = false;
+    setProjectMappingsLoading(true);
+    setProjectMappingsError('');
+
+    api.getMappings(id)
+      .then((response) => {
+        if (cancelled) return;
+        const rows = Array.isArray(response?.mappings) ? response.mappings : [];
+        setProjectMappings(rows);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setProjectMappings([]);
+        setProjectMappingsError(err?.message || 'Failed to load saved mappings.');
+      })
+      .finally(() => {
+        if (!cancelled) setProjectMappingsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id, isInvalidProjectId, loading]);
+
   useEffect(() => {
     if (configForm.source_type !== 'fabric') {
       setFabricAccounts([]);
@@ -1056,6 +1087,30 @@ export default function ProjectConfigPage() {
     return lines.length > 0 ? lines : [{ path: '', text: '{}' }];
   };
 
+  const selectedCompareFromSnapshot = useMemo(
+    () => compareSnapshots.find((row) => String(row?.snapshot_id || '') === String(compareFromSnapshotId || '')) || null,
+    [compareSnapshots, compareFromSnapshotId],
+  );
+
+  const selectedCompareToSnapshot = useMemo(
+    () => compareSnapshots.find((row) => String(row?.snapshot_id || '') === String(compareToSnapshotId || '')) || null,
+    [compareSnapshots, compareToSnapshotId],
+  );
+
+  const compareLeftLabel = useMemo(() => {
+    const timing = String(compareResult?.from_snapshot?.timing || selectedCompareFromSnapshot?.timing || '').toLowerCase();
+    if (timing === 'before') return 'Before Sync Snapshot';
+    if (timing === 'after') return 'After Sync Snapshot';
+    return 'From Snapshot State';
+  }, [compareResult?.from_snapshot?.timing, selectedCompareFromSnapshot?.timing]);
+
+  const compareRightLabel = useMemo(() => {
+    const timing = String(compareResult?.to_snapshot?.timing || selectedCompareToSnapshot?.timing || '').toLowerCase();
+    if (timing === 'before') return 'Before Sync Snapshot';
+    if (timing === 'after') return 'After Sync Snapshot';
+    return 'To Snapshot State';
+  }, [compareResult?.to_snapshot?.timing, selectedCompareToSnapshot?.timing]);
+
   const handleCompareSnapshots = async () => {
     if (!compareFromSnapshotId || !compareToSnapshotId) {
       setSaveInfo('Select both snapshots to compare.');
@@ -1237,6 +1292,11 @@ export default function ProjectConfigPage() {
           </div>
 
           <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 16 }}>
+            <MappingPreviewPanel
+              mappings={projectMappings}
+              loading={projectMappingsLoading}
+              error={projectMappingsError}
+            />
             {viewMode === 'form' ? (
               <FormEditor
                 value={configForm}
@@ -1585,6 +1645,29 @@ export default function ProjectConfigPage() {
                 </div>
               </div>
 
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                {[selectedCompareFromSnapshot, selectedCompareToSnapshot].map((snapshot, index) => (
+                  <div
+                    key={index === 0 ? 'selected-from-meta' : 'selected-to-meta'}
+                    style={{ border: '1px solid var(--border-main)', borderRadius: 10, padding: 12, background: 'var(--bg-surface)' }}
+                  >
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>
+                      {index === 0 ? 'From Snapshot Details' : 'To Snapshot Details'}
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+                      <InfoRow label="ID" value={String(snapshot?.snapshot_id || '-').slice(0, 18) || '-'} mono />
+                      <InfoRow label="Origin" value={String(snapshot?.snapshot_origin || snapshot?.stage || '-').toUpperCase()} />
+                      <InfoRow label="Role" value={String(snapshot?.role || snapshot?.system_role || '-').toUpperCase()} />
+                      <InfoRow label="Format" value={String(snapshot?.intermediate_format || '-').toUpperCase()} />
+                      <InfoRow label="Connector" value={String(snapshot?.connector_type || snapshot?.connector || '-')} />
+                      <InfoRow label="Target" value={String(snapshot?.target_id || '-')} />
+                      <InfoRow label="Group" value={String(snapshot?.snapshot_group_id || '-').slice(0, 18) || '-'} mono />
+                      <InfoRow label="Created" value={snapshot?.created_at ? new Date(snapshot.created_at).toLocaleString() : '-'} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
               {compareResult && (
                 <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, padding: 12, background: 'var(--bg-surface)' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 10 }}>
@@ -1628,7 +1711,7 @@ export default function ProjectConfigPage() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                     <div style={{ border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden' }}>
                       <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border-main)', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
-                        From Snapshot State
+                        {compareLeftLabel}
                       </div>
                       <div style={{ maxHeight: 320, overflow: 'auto', background: 'var(--bg-primary)' }}>
                         {renderStateLines(compareResult?.from_state || {}).map((line, idx) => {
@@ -1657,7 +1740,7 @@ export default function ProjectConfigPage() {
 
                     <div style={{ border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden' }}>
                       <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border-main)', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
-                        To Snapshot State
+                        {compareRightLabel}
                       </div>
                       <div style={{ maxHeight: 320, overflow: 'auto', background: 'var(--bg-primary)' }}>
                         {renderStateLines(compareResult?.to_state || {}).map((line, idx) => {
@@ -1684,6 +1767,7 @@ export default function ProjectConfigPage() {
                       </div>
                     </div>
                   </div>
+
                 </div>
               )}
             </>
@@ -1764,6 +1848,92 @@ export default function ProjectConfigPage() {
 
 
       <GlobalConfigModal open={globalOpen} onClose={() => setGlobalOpen(false)} />
+    </div>
+  );
+}
+
+function MappingPreviewPanel({ mappings = [], loading = false, error = '' }) {
+  if (loading) {
+    return (
+      <div style={{ marginBottom: 16, border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)', padding: 14, fontSize: 12, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
+        Loading saved mappings...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={{ marginBottom: 16, border: '1px solid var(--color-error)', borderRadius: 10, background: 'var(--color-error-bg)', padding: 14, fontSize: 12, color: 'var(--text-primary)' }}>
+        {error}
+      </div>
+    );
+  }
+
+  if (!Array.isArray(mappings) || mappings.length === 0) {
+    return null;
+  }
+
+  const collisionCount = mappings.reduce((count, mapping) => {
+    const tableCollision = mapping?.collision_detected ? 1 : 0;
+    const columnCollisions = Array.isArray(mapping?.columns)
+      ? mapping.columns.filter((column) => column?.collision_detected).length
+      : 0;
+    return count + tableCollision + columnCollisions;
+  }, 0);
+
+  return (
+    <div style={{ marginBottom: 16, border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)', padding: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>Saved Mappings</div>
+        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent-blue)', background: 'var(--accent-blue)20', padding: '2px 8px', borderRadius: 4 }}>
+          {mappings.length} tables
+        </span>
+        {collisionCount > 0 && (
+          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent-orange)', background: 'rgba(245, 158, 11, 0.14)', padding: '2px 8px', borderRadius: 4 }}>
+            {collisionCount} collisions resolved
+          </span>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {mappings.map((mapping) => (
+          <div key={mapping.id || mapping.source_path || mapping.source} style={{ border: '1px solid var(--border-main)', borderRadius: 8, padding: 12, background: 'var(--bg-main)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{mapping.source}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>{mapping.target}</div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                {mapping.collision_detected && (
+                  <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--accent-orange)' }}>COLLISION</span>
+                )}
+                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>{mapping.status || 'saved'}</span>
+              </div>
+            </div>
+
+            {Array.isArray(mapping.columns) && mapping.columns.length > 0 && (
+              <div style={{ marginTop: 10, display: 'grid', gap: 6 }}>
+                {mapping.columns.slice(0, 6).map((column) => (
+                  <div key={column.source_path || column.source} style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr auto', gap: 8, alignItems: 'center', fontSize: 11 }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>{column.source}</span>
+                    <span style={{ color: 'var(--text-tertiary)' }}>{'->'}</span>
+                    <span style={{ color: 'var(--text-primary)' }}>{column.target}</span>
+                    <span style={{ color: column.collision_detected ? 'var(--accent-orange)' : 'var(--text-tertiary)', fontSize: 10 }}>
+                      {column.collision_detected ? 'COLLISION' : (column.type || '')}
+                    </span>
+                  </div>
+                ))}
+                {mapping.columns.length > 6 && (
+                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                    +{mapping.columns.length - 6} more columns
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -2021,6 +2191,17 @@ function ScheduleOptionCard({ active, title, description, onClick }) {
       <div style={{ fontSize: 12, fontWeight: 700 }}>{title}</div>
       <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4, lineHeight: 1.45 }}>{description}</div>
     </button>
+  );
+}
+
+function InfoRow({ label, value, mono = false }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 12, color: 'var(--text-primary)', fontFamily: mono ? 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' : 'inherit', wordBreak: 'break-word' }}>
+        {value || '-'}
+      </div>
+    </div>
   );
 }
 

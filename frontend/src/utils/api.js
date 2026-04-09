@@ -809,11 +809,15 @@ export const api = {
         return handleResponse(res);
     },
 
-    async autoMap(projectId) {
+    async autoMap(projectIdOrPayload) {
         const res = await authFetch(`${API_BASE_URL}/mappings/auto`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(projectId ? { project_id: projectId } : {}),
+            body: JSON.stringify(
+                typeof projectIdOrPayload === 'object' && projectIdOrPayload !== null
+                    ? projectIdOrPayload
+                    : (projectIdOrPayload ? { project_id: projectIdOrPayload } : {})
+            ),
         });
         return handleResponse(res);
     },
@@ -932,6 +936,7 @@ export const api = {
         if (options.role) params.set('role', String(options.role));
         if (options.stage) params.set('stage', String(options.stage));
         if (options.origin) params.set('origin', String(options.origin));
+        if (options.run_id) params.set('run_id', String(options.run_id));
         if (options.group_id) params.set('group_id', String(options.group_id));
         if (options.include_state) params.set('include_state', 'true');
         if (options.limit) params.set('limit', String(options.limit));
