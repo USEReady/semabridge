@@ -42,6 +42,11 @@ class TMSLToOSIConverter(BaseConverter):
     Transforms Fabric TMSL JSON into OSI Model.
     """
 
+    AUTO_HIDDEN_TABLE_PREFIXES = (
+        "LocalDateTable_",
+        "DateTableTemplate_",
+    )
+
     def to_osi(self, source_data: Dict[str, Any]) -> OSIModel:
         """
         Convert TMSL dictionary to OSIModel object.
@@ -86,6 +91,12 @@ class TMSLToOSIConverter(BaseConverter):
             if "tables" in model_obj:
                 for table in model_obj["tables"]:
                     t_name = table.get("name", "")
+                    if self._is_auto_hidden_table_name(t_name):
+                        logger.info(
+                            "Skipping hidden auto-date table during OSI conversion: %s",
+                            t_name or "<unnamed>",
+                        )
+                        continue
                     dataset = self._parse_dataset(table)
                     osi_model.datasets.append(dataset)
 
@@ -267,6 +278,13 @@ class TMSLToOSIConverter(BaseConverter):
             is_hidden=table_def.get("isHidden", False),
             columns=columns,
             source_table=source_table
+        )
+
+    @classmethod
+    def _is_auto_hidden_table_name(cls, table_name: str) -> bool:
+        return any(
+            str(table_name or "").startswith(prefix)
+            for prefix in cls.AUTO_HIDDEN_TABLE_PREFIXES
         )
 
     def _parse_column(self, col_def: Dict[str, Any], table_name: str) -> OSIColumn:

@@ -42,6 +42,11 @@ class TMSLTransformer:
     """
     Transforms Fabric TMSL JSON into SML Model.
     """
+
+    AUTO_HIDDEN_TABLE_PREFIXES = (
+        "LocalDateTable_",
+        "DateTableTemplate_",
+    )
     
     def __init__(self):
         self.dax_translator = DAXTranslator()
@@ -141,6 +146,9 @@ class TMSLTransformer:
                 # Calculation Groups are not supported in V1
                 if table.get("calculationGroup"):
                     logger.info("Skipping calculation group table: %s", table_name or "<unnamed>")
+                    continue
+                if self._is_auto_hidden_table_name(table_name):
+                    logger.info("Skipping hidden auto-date table: %s", table_name or "<unnamed>")
                     continue
                 if "#ERROR" in json.dumps(table, ensure_ascii=False, default=str).upper():
                     logger.warning(
@@ -540,6 +548,13 @@ class TMSLTransformer:
             is_hidden=table_def.get("isHidden", False),
             columns=columns,
             source_table=source_table
+        )
+
+    @classmethod
+    def _is_auto_hidden_table_name(cls, table_name: str) -> bool:
+        return any(
+            str(table_name or "").startswith(prefix)
+            for prefix in cls.AUTO_HIDDEN_TABLE_PREFIXES
         )
     
     def _parse_column(self, col_def: Dict[str, Any]) -> SMLColumn:

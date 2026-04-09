@@ -138,3 +138,24 @@ class TestTMSLToOSI:
         metric = osi.metrics[0]
         assert metric.unique_name == "Broken Measure"
         assert metric.expression == "[Broken Measure]"
+
+    def test_skip_auto_hidden_date_tables(self, converter):
+        """Auto-generated Power BI date tables should be skipped in OSI conversion."""
+        source = {
+            "tmsl": {
+                "model": {
+                    "name": "DateModel",
+                    "tables": [
+                        {"name": "Sales", "columns": [{"name": "Id", "dataType": "int64"}]},
+                        {"name": "LocalDateTable_123", "isHidden": True, "columns": []},
+                        {"name": "DateTableTemplate_abc", "isHidden": True, "columns": []},
+                    ],
+                }
+            },
+            "workspace_id": "ws-123",
+            "dataset_id": "ds-date",
+        }
+
+        osi = converter.to_osi(source)
+
+        assert [ds.unique_name for ds in osi.datasets] == ["Sales"]
