@@ -7,7 +7,7 @@ This separates "what to run" (ExecutionConfig) from "how to run it" (ConnectorBe
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from pathlib import Path
 import yaml
 
@@ -97,6 +97,95 @@ class CompatibilityBehavior(BaseModel):
         description="Force all identifiers to uppercase"
     )
 
+class DatabricksBehavior(BaseModel):
+    """Databricks-specific deployment behavior controls."""
+    create_metadata_table: bool = Field(
+        default=True,
+        description="Create Semabridge metadata Delta table (set false for metric-view-only deployment)"
+    )
+    create_measure_views: bool = Field(
+        default=True,
+        description="Generate measure views for deployed measures"
+    )
+    measure_view_type: str = Field(
+        default="metric_view",
+        description=(
+            "View technology to use: "
+            "'auto' (probe runtime, prefer metric_view), "
+            "'metric_view' (force native WITH METRICS YAML), "
+            "'materialized_view' (CREATE OR REPLACE MATERIALIZED VIEW with semantic TBLPROPERTIES), "
+            "'sql_view' (plain CREATE OR REPLACE VIEW), "
+            "'none' (metadata table only)"
+        ),
+    )
+    measure_view_mode: str = Field(
+        default="per_measure",
+        description=(
+            "View granularity: 'per_measure' (separate views) or "
+            "'combined' (single model-level view with relationship joins when supported)"
+        )
+    )
+    view_prefix: str = Field(
+        default="mv",
+        description="Prefix for generated measure view names"
+    )
+    enable_simple_dax_translation: bool = Field(
+        default=True,
+        description="Translate simple DAX patterns (SUM, COUNT, etc.) to SQL for view creation"
+    )
+    enable_cross_table_joins: bool = Field(
+        default=False,
+        description="Build explicit joins for measures that reference multiple datasets"
+    )
+    enable_low_confidence_drafts: bool = Field(
+        default=False,
+        description="Deploy LOW-confidence measures as draft placeholders instead of dropping them"
+    )
+    emit_metric_views_for_all_datasets: bool = Field(
+        default=False,
+        description="Emit a fallback metric view for datasets without deployable measures"
+    )
+    source_table_mapping: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Explicit mapping of Fabric dataset names to Databricks tables. "
+            "Example: {'CONTINENT_1': 'analytics.raw.continent_data'}"
+        ),
+    )
+    source_column_mapping: Dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Optional mapping of semantic columns to physical Databricks columns. "
+            "Supports nested format {'Fact': {'Customer Key': 'customer_key'}} "
+            "or flat format {'Fact.Customer Key': 'customer_key'}."
+        ),
+    )
+    source_catalog: str = Field(
+        default="",
+        description="Default Databricks catalog for source data tables (if not mapped)"
+    )
+    source_schema: str = Field(
+        default="",
+        description="Default Databricks schema for source data tables (if not mapped)"
+    )
+    on_missing_source: str = Field(
+        default="plan",
+        description=(
+            "Action when source table doesn't exist: "
+            "'plan' (generate SQL, save to output/, warn), "
+            "'skip' (silently skip view creation), "
+            "'fail' (raise error, halt deployment)"
+        ),
+    )
+    grant_select_to_groups: List[str] = Field(
+        default_factory=list,
+        description="Groups to GRANT SELECT on deployed metric views"
+    )
+    transfer_ownership_to: str = Field(
+        default="",
+        description="Group to transfer metric view ownership to (enables collaborative editing)"
+    )
+
 class FeatureFlags(BaseModel):
     """Safe toggles for new/experimental features."""
     enable_cortex_analyst: bool = Field(
@@ -134,6 +223,7 @@ class ConnectorBehavior(BaseModel):
     """
     snowflake: SnowflakeBehavior = Field(default_factory=SnowflakeBehavior)
     fabric: FabricBehavior = Field(default_factory=FabricBehavior)
+    databricks: DatabricksBehavior = Field(default_factory=DatabricksBehavior)
     semantic_model: SemanticModelBehavior = Field(default_factory=SemanticModelBehavior)
     compatibility: CompatibilityBehavior = Field(default_factory=CompatibilityBehavior)
     features: FeatureFlags = Field(default_factory=FeatureFlags)

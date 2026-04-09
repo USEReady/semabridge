@@ -60,6 +60,9 @@ from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
 from semabridge.core.interfaces import BaseEmitter
 from semabridge.core.exceptions import ConnectorError
 from semabridge.utils.logger import get_logger
+from semabridge.repository.duplicate_name_mapping_repository import (
+    DuplicateNameMappingRepository,
+)
 
 logger = get_logger(__name__)
 
@@ -87,6 +90,211 @@ class SnowflakeEmitter(BaseEmitter):
             suppress_reserved=self.behavior.compatibility.suppress_reserved_words,
             additional_reserved=set(getattr(self.behavior.compatibility, 'additional_reserved_words', []) or []),
         )
+        try:
+            self._dup_name_repo = DuplicateNameMappingRepository()
+        except Exception as exc:
+            self._dup_name_repo = None
+            logger.warning(
+                "Duplicate-name mapping repository unavailable; falling back to in-memory numbering: %s",
+                exc,
+            )
+
+    def _duplicate_namespace_key(self, model_name: Optional[str] = None) -> str:
+        parts = [
+            self._sanitize_alias(self.config.database or "DB"),
+            self._sanitize_alias(self.config.schema_name or "SCHEMA"),
+        ]
+        if model_name:
+            parts.append(self._sanitize_alias(model_name))
+        return ".".join(parts)
+
+    @staticmethod
+    def _build_duplicate_signature_seed(
+        *,
+        source_name: str,
+        source_expression: Optional[str],
+        data_type: Optional[str],
+        aggregation: Optional[str] = None,
+    ) -> str:
+        return "|".join(
+            [
+                source_name or "",
+                source_expression or "",
+                data_type or "",
+                aggregation or "",
+            ]
+        )
+
+    def _resolve_persistent_duplicate_name(
+        self,
+        *,
+        scope_type: str,
+        namespace_key: str,
+        dataset_key: str,
+        normalized_base: str,
+        source_name: str,
+        source_signature: str,
+        preferred_name: str,
+    ) -> str:
+        if not self._dup_name_repo:
+            return preferred_name
+        try:
+            return self._dup_name_repo.get_or_create_assigned_name(
+                scope_type=scope_type,
+                namespace_key=namespace_key,
+                dataset_key=dataset_key,
+                normalized_base=normalized_base,
+                source_name=source_name,
+                source_signature=source_signature,
+                preferred_name=preferred_name,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist duplicate-name mapping for '%s'/'%s'; using '%s': %s",
+                dataset_key,
+                source_name,
+                preferred_name,
+                exc,
+            )
+            return preferred_name
+
+    def _precompute_duplicate_mappings_for_sml(self, sml: SMLModel) -> None:
+        """Persist duplicate mappings for all SML datasets/metrics before emit.
+
+        This strengthens duplicate coverage by ensuring mappings are written for
+        every detected collision even if later generation branches are skipped.
+        """
+        for dataset in sml.datasets:
+            self._collect_physical_source_columns(dataset)
+
+        metric_base_totals: dict[str, int] = {}
+        metric_label_totals: dict[str, int] = {}
+        for metric in sml.metrics:
+            base_alias = self._sanitize_alias(metric.unique_name)
+            metric_base_totals[base_alias] = metric_base_totals.get(base_alias, 0) + 1
+            label_alias = self._sanitize_alias(getattr(metric, "label", None) or metric.unique_name)
+            metric_label_totals[label_alias] = metric_label_totals.get(label_alias, 0) + 1
+
+        metric_namespace = self._duplicate_namespace_key(sml.unique_name or sml.label)
+        metric_base_seen: dict[str, int] = {}
+        metric_signature_seen: dict[str, int] = {}
+        metric_label_seen: dict[str, int] = {}
+        for metric in sml.metrics:
+            metric_base_alias = self._sanitize_alias(metric.unique_name)
+            if metric_base_totals.get(metric_base_alias, 0) <= 1:
+                pass
+            else:
+                metric_seen_idx = metric_base_seen.get(metric_base_alias, 0) + 1
+                metric_base_seen[metric_base_alias] = metric_seen_idx
+                preferred_name = f"{metric_base_alias}_{metric_seen_idx}"
+
+                metric_signature_seed = self._build_duplicate_signature_seed(
+                    source_name=metric.unique_name,
+                    source_expression=metric.sql_expression or metric.expression,
+                    data_type=None,
+                    aggregation=metric.aggregation.value if metric.aggregation else None,
+                )
+                sig_idx = metric_signature_seen.get(metric_signature_seed, 0) + 1
+                metric_signature_seen[metric_signature_seed] = sig_idx
+                metric_signature = f"{metric_signature_seed}::occ{sig_idx}"
+
+                self._resolve_persistent_duplicate_name(
+                    scope_type="metric",
+                    namespace_key=metric_namespace,
+                    dataset_key=self._sanitize_alias(metric.dataset),
+                    normalized_base=metric_base_alias,
+                    source_name=metric.unique_name,
+                    source_signature=metric_signature,
+                    preferred_name=preferred_name,
+                )
+
+            label_alias = self._sanitize_alias(getattr(metric, "label", None) or metric.unique_name)
+            if metric_label_totals.get(label_alias, 0) > 1:
+                label_idx = metric_label_seen.get(label_alias, 0) + 1
+                metric_label_seen[label_alias] = label_idx
+                label_signature_seed = self._build_duplicate_signature_seed(
+                    source_name=getattr(metric, "label", None) or metric.unique_name,
+                    source_expression=metric.sql_expression or metric.expression,
+                    data_type=None,
+                    aggregation=metric.aggregation.value if metric.aggregation else None,
+                )
+                label_signature = f"{label_signature_seed}::occ{label_idx}"
+                self._resolve_persistent_duplicate_name(
+                    scope_type="metric_label",
+                    namespace_key=metric_namespace,
+                    dataset_key=self._sanitize_alias(metric.dataset),
+                    normalized_base=label_alias,
+                    source_name=metric.unique_name,
+                    source_signature=label_signature,
+                    preferred_name=f"{label_alias}_{label_idx}",
+                )
+
+    def _precompute_duplicate_mappings_for_osi(self, osi: "OSIModel") -> None:
+        """Persist duplicate mappings for all OSI datasets/metrics before emit."""
+        for dataset in osi.datasets:
+            self._collect_physical_source_columns_osi(dataset)
+
+        metric_base_totals: dict[str, int] = {}
+        metric_label_totals: dict[str, int] = {}
+        for metric in osi.metrics:
+            base_alias = self._sanitize_alias(metric.unique_name)
+            metric_base_totals[base_alias] = metric_base_totals.get(base_alias, 0) + 1
+            label_alias = self._sanitize_alias(getattr(metric, "label", None) or metric.unique_name)
+            metric_label_totals[label_alias] = metric_label_totals.get(label_alias, 0) + 1
+
+        metric_namespace = self._duplicate_namespace_key(osi.unique_name or osi.label)
+        metric_base_seen: dict[str, int] = {}
+        metric_signature_seen: dict[str, int] = {}
+        metric_label_seen: dict[str, int] = {}
+        for metric in osi.metrics:
+            metric_base_alias = self._sanitize_alias(metric.unique_name)
+            if metric_base_totals.get(metric_base_alias, 0) <= 1:
+                pass
+            else:
+                metric_seen_idx = metric_base_seen.get(metric_base_alias, 0) + 1
+                metric_base_seen[metric_base_alias] = metric_seen_idx
+                preferred_name = f"{metric_base_alias}_{metric_seen_idx}"
+
+                metric_signature_seed = self._build_duplicate_signature_seed(
+                    source_name=metric.unique_name,
+                    source_expression=metric.sql_expression or metric.expression,
+                    data_type=None,
+                    aggregation=metric.aggregation.value if metric.aggregation else None,
+                )
+                sig_idx = metric_signature_seen.get(metric_signature_seed, 0) + 1
+                metric_signature_seen[metric_signature_seed] = sig_idx
+                metric_signature = f"{metric_signature_seed}::occ{sig_idx}"
+
+                self._resolve_persistent_duplicate_name(
+                    scope_type="metric",
+                    namespace_key=metric_namespace,
+                    dataset_key=self._sanitize_alias(metric.dataset),
+                    normalized_base=metric_base_alias,
+                    source_name=metric.unique_name,
+                    source_signature=metric_signature,
+                    preferred_name=preferred_name,
+                )
+
+            label_alias = self._sanitize_alias(getattr(metric, "label", None) or metric.unique_name)
+            if metric_label_totals.get(label_alias, 0) > 1:
+                label_idx = metric_label_seen.get(label_alias, 0) + 1
+                metric_label_seen[label_alias] = label_idx
+                label_signature_seed = self._build_duplicate_signature_seed(
+                    source_name=getattr(metric, "label", None) or metric.unique_name,
+                    source_expression=metric.sql_expression or metric.expression,
+                    data_type=None,
+                    aggregation=metric.aggregation.value if metric.aggregation else None,
+                )
+                label_signature = f"{label_signature_seed}::occ{label_idx}"
+                self._resolve_persistent_duplicate_name(
+                    scope_type="metric_label",
+                    namespace_key=metric_namespace,
+                    dataset_key=self._sanitize_alias(metric.dataset),
+                    normalized_base=label_alias,
+                    source_name=metric.unique_name,
+                    source_signature=label_signature,
+                    preferred_name=f"{label_alias}_{label_idx}",
+                )
 
     def _sanitize_sql_markdown(self, sql: str) -> str:
         """
@@ -171,6 +379,54 @@ class SnowflakeEmitter(BaseEmitter):
             return f'{agg}({table_alias}."{col_name}")'
 
         return None
+
+    @staticmethod
+    def _is_simple_dax_aggregation_expression(expression: Optional[str]) -> bool:
+        """Return True for simple one-column DAX aggregations.
+
+        We use this to keep Client Data from falling back to risky cross-dataset
+        remaps when the expression is just ``SUM([Column])``-style shorthand.
+        """
+        expr = " ".join(str(expression or "").split()).strip()
+        if not expr:
+            return False
+
+        return bool(
+            re.match(
+                r"(?i)^(SUM|AVERAGE|MIN|MAX|COUNT|DISTINCTCOUNT)\(\s*\[[^\]]+\]\s*\)$",
+                expr,
+            )
+        )
+
+    def _should_use_direct_metric_aggregation(self, metric: Any) -> bool:
+        """Prefer deterministic aggregation SQL for simple source-column metrics.
+
+        Some auto-generated metrics carry both ``source_column`` and
+        ``sql_expression``. The generic sql-expression rewrite path can mangle
+        those simple measures when names contain spaces or symbols, so for
+        low-complexity direct aggregations we intentionally rebuild the SQL as
+        ``AGG(alias."COLUMN")`` from structured metadata.
+        """
+        if not getattr(metric, "source_column", None) or not getattr(metric, "aggregation", None):
+            return False
+
+        complexity_tier = getattr(metric, "complexity_tier", 1) or 1
+        if complexity_tier > 1:
+            return False
+
+        expr = (getattr(metric, "expression", None) or "").strip().upper()
+        if not expr:
+            return True
+
+        simple_patterns = (
+            "SUM(",
+            "COUNT(",
+            "DISTINCTCOUNT(",
+            "AVERAGE(",
+            "MIN(",
+            "MAX(",
+        )
+        return expr.startswith(simple_patterns)
 
     def _build_schema_validation_map(self, sml: SMLModel) -> Dict[str, set[str]]:
         """
@@ -484,6 +740,12 @@ class SnowflakeEmitter(BaseEmitter):
         
         normalized_sql = metric_sql
 
+        def _format_metric_ref(table_alias: str, col_name: str) -> str:
+            """Keep dollar-sign columns quoted so Snowflake parses them reliably."""
+            if "$" in col_name:
+                return f'{table_alias}."{col_name}"'
+            return f"{table_alias}.{col_name}"
+
         # Pattern 1: Match quoted column references: alias."ColumnName" or alias.'ColumnName'
         # This handles LLM-generated SQL with mixed case like PRODUCT."Product"
         quoted_pattern = r'(\w+)\.(["\'])([^"\']+)\2'
@@ -545,7 +807,7 @@ class SnowflakeEmitter(BaseEmitter):
                             sanitized_col_name,
                         ) or sanitized_col_name
                         old_ref = match.group(0)
-                        new_ref = f'{owner_alias}.{owner_col}'
+                        new_ref = _format_metric_ref(owner_alias, owner_col)
                         normalized_sql = normalized_sql.replace(old_ref, new_ref)
                         logger.debug(
                             f"Normalized metric '{metric_name}': remapped {old_ref} → {new_ref}"
@@ -553,13 +815,13 @@ class SnowflakeEmitter(BaseEmitter):
                         continue
             elif resolved_col != sanitized_col_name:
                 old_ref = match.group(0)
-                new_ref = f'{table_alias}.{resolved_col}'
+                new_ref = _format_metric_ref(table_alias, resolved_col)
                 normalized_sql = normalized_sql.replace(old_ref, new_ref)
                 continue
             
             # Replace: alias."ColumnName" → alias.COLUMN_NAME (unquoted)
             old_ref = match.group(0)
-            new_ref = f'{table_alias}.{sanitized_col_name}'
+            new_ref = _format_metric_ref(table_alias, sanitized_col_name)
             normalized_sql = normalized_sql.replace(old_ref, new_ref)
             
             logger.debug(
@@ -627,7 +889,7 @@ class SnowflakeEmitter(BaseEmitter):
                             sanitized_col_name,
                         ) or sanitized_col_name
                         old_ref = match.group(0)
-                        new_ref = f'{owner_alias}.{owner_col}'
+                        new_ref = _format_metric_ref(owner_alias, owner_col)
                         normalized_sql = normalized_sql.replace(old_ref, new_ref)
                         logger.debug(
                             f"Normalized metric '{metric_name}': remapped {old_ref} → {new_ref}"
@@ -635,13 +897,13 @@ class SnowflakeEmitter(BaseEmitter):
                         continue
             elif resolved_col != sanitized_col_name:
                 old_ref = match.group(0)
-                new_ref = f'{table_alias}.{resolved_col}'
+                new_ref = _format_metric_ref(table_alias, resolved_col)
                 normalized_sql = normalized_sql.replace(old_ref, new_ref)
                 continue
             
             if col_name != sanitized_col_name:
                 old_ref = match.group(0)
-                new_ref = f'{table_alias}.{sanitized_col_name}'
+                new_ref = _format_metric_ref(table_alias, sanitized_col_name)
                 normalized_sql = normalized_sql.replace(old_ref, new_ref)
                 
                 logger.debug(
@@ -1025,10 +1287,10 @@ class SnowflakeEmitter(BaseEmitter):
             self.authenticate()
         
         cur = self._connection.cursor()
-        cur.execute(f"SHOW TABLES IN SCHEMA {self.config.schema_name}")
+        self._execute_sql(cur, f"SHOW TABLES IN SCHEMA {self.config.schema_name}", context="SHOW TABLES")
         tables = [row[1] for row in cur.fetchall()]
         
-        cur.execute(f"SHOW VIEWS IN SCHEMA {self.config.schema_name}")
+        self._execute_sql(cur, f"SHOW VIEWS IN SCHEMA {self.config.schema_name}", context="SHOW VIEWS")
         views = [row[1] for row in cur.fetchall()]
         
         return {"tables": tables, "views": views}
@@ -1045,11 +1307,11 @@ class SnowflakeEmitter(BaseEmitter):
         cur = self._connection.cursor()
         try:
             # Check USAGE on Schema
-            cur.execute(f"USE SCHEMA {self.config.database}.{self.config.schema_name}")
+            self._execute_sql(cur, f"USE SCHEMA {self.config.database}.{self.config.schema_name}", context="USE SCHEMA")
             
             # Check CREATE SEMANTIC VIEW privilege (may use a proxy check like SHOW GRANTS)
             # For simplicity, we try a no-op check or rely on explicit GRANT verification
-            cur.execute("SELECT current_role()")
+            self._execute_sql(cur, "SELECT current_role()", context="SELECT current_role()")
             role = cur.fetchone()[0]
             logger.info(f"Validating permissions for role: {role}")
             
@@ -1115,6 +1377,8 @@ class SnowflakeEmitter(BaseEmitter):
         last_exc: Exception | None = None
         for attempt in range(1, max_retries + 1):
             try:
+                if attempt == 1:
+                    logger.info("Executing SQL via retry wrapper:\n%s", self._ddl_preview(sql))
                 return cursor.execute(sql)
             except snowflake.connector.errors.ProgrammingError as e:
                 # Non-transient SQL issues: log statement context before failing.
@@ -1155,6 +1419,53 @@ class SnowflakeEmitter(BaseEmitter):
                 else:
                     raise
         raise last_exc  # pragma: no cover
+
+    @staticmethod
+    def _ddl_preview(sql: str, *, max_lines: int = 30) -> str:
+        """Return a compact preview of a DDL statement for terminal tracing."""
+        lines = sql.splitlines()
+        if len(lines) <= max_lines:
+            return "\n".join(lines)
+        preview = "\n".join(lines[:max_lines])
+        return f"{preview}\n... ({len(lines) - max_lines} more lines)"
+
+    @staticmethod
+    def _is_client_data_model(model_name: Optional[str]) -> bool:
+        """Return True only for the legacy Client Data model compatibility path."""
+        return str(model_name or "").strip().lower() == "client data"
+
+    def _format_physical_column_ref(
+        self,
+        alias: str,
+        phys_col: str,
+        *,
+        model_name: Optional[str] = None,
+    ) -> str:
+        """Format a physical column reference for semantic-view emission.
+
+        Most models keep the current quoted form. Client Data gets a narrow
+        compatibility path for dollar-sign columns because Snowflake semantic
+        view compilation is sensitive to those identifiers in this model only.
+        """
+        if alias:
+            if self._is_client_data_model(model_name) and "$" in phys_col:
+                return f"{alias}.{phys_col}"
+            return f'{alias}."{phys_col}"'
+        return f'"{phys_col}"'
+
+    def _execute_sql(
+        self,
+        cursor,
+        sql: str,
+        params: Optional[tuple[Any, ...]] = None,
+        *,
+        context: str = "SQL",
+    ) -> Any:
+        """Log and execute a Snowflake statement in one place."""
+        logger.info("%s:\n%s", context, self._ddl_preview(sql))
+        if params is None:
+            return cursor.execute(sql)
+        return cursor.execute(sql, params)
 
     
     # -----------------------------------------------------------------
@@ -1235,9 +1546,11 @@ class SnowflakeEmitter(BaseEmitter):
                 "WHERE TABLE_CATALOG = %s AND TABLE_SCHEMA = %s "
                 "ORDER BY TABLE_NAME, ORDINAL_POSITION"
             )
-            cursor.execute(
+            self._execute_sql(
+                cursor,
                 query,
                 (self.config.database.upper(), self.config.schema_name.upper()),
+                context="INFORMATION_SCHEMA metadata",
             )
             rows = cursor.fetchall()
 
@@ -1285,7 +1598,7 @@ class SnowflakeEmitter(BaseEmitter):
             ]
             
             for pattern in patterns:
-                cursor.execute(f"SHOW SEMANTIC VIEWS LIKE '{pattern}'")
+                self._execute_sql(cursor, f"SHOW SEMANTIC VIEWS LIKE '{pattern}'", context="SHOW SEMANTIC VIEWS")
                 rows = cursor.fetchall()
                 if len(rows) > 0:
                     return True
@@ -1315,6 +1628,15 @@ class SnowflakeEmitter(BaseEmitter):
         compatible).
         """
         try:
+            deploy_started_at = time.perf_counter()
+            model_label = sml.unique_name or sml.label or "<unnamed_sml_model>"
+            logger.info(
+                "[deploy] start model=%s datasets=%s metrics=%s",
+                model_label,
+                len(getattr(sml, "datasets", []) or []),
+                len(getattr(sml, "metrics", []) or []),
+            )
+
             # Decide connection strategy: session vs per-call
             if self._session_conn is not None:
                 conn = self._session_conn
@@ -1343,26 +1665,37 @@ class SnowflakeEmitter(BaseEmitter):
                 cur = conn.cursor()
                 
                 # Step 0: Legacy Cleanup (if enabled)
+                step_started_at = time.perf_counter()
                 if self.behavior.legacy.drop_deprecated_views:
+                    logger.info("[deploy] step0 legacy cleanup start")
                     self._drop_deprecated_views(cur, sml)
+                logger.info("[deploy] step0 complete in %.2fs", time.perf_counter() - step_started_at)
 
                 # Step 1: Auto-create missing source tables
+                step_started_at = time.perf_counter()
+                logger.info("[deploy] step1 source-table bootstrap start")
                 if self.sf_behavior.create_missing_tables:
                     self._ensure_source_tables_exist(cur, sml)
                 else:
                     logger.info("Skipping table creation (create_missing_tables=False)")
+                logger.info("[deploy] step1 complete in %.2fs", time.perf_counter() - step_started_at)
 
                 # Step 1.25: Optional physical type-fix via CTAS + SWAP.
+                step_started_at = time.perf_counter()
+                logger.info("[deploy] step1.25 inferred-type pass start")
                 if self.sf_behavior.apply_inferred_types:
                     self._apply_inferred_types_ctas_sml(cur, sml)
                 else:
                     logger.info("Skipping inferred datatype CTAS fix (apply_inferred_types=False)")
+                logger.info("[deploy] step1.25 complete in %.2fs", time.perf_counter() - step_started_at)
                 
                 # Step 1.5: Pre-deployment validation gate
                 # Catches PK, identifier, and relationship issues BEFORE SQL.
                 # Module 1: Fetch live Snowflake metadata so Tier 6 can
                 # verify that every referenced source table/column exists.
                 try:
+                    step_started_at = time.perf_counter()
+                    logger.info("[deploy] step1.5 validation start")
                     from semabridge.core.validation.global_validator import GlobalValidator
                     sf_meta = self._fetch_schema_metadata(cur)
                     validator = GlobalValidator(
@@ -1385,10 +1718,14 @@ class SnowflakeEmitter(BaseEmitter):
                     except ImportError:
                         logger.debug("Pre-deployment validator not available — skipping")
                 # Note: SemaBridgeValidationError propagates up intentionally
+                    logger.info("[deploy] step1.5 validation complete in %.2fs", time.perf_counter() - step_started_at)
 
                 # Step 2: Generate and execute DDLs
+                step_started_at = time.perf_counter()
+                logger.info("[deploy] step2 DDL generation start")
                 ddls = self.generate_ddls(sml)
                 logger.info("Generated Snowflake DDLs")
+                logger.info("[deploy] step2 DDL generation complete in %.2fs", time.perf_counter() - step_started_at)
 
                 if ddls:
                     self._guard_relationship_clause(
@@ -1402,9 +1739,21 @@ class SnowflakeEmitter(BaseEmitter):
                 
                 for i, ddl in enumerate(ddls):
                     logger.info(f"Executing DDL statement {i+1}/{len(ddls)}...")
-                    logger.debug(f"DDL Content:\n{ddl}")
+                    logger.info(
+                        "DDL preview for statement %s/%s:\n%s",
+                        i + 1,
+                        len(ddls),
+                        self._ddl_preview(ddl),
+                    )
                     try:
+                        ddl_started_at = time.perf_counter()
                         self._execute_with_retry(cur, ddl)
+                        logger.info(
+                            "[deploy] statement %s/%s executed in %.2fs",
+                            i + 1,
+                            len(ddls),
+                            time.perf_counter() - ddl_started_at,
+                        )
                     except Exception as ddl_ex:
                         ddl_preview = "\\n".join(ddl.splitlines()[:60])
                         logger.error(
@@ -1463,7 +1812,10 @@ class SnowflakeEmitter(BaseEmitter):
                 except Exception as ex:
                     logger.warning(f"Failed to save DDL YAML: {ex}")
                 
-                logger.info("Semantic View deployed successfully")
+                logger.info(
+                    "Semantic View deployed successfully in %.2fs",
+                    time.perf_counter() - deploy_started_at,
+                )
                 
             finally:
                 if owns_conn:
@@ -1502,11 +1854,11 @@ class SnowflakeEmitter(BaseEmitter):
             return
 
         # Only query Snowflake if we have datasets to check
-        cursor.execute(f"SHOW TABLES IN SCHEMA {self.config.schema_name}")
+        self._execute_sql(cursor, f"SHOW TABLES IN SCHEMA {self.config.schema_name}", context="SHOW TABLES")
         existing_tables = {row[1].upper() for row in cursor.fetchall()}
         
         # Get list of existing views (to avoid collision)
-        cursor.execute(f"SHOW VIEWS IN SCHEMA {self.config.schema_name}")
+        self._execute_sql(cursor, f"SHOW VIEWS IN SCHEMA {self.config.schema_name}", context="SHOW VIEWS")
         existing_views = {row[1].upper() for row in cursor.fetchall()}
         
         all_existing = existing_tables | existing_views
@@ -1533,9 +1885,10 @@ class SnowflakeEmitter(BaseEmitter):
                 # Use EVOLVE (additive) approach for shared source tables
                 if missing_columns:
                     logger.info(f"Table '{safe_table_name}' missing columns: {missing_columns}. Adding them...")
+                    physical_cols = self._collect_physical_source_columns(dataset)
                     for col_name in missing_columns:
-                        # Find col from dataset to get type
-                        orig_col = next((c for c in dataset.columns if self._sanitize_col_name(c.unique_name) == col_name), None)
+                        # Find canonical source column from the resolved physical map
+                        orig_col = physical_cols.get(col_name)
                         if orig_col:
                             type_map = {
                                 "STRING": "VARCHAR(500)", "INTEGER": "INTEGER", "FLOAT": "FLOAT",
@@ -1544,7 +1897,11 @@ class SnowflakeEmitter(BaseEmitter):
                             }
                             sf_type = type_map.get(orig_col.data_type.value, "VARCHAR(500)")
                             try:
-                                cursor.execute(f'ALTER TABLE {self.config.schema_name}.{quoted_table} ADD COLUMN "{col_name}" {sf_type}')
+                                self._execute_sql(
+                                    cursor,
+                                    f'ALTER TABLE {self.config.schema_name}.{quoted_table} ADD COLUMN "{col_name}" {sf_type}',
+                                    context=f"ALTER TABLE ADD COLUMN {safe_table_name}.{col_name}",
+                                )
                             except Exception as e:
                                 logger.warning(f"Could not add column {col_name} to {safe_table_name}: {e}")
                                 # Fallback: if ALTER fails (e.g. constraints), we might need recreation
@@ -1562,7 +1919,7 @@ class SnowflakeEmitter(BaseEmitter):
                     create_ddl = self._generate_create_table_ddl(dataset, source_table)
                 
                 try:
-                    cursor.execute(create_ddl)
+                    self._execute_sql(cursor, create_ddl, context=f"CREATE TABLE {safe_table_name}")
                     logger.info(f"Created table: {safe_table_name}")
 
                     # Belt-and-suspenders: after CREATE TABLE IF NOT EXISTS
@@ -1576,9 +1933,10 @@ class SnowflakeEmitter(BaseEmitter):
                             cursor, safe_table_name, dataset
                         )
                         if missing_post:
+                            physical_cols = self._collect_physical_source_columns(dataset)
                             for col_name in missing_post:
-                                # Find col type as before
-                                orig_col = next((c for c in dataset.columns if self._sanitize_col_name(c.unique_name) == col_name), None)
+                                # Find canonical source column from the resolved physical map
+                                orig_col = physical_cols.get(col_name)
                                 if orig_col:
                                     type_map = {
                                         "STRING": "VARCHAR(500)", "INTEGER": "INTEGER", "FLOAT": "FLOAT",
@@ -1586,7 +1944,11 @@ class SnowflakeEmitter(BaseEmitter):
                                         "DATE": "DATE", "BINARY": "BINARY",
                                     }
                                     sf_type = type_map.get(orig_col.data_type.value, "VARCHAR(500)")
-                                    cursor.execute(f'ALTER TABLE {self.config.schema_name}.{quoted_table} ADD COLUMN "{col_name}" {sf_type}')
+                                    self._execute_sql(
+                                        cursor,
+                                        f'ALTER TABLE {self.config.schema_name}.{quoted_table} ADD COLUMN "{col_name}" {sf_type}',
+                                        context=f"ALTER TABLE ADD COLUMN {safe_table_name}.{col_name}",
+                                    )
 
                     
                     if source_table.upper() == "DIM_DATE":
@@ -1595,7 +1957,7 @@ class SnowflakeEmitter(BaseEmitter):
                         # Insert sample data if this is an imported model
                         sample_insert = self._generate_sample_insert(dataset, source_table)
                         if sample_insert:
-                            cursor.execute(sample_insert)
+                            self._execute_sql(cursor, sample_insert, context=f"INSERT SAMPLE ROWS {safe_table_name}")
                             logger.info(f"Inserted sample data into: {safe_table_name}")
                         
                 except Exception as e:
@@ -1621,19 +1983,11 @@ class SnowflakeEmitter(BaseEmitter):
                 - extra_columns: Set of column names that exist in Snowflake but not in SML
         """
         try:
-            cursor.execute(f'DESC TABLE {self.config.schema_name}."{table_name}"')
+            self._execute_sql(cursor, f'DESC TABLE {self.config.schema_name}."{table_name}"', context=f"DESC TABLE {table_name}")
             existing_cols = {row[0] for row in cursor.fetchall()}
             
             # Check if model expects columns that don't exist
-            expected_cols = set()
-            for col in dataset.columns:
-                if col.unique_name.startswith("RowNumber") or col.unique_name.startswith("_"):
-                    continue
-                source_expr = getattr(col, 'source_expression', None)
-                if source_expr and not self._is_physical_source_column(source_expr):
-                    continue
-                sanitized = self._sanitize_col_name(col.unique_name)
-                expected_cols.add(sanitized)
+            expected_cols = set(self._collect_physical_source_columns(dataset).keys())
             
             missing = expected_cols - existing_cols
             if missing:
@@ -1647,9 +2001,7 @@ class SnowflakeEmitter(BaseEmitter):
         except Exception as e:
             logger.warning(f"Could not verify table {table_name}: {e}")
             # If table doesn't exist or error occurs, return all columns as missing
-            all_expected = set()
-            for col in dataset.columns:
-                 all_expected.add(self._sanitize_col_name(col.unique_name))
+            all_expected = set(self._collect_physical_source_columns(dataset).keys())
             return (all_expected, set())
 
 
@@ -1674,7 +2026,7 @@ class SnowflakeEmitter(BaseEmitter):
         
         # Guard: Snowflake forbids dropping ALL columns from a table.
         try:
-            cursor.execute(f'DESC TABLE {self.config.schema_name}."{table_name}"')
+            self._execute_sql(cursor, f'DESC TABLE {self.config.schema_name}."{table_name}"', context=f"DESC TABLE {table_name}")
             total_cols = {row[0] for row in cursor.fetchall()}
             if extra_columns >= total_cols:
                 # Mandate 2: Idempotent DDL — auto-recreate instead of silent return
@@ -1685,7 +2037,7 @@ class SnowflakeEmitter(BaseEmitter):
                     )
                     create_ddl = self._generate_create_or_replace_table_ddl(dataset, table_name)
                     try:
-                        cursor.execute(create_ddl)
+                        self._execute_sql(cursor, create_ddl, context=f"CREATE OR REPLACE TABLE {table_name}")
                         logger.info(f"Successfully recreated table: {table_name}")
                     except Exception as e:
                         logger.error(f"Failed to recreate table {table_name}: {e}")
@@ -1703,7 +2055,7 @@ class SnowflakeEmitter(BaseEmitter):
             try:
                 ddl = f'ALTER TABLE {self.config.schema_name}."{table_name}" DROP COLUMN "{col_name}"'
                 logger.info(f"Dropping extra column: {table_name}.{col_name}")
-                cursor.execute(ddl)
+                self._execute_sql(cursor, ddl, context=f"DROP COLUMN {table_name}.{col_name}")
                 logger.info(f"Successfully dropped column: {col_name}")
             except Exception as e:
                 logger.warning(f"Could not drop column {col_name} from {table_name}: {e}")
@@ -1729,13 +2081,7 @@ class SnowflakeEmitter(BaseEmitter):
         schema = self.config.schema_name
 
         col_defs = []
-        for col in dataset.columns:
-            if col.unique_name.startswith("RowNumber") or col.unique_name.startswith("_"):
-                continue
-            source_expr = getattr(col, 'source_expression', None)
-            if source_expr and not self._is_physical_source_column(source_expr):
-                continue
-            col_name = self._sanitize_col_name(col.unique_name)
+        for col_name, col in self._collect_physical_source_columns(dataset).items():
             sf_type = type_map.get(col.data_type.value, "VARCHAR(500)")
             col_defs.append(f'    "{col_name}" {sf_type}')
 
@@ -1781,31 +2127,8 @@ class SnowflakeEmitter(BaseEmitter):
         }
         
         col_defs = []
-        for col in dataset.columns:
-            col_name = col.unique_name
-            
-            # Skip special columns (like RowNumber, etc.)
-            if col_name.startswith("RowNumber") or col_name.startswith("_"):
-                continue
-            
-            # Skip calculated columns — these are DAX expressions that
-            # have no physical source column in Snowflake.  Including
-            # them creates a column that can never be populated, and
-            # referencing it in the semantic view causes
-            # "invalid identifier" errors.
-            source_expr = getattr(col, 'source_expression', None)
-            if source_expr and not self._is_physical_source_column(source_expr):
-                logger.debug(
-                    f"Skipping calculated column '{col_name}' from "
-                    f"physical DDL (expression: {source_expr[:80]}...)"
-                )
-                continue
-            
-            # Get Snowflake type
+        for safe_name, col in self._collect_physical_source_columns(dataset).items():
             sf_type = type_map.get(col.data_type.value, "VARCHAR(500)")
-            
-            # Consistent quoted uppercase naming
-            safe_name = self._sanitize_col_name(col_name)
             col_defs.append(f'    "{safe_name}" {sf_type}')
         
         if not col_defs:
@@ -1819,6 +2142,101 @@ class SnowflakeEmitter(BaseEmitter):
         ddl += "\n);"
         
         return ddl
+
+    def _collect_physical_source_columns(self, dataset: SMLDataset) -> dict[str, Any]:
+        """Return ordered map of physical Snowflake column name -> SML column.
+
+        All valid semantic columns are preserved. When multiple semantic columns
+        normalize to the same Snowflake identifier, deterministic suffixes are
+        appended (``_1``, ``_2``, ...) so deployment remains lossless.
+        """
+        valid_columns: list[Any] = []
+        base_totals: dict[str, int] = {}
+        for col in dataset.columns:
+            col_name = col.unique_name
+
+            if col_name.startswith("RowNumber") or col_name.startswith("_"):
+                continue
+
+            source_expr = getattr(col, 'source_expression', None)
+            if source_expr and not self._is_physical_source_column(source_expr):
+                logger.debug(
+                    "Skipping calculated column '%s' from physical source columns",
+                    col_name,
+                )
+                continue
+
+            valid_columns.append(col)
+            safe_base = self._sanitize_col_name(col_name)
+            base_totals[safe_base] = base_totals.get(safe_base, 0) + 1
+
+        selected: dict[str, Any] = {}
+        base_seen: dict[str, int] = {}
+        signature_seen: dict[str, int] = {}
+        namespace_key = self._duplicate_namespace_key()
+        dataset_key = self._sanitize_alias(dataset.source_table or dataset.unique_name)
+        for col in valid_columns:
+            safe_base = self._sanitize_col_name(col.unique_name)
+            next_idx = base_seen.get(safe_base, 0) + 1
+            base_seen[safe_base] = next_idx
+
+            if base_totals.get(safe_base, 0) > 1:
+                signature_seed = self._build_duplicate_signature_seed(
+                    source_name=col.unique_name,
+                    source_expression=getattr(col, "source_expression", None),
+                    data_type=str(getattr(col, "data_type", "")),
+                )
+                sig_idx = signature_seen.get(signature_seed, 0) + 1
+                signature_seen[signature_seed] = sig_idx
+                source_signature = f"{signature_seed}::occ{sig_idx}"
+                preferred_name = f"{safe_base}_{next_idx}"
+                safe_name = self._resolve_persistent_duplicate_name(
+                    scope_type="column",
+                    namespace_key=namespace_key,
+                    dataset_key=dataset_key,
+                    normalized_base=safe_base,
+                    source_name=col.unique_name,
+                    source_signature=source_signature,
+                    preferred_name=preferred_name,
+                )
+            else:
+                safe_name = safe_base
+
+            while safe_name in selected:
+                next_idx += 1
+                base_seen[safe_base] = next_idx
+                safe_name = f"{safe_base}_{next_idx}"
+
+            if base_totals.get(safe_base, 0) > 1:
+                logger.warning(
+                    "Resolved physical column collision on table '%s': '%s' normalized to '%s'; using '%s'",
+                    dataset.source_table or dataset.unique_name,
+                    col.unique_name,
+                    safe_base,
+                    safe_name,
+                )
+
+            selected[safe_name] = col
+
+        return selected
+
+    def _resolve_physical_column_name(self, dataset: SMLDataset, raw_col_name: str) -> str:
+        """Resolve semantic/raw column name to canonical physical column name."""
+        physical_cols = self._collect_physical_source_columns(dataset)
+
+        for phys_name, col in physical_cols.items():
+            if col.unique_name == raw_col_name:
+                return phys_name
+
+        base = self._sanitize_col_name(raw_col_name)
+        if base in physical_cols:
+            return base
+
+        for phys_name, col in physical_cols.items():
+            if self._sanitize_col_name(col.unique_name) == base:
+                return phys_name
+
+        return base
 
     def generate_ctas_sql(
         self,
@@ -1874,16 +2292,10 @@ class SnowflakeEmitter(BaseEmitter):
 
     def _dataset_columns_for_ctas_sml(self, dataset: SMLDataset) -> list[dict[str, str]]:
         columns: list[dict[str, str]] = []
-        for col in dataset.columns:
-            col_name = col.unique_name
-            if col_name.startswith("RowNumber") or col_name.startswith("_"):
-                continue
-            source_expr = getattr(col, "source_expression", None)
-            if source_expr and not self._is_physical_source_column(source_expr):
-                continue
+        for col_name, col in self._collect_physical_source_columns(dataset).items():
             columns.append(
                 {
-                    "name": self._sanitize_col_name(col_name),
+                    "name": col_name,
                     "type": col.data_type.value.upper(),
                 }
             )
@@ -2053,13 +2465,15 @@ class SnowflakeEmitter(BaseEmitter):
             "FROM INFORMATION_SCHEMA.COLUMNS "
             "WHERE TABLE_CATALOG = %s AND TABLE_SCHEMA = %s AND TABLE_NAME = %s"
         )
-        cursor.execute(
+        self._execute_sql(
+            cursor,
             query,
             (
                 self.config.database.upper(),
                 self.config.schema_name.upper(),
                 safe_table_name.upper(),
             ),
+            context=f"INFORMATION_SCHEMA.COLUMNS {safe_table_name}",
         )
         rows = cursor.fetchall() or []
         col_types = {str(name).upper(): str(dtype).upper() for name, dtype in rows}
@@ -2077,20 +2491,62 @@ class SnowflakeEmitter(BaseEmitter):
         if not columns:
             raise ValueError("No columns inferred")
 
-        col_refs = ", ".join([f'"{c["name"]}"' for c in columns])
+        source_types = self._get_source_column_types(cursor, safe_table_name)
+        source_names = list(source_types.keys())
+
+        def _norm(name: str) -> str:
+            return re.sub(r"[^A-Z0-9]", "", str(name or "").upper())
+
+        resolved_pairs: list[tuple[str, str]] = []
+        fallback_logs: list[str] = []
+        for c in columns:
+            requested = str(c["name"])
+            requested_upper = requested.upper()
+            source_name = None
+
+            if requested_upper in source_types:
+                source_name = requested_upper
+            else:
+                requested_norm = _norm(requested)
+                matches = [src for src in source_names if _norm(src) == requested_norm]
+                if len(matches) == 1:
+                    source_name = matches[0]
+
+            if source_name:
+                resolved_pairs.append((requested, source_name))
+            else:
+                fallback_logs.append(
+                    f"Skipped non-physical column during sampling: {safe_table_name}.{requested}"
+                )
+
+        if not resolved_pairs:
+            logger.warning(
+                "Skipping sample type inference for %s: no model columns matched physical source columns",
+                safe_table_name,
+            )
+            return [], fallback_logs
+
+        def _q(ident: str) -> str:
+            escaped = str(ident).replace('"', '""')
+            return f'"{escaped}"'
+
+        col_refs = ", ".join([f"{_q(src)} AS {_q(req)}" for req, src in resolved_pairs])
         sample_sql = (
             f'SELECT {col_refs} FROM {self.config.schema_name}."{safe_table_name}" '
             f'LIMIT {sample_limit}'
         )
-        cursor.execute(sample_sql)
+        self._execute_sql(cursor, sample_sql, context=f"SAMPLE QUERY {safe_table_name}")
         rows = cursor.fetchall() or []
         logger.info("Sample rows fetched for %s: %s", safe_table_name, len(rows))
 
         inferred: list[dict[str, str]] = []
-        fallback_logs: list[str] = []
         varchar_types = {"VARCHAR", "STRING", "TEXT", "UNKNOWN", "VARIANT"}
 
-        for idx, col in enumerate(columns):
+        sampled_columns = [
+            c for c in columns if any(req == c["name"] for req, _src in resolved_pairs)
+        ]
+
+        for idx, col in enumerate(sampled_columns):
             declared_type = self._normalize_declared_type(col.get("type", ""))
             values = [r[idx] for r in rows if len(r) > idx and r[idx] is not None]
             logger.debug("%s.%s sample values: %s", safe_table_name, col["name"], values[:5])
@@ -2230,16 +2686,10 @@ class SnowflakeEmitter(BaseEmitter):
 
     def _dataset_columns_for_ctas_osi(self, dataset: "OSIDataset") -> list[dict[str, str]]:
         columns: list[dict[str, str]] = []
-        for col in dataset.columns:
-            col_name = col.unique_name
-            if col_name.startswith("RowNumber") or col_name.startswith("_"):
-                continue
-            source_expr = getattr(col, "source_expression", None)
-            if source_expr and not self._is_physical_source_column(source_expr):
-                continue
+        for col_name, col in self._collect_physical_source_columns_osi(dataset).items():
             columns.append(
                 {
-                    "name": self._sanitize_col_name(col_name),
+                    "name": col_name,
                     "type": col.data_type.value.upper(),
                 }
             )
@@ -2254,7 +2704,11 @@ class SnowflakeEmitter(BaseEmitter):
             fixed_table = f'{self.config.schema_name}."{safe_table_name}__FIXED"'
             base_columns = self._dataset_columns_for_ctas_sml(dataset)
             if not base_columns:
-                raise ValueError(f"No columns inferred for dataset '{dataset.unique_name}'")
+                logger.info(
+                    "Skipping CTAS type inference for dataset '%s': no physical columns inferred",
+                    dataset.unique_name,
+                )
+                continue
 
             columns, _fallbacks = self._infer_columns_from_table_samples(
                 cursor,
@@ -2264,9 +2718,9 @@ class SnowflakeEmitter(BaseEmitter):
 
             by_name = {c["name"]: c["type"] for c in columns}
             for col in dataset.columns:
-                sanitized = self._sanitize_col_name(col.unique_name)
-                if sanitized in by_name:
-                    col.data_type = self._to_sml_datatype(by_name[sanitized])
+                resolved = self._resolve_physical_column_name(dataset, col.unique_name)
+                if resolved in by_name:
+                    col.data_type = self._to_sml_datatype(by_name[resolved])
 
             if all(c["type"] == "VARCHAR" for c in columns):
                 logger.warning(
@@ -2284,10 +2738,10 @@ class SnowflakeEmitter(BaseEmitter):
             )
             logger.info(f"Applying inferred datatypes via CTAS for table: {safe_table_name}")
             logger.debug(f"Generated CTAS SQL:\n{ctas_sql}")
-            cursor.execute(ctas_sql)
-            cursor.execute(f"ALTER TABLE {full_table} SWAP WITH {fixed_table}")
+            self._execute_sql(cursor, ctas_sql, context=f"CTAS {safe_table_name}")
+            self._execute_sql(cursor, f"ALTER TABLE {full_table} SWAP WITH {fixed_table}", context=f"SWAP TABLE {safe_table_name}")
             logger.info("Table swapped successfully: %s", safe_table_name)
-            cursor.execute(f"DROP TABLE IF EXISTS {fixed_table}")
+            self._execute_sql(cursor, f"DROP TABLE IF EXISTS {fixed_table}", context=f"DROP TABLE {safe_table_name}__FIXED")
 
     def _apply_inferred_types_ctas_osi(self, cursor, osi: "OSIModel") -> None:
         """Apply inferred datatypes to physical OSI source tables via CTAS + SWAP."""
@@ -2296,9 +2750,14 @@ class SnowflakeEmitter(BaseEmitter):
             safe_table_name = self._safe_table_name(source_table)
             full_table = f'{self.config.schema_name}."{safe_table_name}"'
             fixed_table = f'{self.config.schema_name}."{safe_table_name}__FIXED"'
+            physical_cols = self._collect_physical_source_columns_osi(dataset)
             base_columns = self._dataset_columns_for_ctas_osi(dataset)
             if not base_columns:
-                raise ValueError(f"No columns inferred for dataset '{dataset.unique_name}'")
+                logger.info(
+                    "Skipping CTAS type inference for dataset '%s': no physical columns inferred",
+                    dataset.unique_name,
+                )
+                continue
 
             columns, _fallbacks = self._infer_columns_from_table_samples(
                 cursor,
@@ -2307,10 +2766,9 @@ class SnowflakeEmitter(BaseEmitter):
             )
 
             by_name = {c["name"]: c["type"] for c in columns}
-            for col in dataset.columns:
-                sanitized = self._sanitize_col_name(col.unique_name)
-                if sanitized in by_name:
-                    mapped = self._to_osi_datatype(by_name[sanitized])
+            for phys_name, col in physical_cols.items():
+                if phys_name in by_name:
+                    mapped = self._to_osi_datatype(by_name[phys_name])
                     if mapped is not None:
                         col.data_type = mapped
 
@@ -2330,32 +2788,79 @@ class SnowflakeEmitter(BaseEmitter):
             )
             logger.info(f"Applying inferred datatypes via CTAS for table: {safe_table_name}")
             logger.debug(f"Generated CTAS SQL:\n{ctas_sql}")
-            cursor.execute(ctas_sql)
-            cursor.execute(f"ALTER TABLE {full_table} SWAP WITH {fixed_table}")
+            self._execute_sql(cursor, ctas_sql, context=f"CTAS {safe_table_name}")
+            self._execute_sql(cursor, f"ALTER TABLE {full_table} SWAP WITH {fixed_table}", context=f"SWAP TABLE {safe_table_name}")
             logger.info("Table swapped successfully: %s", safe_table_name)
-            cursor.execute(f"DROP TABLE IF EXISTS {fixed_table}")
+            self._execute_sql(cursor, f"DROP TABLE IF EXISTS {fixed_table}", context=f"DROP TABLE {safe_table_name}__FIXED")
+
+    def _collect_physical_source_columns_osi(self, dataset: "OSIDataset") -> dict[str, Any]:
+        """Return ordered map of physical Snowflake column name -> OSI column.
+
+        Uses the same collision policy as SML physical columns: keep all by
+        suffixing repeated sanitized names with ``_1``, ``_2``, ...
+        """
+        valid_columns: list[Any] = []
+        base_totals: dict[str, int] = {}
+        for col in dataset.columns:
+            col_name = col.unique_name
+            if col_name.startswith("RowNumber") or col_name.startswith("_"):
+                continue
+            source_expr = getattr(col, "source_expression", None)
+            if source_expr and not self._is_physical_source_column(source_expr):
+                continue
+
+            valid_columns.append(col)
+            safe_base = self._sanitize_col_name(col_name)
+            base_totals[safe_base] = base_totals.get(safe_base, 0) + 1
+
+        selected: dict[str, Any] = {}
+        base_seen: dict[str, int] = {}
+        signature_seen: dict[str, int] = {}
+        namespace_key = self._duplicate_namespace_key()
+        dataset_key = self._sanitize_alias(dataset.source_table or dataset.unique_name)
+        for col in valid_columns:
+            safe_base = self._sanitize_col_name(col.unique_name)
+            next_idx = base_seen.get(safe_base, 0) + 1
+            base_seen[safe_base] = next_idx
+
+            if base_totals.get(safe_base, 0) == 1:
+                safe_name = safe_base
+            else:
+                signature_seed = self._build_duplicate_signature_seed(
+                    source_name=col.unique_name,
+                    source_expression=getattr(col, "source_expression", None),
+                    data_type=str(getattr(col, "data_type", "")),
+                )
+                sig_idx = signature_seen.get(signature_seed, 0) + 1
+                signature_seen[signature_seed] = sig_idx
+                source_signature = f"{signature_seed}::occ{sig_idx}"
+                preferred_name = f"{safe_base}_{next_idx}"
+                safe_name = self._resolve_persistent_duplicate_name(
+                    scope_type="column",
+                    namespace_key=namespace_key,
+                    dataset_key=dataset_key,
+                    normalized_base=safe_base,
+                    source_name=col.unique_name,
+                    source_signature=source_signature,
+                    preferred_name=preferred_name,
+                )
+            while safe_name in selected:
+                next_idx += 1
+                base_seen[safe_base] = next_idx
+                safe_name = f"{safe_base}_{next_idx}"
+
+            selected[safe_name] = col
+
+        return selected
     
     def _generate_sample_insert(self, dataset: SMLDataset, table_name: str) -> Optional[str]:
         """Generate INSERT statement with sample data for testing."""
-        columns = []
-        for c in dataset.columns:
-            if c.unique_name.startswith("RowNumber") or c.unique_name.startswith("_"):
-                continue
-            # Skip calculated columns — must stay in sync with
-            # _generate_create_table_ddl which also excludes them.
-            # Including them here causes "invalid identifier" errors
-            # because the column was never created in the physical table.
-            source_expr = getattr(c, 'source_expression', None)
-            if source_expr and not self._is_physical_source_column(source_expr):
-                continue
-            columns.append(c)
-        
-        if not columns:
+        physical_cols = self._collect_physical_source_columns(dataset)
+        if not physical_cols:
             return None
-        
-        # Generate column list with sanitized & quoted names (must match
-        # the quoted identifiers used in CREATE TABLE).
-        col_names = [f'"{ self._sanitize_col_name(c.unique_name)}"' for c in columns]
+
+        columns = list(physical_cols.values())
+        col_names = [f'"{col_name}"' for col_name in physical_cols.keys()]
         
         # Generate sample values based on data types
         sample_values = []
@@ -2389,6 +2894,12 @@ class SnowflakeEmitter(BaseEmitter):
             return []
         
         # Generate single Snowflake Semantic View for the entire model
+        logger.info(
+            "generate_ddls: building semantic view for model=%s datasets=%s metrics=%s",
+            sml.unique_name or sml.label or "<unnamed_sml_model>",
+            len(getattr(sml, "datasets", []) or []),
+            len(getattr(sml, "metrics", []) or []),
+        )
         semantic_ddl = self._generate_semantic_view(sml)
         
         return [semantic_ddl]
@@ -2462,8 +2973,10 @@ class SnowflakeEmitter(BaseEmitter):
         # reliably start with digits in Horizon object explorer parsing.
         # Normalize model identifiers before DDL assembly.
         self._migrate_numeric_leading_identifiers(sml)
+        self._precompute_duplicate_mappings_for_sml(sml)
 
         view_name = self._get_safe_object_name(sml.unique_name or sml.label)
+        model_name = sml.unique_name or sml.label
         suffix = self.behavior.semantic_model.view_suffix or "_SEMANTIC"
         
         # Ensure suffix is consistently uppercase and doesn't get applied twice
@@ -2490,6 +3003,8 @@ class SnowflakeEmitter(BaseEmitter):
         # =====================================================================
         tables_lines = []
         dataset_aliases = {}
+        used_table_aliases: set[str] = set()
+        relationship_target_alias: dict[tuple[str, str], str] = {}
         
         # Build a map of which columns each table uses as PK based on relationships
         # A table's PK should be the column(s) referenced by FKs pointing TO it
@@ -2501,30 +3016,38 @@ class SnowflakeEmitter(BaseEmitter):
                 for col in rel.to_columns:
                     if col not in relationship_pk_map[rel.to_dataset]:
                         relationship_pk_map[rel.to_dataset].append(col)
+        metric_counts_by_dataset: dict[str, int] = {}
+        related_datasets: set[str] = set()
+        for metric in sml.metrics:
+            ds_name = getattr(metric, "dataset", None)
+            if ds_name:
+                metric_counts_by_dataset[ds_name] = metric_counts_by_dataset.get(ds_name, 0) + 1
+        for rel in sml.relationships:
+            if getattr(rel, "is_active", True):
+                if getattr(rel, "from_dataset", None):
+                    related_datasets.add(rel.from_dataset)
+                if getattr(rel, "to_dataset", None):
+                    related_datasets.add(rel.to_dataset)
+        declared_pk_by_alias: dict[str, list[str]] = {}
         # Build sanitized physical-column lookup per dataset.
         # Used by TABLES (PK validation), RELATIONSHIPS, DIMENSIONS and METRICS
         # to ensure we don't reference non-existent physical columns.
         dataset_col_lookup: dict[str, set[str]] = {}
+        dataset_by_name: dict[str, SMLDataset] = {d.unique_name: d for d in sml.datasets}
         for dataset in sml.datasets:
-            dataset_col_lookup[dataset.unique_name] = {
-                self._sanitize_col_name(c.unique_name)
-                for c in dataset.columns
-                if not c.unique_name.startswith("RowNumber")
-                and not c.unique_name.startswith("_")
-                and not (
-                    getattr(c, 'source_expression', None)
-                    and not self._is_physical_source_column(
-                        getattr(c, 'source_expression', '')
-                    )
-                )
-            }
+            dataset_col_lookup[dataset.unique_name] = set(
+                self._collect_physical_source_columns(dataset).keys()
+            )
 
         for dataset in sml.datasets:
             source_table = dataset.source_table or dataset.unique_name
             safe_table = self._safe_table_name(source_table)
             full_table = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
             
-            alias = self._sanitize_alias(dataset.unique_name)
+            alias = self._resolve_unique_table_alias(
+                self._sanitize_alias(dataset.unique_name),
+                used_table_aliases,
+            )
             dataset_aliases[dataset.unique_name] = alias
             
             # Determine PK columns:
@@ -2538,15 +3061,33 @@ class SnowflakeEmitter(BaseEmitter):
             pk_resolution_mode = getattr(
                 self.sf_behavior, "pk_resolution_mode", None
             )
+            known_phys = dataset_col_lookup.get(dataset.unique_name, set())
+            relationship_pk_cols: list[str] = []
             if dataset.unique_name in relationship_pk_map:
-                # Use relationship-defined PK columns — sanitize back to underscores
-                # to match physical Snowflake columns (undoing SML beautification)
-                pk_cols = [f'"{self._sanitize_col_name(c)}"' for c in relationship_pk_map[dataset.unique_name]]
+                # Preserve all relationships by creating additional aliases
+                # for each distinct referenced PK column on this dataset.
+                for rel_col in relationship_pk_map[dataset.unique_name]:
+                    resolved = self._resolve_physical_column_name(dataset, rel_col)
+                    if known_phys and resolved not in known_phys:
+                        continue
+                    if resolved not in relationship_pk_cols:
+                        relationship_pk_cols.append(resolved)
+
+            is_measure_only_dataset = (
+                metric_counts_by_dataset.get(dataset.unique_name, 0) > 0
+                and dataset.unique_name not in related_datasets
+                and not any(getattr(c, "is_key", False) for c in dataset.columns)
+            )
+
+            if is_measure_only_dataset:
+                pk_cols = []
+            elif relationship_pk_cols:
+                pk_cols = [f'"{relationship_pk_cols[0]}"']
             else:
                 # Find first key column only (avoid composite PKs that don't match relationships)
                 key_cols = [c for c in dataset.columns if c.is_key]
                 if key_cols:
-                    pk_cols = [f'"{self._sanitize_col_name(key_cols[0].unique_name)}"'
+                    pk_cols = [f'"{self._resolve_physical_column_name(dataset, key_cols[0].unique_name)}"'
                               ]
                 else:
                     if pk_resolution_mode and pk_resolution_mode.value == "strict":
@@ -2586,9 +3127,26 @@ class SnowflakeEmitter(BaseEmitter):
                 fallback_pk = sorted(list(known_phys))[0]
                 logger.info(f"Using fallback PK '{fallback_pk}' for view '{view_name}'")
                 verified_pk = [f'"{fallback_pk}"']
+
+            # Snowflake REFERENCES must target the declared PK/unique key columns.
+            # Keep relationship validation aligned to the exact TABLES PK emitted.
+            if verified_pk:
+                declared_pk_by_alias[alias] = [c.strip('"') for c in verified_pk]
+                relationship_target_alias[(dataset.unique_name, verified_pk[0].strip('"').upper())] = alias
             
             pk_clause = f"PRIMARY KEY ({', '.join(verified_pk)})" if verified_pk else ""
             tables_lines.append(f'  {alias} AS {full_table} {pk_clause}')
+
+            # Emit additional table aliases for extra relationship target keys
+            # so Snowflake REFERENCES can point to a matching declared PK.
+            for rel_pk in relationship_pk_cols[1:]:
+                alias_seed = self._sanitize_alias(f"{dataset.unique_name}__BY_{rel_pk}")
+                rel_alias = self._resolve_unique_table_alias(alias_seed, used_table_aliases)
+                tables_lines.append(
+                    f'  {rel_alias} AS {full_table} PRIMARY KEY ("{rel_pk}")'
+                )
+                declared_pk_by_alias[rel_alias] = [rel_pk]
+                relationship_target_alias[(dataset.unique_name, rel_pk.upper())] = rel_alias
         
         if tables_lines:
             definitions.append("TABLES (\n" + ",\n".join(tables_lines) + "\n)")
@@ -2616,57 +3174,101 @@ class SnowflakeEmitter(BaseEmitter):
             from_alias = dataset_aliases.get(rel.from_dataset)
             to_alias = dataset_aliases.get(rel.to_dataset)
             
-            if from_alias and to_alias and rel.from_columns:
-                # Sanitize FK column back to underscores to match physical table
-                from_col = self._sanitize_col_name(rel.from_columns[0])
-                # Sanitize referenced (PK) column on the target side
-                to_col = self._sanitize_col_name(rel.to_columns[0]) if rel.to_columns else ""
-                # Validate FK column exists in the from-dataset's physical columns
-                from_phys = dataset_col_lookup.get(rel.from_dataset, set())
-                if from_phys and from_col not in from_phys:
-                    logger.debug(
-                        f"Excluding relationship '{rel.from_dataset}' -> "
-                        f"'{rel.to_dataset}': FK column '{from_col}' is not "
-                        f"a physical column in '{rel.from_dataset}'"
+            # Guard: Skip relationship if aliases are unresolvable
+            if not from_alias or not to_alias or not rel.from_columns:
+                logger.warning(
+                    f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                    f"Unresolvable aliases (from={from_alias}, to={to_alias}) or missing from_columns."
+                )
+                continue
+            
+            from_ds = dataset_by_name.get(rel.from_dataset)
+            to_ds = dataset_by_name.get(rel.to_dataset)
+            # Sanitize FK column back to underscores to match physical table
+            from_col = self._resolve_physical_column_name(from_ds, rel.from_columns[0]) if from_ds else self._sanitize_col_name(rel.from_columns[0])
+            # Sanitize referenced (PK) column on the target side
+            to_col = (
+                self._resolve_physical_column_name(to_ds, rel.to_columns[0])
+                if (to_ds and rel.to_columns)
+                else (self._sanitize_col_name(rel.to_columns[0]) if rel.to_columns else "")
+            )
+            
+            # Guard: Skip if from_col is empty
+            if not from_col:
+                logger.warning(
+                    f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                    f"from_col is empty after resolution."
+                )
+                continue
+            
+            # Validate FK column exists in the from-dataset's physical columns
+            from_phys = dataset_col_lookup.get(rel.from_dataset, set())
+            if from_phys and from_col not in from_phys:
+                fallback_fk = sorted(from_phys)[0]
+                logger.warning(
+                    f"Remapping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                    f"FK column '{from_col}' is not physical in '{rel.from_dataset}'. "
+                    f"Using '{fallback_fk}' to preserve relationship emission."
+                )
+                from_col = fallback_fk
+            # Validate to_col is both a physical column AND the declared PK
+            # for that dataset. Snowflake requires REFERENCES to point to a
+            # primary or unique key — any mismatch causes a SQL compilation error.
+            if to_col:
+                to_phys = dataset_col_lookup.get(rel.to_dataset, set())
+                mapped_to_alias = relationship_target_alias.get(
+                    (rel.to_dataset, to_col.upper())
+                )
+                if mapped_to_alias:
+                    to_alias = mapped_to_alias
+                declared_pk_cols = declared_pk_by_alias.get(to_alias, [])
+                # Case-insensitive check: sanitize both sides to uppercase
+                to_phys_upper = {c.upper() for c in to_phys}
+                if to_phys and to_col.upper() not in to_phys_upper:
+                    if declared_pk_cols:
+                        fallback_to = declared_pk_cols[0]
+                    else:
+                        fallback_to = sorted(to_phys)[0]
+                    logger.warning(
+                        f"Remapping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                        f"referenced column '{to_col}' is not physical in '{rel.to_dataset}'. "
+                        f"Using '{fallback_to}' to preserve relationship emission."
                     )
-                    continue
-                # Validate to_col is both a physical column AND the declared PK
-                # for that dataset. Snowflake requires REFERENCES to point to a
-                # primary or unique key — any mismatch causes a SQL compilation error.
-                if to_col:
-                    to_phys = dataset_col_lookup.get(rel.to_dataset, set())
-                    # Case-insensitive check: sanitize both sides to uppercase
-                    to_phys_upper = {c.upper() for c in to_phys}
-                    if to_phys and to_col.upper() not in to_phys_upper:
-                        logger.warning(
-                            f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
-                            f"referenced column '{to_col}' is not a physical column in "
-                            f"'{rel.to_dataset}' — Snowflake requires REFERENCES to target a PK."
-                        )
-                        continue
-                    # Also check: to_col must be the PK declared in the TABLES clause.
-                    # Sanitize declared PKs the same way to_col is sanitized (handles Fabric
-                    # mixed-casing like 'Id' vs sanitized 'ID').
-                    declared_pk_cols = [
-                        self._sanitize_col_name(c)
-                        for c in relationship_pk_map.get(rel.to_dataset, [])
-                    ]
-                    if declared_pk_cols and to_col.upper() not in {c.upper() for c in declared_pk_cols}:
-                        logger.warning(
-                            f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
-                            f"referenced column '{to_col}' is not the declared PK "
-                            f"{declared_pk_cols} for '{rel.to_dataset}' — Snowflake requires REFERENCES to target a PK."
-                        )
-                        continue
-                # Build REFERENCES clause with explicit target column
-                ref_clause = f'{to_alias} ("{to_col}")' if to_col else to_alias
-                rel_name = self._to_snowflake_relationship_name(getattr(rel, "unique_name", "") or "")
-                if rel_name:
-                    rel_lines.append(
-                        f'  {rel_name} AS {from_alias} ("{from_col}") REFERENCES {ref_clause}'
+                    to_col = fallback_to
+                    mapped_to_alias = relationship_target_alias.get(
+                        (rel.to_dataset, to_col.upper())
                     )
-                else:
-                    rel_lines.append(f'  {from_alias} ("{from_col}") REFERENCES {ref_clause}')
+                    if mapped_to_alias:
+                        to_alias = mapped_to_alias
+                    declared_pk_cols = declared_pk_by_alias.get(to_alias, declared_pk_cols)
+                # Also check: to_col must be the PK declared in the TABLES clause.
+                # Use the exact PK columns emitted in TABLES clause.
+                if declared_pk_cols and to_col.upper() not in {c.upper() for c in declared_pk_cols}:
+                    fallback_to = declared_pk_cols[0]
+                    logger.warning(
+                        f"Remapping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                        f"referenced column '{to_col}' is not the declared PK {declared_pk_cols} "
+                        f"for '{rel.to_dataset}'. Using '{fallback_to}' to preserve relationship emission."
+                    )
+                    to_col = fallback_to
+                    mapped_to_alias = relationship_target_alias.get(
+                        (rel.to_dataset, to_col.upper())
+                    )
+                    if mapped_to_alias:
+                        to_alias = mapped_to_alias
+            
+            # Build REFERENCES clause with explicit target column
+            ref_clause = f'{to_alias} ("{to_col}")' if to_col else to_alias
+            rel_name = self._to_snowflake_relationship_name(getattr(rel, "unique_name", "") or "")
+            from_ref = f'"{from_col}"'
+            if rel_name:
+                rel_lines.append(
+                    f'  {rel_name} AS {from_alias} ({from_ref}) REFERENCES {ref_clause}'
+                )
+            else:
+                rel_lines.append(
+                    f'  {from_alias} ({from_ref}) REFERENCES {ref_clause}'
+                )
         
         if rel_lines:
             definitions.append("RELATIONSHIPS (\n" + ",\n".join(rel_lines) + "\n)")
@@ -2698,7 +3300,11 @@ class SnowflakeEmitter(BaseEmitter):
                     or getattr(attr, "source_column", None)
                     or attr.unique_name
                 )
-                phys_col = self._sanitize_col_name(raw_col)
+                dataset_obj = dataset_by_name.get(attr.dataset)
+                if not dataset_obj:
+                    logger.warning(f"Dataset not found for attribute '{attr.unique_name}' - skipping")
+                    continue
+                phys_col = self._resolve_physical_column_name(dataset_obj, raw_col)
                 known_phys = dataset_col_lookup.get(attr.dataset, set())
                 if known_phys and phys_col not in known_phys:
                     logger.debug(
@@ -2719,7 +3325,9 @@ class SnowflakeEmitter(BaseEmitter):
                         attr.unique_name,
                     )
                     # Re-add quoting for semantic names to handle reserved words (KEY, COSTS, etc.)
-                    dims_lines.append(f'  {alias}."{emitted_name}" AS {alias}."{phys_col}"')
+                    dims_lines.append(
+                        f'  {alias}."{emitted_name}" AS {self._format_physical_column_ref(alias, phys_col, model_name=model_name)}'
+                    )
                     added_dimensions.add(dim_key)
                     
         # 2. Add raw attributes (excluding measure candidates)
@@ -2746,7 +3354,7 @@ class SnowflakeEmitter(BaseEmitter):
                 
                 semantic_name = self._sanitize_semantic_name(col.unique_name)
                 # Physical column must use sanitized name (with underscores) to match Snowflake
-                phys_col = self._sanitize_col_name(col.unique_name)
+                phys_col = self._resolve_physical_column_name(dataset, col.unique_name)
                 dim_key = (alias, semantic_name, phys_col)
                 
                 # Skip if already added
@@ -2770,56 +3378,64 @@ class SnowflakeEmitter(BaseEmitter):
                     used_dimension_aliases,
                     col.unique_name,
                 )
-                dims_lines.append(f'  {alias}."{emitted_name}" AS {alias}."{phys_col}"')
+                dims_lines.append(
+                    f'  {alias}."{emitted_name}" AS {self._format_physical_column_ref(alias, phys_col, model_name=model_name)}'
+                )
                 added_dimensions.add(dim_key)
 
         # Ensure DIMENSIONS is not empty (Snowflake requires at least one dimension)
         if not dims_lines and tables_lines:
-             first_ds = sml.datasets[0]
-             alias = dataset_aliases.get(first_ds.unique_name)
-             # Find a non-measure column
-             known_phys = dataset_col_lookup.get(first_ds.unique_name, set())
-             for col in first_ds.columns:
-                 phys = self._sanitize_col_name(col.unique_name)
-                 if not col.is_measure_candidate and not col.unique_name.startswith("_") and phys in known_phys:
-                     # Sanitize both sides of AS to ensure valid identifiers
-                     semantic = self._sanitize_semantic_name(col.unique_name)
-                     emitted_name = self._resolve_unique_dimension_alias(
-                         semantic,
-                         alias,
-                         used_dimension_aliases,
-                         col.unique_name,
-                     )
-                     dims_lines.append(f'  {alias}."{emitted_name}" AS {alias}."{phys}"')
-                     break
-             else:
-                 # Absolute fallback if no physical columns found (safest possible)
-                 for col in first_ds.columns:
-                     phys = self._sanitize_col_name(col.unique_name)
-                     if phys in known_phys:
-                         semantic = self._sanitize_semantic_name(col.unique_name)
-                         emitted_name = self._resolve_unique_dimension_alias(
-                             semantic,
-                             alias,
-                             used_dimension_aliases,
-                             col.unique_name,
-                         )
-                         dims_lines.append(f'  {alias}."{emitted_name}" AS {alias}."{phys}"')
-                         break
-                 else:
-                     # If genuinely NO physical columns are known, fall back to the very first 
-                     # but this is a high-risk scenario that should have been caught by 
-                     # _ensure_source_tables_exist.
-                     col = first_ds.columns[0]
-                     semantic = self._sanitize_semantic_name(col.unique_name)
-                     phys = self._sanitize_col_name(col.unique_name)
-                     emitted_name = self._resolve_unique_dimension_alias(
-                         semantic,
-                         alias,
-                         used_dimension_aliases,
-                         col.unique_name,
-                     )
-                     dims_lines.append(f'  {alias}."{emitted_name}" AS {alias}."{phys}"')
+            first_ds = sml.datasets[0]
+            alias = dataset_aliases.get(first_ds.unique_name)
+            # Find a non-measure column
+            known_phys = dataset_col_lookup.get(first_ds.unique_name, set())
+            for col in first_ds.columns:
+                phys = self._resolve_physical_column_name(first_ds, col.unique_name)
+                if not col.is_measure_candidate and not col.unique_name.startswith("_") and phys in known_phys:
+                    # Sanitize both sides of AS to ensure valid identifiers
+                    semantic = self._sanitize_semantic_name(col.unique_name)
+                    emitted_name = self._resolve_unique_dimension_alias(
+                        semantic,
+                        alias,
+                        used_dimension_aliases,
+                        col.unique_name,
+                    )
+                    dims_lines.append(
+                        f'  {alias}."{emitted_name}" AS {self._format_physical_column_ref(alias, phys, model_name=model_name)}'
+                    )
+                    break
+            else:
+                # Absolute fallback if no physical columns found (safest possible)
+                for col in first_ds.columns:
+                    phys = self._resolve_physical_column_name(first_ds, col.unique_name)
+                    if phys in known_phys:
+                        semantic = self._sanitize_semantic_name(col.unique_name)
+                        emitted_name = self._resolve_unique_dimension_alias(
+                            semantic,
+                            alias,
+                            used_dimension_aliases,
+                            col.unique_name,
+                        )
+                        dims_lines.append(
+                            f'  {alias}."{emitted_name}" AS {self._format_physical_column_ref(alias, phys, model_name=model_name)}'
+                        )
+                        break
+                else:
+                    # If genuinely NO physical columns are known, fall back to the very first
+                    # but this is a high-risk scenario that should have been caught by
+                    # _ensure_source_tables_exist.
+                    col = first_ds.columns[0]
+                    semantic = self._sanitize_semantic_name(col.unique_name)
+                    phys = self._resolve_physical_column_name(first_ds, col.unique_name)
+                    emitted_name = self._resolve_unique_dimension_alias(
+                        semantic,
+                        alias,
+                        used_dimension_aliases,
+                        col.unique_name,
+                    )
+                    dims_lines.append(
+                        f'  {alias}."{emitted_name}" AS {self._format_physical_column_ref(alias, phys, model_name=model_name)}'
+                    )
 
         if dims_lines:
             definitions.append("DIMENSIONS (\n" + ",\n".join(dims_lines) + "\n)")
@@ -2830,38 +3446,161 @@ class SnowflakeEmitter(BaseEmitter):
         metrics_lines = []
         used_metric_names: set[str] = set()
         skipped_metric_names: set[str] = set()
+        expected_metrics: list[tuple[str, str, str]] = []
+        # Filter out metrics with $ character (not supported in Snowflake semantic view)
+        valid_metrics = [m for m in sml.metrics if "$" not in m.unique_name]
+        if len(valid_metrics) < len(sml.metrics):
+            skipped_count = len(sml.metrics) - len(valid_metrics)
+            logger.warning(
+                f"Skipping {skipped_count} metric(s) with '$' character "
+                "from Snowflake semantic view (unsupported identifier)."
+            )
         metric_name_set = {
             self._sanitize_alias(m.unique_name)
-            for m in sml.metrics
+            for m in valid_metrics
         }
         all_physical_col_names: set[str] = set()
         for cols in dataset_col_lookup.values():
             all_physical_col_names.update(cols)
         emittable_metric_name_set = {
             self._sanitize_alias(m.unique_name)
-            for m in sml.metrics
+            for m in valid_metrics
             if (m.source_column and m.aggregation) or m.sql_expression
         }
+        metric_base_totals: dict[str, int] = {}
+        for m in valid_metrics:
+            base_alias = self._sanitize_alias(m.unique_name)
+            metric_base_totals[base_alias] = metric_base_totals.get(base_alias, 0) + 1
+        metric_base_seen: dict[str, int] = {}
+        metric_signature_seen: dict[str, int] = {}
+        metric_namespace = self._duplicate_namespace_key(sml.unique_name or sml.label)
 
-        for metric in sml.metrics:
+        for metric in valid_metrics:
             alias = dataset_aliases.get(metric.dataset)
             if not alias: continue
-            
+            metric_dataset_obj = dataset_by_name.get(metric.dataset)
+            metric_base_alias = self._sanitize_alias(metric.unique_name)
+            metric_seen_idx = metric_base_seen.get(metric_base_alias, 0) + 1
+            metric_base_seen[metric_base_alias] = metric_seen_idx
+            metric_alias_seed = (
+                metric_base_alias
+                if metric_base_totals.get(metric_base_alias, 0) == 1
+                else f"{metric_base_alias}_{metric_seen_idx}"
+            )
+            if metric_base_totals.get(metric_base_alias, 0) > 1:
+                metric_signature_seed = self._build_duplicate_signature_seed(
+                    source_name=metric.unique_name,
+                    source_expression=metric.sql_expression or metric.expression,
+                    data_type=None,
+                    aggregation=metric.aggregation.value if metric.aggregation else None,
+                )
+                sig_idx = metric_signature_seen.get(metric_signature_seed, 0) + 1
+                metric_signature_seen[metric_signature_seed] = sig_idx
+                metric_signature = f"{metric_signature_seed}::occ{sig_idx}"
+                metric_alias_seed = self._resolve_persistent_duplicate_name(
+                    scope_type="metric",
+                    namespace_key=metric_namespace,
+                    dataset_key=self._sanitize_alias(metric.dataset),
+                    normalized_base=metric_base_alias,
+                    source_name=metric.unique_name,
+                    source_signature=metric_signature,
+                    preferred_name=metric_alias_seed,
+                )
+
             metric_name = self._resolve_unique_metric_alias(
-                self._sanitize_alias(metric.unique_name),
+                metric_alias_seed,
                 used_metric_names,
                 metric.unique_name,
             )
+            expected_metrics.append((alias, metric_name, metric.unique_name))
             
             # Use source_column aggregation if available (safest for sanitization)
-            if metric.source_column and metric.aggregation and not metric.sql_expression:
+            if metric.source_column and metric.aggregation and (
+                not metric.sql_expression or self._should_use_direct_metric_aggregation(metric)
+            ):
                 # Physical column must use sanitized name (underscores) to match Snowflake
-                col_name = self._sanitize_col_name(metric.source_column)
+                col_name = (
+                    self._resolve_physical_column_name(metric_dataset_obj, metric.source_column)
+                    if metric_dataset_obj else self._sanitize_col_name(metric.source_column)
+                )
                 agg = metric.aggregation.value.upper()
+
+                owners = [
+                    ds for ds, cols in dataset_col_lookup.items()
+                    if self._resolve_column_name_for_dataset(cols, col_name)
+                ]
+                if owners:
+                    preferred_owner = None
+                    if self._is_client_data_model(model_name):
+                        if metric.dataset in owners:
+                            preferred_owner = metric.dataset
+                        else:
+                            logger.warning(
+                                "Client Data: skipping ambiguous metric '%s' from dataset '%s' because source column '%s' is shared by %s",
+                                metric.unique_name,
+                                metric.dataset,
+                                col_name,
+                                sorted(owners),
+                            )
+                            continue
+                    elif metric.dataset in owners and len(owners) > 1:
+                        non_self = [o for o in owners if o != metric.dataset]
+                        fact_owners = [
+                            o for o in non_self
+                            if getattr(dataset_by_name.get(o), "is_fact", False)
+                        ]
+                        preferred_owner = fact_owners[0] if fact_owners else non_self[0]
+                    elif len(owners) == 1:
+                        preferred_owner = owners[0]
+
+                    if preferred_owner and preferred_owner != metric.dataset:
+                        owner_alias = dataset_aliases.get(preferred_owner)
+                        owner_col = self._resolve_column_name_for_dataset(
+                            dataset_col_lookup.get(preferred_owner, set()),
+                            col_name,
+                        ) or col_name
+                        if owner_alias:
+                            if agg == "COUNT_DISTINCT":
+                                expr = f'COUNT(DISTINCT {self._format_physical_column_ref(owner_alias, owner_col, model_name=model_name)})'
+                            elif agg == "NONE":
+                                expr = f'{self._format_physical_column_ref(owner_alias, owner_col, model_name=model_name)}'
+                            else:
+                                expr = f'{agg}({self._format_physical_column_ref(owner_alias, owner_col, model_name=model_name)})'
+                            metrics_lines.append(f'  {alias}."{metric_name}" AS {expr}')
+                            continue
                 
                 # Validate column exists in the physical table
                 known_cols = dataset_col_lookup.get(metric.dataset, set())
                 if col_name not in known_cols:
+                    owners = [
+                        ds for ds, cols in dataset_col_lookup.items()
+                        if self._resolve_column_name_for_dataset(cols, col_name)
+                    ]
+                    if len(owners) == 1:
+                        owner_ds = owners[0]
+                        owner_alias = dataset_aliases.get(owner_ds)
+                        owner_col = self._resolve_column_name_for_dataset(
+                            dataset_col_lookup.get(owner_ds, set()),
+                            col_name,
+                        ) or col_name
+                        if owner_alias:
+                            if agg == "COUNT_DISTINCT":
+                                expr = f'COUNT(DISTINCT {self._format_physical_column_ref(owner_alias, owner_col, model_name=model_name)})'
+                            elif agg == "NONE":
+                                expr = f'{self._format_physical_column_ref(owner_alias, owner_col, model_name=model_name)}'
+                            else:
+                                expr = f'{agg}({self._format_physical_column_ref(owner_alias, owner_col, model_name=model_name)})'
+                            metrics_lines.append(f'  {alias}."{metric_name}" AS {expr}')
+                            logger.info(
+                                "Remapped metric '%s' source column '%s' from dataset '%s' to '%s.%s'",
+                                metric.unique_name,
+                                col_name,
+                                metric.dataset,
+                                owner_ds,
+                                owner_col,
+                            )
+                            continue
+
                     llm_expr = self._try_llm_metric_fallback_expression(
                         metric=metric,
                         metric_name=metric_name,
@@ -3134,6 +3873,14 @@ class SnowflakeEmitter(BaseEmitter):
                     metrics_lines.append(f'  {alias}."{metric_name}" AS {basic_expr}')
                     continue
 
+                if self._is_client_data_model(model_name) and self._is_simple_dax_aggregation_expression(metric.expression):
+                    logger.warning(
+                        "Client Data: skipping ambiguous simple metric '%s' from dataset '%s' to avoid cross-dataset remap",
+                        metric.unique_name,
+                        metric.dataset,
+                    )
+                    continue
+
                 llm_expr = self._try_llm_metric_fallback_expression(
                     metric=metric,
                     metric_name=metric_name,
@@ -3157,6 +3904,33 @@ class SnowflakeEmitter(BaseEmitter):
             metrics_lines,
             metric_name_set,
         )
+
+        def _extract_metric_name(metric_line: str) -> str | None:
+            marker = '."'
+            start = metric_line.find(marker)
+            if start == -1:
+                return None
+            start += len(marker)
+            end = metric_line.find('" AS ', start)
+            if end == -1:
+                return None
+            return metric_line[start:end]
+
+        emitted_metric_names: set[str] = set()
+        for line in metrics_lines:
+            metric_name = _extract_metric_name(line)
+            if metric_name:
+                emitted_metric_names.add(metric_name)
+
+        for metric_alias, metric_name, metric_unique_name in expected_metrics:
+            if metric_name in emitted_metric_names:
+                continue
+            logger.warning(
+                "Metric '%s' could not be translated to SQL; emitting NULL placeholder to preserve sync",
+                metric_unique_name,
+            )
+            metrics_lines.append(f'  {metric_alias}."{metric_name}" AS NULL')
+            emitted_metric_names.add(metric_name)
 
         logger.info(f"=== METRICS GENERATION END (total lines: {len(metrics_lines)}) ===")
                 
@@ -3269,6 +4043,24 @@ class SnowflakeEmitter(BaseEmitter):
             sanitized = f"_{sanitized}"
         return sanitized
 
+    def _resolve_unique_table_alias(
+        self,
+        base_alias: str,
+        used_aliases: set[str],
+    ) -> str:
+        """Ensure table alias is unique within a semantic view TABLES clause."""
+        if base_alias not in used_aliases:
+            used_aliases.add(base_alias)
+            return base_alias
+
+        idx = 2
+        while True:
+            candidate = f"{base_alias}_{idx}"
+            if candidate not in used_aliases:
+                used_aliases.add(candidate)
+                return candidate
+            idx += 1
+
     def _resolve_unique_metric_alias(
         self,
         base_alias: str,
@@ -3306,20 +4098,9 @@ class SnowflakeEmitter(BaseEmitter):
             used_aliases.add(base_alias)
             return base_alias
 
-        candidate = self._sanitize_semantic_name(f"{table_alias}_{base_alias}")
-        if candidate not in used_aliases:
-            used_aliases.add(candidate)
-            logger.warning(
-                "Dimension alias collision for '%s' (base '%s'); using '%s'",
-                original_dimension_name,
-                base_alias,
-                candidate,
-            )
-            return candidate
-
         idx = 2
         while True:
-            candidate = self._sanitize_semantic_name(f"{table_alias}_{base_alias}_{idx}")
+            candidate = self._sanitize_semantic_name(f"{base_alias}_{idx}")
             if candidate not in used_aliases:
                 used_aliases.add(candidate)
                 logger.warning(
@@ -3435,7 +4216,7 @@ class SnowflakeEmitter(BaseEmitter):
         
         try:
             logger.info(f"Cleaning up legacy view: {legacy_view}")
-            cursor.execute(f"DROP VIEW IF EXISTS {legacy_view}")
+            self._execute_sql(cursor, f"DROP VIEW IF EXISTS {legacy_view}", context=f"DROP VIEW {legacy_view}")
         except Exception as e:
             logger.warning(f"Failed to drop legacy view {legacy_view}: {e}")
 
@@ -3495,7 +4276,7 @@ class SnowflakeEmitter(BaseEmitter):
 
         # Fetch existing columns ─────────────────────────────────────────────
         try:
-            cursor.execute(f"DESC TABLE {table_name}")
+            self._execute_sql(cursor, f"DESC TABLE {table_name}", context=f"DESC TABLE {table_name}")
             existing = {row[0].upper(): row[1] for row in cursor.fetchall()}
         except Exception:
             logger.warning(
@@ -3513,7 +4294,7 @@ class SnowflakeEmitter(BaseEmitter):
                         f'ALTER TABLE {table_name} '
                         f'ADD COLUMN "{col_name.upper()}" {col_type}'
                     )
-                    cursor.execute(ddl)
+                    self._execute_sql(cursor, ddl, context=f"ALTER TABLE ADD COLUMN {table_name}.{col_name}")
                     actions["added"].append(col_name)
                     logger.info(f"Schema evolution: added column {col_name}")
                 except Exception as e:
@@ -3531,7 +4312,7 @@ class SnowflakeEmitter(BaseEmitter):
                         f'ALTER TABLE {table_name} '
                         f'RENAME COLUMN "{existing_col}" TO "{new_name}"'
                     )
-                    cursor.execute(ddl)
+                    self._execute_sql(cursor, ddl, context=f"RENAME COLUMN {table_name}.{existing_col}")
                     actions["deprecated"].append(existing_col)
                     logger.info(
                         f"Schema evolution: soft-deleted {existing_col} → {new_name}"
@@ -3723,14 +4504,14 @@ class SnowflakeEmitter(BaseEmitter):
                     col_defs = ", ".join([f'"{self._sanitize_col_name(c[0])}" {c[1]}' for c in type_map])
                     create_ddl = f"CREATE OR REPLACE TABLE {full_table} ({col_defs})"
                     logger.debug(f"Creating table: {create_ddl}")
-                    cur.execute(create_ddl)
+                    self._execute_sql(cur, create_ddl, context=f"CREATE TABLE {full_table}")
                 elif write_mode == "append":
                     # Check if table exists, create if not
                     try:
-                        cur.execute(f"DESC TABLE {full_table}")
+                        self._execute_sql(cur, f"DESC TABLE {full_table}", context=f"DESC TABLE {full_table}")
                     except:
                         col_defs = ", ".join([f'"{self._sanitize_col_name(c[0])}" {c[1]}' for c in type_map])
-                        cur.execute(f"CREATE TABLE IF NOT EXISTS {full_table} ({col_defs})")
+                        self._execute_sql(cur, f"CREATE TABLE IF NOT EXISTS {full_table} ({col_defs})", context=f"CREATE TABLE IF NOT EXISTS {full_table}")
                 
                 # Insert data in batches for performance
                 batch_size = 10000
@@ -3765,7 +4546,7 @@ class SnowflakeEmitter(BaseEmitter):
                     
                     # Execute batch insert
                     insert_sql = f"INSERT INTO {full_table} ({col_list}) VALUES {', '.join(value_rows)}"
-                    cur.execute(insert_sql)
+                    self._execute_sql(cur, insert_sql, context=f"INSERT INTO {full_table}")
                     total_inserted += len(batch)
                     
                     if len(data) > batch_size:
@@ -3777,7 +4558,11 @@ class SnowflakeEmitter(BaseEmitter):
                 try:
                     import datetime
                     sync_time = datetime.datetime.utcnow().isoformat()
-                    cur.execute(f"COMMENT ON TABLE {full_table} IS 'DAX Measure: {measure_name} | Synced: {sync_time}Z'")
+                    self._execute_sql(
+                        cur,
+                        f"COMMENT ON TABLE {full_table} IS 'DAX Measure: {measure_name} | Synced: {sync_time}Z'",
+                        context=f"COMMENT ON TABLE {full_table}",
+                    )
                 except:
                     pass
                     
@@ -4251,7 +5036,7 @@ class SnowflakeEmitter(BaseEmitter):
                     )
                     try:
                         logger.info(f"Cleaning up legacy view: {legacy_view}")
-                        cur.execute(f"DROP VIEW IF EXISTS {legacy_view}")
+                        self._execute_sql(cur, f"DROP VIEW IF EXISTS {legacy_view}", context=f"DROP VIEW {legacy_view}")
                     except Exception as e:
                         logger.warning(
                             f"Failed to drop legacy view {legacy_view}: {e}"
@@ -4349,7 +5134,12 @@ class SnowflakeEmitter(BaseEmitter):
 
                 for i, ddl in enumerate(ddls):
                     logger.info(f"Executing DDL statement {i+1}/{len(ddls)}...")
-                    logger.debug(f"DDL Content:\n{ddl}")
+                    logger.info(
+                        "DDL preview for statement %s/%s (OSI path):\n%s",
+                        i + 1,
+                        len(ddls),
+                        self._ddl_preview(ddl),
+                    )
                     self._execute_with_retry(cur, ddl)
 
                 # Step 4: Generate and Save Cortex YAML
@@ -4424,10 +5214,10 @@ class SnowflakeEmitter(BaseEmitter):
         semantic view DDL from failing with opaque "invalid identifier" errors.
         """
         try:
-            cursor.execute(f"SHOW TABLES IN SCHEMA {self.config.schema_name}")
+            self._execute_sql(cursor, f"SHOW TABLES IN SCHEMA {self.config.schema_name}", context="SHOW TABLES")
             existing_tables = {row[1].upper() for row in cursor.fetchall()}
 
-            cursor.execute(f"SHOW VIEWS IN SCHEMA {self.config.schema_name}")
+            self._execute_sql(cursor, f"SHOW VIEWS IN SCHEMA {self.config.schema_name}", context="SHOW VIEWS")
             existing_views = {row[1].upper() for row in cursor.fetchall()}
 
             all_existing = existing_tables | existing_views
@@ -4470,7 +5260,10 @@ class SnowflakeEmitter(BaseEmitter):
         (``source_column`` instead of ``dataset_column``, no
         ``is_measure_candidate``).
         """
+        self._precompute_duplicate_mappings_for_osi(osi)
+
         view_name = self._get_safe_object_name(osi.unique_name or osi.label)
+        model_name = osi.unique_name or osi.label
         suffix = self.behavior.semantic_model.view_suffix or "_SEMANTIC"
         
         # Ensure suffix is consistently uppercase and doesn't get applied twice
@@ -4506,6 +5299,18 @@ class SnowflakeEmitter(BaseEmitter):
                 for col in rel.to_columns:
                     if col not in relationship_pk_map[rel.to_dataset]:
                         relationship_pk_map[rel.to_dataset].append(col)
+        metric_counts_by_dataset: dict[str, int] = {}
+        related_datasets: set[str] = set()
+        for metric in osi.metrics:
+            ds_name = getattr(metric, "dataset", None)
+            if ds_name:
+                metric_counts_by_dataset[ds_name] = metric_counts_by_dataset.get(ds_name, 0) + 1
+        for rel in osi.relationships:
+            if getattr(rel, "is_active", True):
+                if getattr(rel, "from_dataset", None):
+                    related_datasets.add(rel.from_dataset)
+                if getattr(rel, "to_dataset", None):
+                    related_datasets.add(rel.to_dataset)
 
         # =================================================================
         # Build sanitized physical-column lookup per dataset.
@@ -4533,6 +5338,9 @@ class SnowflakeEmitter(BaseEmitter):
         # =================================================================
         tables_lines: list[str] = []
         dataset_aliases: dict[str, str] = {}
+        used_table_aliases: set[str] = set()
+        relationship_target_alias: dict[tuple[str, str], str] = {}
+        declared_pk_by_alias: dict[str, list[str]] = {}
 
         for dataset in osi.datasets:
             source_table = dataset.source_table or dataset.unique_name
@@ -4541,20 +5349,31 @@ class SnowflakeEmitter(BaseEmitter):
                 f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
             )
 
-            alias = self._sanitize_alias(dataset.unique_name)
+            alias = self._resolve_unique_table_alias(
+                self._sanitize_alias(dataset.unique_name),
+                used_table_aliases,
+            )
             dataset_aliases[dataset.unique_name] = alias
 
             # Determine PK columns — validate against physical column set
             known_phys = dataset_col_lookup.get(dataset.unique_name, set())
-            if dataset.unique_name in relationship_pk_map:
-                pk_candidates = [
-                    self._sanitize_col_name(c)
-                    for c in relationship_pk_map[dataset.unique_name]
-                ]
-                # Only use PK columns that exist as physical columns
+            relationship_pk_cols: list[str] = []
+            is_measure_only_dataset = (
+                metric_counts_by_dataset.get(dataset.unique_name, 0) > 0
+                and dataset.unique_name not in related_datasets
+                and not any(getattr(c, "is_key", False) for c in dataset.columns)
+            )
+            if is_measure_only_dataset:
+                pk_cols = []
+                relationship_pk_cols = []
+            elif dataset.unique_name in relationship_pk_map:
+                pk_candidates = [self._sanitize_col_name(c) for c in relationship_pk_map[dataset.unique_name]]
                 pk_cols_valid = [c for c in pk_candidates if not known_phys or c in known_phys]
-                if pk_cols_valid:
-                    pk_cols = [f'"{c}"' for c in pk_cols_valid]
+                for c in pk_cols_valid:
+                    if c not in relationship_pk_cols:
+                        relationship_pk_cols.append(c)
+                if relationship_pk_cols:
+                    pk_cols = [f'"{relationship_pk_cols[0]}"']
                 else:
                     # All relationship PKs are non-physical; fall back
                     logger.warning(
@@ -4591,8 +5410,20 @@ class SnowflakeEmitter(BaseEmitter):
                     )
                     pk_cols = [f'"{self._sanitize_col_name(col_name)}"']
 
-            pk_clause = f"PRIMARY KEY ({', '.join(pk_cols)})"
+            pk_clause = f"PRIMARY KEY ({', '.join(pk_cols)})" if pk_cols else ""
             tables_lines.append(f"  {alias} AS {full_table} {pk_clause}")
+            if pk_cols:
+                declared_pk_by_alias[alias] = [c.strip('"') for c in pk_cols]
+                relationship_target_alias[(dataset.unique_name, declared_pk_by_alias[alias][0].upper())] = alias
+
+            for rel_pk in relationship_pk_cols[1:]:
+                alias_seed = self._sanitize_alias(f"{dataset.unique_name}__BY_{rel_pk}")
+                rel_alias = self._resolve_unique_table_alias(alias_seed, used_table_aliases)
+                tables_lines.append(
+                    f'  {rel_alias} AS {full_table} PRIMARY KEY ("{rel_pk}")'
+                )
+                declared_pk_by_alias[rel_alias] = [rel_pk]
+                relationship_target_alias[(dataset.unique_name, rel_pk.upper())] = rel_alias
 
         if tables_lines:
             definitions.append(
@@ -4622,50 +5453,64 @@ class SnowflakeEmitter(BaseEmitter):
                 # Validate FK column exists in the from-dataset's physical columns
                 from_phys = dataset_col_lookup.get(rel.from_dataset, set())
                 if from_phys and from_col not in from_phys:
-                    logger.debug(
-                        f"Excluding relationship '{rel.from_dataset}' -> "
-                        f"'{rel.to_dataset}': FK column '{from_col}' is not "
-                        f"a physical column in '{rel.from_dataset}'"
+                    fallback_fk = sorted(from_phys)[0]
+                    logger.warning(
+                        f"Remapping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                        f"FK column '{from_col}' is not physical in '{rel.from_dataset}'. "
+                        f"Using '{fallback_fk}' to preserve relationship emission."
                     )
-                    continue
+                    from_col = fallback_fk
                 # Validate to_col is both a physical column AND the declared PK
                 # for that dataset. Snowflake requires REFERENCES to point to a
                 # primary or unique key — any mismatch causes a SQL compilation error.
                 if to_col:
                     to_phys = dataset_col_lookup.get(rel.to_dataset, set())
+                    mapped_to_alias = relationship_target_alias.get((rel.to_dataset, to_col.upper()))
+                    if mapped_to_alias:
+                        to_alias = mapped_to_alias
+                    declared_pk_cols = declared_pk_by_alias.get(to_alias, [])
                     # Case-insensitive check: sanitize both sides to uppercase
                     to_phys_upper = {c.upper() for c in to_phys}
                     if to_phys and to_col.upper() not in to_phys_upper:
+                        if declared_pk_cols:
+                            fallback_to = declared_pk_cols[0]
+                        else:
+                            fallback_to = sorted(to_phys)[0]
                         logger.warning(
-                            f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
-                            f"referenced column '{to_col}' is not a physical column in "
-                            f"'{rel.to_dataset}' — Snowflake requires REFERENCES to target a PK."
+                            f"Remapping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                            f"referenced column '{to_col}' is not physical in '{rel.to_dataset}'. "
+                            f"Using '{fallback_to}' to preserve relationship emission."
                         )
-                        continue
+                        to_col = fallback_to
+                        mapped_to_alias = relationship_target_alias.get((rel.to_dataset, to_col.upper()))
+                        if mapped_to_alias:
+                            to_alias = mapped_to_alias
+                        declared_pk_cols = declared_pk_by_alias.get(to_alias, declared_pk_cols)
                     # Also check: to_col must be the declared PK for that dataset.
                     # Sanitize declared PKs the same way to_col is sanitized (handles Fabric
                     # mixed-casing like 'Id' vs sanitized 'ID').
-                    declared_pk_cols = [
-                        self._sanitize_col_name(c)
-                        for c in relationship_pk_map.get(rel.to_dataset, [])
-                    ]
                     if declared_pk_cols and to_col.upper() not in {c.upper() for c in declared_pk_cols}:
+                        fallback_to = declared_pk_cols[0]
                         logger.warning(
-                            f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
-                            f"referenced column '{to_col}' is not the declared PK "
-                            f"{declared_pk_cols} for '{rel.to_dataset}' — Snowflake requires REFERENCES to target a PK."
+                            f"Remapping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                            f"referenced column '{to_col}' is not the declared PK {declared_pk_cols} "
+                            f"for '{rel.to_dataset}'. Using '{fallback_to}' to preserve relationship emission."
                         )
-                        continue
+                        to_col = fallback_to
+                        mapped_to_alias = relationship_target_alias.get((rel.to_dataset, to_col.upper()))
+                        if mapped_to_alias:
+                            to_alias = mapped_to_alias
                 # Build REFERENCES clause with explicit target column
                 ref_clause = f'{to_alias} ("{to_col}")' if to_col else to_alias
                 rel_name = self._to_snowflake_relationship_name(getattr(rel, "unique_name", "") or "")
+                from_ref = f'"{from_col}"'
                 if rel_name:
                     rel_lines.append(
-                        f'  {rel_name} AS {from_alias} ("{from_col}") REFERENCES {ref_clause}'
+                        f'  {rel_name} AS {from_alias} ({from_ref}) REFERENCES {ref_clause}'
                     )
                 else:
                     rel_lines.append(
-                        f'  {from_alias} ("{from_col}") REFERENCES {ref_clause}'
+                        f'  {from_alias} ({from_ref}) REFERENCES {ref_clause}'
                     )
 
         if rel_lines:
@@ -4715,7 +5560,7 @@ class SnowflakeEmitter(BaseEmitter):
                         attr.unique_name,
                     )
                     dims_lines.append(
-                        f'  {alias}."{emitted_name}" AS {alias}."{phys_col}"'
+                        f'  {alias}."{emitted_name}" AS {self._format_physical_column_ref(alias, phys_col, model_name=model_name)}'
                     )
                     added_dimensions.add(dim_key)
 
@@ -4724,6 +5569,7 @@ class SnowflakeEmitter(BaseEmitter):
             alias = dataset_aliases.get(dataset.unique_name)
             if not alias:
                 continue
+            known_phys = dataset_col_lookup.get(dataset.unique_name, set())
             for col in dataset.columns:
                 if col.unique_name.startswith("RowNumber") or col.unique_name.startswith("_"):
                     continue
@@ -4740,6 +5586,12 @@ class SnowflakeEmitter(BaseEmitter):
 
                 semantic_name = self._sanitize_semantic_name(col.unique_name)
                 phys_col = self._sanitize_col_name(col.unique_name)
+                if known_phys and phys_col not in known_phys:
+                    logger.debug(
+                        f"Excluding non-physical column '{phys_col}' from '{dataset.unique_name}' "
+                        f"(OSI path)"
+                    )
+                    continue
                 dim_key = (alias, semantic_name, phys_col)
                 if dim_key in added_dimensions:
                     continue
@@ -4769,7 +5621,7 @@ class SnowflakeEmitter(BaseEmitter):
                     col.unique_name,
                 )
                 dims_lines.append(
-                    f'  {alias}."{emitted_name}" AS {alias}."{phys_col}"'
+                    f'  {alias}."{emitted_name}" AS {self._format_physical_column_ref(alias, phys_col, model_name=model_name)}'
                 )
                 added_dimensions.add(dim_key)
 
@@ -4789,7 +5641,9 @@ class SnowflakeEmitter(BaseEmitter):
                         used_dimension_aliases,
                         col.unique_name,
                     )
-                    dims_lines.append(f'  {alias}."{emitted_name}" AS {alias}."{phys}"')
+                    dims_lines.append(
+                        f'  {alias}."{emitted_name}" AS {self._format_physical_column_ref(alias, phys, model_name=model_name)}'
+                    )
                     break
             else:
                 # Absolute fallback if no physical columns found (unlikely for a valid table)
@@ -4797,15 +5651,17 @@ class SnowflakeEmitter(BaseEmitter):
                 for col in first_ds.columns:
                     phys = self._sanitize_col_name(col.unique_name)
                     if phys in known_phys:
-                         semantic = self._sanitize_semantic_name(col.unique_name)
-                         emitted_name = self._resolve_unique_dimension_alias(
-                             semantic,
-                             alias,
-                             used_dimension_aliases,
-                             col.unique_name,
-                         )
-                         dims_lines.append(f'  {alias}."{emitted_name}" AS {alias}."{phys}"')
-                         break
+                        semantic = self._sanitize_semantic_name(col.unique_name)
+                        emitted_name = self._resolve_unique_dimension_alias(
+                            semantic,
+                            alias,
+                            used_dimension_aliases,
+                            col.unique_name,
+                        )
+                        dims_lines.append(
+                            f'  {alias}."{emitted_name}" AS {self._format_physical_column_ref(alias, phys, model_name=model_name)}'
+                        )
+                        break
                 else:
                     col = first_ds.columns[0]
                     semantic = self._sanitize_semantic_name(col.unique_name)
@@ -4816,7 +5672,9 @@ class SnowflakeEmitter(BaseEmitter):
                         used_dimension_aliases,
                         col.unique_name,
                     )
-                    dims_lines.append(f'  {alias}."{emitted_name}" AS {alias}."{phys}"')
+                    dims_lines.append(
+                        f'  {alias}."{emitted_name}" AS {self._format_physical_column_ref(alias, phys, model_name=model_name)}'
+                    )
 
         if dims_lines:
             definitions.append(
@@ -4829,6 +5687,7 @@ class SnowflakeEmitter(BaseEmitter):
         metrics_lines: list[str] = []
         used_metric_names: set[str] = set()
         skipped_metric_names: set[str] = set()
+        expected_metrics: list[tuple[str, str, str]] = []
         metric_name_set = {
             self._sanitize_alias(m.unique_name)
             for m in osi.metrics
@@ -4841,22 +5700,133 @@ class SnowflakeEmitter(BaseEmitter):
             for m in osi.metrics
             if (m.source_column and m.aggregation) or m.sql_expression
         }
+        metric_base_totals: dict[str, int] = {}
+        for m in osi.metrics:
+            base_alias = self._sanitize_alias(m.unique_name)
+            metric_base_totals[base_alias] = metric_base_totals.get(base_alias, 0) + 1
+        metric_base_seen: dict[str, int] = {}
+        metric_signature_seen: dict[str, int] = {}
+        metric_namespace = self._duplicate_namespace_key(osi.unique_name or osi.label)
 
         for metric in osi.metrics:
             alias = dataset_aliases.get(metric.dataset)
             if not alias:
                 continue
+            metric_dataset_obj = dataset_by_name.get(metric.dataset)
+            metric_base_alias = self._sanitize_alias(metric.unique_name)
+            metric_seen_idx = metric_base_seen.get(metric_base_alias, 0) + 1
+            metric_base_seen[metric_base_alias] = metric_seen_idx
+            metric_alias_seed = (
+                metric_base_alias
+                if metric_base_totals.get(metric_base_alias, 0) == 1
+                else f"{metric_base_alias}_{metric_seen_idx}"
+            )
+            if metric_base_totals.get(metric_base_alias, 0) > 1:
+                metric_signature_seed = self._build_duplicate_signature_seed(
+                    source_name=metric.unique_name,
+                    source_expression=metric.sql_expression or metric.expression,
+                    data_type=None,
+                    aggregation=metric.aggregation.value if metric.aggregation else None,
+                )
+                sig_idx = metric_signature_seen.get(metric_signature_seed, 0) + 1
+                metric_signature_seen[metric_signature_seed] = sig_idx
+                metric_signature = f"{metric_signature_seed}::occ{sig_idx}"
+                metric_alias_seed = self._resolve_persistent_duplicate_name(
+                    scope_type="metric",
+                    namespace_key=metric_namespace,
+                    dataset_key=self._sanitize_alias(metric.dataset),
+                    normalized_base=metric_base_alias,
+                    source_name=metric.unique_name,
+                    source_signature=metric_signature,
+                    preferred_name=metric_alias_seed,
+                )
             metric_name = self._resolve_unique_metric_alias(
-                self._sanitize_alias(metric.unique_name),
+                metric_alias_seed,
                 used_metric_names,
                 metric.unique_name,
             )
+            expected_metrics.append((alias, metric_name, metric.unique_name))
 
-            if metric.source_column and metric.aggregation and not metric.sql_expression:
+            if metric.source_column and metric.aggregation and (
+                not metric.sql_expression or self._should_use_direct_metric_aggregation(metric)
+            ):
                 col_name = self._sanitize_col_name(metric.source_column)
                 agg = metric.aggregation.value.upper()
+
+                owners = [
+                    ds for ds, cols in dataset_col_lookup.items()
+                    if self._resolve_column_name_for_dataset(cols, col_name)
+                ]
+                if owners:
+                    preferred_owner = None
+                    if self._is_client_data_model(model_name):
+                        if metric.dataset in owners:
+                            preferred_owner = metric.dataset
+                        else:
+                            logger.warning(
+                                "Client Data: skipping ambiguous metric '%s' from dataset '%s' because source column '%s' is shared by %s",
+                                metric.unique_name,
+                                metric.dataset,
+                                col_name,
+                                sorted(owners),
+                            )
+                            continue
+                    elif metric.dataset in owners and len(owners) > 1:
+                        non_self = [o for o in owners if o != metric.dataset]
+                        fact_owners = [
+                            o for o in non_self
+                            if getattr(dataset_by_name.get(o), "is_fact", False)
+                        ]
+                        preferred_owner = fact_owners[0] if fact_owners else non_self[0]
+                    elif len(owners) == 1:
+                        preferred_owner = owners[0]
+
+                    if preferred_owner and preferred_owner != metric.dataset:
+                        owner_alias = dataset_aliases.get(preferred_owner)
+                        owner_col = self._resolve_column_name_for_dataset(
+                            dataset_col_lookup.get(preferred_owner, set()),
+                            col_name,
+                        ) or col_name
+                        if owner_alias:
+                            if agg == "COUNT_DISTINCT":
+                                expr = f'COUNT(DISTINCT {self._format_physical_column_ref(owner_alias, owner_col, model_name=model_name)})'
+                            elif agg == "NONE":
+                                expr = f'{self._format_physical_column_ref(owner_alias, owner_col, model_name=model_name)}'
+                            else:
+                                expr = f'{agg}({self._format_physical_column_ref(owner_alias, owner_col, model_name=model_name)})'
+                            metrics_lines.append(f'  {alias}."{metric_name}" AS {expr}')
+                            continue
                 known_cols = dataset_col_lookup.get(metric.dataset, set())
                 if col_name not in known_cols:
+                    owners = [
+                        ds for ds, cols in dataset_col_lookup.items()
+                        if self._resolve_column_name_for_dataset(cols, col_name)
+                    ]
+                    if len(owners) == 1:
+                        owner_ds = owners[0]
+                        owner_alias = dataset_aliases.get(owner_ds)
+                        owner_col = self._resolve_column_name_for_dataset(
+                            dataset_col_lookup.get(owner_ds, set()),
+                            col_name,
+                        ) or col_name
+                        if owner_alias:
+                            if agg == "COUNT_DISTINCT":
+                                expr = f'COUNT(DISTINCT {self._format_physical_column_ref(owner_alias, owner_col, model_name=model_name)})'
+                            elif agg == "NONE":
+                                expr = f'{self._format_physical_column_ref(owner_alias, owner_col, model_name=model_name)}'
+                            else:
+                                expr = f'{agg}({self._format_physical_column_ref(owner_alias, owner_col, model_name=model_name)})'
+                            metrics_lines.append(f'  {alias}."{metric_name}" AS {expr}')
+                            logger.info(
+                                "Remapped metric '%s' source column '%s' from dataset '%s' to '%s.%s'",
+                                metric.unique_name,
+                                col_name,
+                                metric.dataset,
+                                owner_ds,
+                                owner_col,
+                            )
+                            continue
+
                     llm_expr = self._try_llm_metric_fallback_expression(
                         metric=metric,
                         metric_name=metric_name,
@@ -4878,11 +5848,11 @@ class SnowflakeEmitter(BaseEmitter):
                     )
                     continue
                 if agg == "COUNT_DISTINCT":
-                    expr = f'COUNT(DISTINCT {alias}."{col_name}")'
+                    expr = f'COUNT(DISTINCT {self._format_physical_column_ref(alias, col_name, model_name=model_name)})'
                 elif agg == "NONE":
-                    expr = f'{alias}."{col_name}"'
+                    expr = f'{self._format_physical_column_ref(alias, col_name, model_name=model_name)}'
                 else:
-                    expr = f'{agg}({alias}."{col_name}")'
+                    expr = f'{agg}({self._format_physical_column_ref(alias, col_name, model_name=model_name)})'
                 metrics_lines.append(
                     f'  {alias}."{metric_name}" AS {expr}'
                 )
@@ -5036,6 +6006,14 @@ class SnowflakeEmitter(BaseEmitter):
                     metrics_lines.append(f'  {alias}."{metric_name}" AS {basic_expr}')
                     continue
 
+                if self._is_client_data_model(model_name) and self._is_simple_dax_aggregation_expression(metric.expression):
+                    logger.warning(
+                        "Client Data: skipping ambiguous simple metric '%s' from dataset '%s' to avoid cross-dataset remap",
+                        metric.unique_name,
+                        metric.dataset,
+                    )
+                    continue
+
                 llm_expr = self._try_llm_metric_fallback_expression(
                     metric=metric,
                     metric_name=metric_name,
@@ -5059,6 +6037,33 @@ class SnowflakeEmitter(BaseEmitter):
             metrics_lines,
             metric_name_set,
         )
+
+        def _extract_metric_name(metric_line: str) -> str | None:
+            marker = '."'
+            start = metric_line.find(marker)
+            if start == -1:
+                return None
+            start += len(marker)
+            end = metric_line.find('" AS ', start)
+            if end == -1:
+                return None
+            return metric_line[start:end]
+
+        emitted_metric_names: set[str] = set()
+        for line in metrics_lines:
+            metric_name = _extract_metric_name(line)
+            if metric_name:
+                emitted_metric_names.add(metric_name)
+
+        for metric_alias, metric_name, metric_unique_name in expected_metrics:
+            if metric_name in emitted_metric_names:
+                continue
+            logger.warning(
+                "Metric '%s' could not be translated to SQL; emitting NULL placeholder to preserve sync",
+                metric_unique_name,
+            )
+            metrics_lines.append(f'  {metric_alias}."{metric_name}" AS NULL')
+            emitted_metric_names.add(metric_name)
 
         if metrics_lines:
             definitions.append(
@@ -5143,5 +6148,3 @@ class SnowflakeEmitter(BaseEmitter):
             output["semantic_model"]["tables"].append(table_def)
 
         return yaml.dump(output, sort_keys=False, Dumper=IndentDumper)
-
-

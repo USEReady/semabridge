@@ -1,11 +1,10 @@
-﻿import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   PlugZap, RefreshCw, CheckCircle2, AlertCircle, Clock,
-  Settings2, Plus, FolderOpen,
+  Settings2, Cloud, Snowflake, Plus, ExternalLink, Database, ChevronDown, FolderOpen,
 } from 'lucide-react';
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
-import SourceIcon from '../components/common/SourceIcon';
 
 import ConnectionsPanel from '../components/ConnectionsPanel';
 import ConfigEditor from '../components/ConfigEditor';
@@ -21,7 +20,7 @@ function isLikelyAbsolutePath(value) {
 }
 
 function formatRelative(iso) {
-  if (!iso) return 'â€”';
+  if (!iso) return '—';
   const diff = Date.now() - new Date(iso).getTime();
   const min = Math.floor(diff / 60000);
   if (min < 1) return 'just now';
@@ -29,6 +28,36 @@ function formatRelative(iso) {
   const hr = Math.floor(min / 60);
   if (hr < 24) return `${hr}h ago`;
   return `${Math.floor(hr / 24)}d ago`;
+}
+
+function normalizeConnectorKey(value) {
+  if (!value) return '';
+
+  let key = '';
+  if (typeof value === 'string') {
+    key = value.toLowerCase().trim();
+  } else if (typeof value === 'object') {
+    key = String(
+      value.id || value.type || value.adapter || value.source || value.source_type || value.connector || value.name || ''
+    ).toLowerCase().trim();
+  }
+
+  if (!key) return '';
+  if (key.includes('pbix') || key.includes('powerbi') || key.includes('power bi') || key === 'pbi') return 'pbix';
+  if (key.includes('fabric')) return 'fabric';
+  if (key.includes('snowflake')) return 'snowflake';
+  if (key.includes('databricks')) return 'databricks';
+  if (key.includes('semabridge') || key.includes('api')) return 'semabridge_api';
+  return key;
+}
+
+function renderConnectorIcon(connectorId, size = 18) {
+  const key = normalizeConnectorKey(connectorId);
+  if (key.includes('fabric')) return <Cloud size={size} color="#3b82f6" />;
+  if (key.includes('snowflake')) return <Snowflake size={size} color="#38bdf8" />;
+  if (key.includes('databricks')) return <Database size={size} color="#f97316" />;
+  if (key.includes('api') || key.includes('semabridge')) return <PlugZap size={size} color="#22c55e" />;
+  return <PlugZap size={size} color="var(--text-secondary)" />;
 }
 
 export default function SettingsPage() {
@@ -104,7 +133,7 @@ export default function SettingsPage() {
         detail: fabricStatus === 'connected'
           ? `Workspace: ${fabricConn.credentials.workspace_id}`
           : fabricStatus === 'configured'
-            ? `Workspace set Â· ${fabricHasAuth ? '' : 'Auth required'}`
+            ? `Workspace set · ${fabricHasAuth ? '' : 'Auth required'}`
             : 'Not configured',
         tags: ['production', 'analytics'],
       });
@@ -128,7 +157,7 @@ export default function SettingsPage() {
         status: normalizeStatus(snowStatus),
         last_sync: null,
         detail: snowStatus === 'connected'
-          ? `${snowAccount}${snowAuthType ? ` Â· ${snowAuthType}` : ''}`
+          ? `${snowAccount}${snowAuthType ? ` · ${snowAuthType}` : ''}`
           : snowStatus === 'configured'
             ? `Missing: ${snowMissing.join(', ')}`
             : 'Not configured',
@@ -156,7 +185,7 @@ export default function SettingsPage() {
         type: 'Backend Service',
         status: normalizeStatus(health?.status === 'ok' || health?.status === 'healthy' ? 'connected' : 'error'),
         last_sync: null,
-        detail: health ? `v${health.version ?? 'â€”'} Â· port 8000` : 'Unreachable',
+        detail: health ? `v${health.version ?? '—'} · port 8000` : 'Unreachable',
         tags: ['backend'],
       });
 
@@ -352,7 +381,7 @@ export default function SettingsPage() {
             <tbody>
               {localFoldersLoading ? (
                 <tr>
-                  <td colSpan="3" style={{ padding: '20px 16px', color: 'var(--text-tertiary)', fontSize: 12 }}>Loading local foldersâ€¦</td>
+                  <td colSpan="3" style={{ padding: '20px 16px', color: 'var(--text-tertiary)', fontSize: 12 }}>Loading local folders…</td>
                 </tr>
               ) : localFolders.length === 0 ? (
                 <tr>
@@ -406,9 +435,7 @@ export default function SettingsPage() {
                       fontSize: 18,
                     }}
                   >
-                    {conn.id === 'semabridge_api'
-                      ? <PlugZap size={18} color="var(--accent-blue)" />
-                      : <SourceIcon source={conn.id} size={18} />}
+                    {renderConnectorIcon(conn.id, 18)}
                   </div>
                   <div style={{ textAlign: 'left' }}>
                     <p className="text-primary" style={{ fontWeight: 600, fontSize: 13, margin: 0 }}>{conn.name}</p>
@@ -457,7 +484,7 @@ export default function SettingsPage() {
                       fontSize: 18,
                     }}
                   >
-                    <PlugZap size={18} color="var(--accent-blue)" />
+                    {renderConnectorIcon(apiConn.id, 18)}
                   </div>
                   <div>
                     <p className="text-primary" style={{ fontWeight: 500, fontSize: 12, margin: 0 }}>{apiConn.name}</p>
@@ -501,7 +528,7 @@ export default function SettingsPage() {
               disabled={localFolderSubmitting}
               style={{ background: 'var(--accent-blue)', border: 'none', color: '#fff', borderRadius: 8, padding: '8px 12px', cursor: localFolderSubmitting ? 'not-allowed' : 'pointer', opacity: localFolderSubmitting ? 0.7 : 1 }}
             >
-              {localFolderSubmitting ? 'Savingâ€¦' : 'Save Folder'}
+              {localFolderSubmitting ? 'Saving…' : 'Save Folder'}
             </button>
           </>
         )}

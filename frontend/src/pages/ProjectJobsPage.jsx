@@ -1,10 +1,9 @@
-﻿import { useState, useEffect } from 'react';
-import { Play, RefreshCw, Clock, CalendarClock, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Play, RefreshCw, Clock, CalendarClock, RotateCcw, ChevronDown, ChevronRight, BarChart3, Cloud, Snowflake, Database, Link2 } from 'lucide-react';
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
 import SearchInput from '../components/common/SearchInput';
 import { matchesSmartQuery } from '../components/common/SmartSearchBar';
-import SourceIcon from '../components/common/SourceIcon';
 import { api } from '../utils/api';
 import { buildMockRunLogs, getRunLogs, saveRunLogs } from '../utils/runLogs';
 
@@ -15,7 +14,7 @@ const DEFAULT_CONFIG = { schedule_type: 'Manual Trigger Only', cron: '0 0 * * *'
 const REFRESH_INTERVAL_MS = 4000;
 
 function formatDuration(ms) {
-  if (!ms) return 'â€”';
+  if (!ms) return '—';
   if (ms < 1000) return `${ms}ms`;
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
@@ -23,8 +22,48 @@ function formatDuration(ms) {
 }
 
 function formatDate(iso) {
-  if (!iso) return 'â€”';
-  return new Date(iso).toLocaleString();
+  if (!iso) return '—';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  }).format(date);
+}
+
+function normalizeSourceKey(value) {
+  if (!value) return '';
+
+  let key = '';
+  if (typeof value === 'string') {
+    key = value.toLowerCase().trim();
+  } else if (typeof value === 'object') {
+    key = String(
+      value.type || value.adapter || value.source || value.source_type || value.connector || ''
+    ).toLowerCase().trim();
+  }
+
+  if (!key) return '';
+  if (key.includes('pbix') || key.includes('powerbi') || key.includes('power bi') || key === 'pbi') return 'pbix';
+  if (key.includes('fabric')) return 'fabric';
+  if (key.includes('snowflake')) return 'snowflake';
+  if (key.includes('databricks')) return 'databricks';
+  return key;
+}
+
+function sourceIcon(sourceType) {
+  const normalized = normalizeSourceKey(sourceType);
+
+  if (normalized.includes('pbix')) return <BarChart3 size={14} color="#F2C811" />;
+  if (normalized.includes('fabric')) return <Cloud size={14} color="#3b82f6" />;
+  if (normalized.includes('snowflake')) return <Snowflake size={14} color="#38bdf8" />;
+  if (normalized.includes('databricks')) return <Database size={14} color="#f97316" />;
+  return <Link2 size={14} color="var(--text-tertiary)" />;
 }
 
 export default function ProjectJobsPage() {
@@ -39,6 +78,8 @@ export default function ProjectJobsPage() {
   const [searchUseRegex, setSearchUseRegex] = useState(false);
   const [statusFilter, setStatusFilter] = useState('all');
   const [expandedRunId, setExpandedRunId] = useState(null);
+  const [runSnapshotsByRunId, setRunSnapshotsByRunId] = useState({});
+  const [runSnapshotLoadingByRunId, setRunSnapshotLoadingByRunId] = useState({});
 
   useEffect(() => {
     let cancelled = false;
@@ -86,6 +127,37 @@ export default function ProjectJobsPage() {
       window.clearInterval(intervalId);
     };
   }, []);
+
+  useEffect(() => {
+    const expandedRun = runs.find((run) => String(run?.id ?? run?.run_id ?? '') === String(expandedRunId || ''));
+    const projectId = String(expandedRun?.project_id || '');
+    const runId = String(expandedRun?.run_id ?? expandedRun?.id ?? '');
+
+    if (!expandedRun || !projectId || !runId || runSnapshotsByRunId[runId]) return;
+
+    let cancelled = false;
+    setRunSnapshotLoadingByRunId(prev => ({ ...prev, [runId]: true }));
+
+    (async () => {
+      try {
+        const response = await api.listProjectSnapshots(projectId, { run_id: runId, include_state: false, limit: 100 });
+        if (cancelled) return;
+        const rows = Array.isArray(response?.snapshots) ? response.snapshots : [];
+        setRunSnapshotsByRunId(prev => ({ ...prev, [runId]: rows }));
+      } catch {
+        if (cancelled) return;
+        setRunSnapshotsByRunId(prev => ({ ...prev, [runId]: [] }));
+      } finally {
+        if (!cancelled) {
+          setRunSnapshotLoadingByRunId(prev => ({ ...prev, [runId]: false }));
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [expandedRunId, runSnapshotsByRunId, runs]);
 
   const handleRunNow = async () => {
     setRunning(true);
@@ -159,7 +231,7 @@ export default function ProjectJobsPage() {
         title="Runs"
         description="Configure execution schedules and monitor run history."
         action={{
-          label: running ? 'Runningâ€¦' : 'Run Now',
+          label: running ? 'Running…' : 'Run Now',
           icon: running ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />,
           onClick: handleRunNow,
         }}
@@ -260,7 +332,7 @@ export default function ProjectJobsPage() {
             }}
           >
             {configSaving ? <RefreshCw size={13} className="animate-spin" /> : <RotateCcw size={13} />}
-            {configSaving ? 'Savingâ€¦' : 'Update Configuration'}
+            {configSaving ? 'Saving…' : 'Update Configuration'}
           </button>
         </div>
       </div>
@@ -327,7 +399,7 @@ export default function ProjectJobsPage() {
                     opacity: scheduleDeletingId === String(schedule.project_id) ? 0.6 : 1,
                   }}
                 >
-                  {scheduleDeletingId === String(schedule.project_id) ? 'Cancellingâ€¦' : 'Cancel'}
+                  {scheduleDeletingId === String(schedule.project_id) ? 'Cancelling…' : 'Cancel'}
                 </button>
               </div>
             ))}
@@ -346,7 +418,7 @@ export default function ProjectJobsPage() {
             onToggleRegex={setSearchUseRegex}
             allowRegex
             helperText={searchUseRegex ? 'Regex examples: ^run_\\d+$ or failed|running' : 'Tip: enable regex to use patterns like ^run_\\d+$'}
-            placeholder="Filter runsâ€¦"
+            placeholder="Filter runs…"
             width={220}
           />
           <select
@@ -382,6 +454,19 @@ export default function ProjectJobsPage() {
             filteredRuns.map((run, index) => {
               const isExpanded = expandedRunId === run.id;
               const logs = getRunLogs(run);
+              const runId = String(run?.run_id ?? run?.id ?? '');
+              const runSnapshots = runSnapshotsByRunId[runId] || [];
+              const runSnapshotLookup = Object.fromEntries(runSnapshots.map((snapshot) => [String(snapshot?.snapshot_id || ''), snapshot]));
+              const runSnapshotLoading = Boolean(runSnapshotLoadingByRunId[runId]);
+              const snapshotReferences = [
+                { label: 'Before Source Snapshot', ids: [run.before_src_snapshot_id] },
+                { label: 'After Source Snapshot', ids: [run.after_src_snapshot_id] },
+                { label: 'Before Target Snapshots', ids: Array.isArray(run.before_target_snapshot_ids) ? run.before_target_snapshot_ids : [run.before_targ1_snapshot_id, run.before_targ2_snapshot_id] },
+                { label: 'After Target Snapshots', ids: Array.isArray(run.after_target_snapshot_ids) ? run.after_target_snapshot_ids : [run.after_targ1_snapshot_id, run.after_targ2_snapshot_id] },
+              ].map((item) => ({
+                ...item,
+                ids: (item.ids || []).map((value) => String(value || '').trim()).filter(Boolean),
+              }));
               return (
                 <div
                   key={run.id ?? index}
@@ -414,7 +499,7 @@ export default function ProjectJobsPage() {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600 }}>
                       <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <SourceIcon source={run.source_type} size={14} />
+                        {sourceIcon(run.source_type)}
                       </span>
                       <span>{run.project_name || 'Project run'}</span>
                     </div>
@@ -431,14 +516,50 @@ export default function ProjectJobsPage() {
                   </button>
 
                   {isExpanded && (
+                    <>
                     <div style={{ padding: '0 16px 16px 16px', background: 'var(--bg-input)', borderTop: '1px solid var(--border-main)' }}>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, padding: '14px 0' }}>
                         <InfoCard label="Run ID" value={String(run.id ?? '-')} mono />
                         <InfoCard label="Started" value={formatDate(run.started_at)} />
                         <InfoCard label="Duration" value={formatDuration(run.duration_ms)} mono />
+                        <InfoCard label="Run Type" value={String(run.run_type || 'SYNC')} />
                         <InfoCard label="Status" value={String(run.status || 'draft')} />
-                        <InfoCard label="Message" value={run.message || run.error || 'â€”'} />
+                        <InfoCard label="Message" value={run.message || run.error || '—'} />
                       </div>
+
+                      <InfoCard label="Before Source Snapshot" value={run.before_src_snapshot_id ? String(run.before_src_snapshot_id) : 'â€”'} mono />
+                      <InfoCard label="After Source Snapshot" value={run.after_src_snapshot_id ? String(run.after_src_snapshot_id) : 'â€”'} mono />
+                      <InfoCard
+                        label="Before Target Snapshots"
+                        value={Array.isArray(run.before_target_snapshot_ids) && run.before_target_snapshot_ids.length
+                          ? run.before_target_snapshot_ids.map((id) => String(id).slice(0, 12)).join(', ')
+                          : 'â€”'}
+                      />
+                      <InfoCard
+                        label="After Target Snapshots"
+                        value={Array.isArray(run.after_target_snapshot_ids) && run.after_target_snapshot_ids.length
+                          ? run.after_target_snapshot_ids.map((id) => String(id).slice(0, 12)).join(', ')
+                          : 'â€”'}
+                      />
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>
+                      Snapshot Details From Backend
+                    </div>
+                    {runSnapshotLoading ? (
+                      <div style={{ padding: 12, borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-surface)', fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 14 }}>
+                        Loading snapshot metadata...
+                      </div>
+                    ) : (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12, marginBottom: 14 }}>
+                        {snapshotReferences.map((group) => (
+                          <SnapshotGroupCard
+                            key={group.label}
+                            title={group.label}
+                            ids={group.ids}
+                            lookup={runSnapshotLookup}
+                          />
+                        ))}
+                      </div>
+                    )}
 
                       <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>
                         Execution Stages For Selected Run
@@ -459,6 +580,7 @@ export default function ProjectJobsPage() {
                         {logs.join('\n')}
                       </div>
                     </div>
+                    </>
                   )}
                 </div>
               );
@@ -482,8 +604,65 @@ function InfoCard({ label, value, mono = false }) {
     >
       <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 6 }}>{label}</div>
       <div style={{ fontSize: 12, color: 'var(--text-primary)', fontFamily: mono ? 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' : 'inherit' }}>
-        {value || 'â€”'}
+        {value || '—'}
       </div>
+    </div>
+  );
+}
+
+function SnapshotGroupCard({ title, ids, lookup }) {
+  const snapshotIds = Array.isArray(ids) ? ids.filter(Boolean) : [];
+
+  return (
+    <div
+      style={{
+        border: '1px solid var(--border-main)',
+        borderRadius: 8,
+        padding: 12,
+        background: 'var(--bg-surface)',
+      }}
+    >
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>{title}</div>
+      {snapshotIds.length === 0 ? (
+        <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>No snapshot recorded.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {snapshotIds.map((snapshotId) => {
+            const snapshot = lookup?.[String(snapshotId)] || null;
+            return (
+              <div key={snapshotId} style={{ border: '1px solid var(--border-main)', borderRadius: 8, padding: 10, background: 'var(--bg-surface-raised)' }}>
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>Snapshot ID</div>
+                <div style={{ fontSize: 12, color: 'var(--text-primary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', marginBottom: 8, wordBreak: 'break-word' }}>
+                  {snapshotId}
+                </div>
+                {snapshot ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+                    <SnapshotMeta label="Origin" value={String(snapshot?.snapshot_origin || snapshot?.stage || '-').toUpperCase()} />
+                    <SnapshotMeta label="Format" value={String(snapshot?.intermediate_format || '-').toUpperCase()} />
+                    <SnapshotMeta label="Role" value={String(snapshot?.role || snapshot?.system_role || '-').toUpperCase()} />
+                    <SnapshotMeta label="Connector" value={String(snapshot?.connector_type || snapshot?.connector || '-')} />
+                    <SnapshotMeta label="Target" value={String(snapshot?.target_id || '-')} />
+                    <SnapshotMeta label="Created" value={snapshot?.created_at ? formatDate(snapshot.created_at) : '-'} />
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+                    Snapshot metadata not returned by backend for this run yet.
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SnapshotMeta({ label, value }) {
+  return (
+    <div>
+      <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 3 }}>{label}</div>
+      <div style={{ fontSize: 12, color: 'var(--text-primary)', wordBreak: 'break-word' }}>{value || '-'}</div>
     </div>
   );
 }

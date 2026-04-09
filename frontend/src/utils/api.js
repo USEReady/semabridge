@@ -128,6 +128,12 @@ function getFabricAuthHeaders() {
     return {};
 }
 
+function hasValidFabricToken() {
+    const token = localStorage.getItem(FABRIC_TOKEN_KEY);
+    const expiresAt = parseInt(localStorage.getItem(FABRIC_TOKEN_EXPIRES_KEY) || '0', 10);
+    return Boolean(token && Date.now() < expiresAt);
+}
+
 async function handleResponse(res) {
     if (res.status === 401) {
         try {
@@ -564,6 +570,9 @@ export const api = {
     // â”€â”€ Fabric Workspace Discovery â”€â”€â”€â”€â”€â”€
     async fabricListWorkspaces(accountId = '') {
         const resolvedConnectionId = String(accountId || '').trim();
+        if (!resolvedConnectionId && !hasValidFabricToken()) {
+            return { workspaces: [] };
+        }
         const query = resolvedConnectionId
             ? `?identity_id=${encodeURIComponent(resolvedConnectionId)}&connectionId=${encodeURIComponent(resolvedConnectionId)}`
             : '';
@@ -582,9 +591,40 @@ export const api = {
         return handleResponse(res);
     },
 
-    // â”€â”€ Snowflake SSO â”€â”€â”€â”€â”€â”€
+    // ── Snowflake SSO ──────
     async snowflakeSsoLogin() {
         const res = await authFetch(`${API_BASE_URL}/connections/snowflake/sso-login`, {
+            method: 'POST',
+        });
+        return handleResponse(res);
+    },
+
+    // ── Databricks Native OAuth (U2M / PKCE) ──────
+    async databricksLogin(host, clientId, redirectUri) {
+        const res = await authFetch(`${API_BASE_URL}/connections/databricks/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ host, client_id: clientId, redirect_uri: redirectUri }),
+        });
+        return handleResponse(res);
+    },
+
+    async databricksPoll(flowId, connectionConfig = {}) {
+        const res = await authFetch(`${API_BASE_URL}/connections/databricks/poll`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ flow_id: flowId, ...connectionConfig }),
+        });
+        return handleResponse(res);
+    },
+
+    async databricksAuthStatus() {
+        const res = await authFetch(`${API_BASE_URL}/connections/databricks/auth-status`);
+        return handleResponse(res);
+    },
+
+    async databricksLogout() {
+        const res = await authFetch(`${API_BASE_URL}/connections/databricks/logout`, {
             method: 'POST',
         });
         return handleResponse(res);
@@ -733,7 +773,7 @@ export const api = {
         return handleResponse(res);
     },
 
-   
+
     async getJobConfig(projectId) {
         const url = projectId
             ? `${API_BASE_URL}/jobs/config?project_id=${projectId}`
@@ -769,11 +809,15 @@ export const api = {
         return handleResponse(res);
     },
 
-    async autoMap(projectId) {
+    async autoMap(projectIdOrPayload) {
         const res = await authFetch(`${API_BASE_URL}/mappings/auto`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(projectId ? { project_id: projectId } : {}),
+            body: JSON.stringify(
+                typeof projectIdOrPayload === 'object' && projectIdOrPayload !== null
+                    ? projectIdOrPayload
+                    : (projectIdOrPayload ? { project_id: projectIdOrPayload } : {})
+            ),
         });
         return handleResponse(res);
     },
@@ -870,9 +914,11 @@ export const api = {
         return handleResponse(res);
     },
 
-    async runProjectNow(projectId) {
+    async runProjectNow(projectId, payload = null) {
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
             method: 'POST',
+            headers: payload ? { 'Content-Type': 'application/json' } : undefined,
+            body: payload ? JSON.stringify(payload) : undefined,
         });
         return handleResponse(res);
     },
@@ -885,16 +931,53 @@ export const api = {
         return handleResponse(res);
     },
 
-    async startUiSyncJob(formData) {
-        const res = await authFetch(`${API_BASE_URL}/ui/sync-jobs`, {
+    async listProjectSnapshots(projectId, options = {}) {
+        const params = new URLSearchParams();
+        if (options.role) params.set('role', String(options.role));
+        if (options.stage) params.set('stage', String(options.stage));
+        if (options.origin) params.set('origin', String(options.origin));
+        if (options.run_id) params.set('run_id', String(options.run_id));
+        if (options.group_id) params.set('group_id', String(options.group_id));
+        if (options.include_state) params.set('include_state', 'true');
+        if (options.limit) params.set('limit', String(options.limit));
+        const query = params.toString();
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots${query ? `?${query}` : ''}`);
+        return handleResponse(res);
+    },
+
+    async listProjectSnapshotGroups(projectId, options = {}) {
+        const params = new URLSearchParams();
+        if (options.limit) params.set('limit', String(options.limit));
+        const query = params.toString();
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshot-groups${query ? `?${query}` : ''}`);
+        return handleResponse(res);
+    },
+
+    async captureProjectSnapshot(projectId, payload) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots/capture`, {
             method: 'POST',
-            body: formData,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload || {}),
         });
         return handleResponse(res);
     },
 
-    async getUiSyncJob(jobId) {
-        const res = await authFetch(`${API_BASE_URL}/ui/sync-jobs/${encodeURIComponent(jobId)}`);
+    async restoreProjectVersion(projectId, payload) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/restore-version`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload || {}),
+        });
+        return handleResponse(res);
+    },
+
+    async compareProjectSnapshots(projectId, fromSnapshotId, toSnapshotId, options = {}) {
+        const params = new URLSearchParams();
+        params.set('from_snapshot_id', String(fromSnapshotId || ''));
+        params.set('to_snapshot_id', String(toSnapshotId || ''));
+        if (options.max_changes) params.set('max_changes', String(options.max_changes));
+        if (options.include_states) params.set('include_states', 'true');
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots/compare?${params.toString()}`);
         return handleResponse(res);
     },
 
@@ -1075,33 +1158,6 @@ export const api = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
         });
-        return handleResponse(res);
-    },
-
-    async listLocalFolders(includeInactive = false) {
-        const query = includeInactive ? '?include_inactive=true' : '';
-        const res = await authFetch(`${API_BASE_URL}/settings/local-folders${query}`);
-        const data = await handleResponse(res);
-        return (Array.isArray(data) ? data : []).map(normalizeLocalFolder);
-    },
-
-    async saveLocalFolder(data) {
-        const res = await authFetch(`${API_BASE_URL}/settings/local-folders`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
-        });
-        return normalizeLocalFolder(await handleResponse(res));
-    },
-
-    async getLocalFolderFiles(tag) {
-        const res = await authFetch(`${API_BASE_URL}/folders/${encodeURIComponent(tag)}/files`);
-        return handleResponse(res);
-    },
-
-    async browseDirectory(basePath = '') {
-        const query = basePath ? `?base_path=${encodeURIComponent(basePath)}` : '';
-        const res = await authFetch(`${API_BASE_URL}/utils/browse-directory${query}`);
         return handleResponse(res);
     },
 

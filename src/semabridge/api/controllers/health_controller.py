@@ -1,8 +1,6 @@
 from fastapi import APIRouter
-from services.health_service import health_check
+
+from semabridge.api.services.health_service import health_check
 
 router = APIRouter()
-
-@router.get("/health")
-async def health():
-    return await health_check()
+router.get('/api/health')(health_check)

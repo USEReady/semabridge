@@ -186,6 +186,7 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
                         token_valid: true,
                     });
                     addLog('info', 'Fabric Auth', `Signed in as ${result.username}`);
+                    alert(`Signed in successfully as ${result.username}`);
                     fetchWorkspaces();
                 } else if (result.status === 'pending') {
                     startPolling();
@@ -481,6 +482,7 @@ function SnowflakeAccountForm({ initialTag, status, onSave, onCancel }) {
             });
 
             addLog('info', 'Connections', `Snowflake credentials saved (${authMode})`);
+            alert(`Snowflake credentials saved successfully! (Auth: ${authMode})`);
             if (onSave) onSave(vaultAccounts);
         } catch (err) {
             addLog('error', 'Connections', err.message);
@@ -525,6 +527,7 @@ function SnowflakeAccountForm({ initialTag, status, onSave, onCancel }) {
             setSsoResult(result);
             if (result.status === 'success') {
                 addLog('info', 'Snowflake SSO', result.message);
+                alert(`Successfully signed in via Snowflake SSO!`);
             } else {
                 addLog('warning', 'Snowflake SSO', result.message);
             }
@@ -796,7 +799,20 @@ function ConnectionManager({ type, title, subtitle, icon: Icon, color, FormCompo
                     </div>
                 ) : (
                     accounts.map(acc => (
-                        <div key={acc.id} className="grid grid-cols-3 gap-4 items-center px-4 py-3 bg-[#131620] border border-gray-100/10 rounded-lg hover:border-gray-100/20 transition-colors">
+                        <div key={acc.id} className="grid grid-cols-4 gap-4 items-center px-4 py-3 bg-[#131620] border border-gray-100/10 rounded-lg hover:border-gray-100/20 transition-colors">
+                            <div className="flex items-center gap-2">
+                                {acc.is_default ? (
+                                    <span className="text-[11px] font-bold text-indigo-400">Default</span>
+                                ) : (
+                                    <button
+                                        onClick={() => handleSetDefault(acc.id)}
+                                        className="px-2 py-1 text-[11px] font-bold text-white bg-indigo-500 hover:bg-indigo-600 rounded transition-colors border border-indigo-500/60"
+                                        style={{ minWidth: 70 }}
+                                    >
+                                        Set Default
+                                    </button>
+                                )}
+                            </div>
                             <div className="text-xs text-gray-400 truncate">{acc.identity}</div>
                             <div className="text-xs font-bold text-[#e2e8f0] truncate">{acc.tag}</div>
                             <div className="flex items-center gap-3 text-[11px] font-bold">
@@ -1044,58 +1060,143 @@ function GlobalConfigEditor() {
 }
 
 /* ───────────────────────────────────────────────
-   Account Form: Databricks
+   Account Form: Databricks (MSAL Device Code — like Fabric)
    ─────────────────────────────────────────────── */
 
-const DATABRICKS_FIELDS = [
-    { key: 'host', label: 'Server Hostname', placeholder: 'e.g. adb-123456789.azuredatabricks.net', secret: false, required: true },
-    { key: 'http_path', label: 'HTTP Path', placeholder: 'e.g. /sql/1.0/warehouses/abc12345', secret: false, required: true },
-    { key: 'token', label: 'Personal Access Token', placeholder: 'dapi...', secret: true, passwordOnly: true },
-];
-
 function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
-    const [formData, setFormData] = useState({});
-    const [showSecrets, setShowSecrets] = useState({});
-    const [saving, setSaving] = useState(false);
-    const [testing, setTesting] = useState(false);
-    const [testResult, setTestResult] = useState(null);
+    const [authStatus, setAuthStatus] = useState(null);
+    const [loginPhase, setLoginPhase] = useState('idle'); // idle | requesting | polling | success | failed
+    const [error, setError] = useState(null);
+    const pollTimer = useRef(null);
+    const flowIdRef = useRef(null);
     const { addLog } = useLogs();
 
+    // Post-login connection config
+    const [hostInput, setHostInput] = useState('');
+    const [warehouseId, setWarehouseId] = useState('');
+    const [catalog, setCatalog] = useState('main');
+    const [schemaName, setSchemaName] = useState('semabridge');
+    const [configSaving, setConfigSaving] = useState(false);
+    const [testing, setTesting] = useState(false);
+    const [testResult, setTestResult] = useState(null);
+
+    // OAuth extra config
+    const [clientId, setClientId] = useState('');
+
     useEffect(() => {
+        // Populate fields from existing credentials
         if (status?.credentials) {
-            const initial = {};
-            for (const field of DATABRICKS_FIELDS) {
-                const stored = status.credentials[field.key];
-                initial[field.key] = (field.secret || !stored) ? '' : stored;
+            setHostInput(status.credentials.host || '');
+            setWarehouseId(status.credentials.warehouse_id || '');
+            setCatalog(status.credentials.catalog || 'main');
+            setSchemaName(status.credentials.schema_name || 'semabridge');
+            
+            // Try to load client_id if we have it
+            if (status.credentials.client_id) {
+                setClientId(status.credentials.client_id);
             }
-            setFormData(initial);
         }
+        return () => { if (pollTimer.current) clearTimeout(pollTimer.current); };
     }, [status]);
 
-    const handleSave = async () => {
-        setSaving(true);
+    const handleLogin = async () => {
+        setError(null);
+        if (!hostInput || !clientId) {
+            setError("Server Hostname and Client ID are required to log in.");
+            setLoginPhase('failed');
+            return;
+        }
+
+        setLoginPhase('requesting');
+        try {
+            const redirectUri = window.location.origin + "/api/connections/databricks/callback";
+            const result = await api.databricksLogin(hostInput, clientId, redirectUri);
+            flowIdRef.current = result.flow_id;
+            
+            setLoginPhase('polling');
+            addLog('info', 'Databricks Auth', `Opening Databricks login page...`);
+
+            window.open(result.verification_uri, '_blank', 'noopener,noreferrer');
+            startPolling();
+        } catch (err) {
+            setError(err.message);
+            setLoginPhase('failed');
+            addLog('error', 'Databricks Auth', err.message);
+        }
+    };
+
+    const startPolling = () => {
+        setLoginPhase('polling');
+        pollTimer.current = setTimeout(async () => {
+            try {
+                const connectionConfig = {
+                    host: hostInput,
+                    warehouse_id: warehouseId,
+                    catalog,
+                    schema_name: schemaName,
+                };
+                const result = await api.databricksPoll(flowIdRef.current, connectionConfig);
+                if (result.status === 'success') {
+                    setLoginPhase('success');
+                    setAuthStatus({
+                        auth_method: 'interactive',
+                        username: result.username,
+                        tenant_id: result.tenant_id,
+                        logged_in: true,
+                        token_valid: true,
+                    });
+                    addLog('info', 'Databricks Auth', `Signed in as ${result.username}`);
+                    alert(`Databricks authenticated successfully as ${result.username}`);
+                } else if (result.status === 'pending') {
+                    startPolling();
+                } else {
+                    setError(result.message);
+                    setLoginPhase('failed');
+                }
+            } catch (err) {
+                setError(err.message);
+                setLoginPhase('failed');
+            }
+        }, 2000);
+    };
+
+    const handleLogout = async () => {
+        try {
+            await api.databricksLogout();
+            setAuthStatus(null);
+            setLoginPhase('idle');
+            setTestResult(null);
+            addLog('info', 'Databricks Auth', 'Logged out');
+        } catch (err) {
+            addLog('error', 'Databricks Auth', err.message);
+        }
+    };
+
+    const handleSaveConfig = async () => {
+        setConfigSaving(true);
         setTestResult(null);
         try {
-            const filtered = {};
-            for (const [k, v] of Object.entries(formData)) { if (v) filtered[k] = v; }
-            filtered.account_tag = initialTag;
-            filtered.auth_type = 'token'; // typical databricks auth
-            
-            await api.saveConnection('databricks', filtered);
-            
-            // Also register in the Vault via account_router
+            const configData = {
+                host: hostInput,
+                warehouse_id: warehouseId,
+                catalog,
+                schema_name: schemaName,
+                auth_type: 'interactive',
+                account_tag: initialTag,
+            };
+            await api.saveConnection('databricks', configData);
+
             await api.createAccount({
                 connector_type: 'DATABRICKS',
                 tag: initialTag,
-                identity_email: filtered.host,
-                encrypted_token: filtered.token,
-            }).catch(e => console.log("Vault sync skipped for now", e));
+                identity_email: authStatus?.username || hostInput || 'N/A',
+            }).catch(e => console.log('Vault sync skipped', e));
 
-            addLog('info', 'Connections', `Databricks credentials saved`);
+            addLog('info', 'Connections', `Databricks config saved for ${initialTag}`);
             if (onSave) onSave();
         } catch (err) {
             addLog('error', 'Connections', err.message);
-        } finally { setSaving(false); }
+        } finally { setConfigSaving(false); }
     };
 
     const handleTest = async () => {
@@ -1110,6 +1211,8 @@ function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
         } finally { setTesting(false); }
     };
 
+
+    const isLoggedIn = authStatus?.logged_in;
     const handleDelete = async () => {
         if (!confirm('Remove all stored Databricks credentials?')) return;
         try {
@@ -1128,64 +1231,168 @@ function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
                 <h4 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Authenticate New Account</h4>
                 <button onClick={onCancel} className="text-xs text-gray-400 hover:text-white"><X size={14}/></button>
             </div>
-            
-            <div className="mb-4">
-               <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Account Tag</label>
-               <input type="text" readOnly value={initialTag} className="w-full px-3 py-2 rounded-lg text-xs border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-tertiary)' }} />
-            </div>
 
-            <div className="px-4 py-3 space-y-3">
-                {DATABRICKS_FIELDS.map(field => (
-                    <div key={field.key}>
-                        <label className="block text-[11px] font-medium mb-1"
-                            style={{ color: 'var(--text-secondary)' }}>{field.label}</label>
-                        <div className="relative">
-                            <input
-                                type={field.secret && !showSecrets[field.key] ? 'password' : 'text'}
-                                value={formData[field.key] || ''}
-                                onChange={e => { setFormData(p => ({ ...p, [field.key]: e.target.value })); setTestResult(null); }}
-                                placeholder={field.placeholder}
-                                className="w-full px-3 py-2 rounded-lg text-xs border outline-none focus:ring-1 transition-colors"
-                                style={{ background: 'var(--bg-input, var(--bg-primary))', borderColor: 'var(--border-main)', color: 'var(--text-primary)' }}
-                            />
-                            {field.secret && (
-                                <button onClick={() => setShowSecrets(p => ({ ...p, [field.key]: !p[field.key] }))}
-                                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded opacity-40 hover:opacity-100" type="button">
-                                    {showSecrets[field.key]
-                                        ? <EyeOff size={12} style={{ color: 'var(--text-secondary)' }} />
-                                        : <Eye size={12} style={{ color: 'var(--text-secondary)' }} />}
-                                </button>
-                            )}
+            <div className="space-y-4">
+                {/* Account Tag */}
+                <div>
+                   <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Account Tag</label>
+                   <input type="text" readOnly value={initialTag} className="w-full px-3 py-2 rounded-lg text-xs border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-tertiary)' }} />
+                </div>
+
+                {/* Configuration Fields - Always Visible */}
+                <div className="space-y-3 mt-4">
+                    <div>
+                        <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Server Hostname <span className="text-red-400">*</span></label>
+                        <input type="text" value={hostInput} onChange={e => setHostInput(e.target.value)}
+                            placeholder="e.g. dbc-123456789.cloud.databricks.com"
+                            disabled={isLoggedIn}
+                            className="w-full px-3 py-2 rounded-lg text-xs border outline-none"
+                            style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)', opacity: isLoggedIn ? 0.6 : 1 }} />
+                    </div>
+                    <div>
+                        <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>OAuth Client ID <span className="text-red-400">*</span></label>
+                        <input type="text" value={clientId} onChange={e => setClientId(e.target.value)}
+                            placeholder="e.g. from Custom OAuth App"
+                            disabled={isLoggedIn}
+                            className="w-full px-3 py-2 rounded-lg text-xs border outline-none"
+                            style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)', fontFamily: 'monospace', opacity: isLoggedIn ? 0.6 : 1 }} />
+                        <div className="text-[10px] mt-1" style={{color: 'var(--text-tertiary)'}}>
+                            Requires a Custom OAuth Application configured in your Databricks Account console with Redirect URI: <code>{window.location.origin}/api/connections/databricks/callback</code>
                         </div>
                     </div>
-                ))}
-            </div>
-
-            {testResult && (
-                <div className="mx-4 mb-3 px-3 py-2 rounded-lg text-xs flex items-center gap-2"
-                    style={{
-                        background: testResult.status === 'success' ? 'rgba(52,211,153,0.1)' : 'rgba(239,68,68,0.1)',
-                        color: testResult.status === 'success' ? '#34d399' : '#ef4444',
-                    }}>
-                    {testResult.status === 'success' ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
-                    {testResult.message}
+                    <div>
+                        <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>SQL Warehouse ID</label>
+                        <input type="text" value={warehouseId} onChange={e => setWarehouseId(e.target.value)}
+                            placeholder="e.g. abc12345def67890"
+                            className="w-full px-3 py-2 rounded-lg text-xs border outline-none"
+                            style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)' }} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Catalog</label>
+                            <input type="text" value={catalog} onChange={e => setCatalog(e.target.value)}
+                                placeholder="main"
+                                className="w-full px-3 py-2 rounded-lg text-xs border outline-none"
+                                style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)' }} />
+                        </div>
+                        <div>
+                            <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Schema</label>
+                            <input type="text" value={schemaName} onChange={e => setSchemaName(e.target.value)}
+                                placeholder="semabridge"
+                                className="w-full px-3 py-2 rounded-lg text-xs border outline-none"
+                                style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)' }} />
+                        </div>
+                    </div>
                 </div>
-            )}
 
-            <div className="flex items-center gap-2 px-4 py-3 border-t" style={{ borderColor: 'var(--border-main)' }}>
-                <button onClick={handleSave} disabled={saving}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold"
-                    style={{ background: 'var(--color-accent)', color: '#fff', opacity: saving ? 0.6 : 1 }}>
-                    {saving ? <Loader2 size={12} className="animate-spin" /> : <Database size={12} />} Save
-                </button>
-                <button onClick={handleTest} disabled={testing || !isConfigured}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium border"
-                    style={{ borderColor: 'var(--border-main)', color: 'var(--text-secondary)', opacity: (testing || !isConfigured) ? 0.4 : 1 }}>
-                    {testing ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />} Test
-                </button>
-                {isConfigured && (
-                    <button onClick={handleDelete} className="ml-auto p-2 rounded-lg hover:bg-red-500/10"
-                        style={{ color: 'var(--text-tertiary)' }} title="Remove"><Trash2 size={14} /></button>
+                {/* ── Logged In State ── */}
+                {isLoggedIn && (
+                    <div className="space-y-4">
+                        <div className="flex items-center gap-3 p-3 rounded-lg"
+                            style={{ background: 'rgba(52,211,153,0.05)', border: '1px solid rgba(52,211,153,0.15)' }}>
+                            <div className="w-9 h-9 rounded-full flex items-center justify-center"
+                                style={{ background: 'rgba(255,54,33,0.15)' }}>
+                                <User size={16} style={{ color: '#ff3621' }} />
+                            </div>
+                            <div className="flex-1">
+                                <div className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>
+                                    {authStatus?.username}
+                                </div>
+                                <div className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                                    Databricks · OAuth Active
+                                </div>
+                            </div>
+                            <button onClick={handleLogout}
+                                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold border"
+                                style={{ borderColor: 'rgba(239,68,68,0.3)', color: '#ef4444' }}>
+                                <LogOut size={10} /> Sign Out
+                            </button>
+                        </div>
+
+                        {testResult && (
+                            <div className="px-3 py-2 rounded-lg text-xs flex items-center gap-2"
+                                style={{
+                                    background: testResult.status === 'success' ? 'rgba(52,211,153,0.1)' : 'rgba(239,68,68,0.1)',
+                                    color: testResult.status === 'success' ? '#34d399' : '#ef4444',
+                                }}>
+                                {testResult.status === 'success' ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
+                                {testResult.message}
+                            </div>
+                        )}
+
+                        <div className="flex items-center gap-2 pt-2">
+                            <button onClick={handleSaveConfig} disabled={configSaving}
+                                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold"
+                                style={{ background: 'var(--color-accent)', color: '#fff', opacity: configSaving ? 0.6 : 1 }}>
+                                {configSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} Save Config
+                            </button>
+                            <button onClick={handleTest} disabled={testing || !hostInput || !warehouseId}
+                                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium border"
+                                style={{ borderColor: 'var(--border-main)', color: 'var(--text-secondary)', opacity: (testing || !hostInput || !warehouseId) ? 0.4 : 1 }}>
+                                {testing ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />} Test
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* ── Sign In Button (idle) ── */}
+                {!isLoggedIn && loginPhase === 'idle' && (
+                    <button onClick={handleLogin} disabled={!hostInput || !clientId}
+                        className="w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold transition-all hover:brightness-110 mt-2"
+                        style={{ background: 'linear-gradient(135deg, #ff3621, #e74924)', color: '#fff', opacity: (!hostInput || !clientId) ? 0.5 : 1 }}>
+                        <LogIn size={16} />
+                        Sign in with Databricks
+                    </button>
+                )}
+
+                {loginPhase === 'requesting' && (
+                    <div className="flex items-center justify-center gap-2 py-6 text-xs"
+                        style={{ color: 'var(--text-secondary)' }}>
+                        <Loader2 size={16} className="animate-spin" />
+                        Requesting device code...
+                    </div>
+                )}
+
+                {/* ── Waiting for Browser ── */}
+                {loginPhase === 'polling' && (
+                    <div className="space-y-3">
+                        <div className="text-center py-6 px-4 rounded-xl"
+                            style={{ background: 'rgba(255,54,33,0.05)', border: '1px solid rgba(255,54,33,0.2)' }}>
+                            
+                            <div className="flex items-center justify-center gap-2 mb-3" style={{ color: '#ff3621' }}>
+                                <Loader2 size={24} className="animate-spin" />
+                            </div>
+                            
+                            <h4 className="text-sm font-bold mb-1" style={{ color: 'var(--text-primary)' }}>
+                                Check your browser...
+                            </h4>
+                            <p className="text-[11px] mb-4" style={{ color: 'var(--text-secondary)' }}>
+                                A new tab was safely opened to let you login via your company's provider.
+                            </p>
+                        </div>
+                    </div>
+                )}
+
+                {loginPhase === 'success' && !isLoggedIn && (
+                    <div className="flex items-center gap-2 p-3 rounded-lg text-xs"
+                        style={{ background: 'rgba(52,211,153,0.1)', color: '#34d399' }}>
+                        <CheckCircle2 size={14} />
+                        Successfully authenticated! Configure your connection below.
+                    </div>
+                )}
+
+                {loginPhase === 'failed' && error && (
+                    <div className="space-y-2">
+                        <div className="p-3 rounded-lg text-xs"
+                            style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444' }}>
+                            <AlertCircle size={12} className="inline mr-1" />
+                            {error}
+                        </div>
+                        <button onClick={() => { setLoginPhase('idle'); setError(null); }}
+                            className="text-xs underline" style={{ color: 'var(--text-secondary)' }}>
+                            Try again
+                        </button>
+                    </div>
                 )}
             </div>
         </div>

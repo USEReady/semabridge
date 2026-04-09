@@ -222,13 +222,25 @@ class GlobalValidator:
             )
             return
 
+        dataset_metric_counts: dict[str, int] = {}
+        for metric in metrics:
+            ds_ref = getattr(metric, "dataset", None)
+            if ds_ref:
+                dataset_metric_counts[ds_ref] = dataset_metric_counts.get(ds_ref, 0) + 1
+
         for ds in datasets:
             if not getattr(ds, "columns", []):
-                report.add_error(
-                    1, "Schema", ds.unique_name,
-                    "Dataset has no columns",
-                    "Add column definitions to this dataset.",
-                )
+                metric_count = dataset_metric_counts.get(ds.unique_name, 0)
+                if metric_count > 0:
+                    # Measure-only datasets are valid by design.
+                    # Keep Tier-1 logs clean by suppressing informational warnings.
+                    continue
+                else:
+                    report.add_error(
+                        1, "Schema", ds.unique_name,
+                        "Dataset has no columns",
+                        "Add column definitions to this dataset or attach metrics to it.",
+                    )
 
         ds_names = {ds.unique_name for ds in datasets}
         for metric in metrics:
@@ -309,8 +321,25 @@ class GlobalValidator:
     ) -> None:
         datasets = getattr(model, "datasets", [])
         relationships = getattr(model, "relationships", [])
+        metrics = getattr(model, "metrics", [])
 
-        pk_results = self._pk_resolver.resolve_all(datasets, relationships)
+        metric_counts_by_dataset: dict[str, int] = {}
+        for metric in metrics:
+            ds_ref = getattr(metric, "dataset", None)
+            if ds_ref:
+                metric_counts_by_dataset[ds_ref] = metric_counts_by_dataset.get(ds_ref, 0) + 1
+
+        pk_datasets = []
+        for ds in datasets:
+            if not getattr(ds, "columns", []) and metric_counts_by_dataset.get(ds.unique_name, 0) > 0:
+                logger.info(
+                    "Tier-3 PK: skipping PK resolution for measure-only dataset '%s'",
+                    ds.unique_name,
+                )
+                continue
+            pk_datasets.append(ds)
+
+        pk_results = self._pk_resolver.resolve_all(pk_datasets, relationships)
         report.pk_resolutions = pk_results
 
         for ds_name, pk_res in pk_results.items():

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Physical Validator.
 
 Validates that an SML Model's physical dependencies (Tables, Columns)
