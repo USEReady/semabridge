@@ -1,38 +1,38 @@
-project_name: mpp
+project_name: coporate
 source:
   type: fabric
-  identity_id: 8d13f780-a354-4e6e-85dd-2727f5795b72
+  identity_id: d22c081c-1eae-4a83-a3e3-3141c8cd5261
   workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
   workspace: semabridge
   models:
-  - Client Data
+    - Core_Finance_v1
 targets:
-- type: snowflake
+  - type: snowflake
 mappings:
-- source: Client Data
-  target: CLIENT_DATA
-  type: table
-  columns:
-  - source: id
-    target: ID
-    type: integer
-    primary_key: true
-  - source: name
-    target: NAME
-    type: string
-  - source: created_at
-    target: CREATED_AT
-    type: timestamp
-  - source: updated_at
-    target: UPDATED_AT
-    type: timestamp
+  - source: Core_Finance_v1
+    target: core_finance_v1_mapped
+    type: table
+    columns:
+      - source: id
+        target: id
+        type: INT
+        primary_key: true
+      - source: name
+        target: name
+        type: VARCHAR(255)
+      - source: created_at
+        target: created_at
+        type: TIMESTAMP
+      - source: updated_at
+        target: updated_at
+        type: TIMESTAMP
 ui:
   intermediate_format: osi
   editor_mode: form
   output_format: osi
 selection:
   model_ids:
-  - 0794fdcc-d85f-4d93-a42c-8bacaad04819
+    - bbe97d8c-bf99-457f-b322-6c5e7a948171
 options:
   auto_relationships: true
   generate_descriptions: true

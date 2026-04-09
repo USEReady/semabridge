@@ -394,26 +394,7 @@ export default function YamlEditor({ selectedItems = [], activeModelId = null, s
         setTableWarning(null);
         addLog('info', 'Deploy', 'Starting deployment...');
         try {
-            const envExecutor = String(import.meta.env.VITE_SYNC_EXECUTOR || '').trim().toLowerCase();
-            const envMaxParallelModels = Number.parseInt(String(import.meta.env.VITE_MAX_PARALLEL_MODELS || ''), 10);
-            const envMaxFabricJobs = Number.parseInt(String(import.meta.env.VITE_MAX_PARALLEL_FABRIC_JOBS || ''), 10);
-            const envProcessMaxWorkers = Number.parseInt(String(import.meta.env.VITE_PROCESS_MAX_WORKERS || ''), 10);
-
-            const syncPayload = { content: editorContent };
-            if (envExecutor === 'thread' || envExecutor === 'process') {
-                syncPayload.executor = envExecutor;
-            }
-            if (Number.isInteger(envMaxParallelModels) && envMaxParallelModels > 0) {
-                syncPayload.max_parallel_models = envMaxParallelModels;
-            }
-            if (Number.isInteger(envMaxFabricJobs) && envMaxFabricJobs > 0) {
-                syncPayload.max_parallel_fabric_jobs = envMaxFabricJobs;
-            }
-            if (Number.isInteger(envProcessMaxWorkers) && envProcessMaxWorkers > 0) {
-                syncPayload.process_max_workers = envProcessMaxWorkers;
-            }
-
-            const res = await api.sync(syncPayload);
+            const res = await api.sync({ content: editorContent });
             console.log("Sync result:", res);
             setSyncResult(res);
 

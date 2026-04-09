@@ -1,4 +1,4 @@
-"""
+﻿"""
 Pre-Deployment Semantic Model Validator.
 
 Runs a multi-tiered validation suite on an SML or OSI model BEFORE any SQL is
@@ -196,22 +196,12 @@ def _validate_tier1_schema(
         report.add_error(1, "Schema", sml.unique_name or "<unnamed>", "Model has no datasets")
         return
 
-    metric_counts_by_dataset: dict[str, int] = {}
-    for metric in sml.metrics:
-        ds_ref = getattr(metric, "dataset", None)
-        if ds_ref:
-            metric_counts_by_dataset[ds_ref] = metric_counts_by_dataset.get(ds_ref, 0) + 1
-
     for ds in sml.datasets:
         # Dataset must have columns
         if not ds.columns:
-            metric_count = metric_counts_by_dataset.get(ds.unique_name, 0)
-            if metric_count > 0:
-                continue
-            else:
-                report.add_error(
-                    1, "Schema", ds.unique_name, "Dataset has no columns"
-                )
+            report.add_error(
+                1, "Schema", ds.unique_name, "Dataset has no columns"
+            )
 
     for metric in sml.metrics:
         # Metric must reference a dataset that exists
@@ -336,16 +326,7 @@ def _validate_tier3_primary_keys(
                 if col not in inbound_pk[rel.to_dataset]:
                     inbound_pk[rel.to_dataset].append(col)
 
-    metric_counts_by_dataset: Dict[str, int] = {}
-    for metric in sml.metrics:
-        ds_ref = getattr(metric, "dataset", None)
-        if ds_ref:
-            metric_counts_by_dataset[ds_ref] = metric_counts_by_dataset.get(ds_ref, 0) + 1
-
     for ds in sml.datasets:
-        if not ds.columns and metric_counts_by_dataset.get(ds.unique_name, 0) > 0:
-            continue
-
         # Collect physical key columns
         physical_keys = []
         for c in ds.columns:

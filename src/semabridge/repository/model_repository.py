@@ -46,112 +46,6 @@ from semabridge.repository.duckdb_manager import ModelChange, Snapshot  # noqa: 
 logger = get_logger(__name__)
 
 
-def _deserialize_sml_blob(blob: Any) -> Dict[str, Any]:
-    """Decode snapshot blob supporting both legacy JSON and canonical YAML."""
-    if not blob:
-        return {}
-    if isinstance(blob, dict):
-        return blob
-    if isinstance(blob, bytes):
-        blob = blob.decode("utf-8", errors="replace")
-
-    text = str(blob)
-    try:
-        parsed = json.loads(text)
-        return parsed if isinstance(parsed, dict) else {}
-    except Exception:
-        pass
-
-    try:
-        import yaml
-
-        parsed = yaml.safe_load(text)
-        return parsed if isinstance(parsed, dict) else {}
-    except Exception:
-        logger.warning("Failed to parse snapshot payload as JSON or YAML")
-        return {}
-
-
-def _serialize_sml_blob(sml_json: Dict[str, Any]) -> str:
-    """Serialize snapshot payload as canonical SML YAML when possible."""
-    try:
-        from semabridge.formats.sml.models import SMLModel
-        from semabridge.formats.sml.serializer import SMLSerializer
-
-        model = SMLModel.model_validate(sml_json)
-        return SMLSerializer.to_yaml(model)
-    except Exception:
-        return json.dumps(sml_json)
-
-
-class _DBAPICursorResult:
-    """DuckDB-like execute result wrapper for raw DBAPI cursors.
-
-    Legacy code expects ``conn.execute(...).fetchall()`` to work against the
-    repository connection. Psycopg2 connections do not expose ``execute`` on
-    the connection itself, so we adapt a cursor into that shape.
-    """
-
-    def __init__(self, cursor: Any) -> None:
-        self._cursor = cursor
-
-    def fetchone(self) -> Any:
-        return self._cursor.fetchone()
-
-    def fetchall(self) -> Any:
-        return self._cursor.fetchall()
-
-    def __iter__(self):
-        return iter(self._cursor)
-
-
-class _CompatDBAPIConnection:
-    """Compatibility wrapper that emulates DuckDB's connection.execute()."""
-
-    def __init__(self, raw_connection: Any) -> None:
-        self._raw_connection = raw_connection
-
-    @staticmethod
-    def _normalize_sql(sql: str, params: Optional[List[Any]]) -> str:
-        if not params or "?" not in sql:
-            return sql
-        return sql.replace("?", "%s")
-
-    @staticmethod
-    def _is_result_read(sql: str) -> bool:
-        first = (sql or "").lstrip().split(None, 1)
-        if not first:
-            return False
-        return first[0].upper() in {"SELECT", "WITH", "SHOW", "DESC", "DESCRIBE", "PRAGMA"}
-
-    def execute(self, sql: str, params: Optional[List[Any]] = None) -> _DBAPICursorResult:
-        cursor = self._raw_connection.cursor()
-        normalized_sql = self._normalize_sql(sql, params)
-        if params:
-            cursor.execute(normalized_sql, list(params))
-        else:
-            cursor.execute(normalized_sql)
-
-        # Persist mutations immediately to match the old repository callers,
-        # which usually rely on DuckDB autocommit-ish behavior.
-        if not self._is_result_read(sql):
-            try:
-                self._raw_connection.commit()
-            except Exception:
-                pass
-
-        return _DBAPICursorResult(cursor)
-
-    def close(self) -> None:
-        self._raw_connection.close()
-
-    def commit(self) -> None:
-        self._raw_connection.commit()
-
-    def rollback(self) -> None:
-        self._raw_connection.rollback()
-
-
 class ModelRepository:
     """SQLAlchemy-backed semantic model repository.
 
@@ -251,25 +145,15 @@ class ModelRepository:
         return _dm.get_session_factory()()
 
     def _get_connection(self):
-        """Backward-compat shim: return a connection with DuckDB-like execute().
+        """Backward-compat shim: return a raw DBAPI connection.
 
         Allows legacy test code that used DuckDBManager._get_connection()
         to do low-level queries with positional '?' placeholders.
-
-        When the backing engine is PostgreSQL/psycopg2, the raw DBAPI
-        connection does not expose ``execute`` on the connection object, so we
-        wrap it in a small compatibility adapter.
         """
         if self._url_override:
-            raw_connection = self._engine.raw_connection()
-        else:
-            from semabridge.repository.orm.session_factory import db_manager as _dm
-            raw_connection = _dm.get_engine().raw_connection()
-
-        if hasattr(raw_connection, "execute"):
-            return raw_connection
-
-        return _CompatDBAPIConnection(raw_connection)
+            return self._engine.raw_connection()
+        from semabridge.repository.orm.session_factory import db_manager as _dm
+        return _dm.get_engine().raw_connection()
 
     @staticmethod
     def _row_to_snapshot(row: SnapshotRow) -> Snapshot:
@@ -278,7 +162,7 @@ class ModelRepository:
             project_id=row.project_id,
             timestamp=str(row.timestamp),
             version_tag=row.version_tag,
-            sml_blob=_deserialize_sml_blob(row.sml_blob),
+            sml_blob=json.loads(row.sml_blob) if row.sml_blob else {},
             status=row.status,
             duration_ms=row.duration_ms,
             error_message=row.error_message,
@@ -421,7 +305,7 @@ class ModelRepository:
                     project_id=project_id,
                     timestamp=timestamp,
                     version_tag=tag,
-                    sml_blob=_serialize_sml_blob(sml_json),
+                    sml_blob=json.dumps(sml_json),
                     status=status,
                     duration_ms=duration_ms,
                     error_message=error_message,

@@ -1,5 +1,5 @@
-/**
- * ProjectsPage — Folder-grouped projects with HP search, drag-drop, and import/export.
+﻿/**
+ * ProjectsPage â€” Folder-grouped projects with HP search, drag-drop, and import/export.
  */
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   FolderOpen, Plus, MoreVertical, Layers, Trash2, Edit3,
   Upload, Download, Play, Settings, Copy, Folder, FolderPlus,
-  X, Check, BarChart3, Cloud, Snowflake, Database,
+  X, Check,
 } from 'lucide-react';
 
 import StatusBadge from '../components/common/StatusBadge';
@@ -15,60 +15,11 @@ import EmptyState from '../components/common/EmptyState';
 import ProjectDetailModal from '../components/projects/ProjectDetailModal';
 import ImportProjectModal from '../components/projects/ImportProjectModal';
 import SmartSearchBar, { matchesSmartQuery } from '../components/common/SmartSearchBar';
+import SourceIcon from '../components/common/SourceIcon';
 import { api } from '../utils/api';
 import React, { useContext } from 'react';
 import { SyncContext } from '../context/SyncContext';
 import { DEFAULT_FILTER_OPTIONS, useUIStore } from '../store/uiStore';
-
-function openRunsPage() {
-  if (typeof window !== 'undefined') {
-    window.location.assign('/jobs');
-  }
-}
-
-function normalizeSourceKey(value) {
-  if (!value) return '';
-
-  let key = '';
-  if (typeof value === 'string') {
-    key = value.toLowerCase().trim();
-  }
-  if (typeof value === 'object') {
-    key = String(
-      value.type || value.adapter || value.source || value.source_type || value.connector || ''
-    ).toLowerCase().trim();
-  }
-
-  // Canonicalize common API variants so icon/render logic stays stable.
-  if (!key) return '';
-  if (key.includes('pbix') || key.includes('powerbi') || key.includes('power bi') || key === 'pbi') return 'pbix';
-  if (key.includes('fabric')) return 'fabric';
-  if (key.includes('snowflake')) return 'snowflake';
-  if (key.includes('databricks')) return 'databricks';
-  if (key.includes('google') && key.includes('sheet')) return 'google_sheets';
-  if (key.includes('postgres')) return 'postgresql';
-  if (key.includes('salesforce')) return 'salesforce';
-
-  return key;
-}
-
-function sourceKeyOf(project) {
-  return (
-    normalizeSourceKey(project?.source)
-    || normalizeSourceKey(project?.adapter)
-    || normalizeSourceKey(project?.source_type)
-    || normalizeSourceKey(project?.connector)
-  );
-}
-
-function renderSourceIcon(sourceType, size = 14) {
-  const source = normalizeSourceKey(sourceType);
-  if (source.includes('pbix')) return <BarChart3 size={size} color="#F2C811" />;
-  if (source.includes('fabric')) return <Cloud size={size} color="#3b82f6" />;
-  if (source.includes('snowflake')) return <Snowflake size={size} color="#38bdf8" />;
-  if (source.includes('databricks')) return <Database size={size} color="#f97316" />;
-  return <Folder size={size} color="var(--text-tertiary)" />;
-}
 
 /* Use CSS variables for folder colors - mapped to semantic status colors */
 const FOLDER_COLORS = [
@@ -81,7 +32,7 @@ const FOLDER_COLORS = [
   'var(--accent-orange)',
 ];
 
-/* ─── Main Page ─── */
+/* â”€â”€â”€ Main Page â”€â”€â”€ */
 export default function ProjectsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -163,12 +114,12 @@ export default function ProjectsPage() {
       const selectedFolderKey = String(selectedFolder);
       if (selectedFolderKey.startsWith('source:')) {
         const source = selectedFolderKey.substring(7);
-        if (sourceKeyOf(p) !== source) return false;
+        if ((p.source || p.adapter) !== source) return false;
       } else {
         if (String(p.folder_id ?? '') !== selectedFolderKey) return false;
       }
     }
-    if (sourceFilter !== 'all' && sourceKeyOf(p) !== sourceFilter) return false;
+    if (sourceFilter !== 'all' && (p.source || p.adapter) !== sourceFilter) return false;
     if (targetFilter !== 'all' && p.target_type !== targetFilter) return false;
     
     // Tag filtering - if tags are selected, project must have ALL selected tags
@@ -197,7 +148,8 @@ export default function ProjectsPage() {
         const haystack = [
           p.name,
           p.description,
-          sourceKeyOf(p),
+          p.source,
+          p.adapter,
           p.workspace_id,
           p.target_type,
           ...(Array.isArray(p.tags) ? p.tags : []),
@@ -206,7 +158,7 @@ export default function ProjectsPage() {
       })
     : folderFiltered;
 
-  /* ── Folder actions ── */
+  /* â”€â”€ Folder actions â”€â”€ */
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return;
     const color = FOLDER_COLORS[folders.length % FOLDER_COLORS.length];
@@ -231,7 +183,7 @@ export default function ProjectsPage() {
     setProjects(prev => prev.map(p => p.folder_id === id ? { ...p, folder_id: null } : p));
   };
 
-  /* ── Drag-and-drop ── */
+  /* â”€â”€ Drag-and-drop â”€â”€ */
   const handleDragStart = (e, projectId) => {
     e.dataTransfer.setData('projectId', String(projectId));
   };
@@ -245,7 +197,7 @@ export default function ProjectsPage() {
     setProjects(prev => prev.map(p => p.id === projectId ? { ...p, folder_id: folderId } : p));
   };
 
-  /* ── Project actions ── */
+  /* â”€â”€ Project actions â”€â”€ */
   const handleDelete = async (project) => {
     if (!confirm(`Delete project "${project.name}"?`)) return;
     try {
@@ -298,11 +250,6 @@ export default function ProjectsPage() {
         const pid = updatedProject.id || updatedProject.project_id;
         setProjects(prev => prev.map(p => (p.id === pid || p.project_id === pid) ? { ...p, ...updatedProject } : p));
       }
-      const status = String(result?.status || '').toLowerCase();
-      if (result?.run_id || result?.id || status === 'running') {
-        openRunsPage();
-        return result;
-      }
       // Fallback: force progress bar to 100% and status to 'success' if POST returns 200
       if (result && typeof window !== 'undefined' && window.dispatchEvent) {
         window.dispatchEvent(new CustomEvent('semabridge-sync-fallback', { detail: { projectId, status: 'success', progress: 100 } }));
@@ -321,11 +268,11 @@ export default function ProjectsPage() {
     }
   }, [setProjects]);
 
-  /* ── Render ── */
+  /* â”€â”€ Render â”€â”€ */
   return (
     <div style={{ display: 'flex', flexDirection: 'row-reverse', height: '100%', overflow: 'hidden' }}>
 
-      {/* ── Folder/Adapter Sidebar ── */}
+      {/* â”€â”€ Folder/Adapter Sidebar â”€â”€ */}
       <aside style={{
         width: 220, flexShrink: 0,
         borderLeft: '1px solid var(--border-main)',
@@ -393,16 +340,16 @@ export default function ProjectsPage() {
         ))
         ) : (
           // Adapter/Source view
-          [...new Set(projects.map(p => sourceKeyOf(p)).filter(Boolean))]
+          [...new Set(projects.map(p => p.source || p.adapter).filter(Boolean))]
             .sort()
             .map(source => {
-              const sourceProjects = projects.filter(p => sourceKeyOf(p) === source);
+              const sourceProjects = projects.filter(p => (p.source || p.adapter) === source);
               return (
                 <SidebarItem
                   key={source}
                   color="var(--accent-blue)"
-                  icon={renderSourceIcon(source, 13)}
                   label={`${source} (${sourceProjects.length})`}
+                  icon={<SourceIcon source={source} size={13} />}
                   active={selectedFolder === `source:${source}`}
                   onClick={() => updateFilterOption('selectedFolder', `source:${source}`)}
                 />
@@ -456,7 +403,7 @@ export default function ProjectsPage() {
         </div>
       </aside>
 
-      {/* ── Main content ── */}
+      {/* â”€â”€ Main content â”€â”€ */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {/* Header */}
         <div style={{ padding: '20px 28px 0', flexShrink: 0 }}>
@@ -639,7 +586,7 @@ export default function ProjectsPage() {
                       onMouseEnter={e => { e.currentTarget.style.background = 'var(--color-error)30'; }}
                       onMouseLeave={e => { e.currentTarget.style.background = 'var(--color-error)20'; }}
                     >
-                      ✕ Clear All
+                      âœ• Clear All
                     </button>
                   </div>
                 )}
@@ -656,7 +603,7 @@ export default function ProjectsPage() {
         >
           {loading ? (
             <div style={{ padding: '80px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-              Loading projects…
+              Loading projectsâ€¦
             </div>
           ) : filtered.length === 0 && !searchQuery ? (
             <EmptyState
@@ -709,8 +656,8 @@ export default function ProjectsPage() {
   );
 }
 
-/* ─── Sidebar helpers ─── */
-function SidebarItem({ color, label, active, onClick, icon }) {
+/* â”€â”€â”€ Sidebar helpers â”€â”€â”€ */
+function SidebarItem({ color, label, active, onClick, icon = null }) {
   return (
     <button
       onClick={onClick}
@@ -794,14 +741,14 @@ function SidebarFolder({
   );
 }
 
-/* ─── Project Card ─── */
+/* â”€â”€â”€ Project Card â”€â”€â”€ */
 function ProjectCard({
   project, menuOpen, onMenuToggle,
   onViewDetail, onConfigure, onRunNow, isRunning = false, onDuplicate, onExport, onDelete,
   onDragStart,
 }) {
   const isOpen = menuOpen === project.id;
-  const sourceKey = sourceKeyOf(project);
+  const sourceKey = String(project.source || project.adapter || '').toLowerCase();
   const { activeRuns } = useContext(SyncContext);
   // Debug log for troubleshooting status updates
   console.log('[ProjectCard] project.id:', project.id, 'activeRuns:', activeRuns);
@@ -857,16 +804,16 @@ function ProjectCard({
           <div style={{
             width: 40, height: 40, borderRadius: 10,
             background: 'var(--color-accent-faint)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            {renderSourceIcon(sourceKey, 20)}
+            <SourceIcon source={sourceKey} size={20} />
           </div>
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>
               {project.name}
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>
-              {sourceKey || '—'}
+              {project.source || project.adapter || 'â€”'}
             </div>
           </div>
         </div>
@@ -969,7 +916,7 @@ function IconBtn({ title, onClick, disabled = false, children }) {
   );
 }
 
-/* ─── Project context menu ─── */
+/* â”€â”€â”€ Project context menu â”€â”€â”€ */
 function ProjectMenu({ onViewDetail, onConfigure, onRunNow, onDuplicate, onExport, onDelete, onClose }) {
   useEffect(() => {
     const h = () => onClose();
@@ -1023,7 +970,7 @@ function ProjectMenu({ onViewDetail, onConfigure, onRunNow, onDuplicate, onExpor
   );
 }
 
-/* ─── Shared button style helper ─── */
+/* â”€â”€â”€ Shared button style helper â”€â”€â”€ */
 function btnStyle(variant) {
   return {
     display: 'inline-flex', alignItems: 'center', gap: 5,

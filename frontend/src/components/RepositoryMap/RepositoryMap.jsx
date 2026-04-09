@@ -30,9 +30,8 @@ function readExploreUiPrefs() {
 function normalizeGraphPayload(rawGraph) {
     const rawNodes = Array.isArray(rawGraph?.nodes) ? rawGraph.nodes : [];
     const rawEdges = Array.isArray(rawGraph?.edges) ? rawGraph.edges : [];
-    const graphModelId = String(rawGraph?.model || rawGraph?.model_id || '').trim();
 
-    const provisionalNodes = rawNodes.map((node, idx) => {
+    const nodes = rawNodes.map((node, idx) => {
         const nodeId = String(node?.id ?? `n-${idx}`);
         const incomingData = node?.data && typeof node.data === 'object' ? node.data : {};
         const semanticType = String(incomingData.nodeType || incomingData.type || '').toLowerCase();
@@ -52,7 +51,7 @@ function normalizeGraphPayload(rawGraph) {
                 ...incomingData,
                 nodeType: incomingData.nodeType || (nodeType === 'tableNode' ? 'table' : nodeType === 'measureNode' ? 'measure' : 'model'),
                 label: incomingData.label || nodeId,
-                model_id: incomingData.model_id || (graphModelId && graphModelId !== '__all__' ? graphModelId : nodeId),
+                model_id: incomingData.model_id || nodeId,
             },
             position: node?.position && typeof node.position.x === 'number' && typeof node.position.y === 'number'
                 ? node.position
@@ -68,47 +67,6 @@ function normalizeGraphPayload(rawGraph) {
             source: String(edge.source),
             target: String(edge.target),
         }));
-
-    const nodesById = new Map(provisionalNodes.map((node) => [node.id, node]));
-    const modelIdsByNodeId = new Map();
-
-    provisionalNodes.forEach((node) => {
-        if (node?.data?.nodeType === 'model') {
-            const modelId = String(node?.data?.model_id || node.id || '').trim();
-            if (modelId) {
-                modelIdsByNodeId.set(node.id, modelId);
-            }
-        }
-    });
-
-    edges.forEach((edge) => {
-        const sourceNode = nodesById.get(edge.source);
-        const targetNode = nodesById.get(edge.target);
-
-        if (sourceNode?.data?.nodeType === 'model' && targetNode && !modelIdsByNodeId.has(targetNode.id)) {
-            const modelId = String(sourceNode?.data?.model_id || '').trim();
-            if (modelId) modelIdsByNodeId.set(targetNode.id, modelId);
-        }
-
-        if (targetNode?.data?.nodeType === 'model' && sourceNode && !modelIdsByNodeId.has(sourceNode.id)) {
-            const modelId = String(targetNode?.data?.model_id || '').trim();
-            if (modelId) modelIdsByNodeId.set(sourceNode.id, modelId);
-        }
-    });
-
-    const nodes = provisionalNodes.map((node) => {
-        const inferredModelId = modelIdsByNodeId.get(node.id);
-        const existingModelId = String(node?.data?.model_id || '').trim();
-        const resolvedModelId = existingModelId || inferredModelId || (graphModelId && graphModelId !== '__all__' ? graphModelId : '');
-
-        return {
-            ...node,
-            data: {
-                ...node.data,
-                model_id: resolvedModelId || node.data.model_id,
-            },
-        };
-    });
 
     return {
         nodes,
@@ -163,8 +121,6 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
 
     const [syncing, setSyncing] = useState(false);
     const [loading, setLoading] = useState(true);
-    const [treeLoading, setTreeLoading] = useState(true);
-    const [graphLoading, setGraphLoading] = useState(true);
     const [diffLoading, setDiffLoading] = useState(false);
     const [diffReport, setDiffReport] = useState(null);
     const [inspectorResetToken, setInspectorResetToken] = useState(0);
@@ -172,29 +128,26 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     // ── initial load ────────────────────────────────
     const loadData = useCallback(async () => {
         setLoading(true);
-        setTreeLoading(true);
-        setGraphLoading(true);
         try {
-            const [snapshotResp, snapshotsResp] = await Promise.all([
+            const [, snapshotResp, snapshotsResp] = await Promise.all([
+                api.getRepoTree(),
                 api.getSnapshotTree().catch(() => ({ root: null })),
                 api.getGraphSnapshots('__all__').catch(() => []),
             ]);
 
-            setSnapshotTreeData(snapshotResp?.root || null);
-            setTreeLoading(false);
+            // Always load full graph so model/table selectors can render complete lists.
+            // Scoping to selected model is handled in frontend rendering.
+            const modelScope = '__all__';
 
             let graphResp;
             let effectiveSnapshotId = snapshotId;
-            const snapshots = Array.isArray(snapshotsResp) ? snapshotsResp : [];
             if (!effectiveSnapshotId) {
+                const snapshots = Array.isArray(snapshotsResp) ? snapshotsResp : [];
                 const sorted = [...snapshots].sort(
                     (a, b) => new Date(b?.timestamp || 0).getTime() - new Date(a?.timestamp || 0).getTime()
                 );
                 effectiveSnapshotId = sorted[0]?.snapshot_id || null;
             }
-
-            const effectiveSnapshot = snapshots.find((s) => s?.snapshot_id === effectiveSnapshotId) || null;
-            const modelScope = String(effectiveSnapshot?.model_name || '').trim() || '__all__';
 
             if (effectiveSnapshotId) {
                 graphResp = await api.getGraphSnapshot(modelScope, effectiveSnapshotId, includeSystemTables).catch(() => null);
@@ -202,24 +155,18 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
 
             // Fallback only when no snapshot graph available
             if (!graphResp) {
-                graphResp = await api.getModelGraph(modelScope).catch((err) => {
-                    console.warn('Primary graph fallback failed:', err);
-                    return null;
-                });
+                graphResp = await api.getModelGraph(modelScope);
             }
 
-            const normalizedGraph = normalizeGraphPayload(graphResp);
-            setGraphData(normalizedGraph);
-            setGraphLoading(false);
+            let normalizedGraph = normalizeGraphPayload(graphResp);
 
             // Snowflake-only environments may have no repository graph yet.
-            // Run discovery in the background so Explore doesn't stay blocked on it.
+            // Fall back to discovery so Model Explorer still renders entities.
             if ((normalizedGraph.nodes || []).length === 0) {
-                void api.discoverSnowflakeModels()
-                    .then((discovered) => {
-                        const models = Array.isArray(discovered) ? discovered : [];
-                        if (!models.length) return;
-
+                try {
+                    const discovered = await api.discoverSnowflakeModels();
+                    const models = Array.isArray(discovered) ? discovered : [];
+                    if (models.length > 0) {
                         const modelNodeId = 'model-snowflake-discovery';
                         const nodes = [{
                             id: modelNodeId,
@@ -263,17 +210,18 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                             });
                         });
 
-                        setGraphData({ nodes, edges, meta: { source: 'snowflake-discovery-fallback' } });
-                    })
-                    .catch(() => {
-                        // Keep empty graph if discovery is unavailable.
-                    });
+                        normalizedGraph = { nodes, edges, meta: { source: 'snowflake-discovery-fallback' } };
+                    }
+                } catch {
+                    // Keep empty graph if discovery is unavailable.
+                }
             }
+
+            setSnapshotTreeData(snapshotResp.root);
+            setGraphData(normalizedGraph);
         } catch (err) {
             console.error('Failed to load repo map data:', err);
         } finally {
-            setTreeLoading(false);
-            setGraphLoading(false);
             setLoading(false);
         }
     }, [snapshotId, includeSystemTables]);
@@ -574,15 +522,15 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     }, []);
 
     useEffect(() => {
-        if (selectedModelId !== '__all__' && !modelOptions.some((m) => m.id === selectedModelId)) {
+        if (!erMode && filterType !== 'tables') {
             setSelectedModelId('__all__');
-            setSelectedTableId('__all__');
             return;
         }
-        if (selectedModelId === '__all__' && erMode && modelOptions.length > 1) {
+        // In ER mode default to a specific model when multiple are present for readability.
+        if (selectedModelId === '__all__' && modelOptions.length > 1) {
             setSelectedModelId(modelOptions[0].id);
         }
-    }, [erMode, modelOptions, selectedModelId]);
+    }, [erMode, filterType, modelOptions, selectedModelId]);
 
     useEffect(() => {
         if (filterType === 'models' && erMode) {
@@ -686,17 +634,14 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     <span style={{ fontSize: 11 }}>Explorer</span>
                 </button>
 
-                {modelOptions.length > 0 && (
+                {(erMode || filterType === 'tables' || filterType === 'metrics') && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 8, flexShrink: 0 }}>
                         <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap' }}>
                             Model
                         </span>
                         <select
                             value={selectedModelId}
-                            onChange={(e) => {
-                                setSelectedModelId(e.target.value);
-                                setSelectedTableId('__all__');
-                            }}
+                            onChange={(e) => setSelectedModelId(e.target.value)}
                             style={{
                                 border: '1px solid var(--border-color)',
                                 borderRadius: 6,
@@ -707,9 +652,9 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                                 maxWidth: 220,
                                 minWidth: 120,
                             }}
-                            title="Choose model filter"
+                            title="Choose model"
                         >
-                            <option value="__all__">Select model</option>
+                            <option value="__all__">All models</option>
                             {modelOptions.map(m => (
                                 <option key={m.id} value={m.id}>{m.label}</option>
                             ))}
@@ -731,24 +676,11 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                                 }}
                                 title="Choose table"
                             >
-                                <option value="__all__">{selectedModelId === '__all__' ? 'Select model first' : 'Select table'}</option>
+                                <option value="__all__">All tables</option>
                                 {tableOptions.map(t => (
                                     <option key={t.id} value={t.id}>{t.schema}.{t.name} · {t.model}</option>
                                 ))}
                             </select>
-                        )}
-                        {selectedModelId !== '__all__' && (
-                            <span style={{
-                                fontSize: 10,
-                                color: '#818CF8',
-                                border: '1px solid rgba(129,140,248,.35)',
-                                background: 'rgba(129,140,248,.10)',
-                                padding: '4px 8px',
-                                borderRadius: 999,
-                                whiteSpace: 'nowrap',
-                            }}>
-                                {selectedTableId !== '__all__' ? 'Model + table filtered' : 'Model filtered'}
-                            </span>
                         )}
                     </div>
                 )}
@@ -919,7 +851,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                         <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)' }}>Snapshots</span>
                     </div>
                     <div style={{ flex: 1, overflow: 'auto' }}>
-                    {treeLoading ? (
+                    {loading ? (
                         <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
                             Loading tree...
                         </div>
@@ -960,7 +892,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                                     filterType={filterType}
                                     showVersionBadges={showVersionBadges}
                                     onNodeClick={handleNodeClick}
-                                    isLoading={graphLoading}
+                                    isLoading={loading}
                                     snapshotId={snapshotId}
                                     diffMode={diffMode}
                                     defaultEdgeOptions={{ type: 'step' }}
@@ -985,7 +917,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                                                             filterType={filterType}
                                                             showVersionBadges={showVersionBadges}
                                                             onNodeClick={handleNodeClick}
-                                                            isLoading={graphLoading}
+                                                            isLoading={loading}
                                                             snapshotId={snapshotId}
                                                             diffMode={diffMode}
                                                             defaultEdgeOptions={{ type: 'step' }}
@@ -1230,3 +1162,4 @@ const tdStyle = {
     padding: '6px 8px',
     color: 'var(--text-secondary)',
 };
+

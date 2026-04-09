@@ -7,11 +7,7 @@ canonical intermediate representation.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import re
-import unicodedata
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from semabridge.core.interfaces import BaseConverter
@@ -41,11 +37,6 @@ class TMSLToOSIConverter(BaseConverter):
     """
     Transforms Fabric TMSL JSON into OSI Model.
     """
-
-    AUTO_HIDDEN_TABLE_PREFIXES = (
-        "LocalDateTable_",
-        "DateTableTemplate_",
-    )
 
     def to_osi(self, source_data: Dict[str, Any]) -> OSIModel:
         """
@@ -77,7 +68,6 @@ class TMSLToOSIConverter(BaseConverter):
 
             model_obj = tmsl_json.get("model", {})
             name = model_obj.get("name", "FabricModel")
-            self._dump_measure_audit(model_obj, dataset_id, phase="tmsl_to_osi_pre")
 
             osi_model = OSIModel(
                 unique_name=dataset_id,
@@ -90,13 +80,11 @@ class TMSLToOSIConverter(BaseConverter):
             # Process Datasets (Tables)
             if "tables" in model_obj:
                 for table in model_obj["tables"]:
+                    # Skip internal tables
                     t_name = table.get("name", "")
-                    if self._is_auto_hidden_table_name(t_name):
-                        logger.info(
-                            "Skipping hidden auto-date table during OSI conversion: %s",
-                            t_name or "<unnamed>",
-                        )
+                    if t_name.startswith("DateTableTemplate") or t_name.startswith("LocalDateTable"):
                         continue
+                    
                     dataset = self._parse_dataset(table)
                     osi_model.datasets.append(dataset)
 
@@ -107,107 +95,29 @@ class TMSLToOSIConverter(BaseConverter):
                         osi_model.dimensions.append(dim)
 
                     # Process Measures (Metrics)
-                    for measure in self._iter_table_measures_with_stable_names(table):
+                    for measure in self._iter_table_measures(table):
                         metric = self._parse_metric(measure, dataset.unique_name)
                         osi_model.metrics.append(metric)
 
             # Process Relationships
-            # Build case-insensitive map of valid datasets so relationship
-            # endpoints can be canonicalized before filtering.
-            valid_dataset_map = {
-                str(ds.unique_name).casefold(): ds.unique_name for ds in osi_model.datasets
-            }
+            # Build set of valid dataset names (excluding filtered-out tables like LocalDateTable_*)
+            valid_datasets = {ds.unique_name for ds in osi_model.datasets}
             
             if "relationships" in model_obj:
                 for rel in model_obj["relationships"]:
                     osi_rel = self._parse_relationship(rel)
                     if osi_rel:
-                        from_dataset = valid_dataset_map.get(str(osi_rel.from_dataset).casefold())
-                        to_dataset = valid_dataset_map.get(str(osi_rel.to_dataset).casefold())
                         # Only add relationship if both referenced tables exist
-                        if from_dataset and to_dataset:
-                            osi_rel.from_dataset = from_dataset
-                            osi_rel.to_dataset = to_dataset
+                        if (osi_rel.from_dataset in valid_datasets and 
+                            osi_rel.to_dataset in valid_datasets):
                             osi_model.relationships.append(osi_rel)
                         else:
-                            # Skip only relationships that reference truly missing datasets.
+                            # Skip relationships to excluded tables (e.g., LocalDateTable_*)
                             logger.debug(
                                 f"Skipping relationship '{osi_rel.unique_name}': "
-                                f"references unavailable table(s) "
+                                f"references excluded table(s) "
                                 f"({osi_rel.from_dataset} -> {osi_rel.to_dataset})"
                             )
-
-            # Fallback: infer relationships when source metadata exposes none.
-            if not osi_model.relationships and osi_model.datasets:
-                try:
-                    from semabridge.connectors.relationship_detector import RelationshipDetector
-
-                    tables_meta: Dict[str, Dict[str, Any]] = {
-                        ds.unique_name: {"row_count": 0} for ds in osi_model.datasets
-                    }
-                    columns_meta: Dict[str, List[Dict[str, Any]]] = {
-                        ds.unique_name: [
-                            {
-                                "name": c.unique_name,
-                                "data_type": (
-                                    c.data_type.value if hasattr(c.data_type, "value") else str(c.data_type)
-                                ),
-                            }
-                            for c in ds.columns
-                        ]
-                        for ds in osi_model.datasets
-                    }
-                    pks_meta: Dict[str, List[str]] = {
-                        ds.unique_name: [c.unique_name for c in ds.columns if c.is_key]
-                        for ds in osi_model.datasets
-                    }
-
-                    detector = RelationshipDetector(tables_meta, columns_meta, pks_meta)
-                    inferred_rels = detector.detect_all()
-                    if inferred_rels:
-                        seen_signatures = {
-                            (
-                                r.from_dataset.casefold(),
-                                (r.from_columns[0] if r.from_columns else "").casefold(),
-                                r.to_dataset.casefold(),
-                                (r.to_columns[0] if r.to_columns else "").casefold(),
-                            )
-                            for r in osi_model.relationships
-                        }
-                        for rel in inferred_rels:
-                            sig = (
-                                str(rel.get("from_table", "")).casefold(),
-                                str(rel.get("from_column", "")).casefold(),
-                                str(rel.get("to_table", "")).casefold(),
-                                str(rel.get("to_column", "")).casefold(),
-                            )
-                            if sig in seen_signatures:
-                                continue
-                            from_ds = valid_dataset_map.get(str(rel.get("from_table", "")).casefold())
-                            to_ds = valid_dataset_map.get(str(rel.get("to_table", "")).casefold())
-                            from_col = str(rel.get("from_column", "")).strip()
-                            to_col = str(rel.get("to_column", "")).strip()
-                            if not (from_ds and to_ds and from_col and to_col):
-                                continue
-                            osi_model.relationships.append(
-                                OSIRelationship(
-                                    unique_name=generate_relationship_name(from_ds, from_col, to_ds, to_col),
-                                    from_dataset=from_ds,
-                                    from_columns=[from_col],
-                                    to_dataset=to_ds,
-                                    to_columns=[to_col],
-                                    cardinality=OSICardinality.MANY_TO_ONE,
-                                    cross_filter_direction=OSICrossFilterDirection.SINGLE,
-                                    is_active=True,
-                                )
-                            )
-                            seen_signatures.add(sig)
-                        logger.info(
-                            "Inferred %s fallback relationship(s) from table metadata",
-                            len(osi_model.relationships),
-                        )
-                except Exception as exc:
-                    logger.warning("Relationship inference fallback failed: %s", exc)
 
             return osi_model
 
@@ -278,13 +188,6 @@ class TMSLToOSIConverter(BaseConverter):
             is_hidden=table_def.get("isHidden", False),
             columns=columns,
             source_table=source_table
-        )
-
-    @classmethod
-    def _is_auto_hidden_table_name(cls, table_name: str) -> bool:
-        return any(
-            str(table_name or "").startswith(prefix)
-            for prefix in cls.AUTO_HIDDEN_TABLE_PREFIXES
         )
 
     def _parse_column(self, col_def: Dict[str, Any], table_name: str) -> OSIColumn:
@@ -486,7 +389,6 @@ class TMSLToOSIConverter(BaseConverter):
             dax = "\n".join(dax)
 
         name = measure_def["name"]
-        display_name = self._measure_display_name(measure_def) or name
 
         if not str(dax).strip():
             logger.warning(
@@ -508,11 +410,11 @@ class TMSLToOSIConverter(BaseConverter):
         access_modifier = "private_access" if is_helper else "public_access"
 
         # Auto-generate synonyms from measure name
-        synonyms = TMSLToOSIConverter._auto_synonyms(display_name)
+        synonyms = TMSLToOSIConverter._auto_synonyms(name)
 
         return OSIMetric(
             unique_name=name,
-            label=display_name,
+            label=name,
             dataset=dataset_name,
             expression=dax,
             aggregation=OSIAggregationType.NONE,  # Raw DAX implies explicit calc
@@ -555,147 +457,6 @@ class TMSLToOSIConverter(BaseConverter):
         return measures
 
     @staticmethod
-    def _normalize_measure_name_key(name: str) -> str:
-        """Normalize measure names for robust duplicate detection."""
-        normalized = unicodedata.normalize("NFKC", str(name or ""))
-        normalized = " ".join(normalized.split())
-        return normalized.casefold()
-
-    @staticmethod
-    def _measure_display_name(measure_def: Dict[str, Any]) -> str:
-        """Return user-visible measure display name when available."""
-        return str(
-            measure_def.get("displayName")
-            or measure_def.get("caption")
-            or measure_def.get("label")
-            or measure_def.get("name")
-            or ""
-        ).strip()
-
-    def _dump_measure_audit(self, model_obj: Dict[str, Any], dataset_id: str, phase: str) -> None:
-        """Write strict raw measure audit before conversion for duplicate tracing."""
-        try:
-            tables = model_obj.get("tables") or []
-            audit_tables: List[Dict[str, Any]] = []
-            for table in tables:
-                table_name = str(table.get("name") or "")
-                measures = self._iter_table_measures(table)
-                if not measures:
-                    continue
-
-                name_totals: Dict[str, int] = {}
-                display_totals: Dict[str, int] = {}
-                for m in measures:
-                    raw_name = str(m.get("name") or "").strip()
-                    display_name = self._measure_display_name(m)
-                    nk = self._normalize_measure_name_key(raw_name)
-                    dk = self._normalize_measure_name_key(display_name)
-                    if nk:
-                        name_totals[nk] = name_totals.get(nk, 0) + 1
-                    if dk:
-                        display_totals[dk] = display_totals.get(dk, 0) + 1
-
-                duplicate_name_groups = [k for k, v in name_totals.items() if v > 1]
-                duplicate_display_groups = [k for k, v in display_totals.items() if v > 1]
-                is_project_measures = table_name.strip().casefold() == "project measures"
-                if not (is_project_measures or duplicate_name_groups or duplicate_display_groups):
-                    continue
-
-                rows: List[Dict[str, Any]] = []
-                for idx, m in enumerate(measures, start=1):
-                    raw_name = str(m.get("name") or "").strip()
-                    display_name = self._measure_display_name(m)
-                    expr = self._extract_measure_expression(m)
-                    expr_norm = " ".join(str(expr or "").split())
-                    expr_hash = hashlib.sha1(expr_norm.encode("utf-8")).hexdigest()[:16]
-                    rows.append(
-                        {
-                            "index": idx,
-                            "name": raw_name,
-                            "display_name": display_name,
-                            "name_key": self._normalize_measure_name_key(raw_name),
-                            "display_key": self._normalize_measure_name_key(display_name),
-                            "is_hidden": bool(m.get("isHidden", False)),
-                            "expression_hash": expr_hash,
-                        }
-                    )
-
-                audit_tables.append(
-                    {
-                        "table": table_name,
-                        "measure_count": len(measures),
-                        "duplicate_name_groups": duplicate_name_groups,
-                        "duplicate_display_groups": duplicate_display_groups,
-                        "measures": rows,
-                    }
-                )
-
-            if not audit_tables:
-                return
-
-            safe_dataset = re.sub(r"[^A-Za-z0-9_.-]", "_", str(dataset_id or "model"))
-            safe_dataset = re.sub(r"_+", "_", safe_dataset).strip("._") or "model"
-            out_dir = Path("output") / "debug" / safe_dataset
-            out_dir.mkdir(parents=True, exist_ok=True)
-            out_file = out_dir / f"{phase}_measure_audit.json"
-            payload = {
-                "dataset_id": dataset_id,
-                "phase": phase,
-                "tables": audit_tables,
-            }
-            out_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-            logger.info("Wrote measure audit artifact: %s", out_file)
-        except Exception as exc:
-            logger.warning("Failed writing measure audit artifact: %s", exc)
-
-    def _iter_table_measures_with_stable_names(self, table_def: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Return measures with deterministic numbering for duplicate names.
-
-        Fabric can surface visually duplicate measure names. Preserve all of
-        them by assigning stable ``_1``, ``_2`` suffixes when duplicates are
-        detected, so downstream sync keeps both entries instead of collapsing.
-        """
-        measures = self._iter_table_measures(table_def)
-        if not measures:
-            return measures
-
-        name_totals: Dict[str, int] = {}
-        display_totals: Dict[str, int] = {}
-        for measure in measures:
-            raw_name = str(measure.get("name") or "").strip()
-            key = self._normalize_measure_name_key(raw_name)
-            if key:
-                name_totals[key] = name_totals.get(key, 0) + 1
-            display_name = self._measure_display_name(measure)
-            display_key = self._normalize_measure_name_key(display_name)
-            if display_key:
-                display_totals[display_key] = display_totals.get(display_key, 0) + 1
-
-        name_seen: Dict[str, int] = {}
-        output: List[Dict[str, Any]] = []
-        for measure in measures:
-            cloned = dict(measure)
-            raw_name = str(cloned.get("name") or "").strip()
-            key = self._normalize_measure_name_key(raw_name)
-            total = name_totals.get(key, 0)
-            if total > 1 and raw_name:
-                idx = name_seen.get(key, 0) + 1
-                name_seen[key] = idx
-                cloned["name"] = f"{raw_name}_{idx}"
-                cloned.setdefault("displayName", raw_name)
-            output.append(cloned)
-
-        display_dup_count = sum(1 for c in display_totals.values() if c > 1)
-        if display_dup_count:
-            logger.info(
-                "Detected %d duplicate measure display-name group(s) on table '%s'",
-                display_dup_count,
-                table_def.get("name", "<unnamed>"),
-            )
-
-        return output
-
-    @staticmethod
     def _extract_measure_expression(measure_def: Dict[str, Any]) -> Any:
         """Read the raw DAX expression from a TMSL measure definition."""
         for key in ("expression", "formula", "dax", "value"):
@@ -709,37 +470,13 @@ class TMSLToOSIConverter(BaseConverter):
     def _parse_relationship(self, rel_def: Dict[str, Any]) -> Optional[OSIRelationship]:
         """Parse TMSL relationship."""
         try:
-             def _normalize_rel_identifier(value: str) -> str:
-                 text = str(value or "").strip()
-                 if (text.startswith("[") and text.endswith("]")) and len(text) >= 2:
-                     text = text[1:-1].strip()
-                 if (text.startswith("'") and text.endswith("'")) and len(text) >= 2:
-                     text = text[1:-1].strip()
-                 if (text.startswith('"') and text.endswith('"')) and len(text) >= 2:
-                     text = text[1:-1].strip()
-                 return text
-
-             def _get_rel_field(*names: str) -> Optional[str]:
-                 for key in names:
-                     for actual_key, value in rel_def.items():
-                         if actual_key.lower() == key.lower() and value not in (None, ""):
-                             return _normalize_rel_identifier(str(value))
-                 return None
-
-             from_table = _get_rel_field("fromTable", "from_table", "sourceTable")
-             from_column = _get_rel_field("fromColumn", "from_column", "sourceColumn")
-             to_table = _get_rel_field("toTable", "to_table", "targetTable")
-             to_column = _get_rel_field("toColumn", "to_column", "targetColumn")
-             if not (from_table and from_column and to_table and to_column):
-                 raise ValueError("Relationship endpoints missing required fields")
-
              # Always derive canonical names from endpoints because Fabric can
              # emit GUID/system relationship names that violate OSI naming rules.
              name = generate_relationship_name(
-                 from_table,
-                 from_column,
-                 to_table,
-                 to_column,
+                 rel_def["fromTable"],
+                 rel_def["fromColumn"],
+                 rel_def["toTable"],
+                 rel_def["toColumn"],
              )
              
              card_map = {
@@ -758,10 +495,10 @@ class TMSLToOSIConverter(BaseConverter):
 
              return OSIRelationship(
                  unique_name=name,
-                 from_dataset=from_table,
-                 from_columns=[from_column],
-                 to_dataset=to_table,
-                 to_columns=[to_column],
+                 from_dataset=rel_def["fromTable"],
+                 from_columns=[rel_def["fromColumn"]],
+                 to_dataset=rel_def["toTable"],
+                 to_columns=[rel_def["toColumn"]],
                  cardinality=card_map.get(raw_card, OSICardinality.MANY_TO_ONE),
                  cross_filter_direction=cf_map.get(raw_cf, OSICrossFilterDirection.SINGLE),
                  is_active=rel_def.get("isActive", True)

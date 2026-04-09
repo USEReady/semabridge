@@ -1,7 +1,12 @@
 from fastapi import APIRouter
-
-from semabridge.api.services.model_service import get_model, save_model
+from services.model_service import get_model, save_model
 
 router = APIRouter()
-router.get('/api/models/{model_id}')(get_model)
-router.put('/api/models/{model_id}')(save_model)
+
+@router.get("/{model_id}")
+async def read_model(model_id: str):
+    return await get_model(model_id)
+
+@router.put("/{model_id}")
+async def update_model(model_id: str, payload: dict):
+    return await save_model(model_id, payload)
