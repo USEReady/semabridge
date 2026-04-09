@@ -46,6 +46,44 @@ from semabridge.repository.duckdb_manager import ModelChange, Snapshot  # noqa: 
 logger = get_logger(__name__)
 
 
+def _deserialize_sml_blob(blob: Any) -> Dict[str, Any]:
+    """Decode snapshot blob supporting both legacy JSON and canonical YAML."""
+    if not blob:
+        return {}
+    if isinstance(blob, dict):
+        return blob
+    if isinstance(blob, bytes):
+        blob = blob.decode("utf-8", errors="replace")
+
+    text = str(blob)
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        pass
+
+    try:
+        import yaml
+
+        parsed = yaml.safe_load(text)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        logger.warning("Failed to parse snapshot payload as JSON or YAML")
+        return {}
+
+
+def _serialize_sml_blob(sml_json: Dict[str, Any]) -> str:
+    """Serialize snapshot payload as canonical SML YAML when possible."""
+    try:
+        from semabridge.formats.sml.models import SMLModel
+        from semabridge.formats.sml.serializer import SMLSerializer
+
+        model = SMLModel.model_validate(sml_json)
+        return SMLSerializer.to_yaml(model)
+    except Exception:
+        return json.dumps(sml_json)
+
+
 class _DBAPICursorResult:
     """DuckDB-like execute result wrapper for raw DBAPI cursors.
 
@@ -240,7 +278,7 @@ class ModelRepository:
             project_id=row.project_id,
             timestamp=str(row.timestamp),
             version_tag=row.version_tag,
-            sml_blob=json.loads(row.sml_blob) if row.sml_blob else {},
+            sml_blob=_deserialize_sml_blob(row.sml_blob),
             status=row.status,
             duration_ms=row.duration_ms,
             error_message=row.error_message,
@@ -383,7 +421,7 @@ class ModelRepository:
                     project_id=project_id,
                     timestamp=timestamp,
                     version_tag=tag,
-                    sml_blob=json.dumps(sml_json),
+                    sml_blob=_serialize_sml_blob(sml_json),
                     status=status,
                     duration_ms=duration_ms,
                     error_message=error_message,

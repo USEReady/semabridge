@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Save, Play, CalendarClock, CalendarDays, Settings2, FileCode2, SlidersHorizontal, Loader2, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, Save, Play, CalendarClock, CalendarDays, Settings2, FileCode2, SlidersHorizontal, Loader2, CheckCircle2, RotateCcw, Camera } from 'lucide-react';
 import { parseDocument as parseYamlDocument, stringify as stringifyYaml } from 'yaml';
 import CodeMirror from '@uiw/react-codemirror';
 import { yaml as yamlLang } from '@codemirror/lang-yaml';
@@ -125,6 +125,26 @@ export default function ProjectConfigPage() {
   const [fabricLoading, setFabricLoading] = useState(false);
 
   const [globalOpen, setGlobalOpen] = useState(false);
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const [restoreSnapshots, setRestoreSnapshots] = useState([]);
+  const [selectedRestoreSnapshotId, setSelectedRestoreSnapshotId] = useState('');
+  const [useCurrentRestoreDetails, setUseCurrentRestoreDetails] = useState(true);
+  const [manualSnapOpen, setManualSnapOpen] = useState(false);
+  const [manualSnapBusy, setManualSnapBusy] = useState(false);
+  const [manualSnapLabel, setManualSnapLabel] = useState('');
+  const [manualSnapFormat, setManualSnapFormat] = useState('');
+  const [manualSnapIncludeSource, setManualSnapIncludeSource] = useState(true);
+  const [manualSnapIncludeTargets, setManualSnapIncludeTargets] = useState(true);
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [compareBusy, setCompareBusy] = useState(false);
+  const [compareSnapshots, setCompareSnapshots] = useState([]);
+  const [compareFromSnapshotId, setCompareFromSnapshotId] = useState('');
+  const [compareToSnapshotId, setCompareToSnapshotId] = useState('');
+  const [compareResult, setCompareResult] = useState(null);
+  const [compareMaximized, setCompareMaximized] = useState(false);
   const timezoneOptions = useMemo(() => ([
     'UTC',
     'Asia/Kolkata',
@@ -165,6 +185,17 @@ export default function ProjectConfigPage() {
   );
   const isProjectSyncing = projectSyncStatus === 'running';
   const isProjectSynced = hasLiveSyncState && !isProjectSyncing && projectSyncStatus === 'success';
+  const targetCount = useMemo(() => {
+    try {
+      const parsed = parseProjectYaml(yamlText || '', project);
+      const tree = parsed?.tree || {};
+      if (Array.isArray(tree?.targets) && tree.targets.length > 0) return tree.targets.length;
+      if (tree?.target && typeof tree.target === 'object') return 1;
+    } catch {
+      // Keep UI stable even if YAML is temporarily invalid while editing.
+    }
+    return 0;
+  }, [yamlText, project]);
 
   useEffect(() => {
     if (!normalizedProjectId) return;
@@ -757,6 +788,304 @@ export default function ProjectConfigPage() {
     }
   };
 
+  const buildRestoreOverrides = () => {
+    const source = {
+      type: configForm.source_type || 'fabric',
+      identity_id: configForm.identity_id || undefined,
+      workspace_id: configForm.workspace_id || undefined,
+      database: configForm.database || undefined,
+      schema: configForm.schema || undefined,
+      pbix_path: configForm.pbix_path || undefined,
+      pbix_folder: configForm.pbix_folder || undefined,
+    };
+
+    const target = {
+      type: configForm.target_type || 'snowflake',
+      database: configForm.target_database || undefined,
+      schema: configForm.target_schema || undefined,
+    };
+
+    return {
+      source,
+      target,
+      targets: [target],
+      ui: {
+        output_format: configForm.output_format || 'osi',
+        intermediate_format: configForm.output_format || 'osi',
+      },
+    };
+  };
+
+  const openRestoreModal = async () => {
+    setRestoreOpen(true);
+    setRestoreLoading(true);
+    setSelectedRestoreSnapshotId('');
+
+    try {
+      const response = await api.listProjectSnapshots(id, { role: 'source', limit: 300 });
+      const rows = Array.isArray(response?.snapshots) ? response.snapshots : [];
+      setRestoreSnapshots(rows);
+      if (rows.length > 0) {
+        setSelectedRestoreSnapshotId(String(rows[0].snapshot_id || ''));
+      }
+    } catch (err) {
+      setRestoreSnapshots([]);
+      setSaveInfo(`Failed to load snapshots: ${err?.message || 'Unknown error'}`);
+      addLog('error', 'Restore Version', `Failed to load snapshots: ${err?.message || 'Unknown error'}`);
+    } finally {
+      setRestoreLoading(false);
+    }
+  };
+
+  const handleRestoreVersion = async () => {
+    if (!selectedRestoreSnapshotId) {
+      setSaveInfo('Select a snapshot version to restore.');
+      return;
+    }
+
+    setRestoreBusy(true);
+    try {
+      const payload = {
+        snapshot_id: selectedRestoreSnapshotId,
+        overrides: useCurrentRestoreDetails ? buildRestoreOverrides() : {},
+        allow_format_conversion: true,
+        execute_restore_run: true,
+      };
+
+      const response = await api.restoreProjectVersion(id, payload);
+      const restoredYaml = String(response?.config_yaml || '').trim();
+      if (!restoredYaml) {
+        throw new Error('Restore succeeded but no config payload was returned.');
+      }
+
+      setYamlText(restoredYaml);
+      hydrateFormFromYaml(restoredYaml, project);
+      setSaveInfo(`Version restored from snapshot ${selectedRestoreSnapshotId.slice(0, 12)}.`);
+      const restoreRunId = String(response?.run_id || '').trim();
+      if (restoreRunId) {
+        addLog('success', 'Restore Version', `Project config restored and restore run ${restoreRunId.slice(0, 12)} started.`);
+      } else {
+        addLog('success', 'Restore Version', 'Project config restored from selected snapshot version.');
+      }
+      setRestoreOpen(false);
+    } catch (err) {
+      const msg = err?.message || 'Restore failed.';
+      setSaveInfo(`Restore failed: ${msg}`);
+      addLog('error', 'Restore Version', msg);
+    } finally {
+      setRestoreBusy(false);
+    }
+  };
+
+  const openManualSnapshotModal = () => {
+    setManualSnapLabel('');
+    setManualSnapFormat('');
+    setManualSnapIncludeSource(true);
+    setManualSnapIncludeTargets(targetCount > 0);
+    setManualSnapOpen(true);
+  };
+
+  const handleManualSnapshotCapture = async () => {
+    if (!manualSnapIncludeSource && !manualSnapIncludeTargets) {
+      setSaveInfo('Select source and/or targets for manual snapshot capture.');
+      return;
+    }
+
+    setManualSnapBusy(true);
+    try {
+      const payload = {
+        label: String(manualSnapLabel || '').trim() || undefined,
+        format: manualSnapFormat || undefined,
+        scope: {
+          source: manualSnapIncludeSource,
+          targets: manualSnapIncludeTargets ? 'all' : [],
+        },
+      };
+      const response = await api.captureProjectSnapshot(id, payload);
+      const groupId = String(response?.snapshot_group_id || '').trim();
+      const count = Number(response?.count || 0);
+      setSaveInfo(`Manual snapshot captured (${count} record${count === 1 ? '' : 's'}).`);
+      addLog('success', 'Snapshot', `Manual snapshot group ${groupId || 'created'} with ${count} snapshot record(s).`);
+      setManualSnapOpen(false);
+    } catch (err) {
+      const msg = err?.message || 'Manual snapshot capture failed.';
+      setSaveInfo(`Snapshot capture failed: ${msg}`);
+      addLog('error', 'Snapshot', msg);
+    } finally {
+      setManualSnapBusy(false);
+    }
+  };
+
+  const openCompareModal = async () => {
+    setCompareOpen(true);
+    setCompareLoading(true);
+    setCompareResult(null);
+    setCompareMaximized(false);
+    try {
+      const response = await api.listProjectSnapshots(id, { role: 'source', include_state: false, limit: 400 });
+      const rows = Array.isArray(response?.snapshots) ? response.snapshots : [];
+      setCompareSnapshots(rows);
+
+      const defaultFrom = selectedRestoreSnapshotId || String(rows?.[1]?.snapshot_id || rows?.[0]?.snapshot_id || '');
+      const defaultTo = String(rows?.[0]?.snapshot_id || '');
+      setCompareFromSnapshotId(defaultFrom);
+      setCompareToSnapshotId(defaultTo && defaultTo !== defaultFrom ? defaultTo : String(rows?.[1]?.snapshot_id || ''));
+    } catch (err) {
+      setCompareSnapshots([]);
+      setSaveInfo(`Failed to load snapshots for comparison: ${err?.message || 'Unknown error'}`);
+      addLog('error', 'Snapshot Compare', err?.message || 'Failed to load snapshots for comparison.');
+    } finally {
+      setCompareLoading(false);
+    }
+  };
+
+  const isPrimitive = (value) => (
+    value === null || ['string', 'number', 'boolean'].includes(typeof value)
+  );
+
+  const formatScalar = (value) => {
+    if (value === null) return 'null';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'boolean') return value ? 'true' : 'false';
+    return String(value);
+  };
+
+  const buildYamlLikeLines = (value, path = '', indent = 0) => {
+    const lines = [];
+    const pad = ' '.repeat(indent);
+
+    if (Array.isArray(value)) {
+      value.forEach((item, idx) => {
+        const itemPath = path ? `${path}[${idx}]` : `[${idx}]`;
+        if (isPrimitive(item)) {
+          lines.push({ path: itemPath, text: `${pad}- ${formatScalar(item)}` });
+        } else {
+          lines.push({ path: itemPath, text: `${pad}-` });
+          lines.push(...buildYamlLikeLines(item, itemPath, indent + 2));
+        }
+      });
+      return lines;
+    }
+
+    if (value && typeof value === 'object') {
+      Object.keys(value).forEach((key) => {
+        const nextPath = path ? `${path}.${key}` : key;
+        const nextValue = value[key];
+        if (isPrimitive(nextValue)) {
+          lines.push({ path: nextPath, text: `${pad}${key}: ${formatScalar(nextValue)}` });
+        } else {
+          lines.push({ path: nextPath, text: `${pad}${key}:` });
+          lines.push(...buildYamlLikeLines(nextValue, nextPath, indent + 2));
+        }
+      });
+      return lines;
+    }
+
+    lines.push({ path, text: `${pad}${formatScalar(value)}` });
+    return lines;
+  };
+
+  const normalizeChangePath = (rawPath) => {
+    const text = String(rawPath || '').trim();
+    if (!text || text === '$') return '';
+    if (text.startsWith('$.')) return text.slice(2);
+    if (text.startsWith('$')) return text.slice(1);
+    return text;
+  };
+
+  const pathsRelated = (linePath, changePath) => {
+    const a = String(linePath || '');
+    const b = String(changePath || '');
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    return (
+      a === b
+      || a.startsWith(`${b}.`)
+      || a.startsWith(`${b}[`)
+      || b.startsWith(`${a}.`)
+      || b.startsWith(`${a}[`)
+    );
+  };
+
+  const getLineDiffType = (linePath, side, changes) => {
+    const normalizedLinePath = normalizeChangePath(linePath);
+    const rows = Array.isArray(changes) ? changes : [];
+
+    const hasType = (targetType) => rows.some((row) => {
+      const rowType = String(row?.type || '').toLowerCase();
+      if (rowType !== targetType) return false;
+      const rowPath = normalizeChangePath(row?.path);
+      return pathsRelated(normalizedLinePath, rowPath);
+    });
+
+    if (side === 'from') {
+      if (hasType('removed')) return 'removed';
+      if (hasType('modified')) return 'modified';
+      return null;
+    }
+
+    if (hasType('added')) return 'added';
+    if (hasType('modified')) return 'modified';
+    return null;
+  };
+
+  const getLineHighlightStyle = (diffType) => {
+    if (diffType === 'added') {
+      return {
+        background: 'var(--color-success-bg)',
+        borderLeft: '3px solid var(--color-success)',
+      };
+    }
+    if (diffType === 'removed') {
+      return {
+        background: 'var(--color-error-bg)',
+        borderLeft: '3px solid var(--color-error)',
+      };
+    }
+    if (diffType === 'modified') {
+      return {
+        background: 'var(--color-warning-bg)',
+        borderLeft: '3px solid var(--color-warning)',
+      };
+    }
+    return null;
+  };
+
+  const renderStateLines = (state) => {
+    const lines = buildYamlLikeLines(state || {});
+    return lines.length > 0 ? lines : [{ path: '', text: '{}' }];
+  };
+
+  const handleCompareSnapshots = async () => {
+    if (!compareFromSnapshotId || !compareToSnapshotId) {
+      setSaveInfo('Select both snapshots to compare.');
+      return;
+    }
+    if (compareFromSnapshotId === compareToSnapshotId) {
+      setSaveInfo('Choose two different snapshots for comparison.');
+      return;
+    }
+
+    setCompareBusy(true);
+    try {
+      const report = await api.compareProjectSnapshots(id, compareFromSnapshotId, compareToSnapshotId, { max_changes: 150, include_states: true });
+      setCompareResult(report || null);
+      const total = Number(report?.summary?.total_changes || 0);
+      if (total === 0) {
+        addLog('success', 'Snapshot Compare', 'No differences found. Rollback matches selected snapshot state.');
+      } else {
+        addLog('warning', 'Snapshot Compare', `${total} difference(s) found between selected snapshots.`);
+      }
+    } catch (err) {
+      const msg = err?.message || 'Snapshot comparison failed.';
+      setSaveInfo(`Snapshot comparison failed: ${msg}`);
+      addLog('error', 'Snapshot Compare', msg);
+      setCompareResult(null);
+    } finally {
+      setCompareBusy(false);
+    }
+  };
+
   const handleCreateJob = async () => {
     await handleSave();
     navigate('/jobs');
@@ -966,6 +1295,15 @@ export default function ProjectConfigPage() {
         <button onClick={() => setSchedulerOpen(true)} style={secondaryBtn}>
           <CalendarClock size={13} /> Schedule
         </button>
+        <button onClick={openManualSnapshotModal} disabled={saving || syncing || isProjectSyncing} style={secondaryBtn}>
+          <Camera size={13} /> Capture Snapshot
+        </button>
+        <button onClick={openCompareModal} disabled={saving || syncing || isProjectSyncing} style={secondaryBtn}>
+          <FileCode2 size={13} /> Compare States
+        </button>
+        <button onClick={openRestoreModal} disabled={saving || syncing || isProjectSyncing} style={secondaryBtn}>
+          <RotateCcw size={13} /> Restore Version
+        </button>
         <button onClick={handleCreateJob} style={secondaryBtn}>
           <CalendarClock size={13} /> Create Job for Later
         </button>
@@ -1134,6 +1472,291 @@ export default function ProjectConfigPage() {
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 24 }}>
           <button onClick={() => setSchedulerOpen(false)} style={secondaryBtn}>Cancel</button>
           <button onClick={handleScheduleSave} style={primaryBtn}>Save</button>
+        </div>
+      </Modal>
+
+      <Modal open={restoreOpen} onClose={() => !restoreBusy && setRestoreOpen(false)} title="Restore Version" size="md">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+            Restoring a version updates this project to a previously captured snapshot state. Please confirm before proceeding.
+          </div>
+
+          {restoreLoading ? (
+            <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Loading available snapshots...</div>
+          ) : restoreSnapshots.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>No source snapshots found for this project yet.</div>
+          ) : (
+            <>
+              <div>
+                <label style={{ ...LABEL, marginBottom: 6 }}>Snapshot Version</label>
+                <select
+                  value={selectedRestoreSnapshotId}
+                  onChange={(e) => setSelectedRestoreSnapshotId(e.target.value)}
+                  style={{ ...INPUT, cursor: 'pointer' }}
+                >
+                  {restoreSnapshots.map((row) => {
+                    const sid = String(row?.snapshot_id || '');
+                    const created = row?.created_at ? new Date(row.created_at).toLocaleString() : 'Unknown time';
+                    const format = String(row?.intermediate_format || 'sml').toUpperCase();
+                    const origin = String(row?.snapshot_origin || row?.stage || 'snapshot').toUpperCase();
+                    return (
+                      <option key={sid} value={sid}>
+                        {sid.slice(0, 12)}... | {origin} | {format} | {created}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
+                <input
+                  type="checkbox"
+                  checked={useCurrentRestoreDetails}
+                  onChange={(e) => setUseCurrentRestoreDetails(e.target.checked)}
+                />
+                Use current project connector/runtime details for this restored sync instance
+              </label>
+              <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+                Restore will create a new run with source from repository snapshot and deploy using selected config details.
+              </div>
+            </>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+            <button onClick={openCompareModal} disabled={restoreBusy || restoreLoading || !selectedRestoreSnapshotId} style={secondaryBtn}>Compare</button>
+            <button onClick={() => setRestoreOpen(false)} disabled={restoreBusy} style={secondaryBtn}>Cancel</button>
+            <button
+              onClick={handleRestoreVersion}
+              disabled={restoreBusy || restoreLoading || !selectedRestoreSnapshotId}
+              style={primaryBtn}
+            >
+              {restoreBusy ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <RotateCcw size={13} />} Restore
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={compareOpen}
+        onClose={() => !compareBusy && setCompareOpen(false)}
+        title="Compare Snapshot States"
+        size="lg"
+        allowMaximize
+        isMaximized={compareMaximized}
+        onToggleMaximize={() => setCompareMaximized((prev) => !prev)}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+            Compare two source snapshots to verify rollback accuracy. If total changes is 0, states are identical.
+          </div>
+
+          {compareLoading ? (
+            <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Loading snapshots...</div>
+          ) : compareSnapshots.length < 2 ? (
+            <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Need at least two source snapshots to compare.</div>
+          ) : (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div>
+                  <label style={{ ...LABEL, marginBottom: 6 }}>From Snapshot</label>
+                  <select value={compareFromSnapshotId} onChange={(e) => setCompareFromSnapshotId(e.target.value)} style={{ ...INPUT, cursor: 'pointer' }}>
+                    {compareSnapshots.map((row) => {
+                      const sid = String(row?.snapshot_id || '');
+                      const created = row?.created_at ? new Date(row.created_at).toLocaleString() : 'Unknown time';
+                      const origin = String(row?.snapshot_origin || row?.stage || 'snapshot').toUpperCase();
+                      return (
+                        <option key={`from-${sid}`} value={sid}>{sid.slice(0, 12)}... | {origin} | {created}</option>
+                      );
+                    })}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ ...LABEL, marginBottom: 6 }}>To Snapshot</label>
+                  <select value={compareToSnapshotId} onChange={(e) => setCompareToSnapshotId(e.target.value)} style={{ ...INPUT, cursor: 'pointer' }}>
+                    {compareSnapshots.map((row) => {
+                      const sid = String(row?.snapshot_id || '');
+                      const created = row?.created_at ? new Date(row.created_at).toLocaleString() : 'Unknown time';
+                      const origin = String(row?.snapshot_origin || row?.stage || 'snapshot').toUpperCase();
+                      return (
+                        <option key={`to-${sid}`} value={sid}>{sid.slice(0, 12)}... | {origin} | {created}</option>
+                      );
+                    })}
+                  </select>
+                </div>
+              </div>
+
+              {compareResult && (
+                <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, padding: 12, background: 'var(--bg-surface)' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 10 }}>
+                    <div style={{ fontSize: 12 }}><strong>Exact Match:</strong> {compareResult?.exact_match ? 'Yes' : 'No'}</div>
+                    <div style={{ fontSize: 12 }}><strong>Added:</strong> {Number(compareResult?.summary?.added || 0)}</div>
+                    <div style={{ fontSize: 12 }}><strong>Removed:</strong> {Number(compareResult?.summary?.removed || 0)}</div>
+                    <div style={{ fontSize: 12 }}><strong>Modified:</strong> {Number(compareResult?.summary?.modified || 0)}</div>
+                  </div>
+
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>Sample Changes</div>
+                  <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
+                    {(Array.isArray(compareResult?.changes) && compareResult.changes.length > 0) ? (
+                      compareResult.changes.map((item, idx) => (
+                        <div
+                          key={`chg-${idx}`}
+                          style={{
+                            padding: '8px 10px',
+                            borderBottom: idx === compareResult.changes.length - 1 ? 'none' : '1px solid var(--border-main)',
+                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                            fontSize: 11,
+                            color: 'var(--text-secondary)',
+                            display: 'flex',
+                            gap: 8,
+                          }}
+                        >
+                          <span style={{ minWidth: 62, textTransform: 'uppercase' }}>{String(item?.type || 'modified')}</span>
+                          <span>{String(item?.path || '$')}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <div style={{ padding: 10, fontSize: 12, color: 'var(--text-tertiary)' }}>No visible changes.</div>
+                    )}
+                  </div>
+
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginTop: 12, marginBottom: 6 }}>
+                    Side-by-Side State View
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 8 }}>
+                    Changed lines are highlighted inside each pane: green = added (right), red = removed (left), yellow = modified (both).
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <div style={{ border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden' }}>
+                      <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border-main)', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                        From Snapshot State
+                      </div>
+                      <div style={{ maxHeight: 320, overflow: 'auto', background: 'var(--bg-primary)' }}>
+                        {renderStateLines(compareResult?.from_state || {}).map((line, idx) => {
+                          const diffType = getLineDiffType(line.path, 'from', compareResult?.changes || []);
+                          const diffStyle = getLineHighlightStyle(diffType);
+                          return (
+                            <div
+                              key={`from-line-${idx}-${line.path}`}
+                              style={{
+                                padding: '2px 10px',
+                                fontSize: 11,
+                                lineHeight: 1.45,
+                                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                                color: 'var(--text-secondary)',
+                                whiteSpace: 'pre',
+                                ...(diffStyle || {}),
+                              }}
+                              title={line.path || '$'}
+                            >
+                              {line.text}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div style={{ border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden' }}>
+                      <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border-main)', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                        To Snapshot State
+                      </div>
+                      <div style={{ maxHeight: 320, overflow: 'auto', background: 'var(--bg-primary)' }}>
+                        {renderStateLines(compareResult?.to_state || {}).map((line, idx) => {
+                          const diffType = getLineDiffType(line.path, 'to', compareResult?.changes || []);
+                          const diffStyle = getLineHighlightStyle(diffType);
+                          return (
+                            <div
+                              key={`to-line-${idx}-${line.path}`}
+                              style={{
+                                padding: '2px 10px',
+                                fontSize: 11,
+                                lineHeight: 1.45,
+                                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                                color: 'var(--text-secondary)',
+                                whiteSpace: 'pre',
+                                ...(diffStyle || {}),
+                              }}
+                              title={line.path || '$'}
+                            >
+                              {line.text}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+            <button onClick={() => setCompareOpen(false)} disabled={compareBusy} style={secondaryBtn}>Close</button>
+            <button
+              onClick={handleCompareSnapshots}
+              disabled={compareBusy || compareLoading || !compareFromSnapshotId || !compareToSnapshotId || compareFromSnapshotId === compareToSnapshotId}
+              style={primaryBtn}
+            >
+              {compareBusy ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <FileCode2 size={13} />} Compare
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={manualSnapOpen} onClose={() => !manualSnapBusy && setManualSnapOpen(false)} title="Capture Manual Snapshot" size="md">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div>
+            <label style={{ ...LABEL, marginBottom: 6 }}>Snapshot Label (optional)</label>
+            <input
+              value={manualSnapLabel}
+              onChange={(e) => setManualSnapLabel(e.target.value)}
+              placeholder="e.g. before-q2-model-tuning"
+              style={INPUT}
+            />
+          </div>
+
+          <div>
+            <label style={{ ...LABEL, marginBottom: 6 }}>Format</label>
+            <select
+              value={manualSnapFormat}
+              onChange={(e) => setManualSnapFormat(e.target.value)}
+              style={{ ...INPUT, cursor: 'pointer' }}
+            >
+              <option value="">Use project format</option>
+              <option value="sml">SML</option>
+              <option value="osi">OSI</option>
+            </select>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={manualSnapIncludeSource}
+                onChange={(e) => setManualSnapIncludeSource(e.target.checked)}
+              />
+              Include source state
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={manualSnapIncludeTargets}
+                onChange={(e) => setManualSnapIncludeTargets(e.target.checked)}
+                disabled={targetCount <= 0}
+              />
+              Include target states ({targetCount})
+            </label>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+            <button onClick={() => setManualSnapOpen(false)} disabled={manualSnapBusy} style={secondaryBtn}>Cancel</button>
+            <button
+              onClick={handleManualSnapshotCapture}
+              disabled={manualSnapBusy}
+              style={primaryBtn}
+            >
+              {manualSnapBusy ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Camera size={13} />} Capture
+            </button>
+          </div>
         </div>
       </Modal>
 

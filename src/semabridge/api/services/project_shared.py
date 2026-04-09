@@ -221,6 +221,9 @@ version_control_service = VersionControlService(
 _compat_projects: Dict[str, Dict[str, Any]] = {}
 _compat_project_configs: Dict[str, str] = {}
 _compat_project_runs: Dict[str, List[Dict[str, Any]]] = {}
+_compat_project_snapshots: Dict[str, List[Dict[str, Any]]] = {}
+_compat_snapshot_groups: Dict[str, List[Dict[str, Any]]] = {}
+_compat_run_snapshots: Dict[str, List[Dict[str, Any]]] = {}
 _compat_folders: Dict[str, Dict[str, Any]] = {}
 _compat_mappings: Dict[str, Dict[str, Any]] = {}
 _compat_project_schedules: Dict[str, Dict[str, Any]] = {}
@@ -253,6 +256,9 @@ def _compat_save_store() -> None:
         "projects": _compat_projects,
         "project_configs": _compat_project_configs,
         "project_runs": _compat_project_runs,
+        "project_snapshots": _compat_project_snapshots,
+        "snapshot_groups": _compat_snapshot_groups,
+        "run_snapshots": _compat_run_snapshots,
         "folders": _compat_folders,
         "mappings": _compat_mappings,
         "project_schedules": _compat_project_schedules,
@@ -287,6 +293,12 @@ def _compat_load_store() -> None:
             _compat_project_configs.update(data.get("project_configs") or {})
         if isinstance(data.get("project_runs"), dict):
             _compat_project_runs.update(data.get("project_runs") or {})
+        if isinstance(data.get("project_snapshots"), dict):
+            _compat_project_snapshots.update(data.get("project_snapshots") or {})
+        if isinstance(data.get("snapshot_groups"), dict):
+            _compat_snapshot_groups.update(data.get("snapshot_groups") or {})
+        if isinstance(data.get("run_snapshots"), dict):
+            _compat_run_snapshots.update(data.get("run_snapshots") or {})
         if isinstance(data.get("folders"), dict):
             _compat_folders.update(data.get("folders") or {})
         if isinstance(data.get("mappings"), dict):
@@ -339,6 +351,8 @@ def _compat_bootstrap_projects_from_orm() -> None:
             _compat_projects[pid] = project
             _compat_project_configs.setdefault(pid, _compat_load_repo_yaml_text() or _compat_default_project_yaml(project))
             _compat_project_runs.setdefault(pid, [])
+            _compat_project_snapshots.setdefault(pid, [])
+            _compat_snapshot_groups.setdefault(pid, [])
     except Exception as exc:
         logger.debug("ORM project bootstrap skipped: %s", exc)
 
@@ -381,6 +395,8 @@ def _compat_bootstrap_project_from_repo_yaml() -> None:
     _compat_projects[project_id] = project
     _compat_project_configs[project_id] = yaml_text
     _compat_project_runs.setdefault(project_id, [])
+    _compat_project_snapshots.setdefault(project_id, [])
+    _compat_snapshot_groups.setdefault(project_id, [])
 
 
 def _compat_ensure_loaded() -> None:

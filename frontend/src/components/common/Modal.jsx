@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { X, Maximize2, Minimize2 } from 'lucide-react';
 import { useEffect } from 'react';
 
 /**
@@ -10,8 +10,21 @@ import { useEffect } from 'react';
  *   size     : 'sm' | 'md' | 'lg' | 'xl'  (default 'md')
  *   children : modal body content
  *   footer   : ReactNode — custom footer (optional)
+ *   allowMaximize : boolean — show maximize/minimize toggle in header
+ *   isMaximized   : boolean — whether modal is in fullscreen mode
+ *   onToggleMaximize : () => void — toggle callback
  */
-export default function Modal({ open, onClose, title, size = 'md', children, footer }) {
+export default function Modal({
+  open,
+  onClose,
+  title,
+  size = 'md',
+  children,
+  footer,
+  allowMaximize = false,
+  isMaximized = false,
+  onToggleMaximize,
+}) {
   // Close on Escape key
   useEffect(() => {
     if (!open) return;
@@ -34,11 +47,11 @@ export default function Modal({ open, onClose, title, size = 'md', children, foo
       <div
         className="w-full rounded-2xl flex flex-col overflow-hidden"
         style={{
-          maxWidth: maxW,
+          maxWidth: isMaximized ? '96vw' : maxW,
           background: 'var(--bg-surface)',
           border: '1px solid var(--border-main)',
           boxShadow: 'var(--shadow-lg)',
-          maxHeight: 'min(90vh, 800px)',
+          maxHeight: isMaximized ? '95vh' : 'min(90vh, 800px)',
         }}
       >
         {/* Header */}
@@ -49,22 +62,44 @@ export default function Modal({ open, onClose, title, size = 'md', children, foo
           <h2 className="text-primary font-semibold text-base" style={{ margin: 0 }}>
             {title}
           </h2>
-          <button
-            onClick={onClose}
-            className="flex items-center justify-center rounded-lg transition-colors"
-            style={{
-              width: 28,
-              height: 28,
-              color: 'var(--text-tertiary)',
-              background: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-surface-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-tertiary)'; }}
-          >
-            <X size={16} />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {allowMaximize && (
+              <button
+                onClick={onToggleMaximize}
+                className="flex items-center justify-center rounded-lg transition-colors"
+                style={{
+                  width: 28,
+                  height: 28,
+                  color: 'var(--text-tertiary)',
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-surface-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+                title={isMaximized ? 'Exit fullscreen' : 'Maximize'}
+                aria-label={isMaximized ? 'Exit fullscreen' : 'Maximize'}
+              >
+                {isMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="flex items-center justify-center rounded-lg transition-colors"
+              style={{
+                width: 28,
+                height: 28,
+                color: 'var(--text-tertiary)',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-surface-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+            >
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         {/* Body */}

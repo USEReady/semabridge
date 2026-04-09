@@ -162,5 +162,3 @@ async def rollback_version(payload: Dict[str, Any]):
     except Exception as e:
         logger.exception(f"Rollback failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-

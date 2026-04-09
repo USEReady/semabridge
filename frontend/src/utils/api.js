@@ -910,9 +910,11 @@ export const api = {
         return handleResponse(res);
     },
 
-    async runProjectNow(projectId) {
+    async runProjectNow(projectId, payload = null) {
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
             method: 'POST',
+            headers: payload ? { 'Content-Type': 'application/json' } : undefined,
+            body: payload ? JSON.stringify(payload) : undefined,
         });
         return handleResponse(res);
     },
@@ -922,6 +924,55 @@ export const api = {
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
             method: 'POST',
         });
+        return handleResponse(res);
+    },
+
+    async listProjectSnapshots(projectId, options = {}) {
+        const params = new URLSearchParams();
+        if (options.role) params.set('role', String(options.role));
+        if (options.stage) params.set('stage', String(options.stage));
+        if (options.origin) params.set('origin', String(options.origin));
+        if (options.group_id) params.set('group_id', String(options.group_id));
+        if (options.include_state) params.set('include_state', 'true');
+        if (options.limit) params.set('limit', String(options.limit));
+        const query = params.toString();
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots${query ? `?${query}` : ''}`);
+        return handleResponse(res);
+    },
+
+    async listProjectSnapshotGroups(projectId, options = {}) {
+        const params = new URLSearchParams();
+        if (options.limit) params.set('limit', String(options.limit));
+        const query = params.toString();
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshot-groups${query ? `?${query}` : ''}`);
+        return handleResponse(res);
+    },
+
+    async captureProjectSnapshot(projectId, payload) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots/capture`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload || {}),
+        });
+        return handleResponse(res);
+    },
+
+    async restoreProjectVersion(projectId, payload) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/restore-version`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload || {}),
+        });
+        return handleResponse(res);
+    },
+
+    async compareProjectSnapshots(projectId, fromSnapshotId, toSnapshotId, options = {}) {
+        const params = new URLSearchParams();
+        params.set('from_snapshot_id', String(fromSnapshotId || ''));
+        params.set('to_snapshot_id', String(toSnapshotId || ''));
+        if (options.max_changes) params.set('max_changes', String(options.max_changes));
+        if (options.include_states) params.set('include_states', 'true');
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots/compare?${params.toString()}`);
         return handleResponse(res);
     },
 

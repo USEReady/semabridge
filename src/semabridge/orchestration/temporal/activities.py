@@ -17,21 +17,56 @@ The four core activities mirror the legacy SyncOrchestrator phases:
 from __future__ import annotations
 
 import json
-import os
 import time
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from temporalio import activity
 
 from semabridge.connectors.fabric_publisher import FabricPublisher, PublishError
 from semabridge.core.settings import FabricConfig
+from semabridge.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
 # Activity I/O contracts
 # ---------------------------------------------------------------------------
+
+
+def _parse_sml_payload(payload: str) -> dict:
+    """Parse snapshot payload from JSON (legacy) or YAML (canonical)."""
+    try:
+        parsed = json.loads(payload)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        pass
+
+    try:
+        import yaml
+
+        parsed = yaml.safe_load(payload)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def _serialize_canonical_sml(payload: str) -> str:
+    """Serialize payload to canonical SML YAML when valid SML; otherwise return input."""
+    parsed = _parse_sml_payload(payload)
+    if not parsed:
+        return payload
+
+    try:
+        from semabridge.formats.sml.models import SMLModel
+        from semabridge.formats.sml.serializer import SMLSerializer
+
+        model = SMLModel.model_validate(parsed)
+        return SMLSerializer.to_yaml(model)
+    except Exception:
+        return payload
 
 
 @dataclass
@@ -266,7 +301,7 @@ async def compute_diff(inp: DiffInput) -> DiffOutput:
         from semabridge.storage.orm import get_session, SnapshotRow
         from semabridge.repository.semantic_diff_engine import SemanticDiffEngine
 
-        current = json.loads(inp.current_sml_json)
+        current = _parse_sml_payload(inp.current_sml_json)
 
         # Fetch previous baseline
         previous_json: Optional[str] = None
@@ -298,12 +333,12 @@ async def compute_diff(inp: DiffInput) -> DiffOutput:
         # Attempt Ray-accelerated diff
         try:
             from semabridge.distributed.ray.coordinator import submit_diff
-            diff_result = await submit_diff(current, json.loads(previous_json))
+            diff_result = await submit_diff(current, _parse_sml_payload(previous_json))
         except ImportError:
             # Ray not installed – local fallback
             diff_engine = SemanticDiffEngine()
             diff_result = diff_engine.compute_diff_dicts(
-                json.loads(previous_json), current
+                _parse_sml_payload(previous_json), current
             )
 
         total = (
@@ -436,7 +471,7 @@ async def persist_snapshot(inp: SnapshotInput) -> SnapshotOutput:
                 model_id=inp.model_id,
                 timestamp=datetime.now(timezone.utc),
                 version_tag=inp.version_tag or None,
-                sml_blob=inp.sml_json,
+                sml_blob=_serialize_canonical_sml(inp.sml_json),
                 status=inp.status,
                 run_id=inp.run_id or None,
             )
