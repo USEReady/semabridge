@@ -10,6 +10,7 @@ from semabridge.converter.dax_translator import DAXTranslator, DAXTranslationRes
 from semabridge.converter.tmsl_to_sml import TMSLTransformer, TransformationError
 from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
 from semabridge.converter.osi_to_sml import OSIToSMLConverter
+from semabridge.converter.tmsl_transformer import translate_complex_measure_to_cube
 
 __all__ = [
     "DAXTranslator",
@@ -18,4 +19,5 @@ __all__ = [
     "TransformationError",
     "TMSLToOSIConverter",
     "OSIToSMLConverter",
+    "translate_complex_measure_to_cube",
 ]

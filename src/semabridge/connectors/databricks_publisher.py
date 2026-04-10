@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import re
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from semabridge.core.behavior import ConnectorBehavior, DatabricksBehavior
 from semabridge.core.settings import DatabricksConfig
@@ -30,6 +33,33 @@ logger = get_logger(__name__)
 
 class DatabricksPublishError(Exception):
     """Raised when Databricks publish fails."""
+
+
+class DatabricksSessionPool:
+    """Connection pool with retry strategy for Databricks API calls."""
+    
+    def __init__(self, max_retries: int = 3, backoff_factor: float = 0.5):
+        self.session = requests.Session()
+        retry_strategy = Retry(
+            total=max_retries,
+            backoff_factor=backoff_factor,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["POST"],
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=20, pool_maxsize=20)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
+    
+    def post(self, *args, **kwargs):
+        """POST with connection pooling."""
+        return self.session.post(*args, **kwargs)
+    
+    def close(self):
+        """Close session."""
+        self.session.close()
+
+
+DEFAULT_DATABRICKS_SCHEMA_OBJECT_LIMIT = 100
 
 
 # ── Deploy Status Constants ──────────────────────────────────────────────────
@@ -128,6 +158,7 @@ class DatabricksPublisher:
         self.config = config
         self._behavior = behavior or ConnectorBehavior()
         self._dbx_behavior: DatabricksBehavior = self._behavior.databricks
+        self._session_pool = DatabricksSessionPool(max_retries=3)
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -1942,6 +1973,114 @@ class DatabricksPublisher:
         safe = re.sub(r"_+", "_", safe).strip("_")
         return safe or "unnamed"
 
+    def _count_schema_objects(self) -> int | None:
+        """Return current number of tables/views in the target schema."""
+        stmt = (
+            f"SELECT COUNT(1) AS cnt FROM {self.config.catalog}.information_schema.tables "
+            f"WHERE table_schema = '{self.config.schema_name}'"
+        )
+        try:
+            rows = self.execute_statements([stmt])
+        except Exception:
+            return None
+
+        if not rows:
+            return None
+
+        payload = rows[0] if isinstance(rows[0], dict) else {}
+        result_block = payload.get("result") if isinstance(payload, dict) else {}
+        data_array = result_block.get("data_array") if isinstance(result_block, dict) else None
+        if not data_array or not data_array[0]:
+            return None
+
+        try:
+            return int(data_array[0][0])
+        except (TypeError, ValueError):
+            return None
+
+    def _estimate_publish_object_count(
+        self,
+        sml_model: SMLModel,
+        *,
+        resolved_view_type: str,
+        measure_view_mode: str,
+    ) -> int:
+        """Estimate how many schema objects this publish will create or replace."""
+        count = 0
+
+        if self._dbx_behavior.create_metadata_table:
+            count += 1
+
+        if not self._dbx_behavior.create_measure_views or resolved_view_type == VIEW_TYPE_NONE:
+            return count
+
+        if measure_view_mode == "combined":
+            metric_datasets = {
+                self._sanitize_identifier(metric.dataset)
+                for metric in sml_model.metrics
+                if self._sanitize_identifier(metric.dataset)
+            }
+            if metric_datasets:
+                count += len(metric_datasets)
+            elif self._dbx_behavior.emit_metric_views_for_all_datasets:
+                count += len(
+                    [
+                        ds for ds in sml_model.datasets
+                        if self._sanitize_identifier(ds.unique_name)
+                    ]
+                )
+            return count
+
+        count += len(sml_model.metrics or [])
+        return count
+
+    def _select_measure_view_mode_for_quota(
+        self,
+        sml_model: SMLModel,
+        *,
+        resolved_view_type: str,
+    ) -> str:
+        """Pick the least risky Databricks measure-view mode for current schema quota."""
+        configured_mode = str(self._dbx_behavior.measure_view_mode or "per_measure").strip().lower() or "per_measure"
+        current_count = self._count_schema_objects()
+        if current_count is None:
+            return configured_mode
+
+        configured_estimate = self._estimate_publish_object_count(
+            sml_model,
+            resolved_view_type=resolved_view_type,
+            measure_view_mode=configured_mode,
+        )
+        configured_total = current_count + configured_estimate
+        if configured_total <= DEFAULT_DATABRICKS_SCHEMA_OBJECT_LIMIT:
+            return configured_mode
+
+        if configured_mode != "combined" and self._dbx_behavior.create_measure_views:
+            combined_estimate = self._estimate_publish_object_count(
+                sml_model,
+                resolved_view_type=resolved_view_type,
+                measure_view_mode="combined",
+            )
+            combined_total = current_count + combined_estimate
+            if combined_total <= DEFAULT_DATABRICKS_SCHEMA_OBJECT_LIMIT:
+                logger.warning(
+                    "Databricks schema quota preflight: auto-switching measure_view_mode from %s to combined "
+                    "(current=%s, estimated=%s, combined_estimated=%s, limit=%s)",
+                    configured_mode,
+                    current_count,
+                    configured_total,
+                    combined_total,
+                    DEFAULT_DATABRICKS_SCHEMA_OBJECT_LIMIT,
+                )
+                return "combined"
+
+        raise DatabricksPublishError(
+            "Databricks schema object quota would be exceeded before deployment starts. "
+            f"schema={self.config.catalog}.{self.config.schema_name} current={current_count} "
+            f"estimated_after_publish={configured_total} limit={DEFAULT_DATABRICKS_SCHEMA_OBJECT_LIMIT}. "
+            "Use a cleaner/fresh schema or reduce Databricks artifact count."
+        )
+
     def _normalize_metric_identifier(self, value: str) -> str:
         """Normalize semantic metric names while preserving meaningful symbols."""
         raw = str(value or "").strip()
@@ -2213,6 +2352,40 @@ class DatabricksPublisher:
         view_name = f"{prefix}_{safe_model}_{safe_measure}"
         return f'`{self.config.catalog}`.`{self.config.schema_name}`.`{view_name}`'
 
+    # ── Parallel Metric Resolution (CP-Level Optimization) ──────────────────
+
+    def _resolve_metric_sql_cached(self, metric: SMLMetric, sml_model: SMLModel) -> dict:
+        """Resolve SQL for one metric in parallel context.
+        
+        Returns dict with metric id, sql_expr, translation_type for thread-safe result passing.
+        """
+        dataset = sml_model.get_dataset(metric.dataset)
+        sql_expr, translation_type = self._resolve_measure_sql(metric, dataset)
+        return {
+            "metric_id": id(metric),
+            "metric": metric,
+            "sql_expr": sql_expr,
+            "translation_type": translation_type,
+            "dataset": dataset,
+        }
+
+    def _resolve_all_metrics_parallel(self, sml_model: SMLModel, max_workers: int = 8) -> dict:
+        """Resolve SQL for all metrics in parallel (CP-Level: 8 workers for DAX translation).
+        
+        Parallelizes the heavy DAX→SQL translation work across multiple threads.
+        Each worker independently translates a metric's DAX expression.
+        """
+        results = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(self._resolve_metric_sql_cached, metric, sml_model)
+                for metric in sml_model.metrics
+            ]
+            for future in as_completed(futures):
+                result = future.result()
+                results[id(result["metric"])] = result
+        return results
+
     # ── Measure View SQL Generation ──────────────────────────────────────────
 
     def generate_measure_view_statements(
@@ -2263,12 +2436,16 @@ class DatabricksPublisher:
         sml_model: SMLModel,
         model_name: str,
     ) -> tuple[list[str], int, int, list[dict[str, str]]]:
-        """One view per measure (default mode)."""
+        """One view per measure (default mode) - with parallel metric resolution."""
         stmts: list[str] = []
         created = 0
         skipped_count = 0
         skipped_details: list[dict[str, str]] = []
         metric_name_index = self._build_metric_name_index(sml_model)
+
+        # CP-LEVEL: Resolve all metrics in parallel (8 workers for DAX translation)
+        logger.info("Resolving SQL for %d metrics in parallel (8 workers)...", len(sml_model.metrics))
+        metric_sql_cache = self._resolve_all_metrics_parallel(sml_model, max_workers=8)
 
         for metric in sml_model.metrics:
             measure_name = metric_name_index.get(
@@ -2292,13 +2469,16 @@ class DatabricksPublisher:
                 })
                 continue
 
-            # Resolve SQL expression
+            # Resolve SQL expression (from parallel cache)
+            cached_result = metric_sql_cache.get(id(metric), {})
+            sql_expr = cached_result.get("sql_expr")
+            translation_type = cached_result.get("translation_type", TRANSLATION_TYPE_DAX_SKIPPED)
+            
             source_table = self._fq_name(
                 self._sanitize_identifier(dataset.source_table or dataset.unique_name)
             )
             source_relation = self._build_reconciled_sql_source_relation(dataset, source_table)
 
-            sql_expr, translation_type = self._resolve_measure_sql(metric, dataset)
             if not sql_expr:
                 sql_view_expr = None
             else:
@@ -2681,56 +2861,80 @@ class DatabricksPublisher:
 
     # ── Network Execution ────────────────────────────────────────────────────
 
-    def execute_statements(self, statements: list[str]) -> list[dict[str, Any]]:
-        """Execute SQL statements via Databricks SQL Statements API.
+    def _execute_single_statement(self, payload: dict[str, Any], endpoint: str, is_retry: bool = False) -> dict[str, Any]:
+        """Execute single statement with token refresh on 401."""
+        headers = self._headers()
+        resp = self._session_pool.post(endpoint, headers=headers, json=payload, timeout=60)
         
-        Includes built-in resilience for interactive MSAL tokens: if Databricks
-        returns a 401 Unauthorized (e.g. token expired sooner than expected or
-        revoked), it forces a silent refresh and retries exactly once.
+        # If 401, handle token refresh explicitly
+        if resp.status_code == 401 and not is_retry:
+            auth_type = getattr(self.config, "auth_type", "pat")
+            if auth_type == "interactive":
+                logger.warning("Databricks API returned 401 Unauthorized. Forcing MSAL token refresh...")
+                from semabridge.repository.credential_manager import CredentialManager
+                cm = CredentialManager()
+                if cm.refresh_databricks_token():
+                    logger.info("Token refresh successful. Retrying Databricks API call...")
+                    return self._execute_single_statement(payload, endpoint, is_retry=True)
+                else:
+                    raise DatabricksPublishError("Databricks session expired and automatic refresh failed. Please sign in again.")
+
+        if resp.status_code >= 400:
+            raise DatabricksPublishError(
+                f"Databricks statement failed ({resp.status_code}): {resp.text[:500]}"
+            )
+
+        data = resp.json()
+        state = (data.get("status") or {}).get("state")
+        if state and state not in {"SUCCEEDED"}:
+            err = data.get("status", {}).get("error") or "unknown error"
+            raise DatabricksPublishError(f"Databricks statement state={state}: {err}")
+
+        return data
+
+    def execute_statements(self, statements: list[str], batch_size: int = 10, max_workers: int = 5) -> list[dict[str, Any]]:
+        """Execute SQL statements via Databricks SQL Statements API with batching and parallelization.
+        
+        Strategy:
+        1. Batch statements (10 per batch) to reduce overhead
+        2. Execute batches in parallel (5 workers) for concurrency
+        3. Reuse HTTP connections via session pool
+        
+        Args:
+            statements: List of SQL statements to execute
+            batch_size: Statements to batch together (default 10)
+            max_workers: Parallel executor threads (default 5)
+        
+        Returns:
+            List of Databricks API responses
         """
+        if not statements:
+            return []
+        
         endpoint = f"{self.config.api_base_url}/api/2.0/sql/statements"
         results: list[dict[str, Any]] = []
-
-        for sql in statements:
-            payload = {
-                "statement": sql,
-                "warehouse_id": self.config.warehouse_id,
-                "wait_timeout": "30s",
-            }
-            
-            # Request wrapper with 401 recovery
-            def _fire_request(is_retry: bool = False) -> dict[str, Any]:
-                headers = self._headers()
-                resp = requests.post(endpoint, headers=headers, json=payload, timeout=60)
-                
-                # If 401, handle token refresh explicitly
-                if resp.status_code == 401 and not is_retry:
-                    auth_type = getattr(self.config, "auth_type", "pat")
-                    if auth_type == "interactive":
-                        logger.warning("Databricks API returned 401 Unauthorized. Forcing MSAL token refresh...")
-                        from semabridge.repository.credential_manager import CredentialManager
-                        cm = CredentialManager()
-                        if cm.refresh_databricks_token():
-                            logger.info("Token refresh successful. Retrying Databricks API call...")
-                            return _fire_request(is_retry=True)
-                        else:
-                            raise DatabricksPublishError("Databricks session expired and automatic refresh failed. Please sign in again.")
-
-                if resp.status_code >= 400:
-                    raise DatabricksPublishError(
-                        f"Databricks statement failed ({resp.status_code}): {resp.text[:500]}"
-                    )
-
-                data = resp.json()
-                state = (data.get("status") or {}).get("state")
-                if state and state not in {"SUCCEEDED"}:
-                    err = data.get("status", {}).get("error") or "unknown error"
-                    raise DatabricksPublishError(f"Databricks statement state={state}: {err}")
-
-                return data
-
-            results.append(_fire_request())
-
+        
+        # Batch statements together
+        batches = [statements[i:i + batch_size] for i in range(0, len(statements), batch_size)]
+        
+        def _execute_batch(batch: list[str]) -> list[dict[str, Any]]:
+            """Execute one batch of statements."""
+            batch_results = []
+            for sql in batch:
+                payload = {
+                    "statement": sql,
+                    "warehouse_id": self.config.warehouse_id,
+                    "wait_timeout": "30s",
+                }
+                batch_results.append(self._execute_single_statement(payload, endpoint))
+            return batch_results
+        
+        # Execute batches in parallel
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(_execute_batch, batch) for batch in batches]
+            for future in as_completed(futures):
+                results.extend(future.result())
+        
         return results
 
     def publish(self, sml_model: SMLModel) -> str:
@@ -2738,129 +2942,155 @@ class DatabricksPublisher:
 
         Three-phase deployment:
             1. Probe runtime for metric view support (if auto)
-            2. Deploy metadata table (mandatory)
-            3. Deploy measure views (best-effort, non-fatal)
+            2. Run quota-aware preflight for Databricks artifacts
+            3. Deploy metadata table and measure views
 
         Returns:
             A URI identifying the deployed artifact.
         """
-        # Phase 0: Resolve view type (probe runtime if "auto")
-        resolved_view_type = self._determine_view_type()
-        logger.info(
-            "📊 View technology resolved: %s (config=%s)",
-            resolved_view_type,
-            self._dbx_behavior.measure_view_type,
-        )
-
-        # Databricks pre-flight: ensure missing sources have a usable table/view shape
-        self._auto_initialize_missing_tables(sml_model)
-        self._validate_source_table_schema(sml_model)
-
-        # Generate all statements with the resolved view type
-        statements = self.generate_sql_statements(
-            sml_model, view_type_override=resolved_view_type,
-        )
-
-        # Split into metadata (mandatory) and view (best-effort) statements
-        metadata_stmts = [
-            s for s in statements
-            if not s.strip().startswith("CREATE OR REPLACE VIEW")
-        ]
-        view_stmts = [
-            s for s in statements
-            if s.strip().startswith("CREATE OR REPLACE VIEW")
-        ]
-
-        logger.info(
-            "Publishing semantic model to Databricks: model=%s "
-            "metadata_statements=%s measure_views=%s view_type=%s",
-            sml_model.unique_name,
-            len(metadata_stmts),
-            len(view_stmts),
-            resolved_view_type,
-        )
-
-        # Phase 1: Metadata table — mandatory, fails the deploy if broken
-        self.execute_statements(metadata_stmts)
-        logger.info(
-            "✅ Metadata table deployed successfully for model '%s'",
-            sml_model.unique_name,
-        )
-
-        # Phase 2: Measure views — best-effort, with SQL-view fallback when
-        # native metric views are rejected by the warehouse/runtime.
-        views_success = 0
-        views_failed = 0
-        for view_sql in view_stmts:
-            # Extract view name for logging
-            view_name = "unknown"
-            match = re.search(r'VIEW\s+(`[^`]+`\.`[^`]+`\.`[^`]+`)', view_sql)
-            if match:
-                view_name = match.group(1)
-
-            try:
-                self.execute_statements([view_sql])
-                views_success += 1
-                logger.info("✅ Deployed measure view: %s", view_name)
-            except DatabricksPublishError as exc:
-                views_failed += 1
-                logger.warning(
-                    "⚠️  Measure view %s skipped — source schema/columns may not "
-                    "match Databricks physical tables. Error: %s",
-                    view_name,
-                    str(exc)[:200],
-                )
-
-        if views_failed:
-            logger.warning(
-                "⚠️  %d/%d measure views failed (source table/column mismatch in "
-                "Databricks). Metadata table deployed OK. Verify source table "
-                "names and physical column names used by the semantic model.",
-                views_failed,
-                len(view_stmts),
+        original_view_mode = self._dbx_behavior.measure_view_mode
+        try:
+            resolved_view_type = self._determine_view_type()
+            logger.info(
+                "View technology resolved: %s (config=%s)",
+                resolved_view_type,
+                self._dbx_behavior.measure_view_type,
             )
 
-        if (
-            resolved_view_type == VIEW_TYPE_METRIC
-            and view_stmts
-            and views_success == 0
-        ):
-            logger.warning(
-                "Native Databricks metric-view deployment produced 0 successful "
-                "views. Falling back to SQL views for model '%s'.",
+            selected_view_mode = self._select_measure_view_mode_for_quota(
+                sml_model,
+                resolved_view_type=resolved_view_type,
+            )
+            configured_mode = str(original_view_mode or "").strip().lower() or "per_measure"
+            if selected_view_mode != configured_mode:
+                logger.warning(
+                    "Databricks quota preflight selected measure_view_mode=%s for model '%s' (configured=%s)",
+                    selected_view_mode,
+                    sml_model.unique_name,
+                    original_view_mode,
+                )
+                self._dbx_behavior.measure_view_mode = selected_view_mode
+
+            self._auto_initialize_missing_tables(sml_model)
+            self._validate_source_table_schema(sml_model)
+
+            statements = self.generate_sql_statements(
+                sml_model, view_type_override=resolved_view_type,
+            )
+
+            metadata_stmts = [
+                s for s in statements
+                if not s.strip().startswith("CREATE OR REPLACE VIEW")
+            ]
+            view_stmts = [
+                s for s in statements
+                if s.strip().startswith("CREATE OR REPLACE VIEW")
+            ]
+
+            logger.info(
+                "Publishing semantic model to Databricks: model=%s metadata_statements=%s "
+                "measure_views=%s view_type=%s view_mode=%s",
+                sml_model.unique_name,
+                len(metadata_stmts),
+                len(view_stmts),
+                resolved_view_type,
+                self._dbx_behavior.measure_view_mode,
+            )
+
+            self.execute_statements(metadata_stmts)
+            logger.info(
+                "Metadata table deployed successfully for model '%s'",
                 sml_model.unique_name,
             )
-            fallback_view_stmts, _, _, _ = self.generate_measure_view_statements(
-                sml_model,
-                view_type_override=VIEW_TYPE_SQL,
-            )
 
-            fallback_success = 0
-            fallback_failed = 0
-            for view_sql in fallback_view_stmts:
-                view_name = "unknown"
-                match = re.search(r'VIEW\s+(`[^`]+`\.`[^`]+`\.`[^`]+`)', view_sql)
-                if match:
-                    view_name = match.group(1)
+            views_success = 0
+            views_failed = 0
+            
+            # Deploy all views in parallel batches instead of one-by-one
+            if view_stmts:
+                logger.info("Deploying %d measure views in parallel batches (batch_size=10, workers=5)...", len(view_stmts))
                 try:
-                    self.execute_statements([view_sql])
-                    fallback_success += 1
-                    logger.info("✅ Deployed SQL fallback view: %s", view_name)
+                    # Execute all views in batches of 10 with 5 parallel workers
+                    self.execute_statements(view_stmts, batch_size=10, max_workers=5)
+                    views_success = len(view_stmts)
+                    logger.info("✓ All %d measure views deployed successfully", len(view_stmts))
                 except DatabricksPublishError as exc:
-                    fallback_failed += 1
-                    logger.warning(
-                        "⚠️  SQL fallback view %s failed. Error: %s",
-                        view_name,
-                        str(exc)[:200],
-                    )
+                    # If batch fails, fall back to individual deployment for error tracking
+                    logger.warning("Batch view deployment failed: %s. Attempting individual deployment...", str(exc)[:200])
+                    for view_sql in view_stmts:
+                        view_name = "unknown"
+                        match = re.search(r'VIEW\s+(`[^`]+`\.`[^`]+`\.`[^`]+`)', view_sql)
+                        if match:
+                            view_name = match.group(1)
+                        try:
+                            self.execute_statements([view_sql])
+                            views_success += 1
+                            logger.info("Deployed measure view: %s", view_name)
+                        except DatabricksPublishError as e:
+                            views_failed += 1
+                            logger.warning(
+                                "Measure view %s skipped because Databricks rejected the deployment. Error: %s",
+                                view_name,
+                                str(e)[:200],
+                            )
 
-            if fallback_failed:
+            if views_failed:
                 logger.warning(
-                    "⚠️  %d/%d SQL fallback views also failed for model '%s'.",
-                    fallback_failed,
-                    len(fallback_view_stmts),
-                    sml_model.unique_name,
+                    "%d/%d measure views failed in Databricks. Metadata table deployed OK.",
+                    views_failed,
+                    len(view_stmts),
                 )
 
-        return f"databricks://{self.config.catalog}/{self.config.schema_name}/{sml_model.unique_name}"
+            if (
+                resolved_view_type == VIEW_TYPE_METRIC
+                and view_stmts
+                and views_success == 0
+            ):
+                logger.warning(
+                    "Native Databricks metric-view deployment produced 0 successful "
+                    "views. Falling back to SQL views for model '%s'.",
+                    sml_model.unique_name,
+                )
+                fallback_view_stmts, _, _, _ = self.generate_measure_view_statements(
+                    sml_model,
+                    view_type_override=VIEW_TYPE_SQL,
+                )
+
+                fallback_failed = 0
+                if fallback_view_stmts:
+                    logger.info("Deploying %d SQL fallback views in parallel batches...", len(fallback_view_stmts))
+                    try:
+                        # Deploy fallback views in parallel batches
+                        self.execute_statements(fallback_view_stmts, batch_size=10, max_workers=5)
+                        logger.info("✓ All %d SQL fallback views deployed successfully", len(fallback_view_stmts))
+                    except DatabricksPublishError as exc:
+                        # Fall back to individual deployment
+                        logger.warning("Batch fallback deployment failed: %s. Attempting individual deployment...", str(exc)[:200])
+                        for view_sql in fallback_view_stmts:
+                            view_name = "unknown"
+                            match = re.search(r'VIEW\s+(`[^`]+`\.`[^`]+`\.`[^`]+`)', view_sql)
+                            if match:
+                                view_name = match.group(1)
+                            try:
+                                self.execute_statements([view_sql])
+                                logger.info("Deployed SQL fallback view: %s", view_name)
+                            except DatabricksPublishError as e:
+                                fallback_failed += 1
+                                logger.warning(
+                                    "SQL fallback view %s failed. Error: %s",
+                                    view_name,
+                                    str(e)[:200],
+                                )
+
+                if fallback_failed:
+                    logger.warning(
+                        "%d/%d SQL fallback views also failed for model '%s'.",
+                        fallback_failed,
+                        len(fallback_view_stmts),
+                        sml_model.unique_name,
+                    )
+
+            return f"databricks://{self.config.catalog}/{self.config.schema_name}/{sml_model.unique_name}"
+        finally:
+            self._dbx_behavior.measure_view_mode = original_view_mode
 
