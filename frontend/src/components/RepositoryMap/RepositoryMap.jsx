@@ -863,13 +863,13 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     borderBottom: '1px solid var(--border-color)',
                     background: 'var(--bg-surface)',
                 }}>
-                    <AuditCard label="Total Tables" value={snapshotAudit.totalTables} tone="#818CF8" />
+                    <AuditCard label="Total Tables" value={snapshotAudit.totalTables} tone="var(--accent-blue)" />
                     <AuditCard label="Relationships" value={snapshotAudit.totalRelationships} tone="#22C55E" />
                     <AuditCard label="Broken Refs" value={snapshotAudit.brokenTables} tone={snapshotAudit.brokenTables > 0 ? '#EF4444' : '#22C55E'} />
                     <AuditCard
                         label={includeSystemTables ? 'System Included' : 'System Excluded'}
                         value={includeSystemTables ? snapshotAudit.systemDetected : snapshotAudit.systemExcluded}
-                        tone={includeSystemTables ? '#F59E0B' : '#818CF8'}
+                        tone={includeSystemTables ? '#F59E0B' : 'var(--accent-blue)'}
                     />
                 </div>
             )}
@@ -884,7 +884,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     background: 'var(--bg-surface)',
                     fontSize: 11,
                 }}>
-                    <span style={{ fontWeight: 700, color: '#818CF8' }}>Diff Mode</span>
+                    <span style={{ fontWeight: 700, color: 'var(--accent-blue)' }}>Diff Mode</span>
                     {diffLoading ? (
                         <span style={{ color: 'var(--text-tertiary)' }}>Comparing snapshots...</span>
                     ) : (
@@ -945,7 +945,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                         display: 'flex', flexDirection: 'column',
                     }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 20px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border-color)' }}>
-                            <span style={{ fontWeight: 700, fontSize: 15, color: '#818CF8' }}>Model Relationship Explorer (Full Screen)</span>
+                            <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--accent-blue)' }}>Model Relationship Explorer (Full Screen)</span>
                             <button onClick={() => setFullScreen(false)} style={{ ...iconBtnStyle, fontSize: 18, color: '#EF4444', border: '1px solid #EF4444', borderRadius: 6, padding: '4px 12px', fontWeight: 700 }}>Exit Full Screen ✕</button>
                         </div>
                         <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
@@ -1191,8 +1191,8 @@ const chipStyle = {
     transition: 'all .15s',
 };
 const activeChipStyle = {
-    background: '#818CF8',
-    border: '1px solid #818CF8',
+    background: 'var(--accent-blue)',
+    border: '1px solid var(--accent-blue)',
     color: '#fff',
     fontWeight: 600,
 };

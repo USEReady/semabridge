@@ -109,7 +109,7 @@ export default function TimeMachine({
             max={Math.max(0, ordered.length - 1)}
             value={currentIndex}
             onChange={(e) => jumpTo(parseInt(e.target.value, 10))}
-            style={{ flex: 1, accentColor: '#818CF8' }}
+            style={{ flex: 1, accentColor: 'var(--accent-blue)' }}
           />
 
           <button
@@ -123,7 +123,7 @@ export default function TimeMachine({
               ...miniBtn,
               borderColor: diffMode ? 'rgba(129,140,248,.45)' : 'var(--border-color)',
               background: diffMode ? 'rgba(129,140,248,.14)' : 'transparent',
-              color: diffMode ? '#818CF8' : 'var(--text-secondary)',
+              color: diffMode ? 'var(--accent-blue)' : 'var(--text-secondary)',
               minWidth: 108,
               justifyContent: 'center',
             }}
@@ -140,9 +140,9 @@ export default function TimeMachine({
           background: currentTone.bg,
           fontSize: 11,
         }}>
-          <GitCommit size={13} style={{ color: '#818CF8' }} />
+          <GitCommit size={13} style={{ color: 'var(--accent-blue)' }} />
           <span style={{ color: 'var(--text-secondary)' }}>Snapshot</span>
-          <span style={{ color: '#818CF8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }}>
+          <span style={{ color: 'var(--accent-blue)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }}>
             {String(current?.snapshot_id || '').slice(0, 12)}
           </span>
           <span style={{ color: 'var(--text-tertiary)' }}>•</span>
@@ -184,7 +184,7 @@ export default function TimeMachine({
                 background: active ? 'rgba(129,140,248,.12)' : 'transparent',
               }}
             >
-              <button onClick={() => onSnapshotSelect?.(s.snapshot_id)} style={{ ...listBtn, color: active ? '#818CF8' : 'var(--text-secondary)' }}>
+              <button onClick={() => onSnapshotSelect?.(s.snapshot_id)} style={{ ...listBtn, color: active ? 'var(--accent-blue)' : 'var(--text-secondary)' }}>
                 <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }}>{String(s.snapshot_id).slice(0, 8)}</span>
                 <span style={{ color: 'var(--text-tertiary)', marginLeft: 6 }}>{new Date(s.timestamp).toLocaleTimeString()}</span>
                 <span style={{ marginLeft: 6, color: tone.fg }}>{String(s.status || 'unknown').toUpperCase()}</span>

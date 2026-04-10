@@ -93,7 +93,10 @@ export default function ProjectsPage() {
   const [newFolderName, setNewFolderName] = useState('');
   const [renameFolderId, setRenameFolderId] = useState(null);
   const [renameFolderName, setRenameFolderName] = useState('');
+  const [draggingProjectId, setDraggingProjectId] = useState(null);
   const [dragOverFolder, setDragOverFolder] = useState(null);
+  const [sidebarWidth, setSidebarWidth] = useState(240);
+  const [isResizing, setIsResizing] = useState(false);
   const [runningProjectIds, setRunningProjectIds] = useState(new Set());
   const searchQuery = useUIStore(state => state.searchQuery);
   const setSearchQuery = useUIStore(state => state.setSearchQuery);
@@ -150,6 +153,31 @@ export default function ProjectsPage() {
     if (!container || !Number.isFinite(projectListScrollTop)) return;
     container.scrollTop = projectListScrollTop;
   }, [projectListScrollTop, loading]);
+
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!isResizing) return;
+      const newWidth = window.innerWidth - e.clientX;
+      if (newWidth >= 180 && newWidth <= 600) {
+        setSidebarWidth(newWidth);
+      }
+    };
+    const handleMouseUp = () => setIsResizing(false);
+
+    if (isResizing) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizing]);
 
   const updateFilterOption = useCallback((key, value) => {
     setFilterOptions({ [key]: value });
@@ -234,6 +262,13 @@ export default function ProjectsPage() {
   /* ── Drag-and-drop ── */
   const handleDragStart = (e, projectId) => {
     e.dataTransfer.setData('projectId', String(projectId));
+    setDraggingProjectId(projectId);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragEnd = () => {
+    setDraggingProjectId(null);
+    setDragOverFolder(null);
   };
 
   const handleDropOnFolder = async (e, folderId) => {
@@ -327,13 +362,30 @@ export default function ProjectsPage() {
 
       {/* ── Folder/Adapter Sidebar ── */}
       <aside style={{
-        width: 220, flexShrink: 0,
+        width: sidebarWidth, flexShrink: 0,
         borderLeft: '1px solid var(--border-main)',
         borderRight: 'none',
         display: 'flex', flexDirection: 'column',
         padding: '16px 0',
         overflowY: 'auto',
+        position: 'relative',
+        background: 'var(--bg-app)',
       }}>
+        <div
+          onMouseDown={(e) => {
+            e.preventDefault();
+            setIsResizing(true);
+          }}
+          style={{
+            position: 'absolute',
+            left: -2, top: 0, bottom: 0,
+            width: 4,
+            cursor: 'col-resize',
+            zIndex: 50,
+            transition: 'background 0.2s',
+          }}
+          className={isResizing ? 'bg-accent' : 'hover:bg-accent/40'}
+        />
         <div style={{ padding: '0 12px', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
             {viewMode === 'folder' ? 'Folders' : 'Sources'}
@@ -368,6 +420,19 @@ export default function ProjectsPage() {
           label={`All Projects (${projects.length})`}
           active={selectedFolder === null}
           onClick={() => updateFilterOption('selectedFolder', null)}
+          isDraggingGlobal={!!draggingProjectId}
+          onDragOver={e => { e.preventDefault(); setDragOverFolder('all'); }}
+          onDragLeave={() => setDragOverFolder(null)}
+          onDrop={async e => {
+            e.preventDefault();
+            const pid = e.dataTransfer.getData('projectId');
+            if (!pid) return;
+            await api.moveProjectToFolder(pid, null);
+            setProjects(prev => prev.map(p => p.id === pid ? { ...p, folder_id: null } : p));
+            setDraggingProjectId(null);
+            setDragOverFolder(null);
+          }}
+          isDragOver={dragOverFolder === 'all'}
         />
 
         {/* Folder list or Source list */}
@@ -386,9 +451,13 @@ export default function ProjectsPage() {
             onRenameStart={() => { setRenameFolderId(f.id); setRenameFolderName(f.name); }}
             onDelete={() => handleDeleteFolder(f.id)}
             isDragOver={dragOverFolder === f.id}
+            isDraggingGlobal={!!draggingProjectId}
             onDragOver={e => { e.preventDefault(); setDragOverFolder(f.id); }}
             onDragLeave={() => setDragOverFolder(null)}
-            onDrop={e => handleDropOnFolder(e, f.id)}
+            onDrop={async e => {
+              await handleDropOnFolder(e, f.id);
+              setDraggingProjectId(null);
+            }}
           />
         ))
         ) : (
@@ -440,19 +509,30 @@ export default function ProjectsPage() {
         {/* Drop-to-root zone */}
         <div
           style={{
-            margin: '8px 10px 0', borderRadius: 6, border: '1px dashed var(--border-subtle)',
-            padding: '6px 10px', fontSize: 11, color: 'var(--text-tertiary)', textAlign: 'center',
+            margin: '8px 10px 0',
+            borderRadius: 6,
+            border: draggingProjectId ? '1.5px dashed var(--accent-blue)' : '1px dashed var(--border-subtle)',
+            padding: '8px 10px',
+            fontSize: 11,
+            color: draggingProjectId ? 'var(--accent-blue)' : 'var(--text-tertiary)',
+            textAlign: 'center',
+            background: dragOverFolder === 'root' ? 'var(--accent-blue)10' : 'transparent',
+            transition: 'all 0.2s',
+            opacity: draggingProjectId ? 1 : 0.6,
           }}
-          onDragOver={e => e.preventDefault()}
+          onDragOver={e => { e.preventDefault(); setDragOverFolder('root'); }}
+          onDragLeave={() => setDragOverFolder(null)}
           onDrop={async e => {
             e.preventDefault();
-            const projectId = e.dataTransfer.getData('projectId');
-            if (!projectId) return;
-            await api.moveProjectToFolder(projectId, null);
-            setProjects(prev => prev.map(p => p.id === projectId ? { ...p, folder_id: null } : p));
+            const pid = e.dataTransfer.getData('projectId');
+            if (!pid) return;
+            await api.moveProjectToFolder(pid, null);
+            setProjects(prev => prev.map(p => p.id === pid ? { ...p, folder_id: null } : p));
+            setDraggingProjectId(null);
+            setDragOverFolder(null);
           }}
         >
-          Drop here to remove from folder
+          {dragOverFolder === 'root' ? 'Release to remove' : 'Drop here to remove from folder'}
         </div>
       </aside>
 
@@ -686,6 +766,7 @@ export default function ProjectsPage() {
                   onExport={() => handleExportSingle(project)}
                   onDelete={() => handleDelete(project)}
                   onDragStart={handleDragStart}
+                  onDragEnd={handleDragEnd}
                 />
               ))}
             </div>
@@ -710,17 +791,23 @@ export default function ProjectsPage() {
 }
 
 /* ─── Sidebar helpers ─── */
-function SidebarItem({ color, label, active, onClick, icon }) {
+function SidebarItem({ color, label, active, onClick, icon, isDraggingGlobal, isDragOver, onDragOver, onDragLeave, onDrop }) {
   return (
     <button
       onClick={onClick}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
       style={{
         display: 'flex', alignItems: 'center', gap: 8,
-        padding: '6px 12px', width: '100%', border: 'none',
-        background: active ? 'var(--accent-blue)14' : 'transparent',
-        color: active ? 'var(--accent-blue)' : 'var(--text-secondary)',
+        padding: '8px 12px', width: '100%', border: 'none',
+        background: isDragOver ? 'var(--accent-blue)18' : active ? 'var(--accent-blue)14' : 'transparent',
+        color: isDragOver || active ? 'var(--accent-blue)' : 'var(--text-secondary)',
         fontSize: 12, fontWeight: active ? 600 : 400, cursor: 'pointer',
         textAlign: 'left',
+        borderLeft: isDragOver ? '3px solid var(--accent-blue)' : '3px solid transparent',
+        transition: 'all 0.2s',
+        animation: isDraggingGlobal && !isDragOver ? 'pulse 2s infinite' : 'none',
       }}
     >
       {icon || <Folder size={13} style={{ color }} />}
@@ -732,7 +819,7 @@ function SidebarItem({ color, label, active, onClick, icon }) {
 function SidebarFolder({
   folder, projectCount, active, onClick,
   isRenaming, renameValue, onRenameChange, onRenameSubmit, onRenameStart,
-  onDelete, isDragOver, onDragOver, onDragLeave, onDrop,
+  onDelete, isDragOver, isDraggingGlobal, onDragOver, onDragLeave, onDrop,
 }) {
   const [hover, setHover] = useState(false);
   return (
@@ -741,10 +828,12 @@ function SidebarFolder({
       tabIndex={0}
       style={{
         display: 'flex', alignItems: 'center', gap: 6,
-        padding: '5px 10px', cursor: 'pointer',
+        padding: '6px 10px', cursor: 'pointer',
         background: isDragOver ? `${folder.color}22` : active ? 'var(--accent-blue)14' : 'transparent',
-        borderLeft: active ? `2px solid ${folder.color}` : '2px solid transparent',
-        transition: 'background 0.1s',
+        borderLeft: isDragOver ? `4px solid ${folder.color}` : active ? `3px solid ${folder.color}` : '3px solid transparent',
+        transition: 'all 0.2s',
+        animation: isDraggingGlobal && !isDragOver ? 'pulse 2s infinite' : 'none',
+        position: 'relative',
       }}
       onClick={onClick}
       onKeyDown={e => e.key === 'Enter' && onClick()}
@@ -798,19 +887,17 @@ function SidebarFolder({
 function ProjectCard({
   project, menuOpen, onMenuToggle,
   onViewDetail, onConfigure, onRunNow, isRunning = false, onDuplicate, onExport, onDelete,
-  onDragStart,
+  onDragStart, onDragEnd,
 }) {
+  const navigate = useNavigate();
   const isOpen = menuOpen === project.id;
   const sourceKey = sourceKeyOf(project);
   const { activeRuns } = useContext(SyncContext);
-  // Debug log for troubleshooting status updates
-  console.log('[ProjectCard] project.id:', project.id, 'activeRuns:', activeRuns);
   const myRun = activeRuns.find(
     run =>
       String(run.projectId) === String(project.id) ||
       String(run.project_id) === String(project.id)
   );
-  console.log('[ProjectCard] myRun:', myRun, 'project.status:', project.status);
   const status = myRun ? myRun.status : (project.status || 'Idle');
   let progress = 0;
   if (myRun) {
@@ -832,14 +919,16 @@ function ProjectCard({
 
   return (
     <div
+      onClick={() => navigate(`/projects/${project.id}`)}
       draggable
       onDragStart={e => onDragStart(e, project.id)}
+      onDragEnd={onDragEnd}
       style={{
         background: 'var(--bg-surface)',
         border: '1px solid var(--border-main)',
         borderRadius: 10, padding: 18,
         display: 'flex', flexDirection: 'column',
-        cursor: 'grab', position: 'relative',
+        cursor: 'pointer', position: 'relative',
         transition: 'border-color 0.15s, box-shadow 0.15s',
       }}
       onMouseEnter={e => {
@@ -853,19 +942,27 @@ function ProjectCard({
     >
       {/* Top row */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
           <div style={{
             width: 40, height: 40, borderRadius: 10,
             background: 'var(--color-accent-faint)',
             display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20,
+            flexShrink: 0,
           }}>
             {renderSourceIcon(sourceKey, 20)}
           </div>
-          <div>
+          <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>
-              {project.name}
+              <span style={{
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                display: 'block',
+              }}>
+                {project.name}
+              </span>
             </div>
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {sourceKey || '—'}
             </div>
           </div>

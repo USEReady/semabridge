@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Play, RefreshCw, Clock, CalendarClock, RotateCcw, ChevronDown, ChevronRight, BarChart3, Cloud, Snowflake, Database, Link2 } from 'lucide-react';
+import { Play, RefreshCw, Clock, CalendarClock, ChevronDown, ChevronRight, BarChart3, Cloud, Snowflake, Database, Link2 } from 'lucide-react';
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
 import SearchInput from '../components/common/SearchInput';
@@ -7,10 +7,6 @@ import { matchesSmartQuery } from '../components/common/SmartSearchBar';
 import { api } from '../utils/api';
 import { buildMockRunLogs, getRunLogs, saveRunLogs } from '../utils/runLogs';
 
-const TIMEZONES = ['UTC', 'US/Eastern (EST)', 'US/Pacific (PST)', 'Europe/London', 'Asia/Singapore'];
-const SCHEDULE_TYPES = ['Manual Trigger Only', 'Cron Expression', 'Time Picker'];
-
-const DEFAULT_CONFIG = { schedule_type: 'Manual Trigger Only', cron: '0 0 * * *', timezone: 'UTC' };
 const REFRESH_INTERVAL_MS = 4000;
 
 function formatDuration(ms) {
@@ -70,26 +66,21 @@ export default function ProjectJobsPage() {
   const [runs, setRuns] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [config, setConfig] = useState(DEFAULT_CONFIG);
-  const [configSaving, setConfigSaving] = useState(false);
   const [running, setRunning] = useState(false);
   const [scheduleDeletingId, setScheduleDeletingId] = useState('');
   const [search, setSearch] = useState('');
   const [searchUseRegex, setSearchUseRegex] = useState(false);
   const [statusFilter, setStatusFilter] = useState('all');
   const [expandedRunId, setExpandedRunId] = useState(null);
-  const [runSnapshotsByRunId, setRunSnapshotsByRunId] = useState({});
-  const [runSnapshotLoadingByRunId, setRunSnapshotLoadingByRunId] = useState({});
 
   useEffect(() => {
     let cancelled = false;
 
-    const loadPageData = async ({ includeConfig = false } = {}) => {
+    const loadPageData = async () => {
       try {
-        const [runsData, schedulesData, jobConfig] = await Promise.all([
+        const [runsData, schedulesData] = await Promise.all([
           api.listJobRuns().catch(() => []),
           api.listJobSchedules().catch(() => []),
-          includeConfig ? api.getJobConfig().catch(() => null) : Promise.resolve(null),
         ]);
 
         if (cancelled) return;
@@ -102,10 +93,6 @@ export default function ProjectJobsPage() {
         });
         setRuns(nextRuns);
         setSchedules(Array.isArray(schedulesData) ? schedulesData : []);
-
-        if (includeConfig && jobConfig) {
-          setConfig(prev => ({ ...prev, ...jobConfig }));
-        }
       } catch {
         if (cancelled) return;
         setRuns([]);
@@ -117,9 +104,9 @@ export default function ProjectJobsPage() {
       }
     };
 
-    loadPageData({ includeConfig: true });
+    loadPageData();
     const intervalId = window.setInterval(() => {
-      loadPageData({ includeConfig: false });
+      loadPageData();
     }, REFRESH_INTERVAL_MS);
 
     return () => {
@@ -127,37 +114,6 @@ export default function ProjectJobsPage() {
       window.clearInterval(intervalId);
     };
   }, []);
-
-  useEffect(() => {
-    const expandedRun = runs.find((run) => String(run?.id ?? run?.run_id ?? '') === String(expandedRunId || ''));
-    const projectId = String(expandedRun?.project_id || '');
-    const runId = String(expandedRun?.run_id ?? expandedRun?.id ?? '');
-
-    if (!expandedRun || !projectId || !runId || runSnapshotsByRunId[runId]) return;
-
-    let cancelled = false;
-    setRunSnapshotLoadingByRunId(prev => ({ ...prev, [runId]: true }));
-
-    (async () => {
-      try {
-        const response = await api.listProjectSnapshots(projectId, { run_id: runId, include_state: false, limit: 100 });
-        if (cancelled) return;
-        const rows = Array.isArray(response?.snapshots) ? response.snapshots : [];
-        setRunSnapshotsByRunId(prev => ({ ...prev, [runId]: rows }));
-      } catch {
-        if (cancelled) return;
-        setRunSnapshotsByRunId(prev => ({ ...prev, [runId]: [] }));
-      } finally {
-        if (!cancelled) {
-          setRunSnapshotLoadingByRunId(prev => ({ ...prev, [runId]: false }));
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [expandedRunId, runSnapshotsByRunId, runs]);
 
   const handleRunNow = async () => {
     setRunning(true);
@@ -175,19 +131,6 @@ export default function ProjectJobsPage() {
       console.error('Trigger job failed:', err);
     } finally {
       setRunning(false);
-    }
-  };
-
-  const handleSaveConfig = async () => {
-    setConfigSaving(true);
-    try {
-      await api.updateJobConfig(config);
-      const refreshedSchedules = await api.listJobSchedules().catch(() => []);
-      setSchedules(Array.isArray(refreshedSchedules) ? refreshedSchedules : []);
-    } catch (err) {
-      console.error('Save config failed:', err);
-    } finally {
-      setConfigSaving(false);
     }
   };
 
@@ -226,7 +169,7 @@ export default function ProjectJobsPage() {
   };
 
   return (
-    <div style={{ padding: '28px 32px', minHeight: '100%' }}>
+    <div style={{ padding: '28px 16px', minHeight: '100%', maxWidth: 1400, margin: '0 auto' }} className="md:px-10">
       <PageHeader
         title="Runs"
         description="Configure execution schedules and monitor run history."
@@ -236,106 +179,6 @@ export default function ProjectJobsPage() {
           onClick: handleRunNow,
         }}
       />
-
-      <div
-        className="rounded-xl mb-6"
-        style={{
-          background: 'var(--bg-surface)',
-          border: '1px solid var(--border-main)',
-          padding: 24,
-        }}
-      >
-        <div className="flex items-center gap-2 mb-4">
-          <Clock size={16} style={{ color: 'var(--accent-blue)' }} />
-          <h2 className="text-primary font-semibold" style={{ fontSize: 14, margin: 0 }}>Execution Schedule</h2>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
-          <div>
-            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
-              Schedule Type
-            </label>
-            <select
-              value={config.schedule_type}
-              onChange={e => setConfig(c => ({ ...c, schedule_type: e.target.value }))}
-              style={{ ...inputStyle, width: '100%', cursor: 'pointer' }}
-            >
-              {SCHEDULE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </div>
-
-          {config.schedule_type === 'Cron Expression' && (
-            <div>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
-                Cron Expression
-              </label>
-              <input
-                type="text"
-                value={config.cron}
-                onChange={e => setConfig(c => ({ ...c, cron: e.target.value }))}
-                placeholder="0 0 * * *"
-                style={{ ...inputStyle, width: '100%', fontFamily: 'monospace' }}
-              />
-              <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>e.g. every day at midnight</p>
-            </div>
-          )}
-
-          <div>
-            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
-              Timezone
-            </label>
-            <select
-              value={config.timezone}
-              onChange={e => setConfig(c => ({ ...c, timezone: e.target.value }))}
-              style={{ ...inputStyle, width: '100%', cursor: 'pointer' }}
-            >
-              {TIMEZONES.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </div>
-
-          <div className="flex items-end">
-            <div className="w-full">
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
-                Schedule Status
-              </label>
-              <div className="flex items-center gap-2">
-                <span
-                  className={config.schedule_type !== 'Manual Trigger Only' ? 'animate-pulse' : ''}
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: '50%',
-                    background: config.schedule_type !== 'Manual Trigger Only'
-                      ? 'var(--color-success)'
-                      : 'var(--text-tertiary)',
-                    flexShrink: 0,
-                  }}
-                />
-                <span className="text-secondary text-sm">
-                  {config.schedule_type !== 'Manual Trigger Only' ? 'Active' : 'Manual only'}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex justify-end mt-4">
-          <button
-            onClick={handleSaveConfig}
-            disabled={configSaving}
-            className="flex items-center gap-2 rounded-lg text-sm font-semibold px-4 py-2"
-            style={{
-              background: configSaving ? 'var(--bg-surface-raised)' : 'var(--accent-blue)',
-              color: configSaving ? 'var(--text-tertiary)' : '#fff',
-              border: 'none',
-              cursor: configSaving ? 'not-allowed' : 'pointer',
-            }}
-          >
-            {configSaving ? <RefreshCw size={13} className="animate-spin" /> : <RotateCcw size={13} />}
-            {configSaving ? 'Saving…' : 'Update Configuration'}
-          </button>
-        </div>
-      </div>
 
       <div
         className="rounded-xl mb-6"
@@ -359,13 +202,11 @@ export default function ProjectJobsPage() {
             {schedules.map((schedule) => (
               <div
                 key={schedule.id || schedule.project_id}
+                className="flex flex-col md:grid md:grid-cols-[1.5fr_0.8fr_1.2fr_auto] gap-4"
                 style={{
                   border: '1px solid var(--border-main)',
                   borderRadius: 10,
                   padding: 14,
-                  display: 'grid',
-                  gridTemplateColumns: 'minmax(0, 1.2fr) minmax(120px, 0.9fr) minmax(180px, 1fr) auto',
-                  gap: 12,
                   alignItems: 'center',
                   background: 'var(--bg-surface-raised)',
                 }}
@@ -407,185 +248,184 @@ export default function ProjectJobsPage() {
         )}
       </div>
 
-      <div>
-        <div className="flex items-center gap-3 mb-4">
-          <h2 className="text-primary font-semibold" style={{ fontSize: 14, margin: 0 }}>Run History</h2>
-          <div className="flex-1" />
-          <SearchInput
-            value={search}
-            onChange={setSearch}
-            useRegex={searchUseRegex}
-            onToggleRegex={setSearchUseRegex}
-            allowRegex
-            helperText={searchUseRegex ? 'Regex examples: ^run_\\d+$ or failed|running' : 'Tip: enable regex to use patterns like ^run_\\d+$'}
-            placeholder="Filter runs…"
-            width={220}
-          />
-          <select
-            value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value)}
-            style={{
-              ...inputStyle,
-              padding: '7px 10px',
-              fontSize: 12,
-              cursor: 'pointer',
-            }}
-          >
-            <option value="all">All Status</option>
-            <option value="success">Success</option>
-            <option value="failed">Failed</option>
-            <option value="running">Running</option>
-          </select>
+      <div className="mt-10">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <h2 className="text-primary font-bold" style={{ fontSize: 18, margin: 0 }}>Run History</h2>
+            <span className="px-2 py-0.5 rounded-full bg-surface-raised border border-main text-[11px] text-tertiary">
+              {runs.length} runs
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setRuns([])}
+              className="text-[11px] text-tertiary hover:text-primary transition-colors bg-transparent border-none cursor-pointer"
+            >
+              Clear Logs
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-row items-center gap-3 mb-6">
+          <div className="flex-1 relative">
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              useRegex={searchUseRegex}
+              onToggleRegex={setSearchUseRegex}
+              allowRegex
+              helperText={searchUseRegex ? 'Regex enabled' : ''}
+              placeholder="Search by prefix or regex..."
+              width="100%"
+            />
+          </div>
+
+          <div className="shrink-0">
+            <div className="relative group">
+              <select
+                value={statusFilter}
+                onChange={e => setStatusFilter(e.target.value)}
+                style={{
+                  ...inputStyle,
+                  padding: '7px 12px',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                  minWidth: 140,
+                  appearance: 'none',
+                  backgroundImage: 'none',
+                  textAlign: 'center',
+                }}
+                className="hover:border-accent group-hover:bg-surface-hover"
+              >
+                <option value="all">🔍 All Status</option>
+                <option value="success">✅ Success</option>
+                <option value="failed">❌ Failed</option>
+                <option value="running">🔄 Running</option>
+              </select>
+            </div>
+          </div>
         </div>
 
         <div
-          className="rounded-xl overflow-hidden"
+          className="rounded-xl overflow-x-auto custom-scrollbar"
           style={{ border: '1px solid var(--border-main)', background: 'var(--bg-surface)' }}
         >
-          {loading ? (
-            <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-              Loading runs...
-            </div>
-          ) : filteredRuns.length === 0 ? (
-            <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-              No job runs yet. Click 'Run Now' to trigger your first execution.
-            </div>
-          ) : (
-            filteredRuns.map((run, index) => {
-              const isExpanded = expandedRunId === run.id;
-              const logs = getRunLogs(run);
-              const runId = String(run?.run_id ?? run?.id ?? '');
-              const runSnapshots = runSnapshotsByRunId[runId] || [];
-              const runSnapshotLookup = Object.fromEntries(runSnapshots.map((snapshot) => [String(snapshot?.snapshot_id || ''), snapshot]));
-              const runSnapshotLoading = Boolean(runSnapshotLoadingByRunId[runId]);
-              const snapshotReferences = [
-                { label: 'Before Source Snapshot', ids: [run.before_src_snapshot_id] },
-                { label: 'After Source Snapshot', ids: [run.after_src_snapshot_id] },
-                { label: 'Before Target Snapshots', ids: Array.isArray(run.before_target_snapshot_ids) ? run.before_target_snapshot_ids : [run.before_targ1_snapshot_id, run.before_targ2_snapshot_id] },
-                { label: 'After Target Snapshots', ids: Array.isArray(run.after_target_snapshot_ids) ? run.after_target_snapshot_ids : [run.after_targ1_snapshot_id, run.after_targ2_snapshot_id] },
-              ].map((item) => ({
-                ...item,
-                ids: (item.ids || []).map((value) => String(value || '').trim()).filter(Boolean),
-              }));
-              return (
-                <div
-                  key={run.id ?? index}
-                  style={{
-                    borderTop: index === 0 ? 'none' : '1px solid var(--border-main)',
-                    background: index % 2 === 0 ? 'transparent' : 'var(--bg-surface-raised)',
-                  }}
-                >
-                  <button
-                    onClick={() => setExpandedRunId(isExpanded ? null : run.id)}
+          <div style={{ minWidth: 850 }}>
+            {loading ? (
+              <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+                Loading runs...
+              </div>
+            ) : filteredRuns.length === 0 ? (
+              <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+                No job runs yet. Click 'Run Now' to trigger your first execution.
+              </div>
+            ) : (
+              filteredRuns.map((run, index) => {
+                const isExpanded = expandedRunId === run.id;
+                const logs = getRunLogs(run);
+                return (
+                  <div
+                    key={run.id ?? index}
                     style={{
-                      width: '100%',
-                      border: 'none',
-                      background: 'transparent',
-                      cursor: 'pointer',
-                      padding: '14px 16px',
-                      display: 'grid',
-                      gridTemplateColumns: 'auto minmax(120px, 1fr) minmax(120px, 1.1fr) minmax(100px, 0.9fr) minmax(120px, 1fr) auto',
-                      gap: 12,
-                      alignItems: 'center',
-                      textAlign: 'left',
-                      color: 'var(--text-primary)',
+                      borderTop: index === 0 ? 'none' : '1px solid var(--border-main)',
+                      background: index % 2 === 0 ? 'transparent' : 'var(--bg-surface-raised)',
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-secondary)' }}>
-                        {String(run.id ?? '-').substring(0, 12)}
-                      </span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600 }}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                        {sourceIcon(run.source_type)}
-                      </span>
-                      <span>{run.project_name || 'Project run'}</span>
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{run.schedule || 'Manual'}</div>
-                    <div style={{ display: 'flex', justifyContent: 'center' }}>
-                      <StatusBadge status={run.status || 'draft'} />
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
-                      {formatDate(run.started_at)}
-                    </div>
-                    <div style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-secondary)' }}>
-                      {formatDuration(run.duration_ms)}
-                    </div>
-                  </button>
-
-                  {isExpanded && (
-                    <>
-                    <div style={{ padding: '0 16px 16px 16px', background: 'var(--bg-input)', borderTop: '1px solid var(--border-main)' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, padding: '14px 0' }}>
-                        <InfoCard label="Run ID" value={String(run.id ?? '-')} mono />
-                        <InfoCard label="Started" value={formatDate(run.started_at)} />
-                        <InfoCard label="Duration" value={formatDuration(run.duration_ms)} mono />
-                        <InfoCard label="Run Type" value={String(run.run_type || 'SYNC')} />
-                        <InfoCard label="Status" value={String(run.status || 'draft')} />
-                        <InfoCard label="Message" value={run.message || run.error || '—'} />
+                    <button
+                      onClick={() => setExpandedRunId(isExpanded ? null : run.id)}
+                      style={{
+                        width: '100%',
+                        border: 'none',
+                        background: 'transparent',
+                        cursor: 'pointer',
+                        padding: '14px 16px',
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(120px, 0.8fr) minmax(200px, 2.5fr) minmax(80px, 0.5fr) 110px 160px 80px',
+                        gap: 16,
+                        alignItems: 'center',
+                        textAlign: 'left',
+                        color: 'var(--text-primary)',
+                        minHeight: 56,
+                      }}
+                    >
+                      <div className="hidden lg:flex items-center gap-10 min-w-0">
+                        <div className="flex items-center gap-2">
+                          {isExpanded ? <ChevronDown size={14} className="text-tertiary" /> : <ChevronRight size={14} className="text-tertiary" />}
+                          <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {String(run.id ?? '-').substring(0, 12)}
+                          </span>
+                        </div>
                       </div>
 
-                      <InfoCard label="Before Source Snapshot" value={run.before_src_snapshot_id ? String(run.before_src_snapshot_id) : 'â€”'} mono />
-                      <InfoCard label="After Source Snapshot" value={run.after_src_snapshot_id ? String(run.after_src_snapshot_id) : 'â€”'} mono />
-                      <InfoCard
-                        label="Before Target Snapshots"
-                        value={Array.isArray(run.before_target_snapshot_ids) && run.before_target_snapshot_ids.length
-                          ? run.before_target_snapshot_ids.map((id) => String(id).slice(0, 12)).join(', ')
-                          : 'â€”'}
-                      />
-                      <InfoCard
-                        label="After Target Snapshots"
-                        value={Array.isArray(run.after_target_snapshot_ids) && run.after_target_snapshot_ids.length
-                          ? run.after_target_snapshot_ids.map((id) => String(id).slice(0, 12)).join(', ')
-                          : 'â€”'}
-                      />
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>
-                      Snapshot Details From Backend
-                    </div>
-                    {runSnapshotLoading ? (
-                      <div style={{ padding: 12, borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-surface)', fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 14 }}>
-                        Loading snapshot metadata...
+                      <div className="lg:hidden flex items-center justify-center flex-shrink-0" style={{ width: 24 }}>
+                        {isExpanded ? <ChevronDown size={14} className="text-tertiary" /> : <ChevronRight size={14} className="text-tertiary" />}
                       </div>
-                    ) : (
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12, marginBottom: 14 }}>
-                        {snapshotReferences.map((group) => (
-                          <SnapshotGroupCard
-                            key={group.label}
-                            title={group.label}
-                            ids={group.ids}
-                            lookup={runSnapshotLookup}
-                          />
-                        ))}
+                      <div style={{
+                        display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600,
+                        minWidth: 0,
+                      }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          {sourceIcon(run.source_type)}
+                        </span>
+                        <span style={{
+                          whiteSpace: isExpanded ? 'normal' : 'nowrap',
+                          overflow: isExpanded ? 'visible' : 'hidden',
+                          textOverflow: isExpanded ? 'clip' : 'ellipsis',
+                          flex: 1,
+                          minWidth: 0,
+                          overflowWrap: 'break-word',
+                          wordBreak: 'break-word',
+                        }}>
+                          {run.project_name || 'Project run'}
+                        </span>
+                      </div>
+                      <div className="hidden sm:block" style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 500 }}>{run.schedule || 'Manual'}</div>
+                      <div style={{ display: 'flex', justifyContent: 'center' }}>
+                        <StatusBadge status={run.status || 'draft'} size="sm" />
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        {formatDate(run.started_at)}
+                      </div>
+                      <div className="hidden md:block" style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-secondary)', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        {formatDuration(run.duration_ms)}
+                      </div>
+                    </button>
+
+                    {isExpanded && (
+                      <div style={{ padding: '0 16px 16px 16px', background: 'var(--bg-input)', borderTop: '1px solid var(--border-main)' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, padding: '14px 0' }}>
+                          <InfoCard label="Run ID" value={String(run.id ?? '-')} mono />
+                          <InfoCard label="Started" value={formatDate(run.started_at)} />
+                          <InfoCard label="Duration" value={formatDuration(run.duration_ms)} mono />
+                          <InfoCard label="Status" value={String(run.status || 'draft')} />
+                          <InfoCard label="Message" value={run.message || run.error || '—'} />
+                        </div>
+
+                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>
+                          Execution Stages For Selected Run
+                        </div>
+                        <div
+                          style={{
+                            borderRadius: 8,
+                            border: '1px solid var(--border-main)',
+                            background: 'var(--bg-surface)',
+                            padding: 12,
+                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                            fontSize: 12,
+                            lineHeight: 1.65,
+                            color: 'var(--text-primary)',
+                            whiteSpace: 'pre-wrap',
+                          }}
+                        >
+                          {logs.join('\n')}
+                        </div>
                       </div>
                     )}
-
-                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>
-                        Execution Stages For Selected Run
-                      </div>
-                      <div
-                        style={{
-                          borderRadius: 8,
-                          border: '1px solid var(--border-main)',
-                          background: 'var(--bg-surface)',
-                          padding: 12,
-                          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                          fontSize: 12,
-                          lineHeight: 1.65,
-                          color: 'var(--text-primary)',
-                          whiteSpace: 'pre-wrap',
-                        }}
-                      >
-                        {logs.join('\n')}
-                      </div>
-                    </div>
-                    </>
-                  )}
-                </div>
-              );
-            })
-          )}
+                  </div>
+                );
+              })
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -606,63 +446,6 @@ function InfoCard({ label, value, mono = false }) {
       <div style={{ fontSize: 12, color: 'var(--text-primary)', fontFamily: mono ? 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' : 'inherit' }}>
         {value || '—'}
       </div>
-    </div>
-  );
-}
-
-function SnapshotGroupCard({ title, ids, lookup }) {
-  const snapshotIds = Array.isArray(ids) ? ids.filter(Boolean) : [];
-
-  return (
-    <div
-      style={{
-        border: '1px solid var(--border-main)',
-        borderRadius: 8,
-        padding: 12,
-        background: 'var(--bg-surface)',
-      }}
-    >
-      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>{title}</div>
-      {snapshotIds.length === 0 ? (
-        <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>No snapshot recorded.</div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {snapshotIds.map((snapshotId) => {
-            const snapshot = lookup?.[String(snapshotId)] || null;
-            return (
-              <div key={snapshotId} style={{ border: '1px solid var(--border-main)', borderRadius: 8, padding: 10, background: 'var(--bg-surface-raised)' }}>
-                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>Snapshot ID</div>
-                <div style={{ fontSize: 12, color: 'var(--text-primary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', marginBottom: 8, wordBreak: 'break-word' }}>
-                  {snapshotId}
-                </div>
-                {snapshot ? (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
-                    <SnapshotMeta label="Origin" value={String(snapshot?.snapshot_origin || snapshot?.stage || '-').toUpperCase()} />
-                    <SnapshotMeta label="Format" value={String(snapshot?.intermediate_format || '-').toUpperCase()} />
-                    <SnapshotMeta label="Role" value={String(snapshot?.role || snapshot?.system_role || '-').toUpperCase()} />
-                    <SnapshotMeta label="Connector" value={String(snapshot?.connector_type || snapshot?.connector || '-')} />
-                    <SnapshotMeta label="Target" value={String(snapshot?.target_id || '-')} />
-                    <SnapshotMeta label="Created" value={snapshot?.created_at ? formatDate(snapshot.created_at) : '-'} />
-                  </div>
-                ) : (
-                  <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
-                    Snapshot metadata not returned by backend for this run yet.
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SnapshotMeta({ label, value }) {
-  return (
-    <div>
-      <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 3 }}>{label}</div>
-      <div style={{ fontSize: 12, color: 'var(--text-primary)', wordBreak: 'break-word' }}>{value || '-'}</div>
     </div>
   );
 }

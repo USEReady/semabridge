@@ -17,6 +17,7 @@ import ProjectConfigPage from './pages/ProjectConfigPage';
 import ProjectJobsPage from './pages/ProjectJobsPage';
 import ModelMappingPage from './pages/ModelMappingPage';
 import SettingsPage    from './pages/SettingsPage';
+import ProjectDetailPage from './pages/ProjectDetailPage';
 
 export default function App() {
   const location = useLocation();
@@ -49,6 +50,7 @@ export default function App() {
                 <Route path="/explore"       element={<ExplorePage />} />
                 <Route path="/projects"      element={<ProjectsPage />} />
                 <Route path="/projects/new"  element={<CreateProjectPage />} />
+                <Route path="/projects/:id" element={<ProjectDetailPage />} />
                 <Route path="/projects/:id/edit" element={<ProjectConfigPage />} />
                 <Route path="/projects/:id/config" element={<ProjectConfigPage />} />
                 <Route path="/jobs"          element={<ProjectJobsPage />} />

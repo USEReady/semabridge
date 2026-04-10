@@ -161,26 +161,38 @@ export default function CommandPalette({
     return (
         <div
             className="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh]"
-            style={{ background: 'var(--bg-backdrop)' }}
+            style={{ background: 'var(--bg-backdrop)', backdropFilter: 'blur(8px)' }}
             onClick={onClose}
         >
             <div
-                className="w-full max-w-lg rounded-xl overflow-hidden shadow-2xl border border-main"
-                style={{ background: 'var(--bg-surface)', boxShadow: 'var(--shadow-lg)' }}
+                className="w-full max-w-2xl rounded-2xl overflow-hidden shadow-2xl border border-main"
+                style={{
+                    background: 'color-mix(in srgb, var(--bg-surface) 92%, transparent)',
+                    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--border-main)',
+                    backdropFilter: 'blur(16px)',
+                }}
                 onClick={e => e.stopPropagation()}
             >
                 {/* Search Input */}
-                <div className="flex items-center gap-3 px-4 py-3 border-b border-main">
-                    <Search size={16} className="text-tertiary shrink-0" />
-                    <input
-                        ref={inputRef}
-                        type="text"
-                        value={queryText}
-                        onChange={e => setQueryText(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        placeholder="Search models, commands..."
-                        className="flex-1 bg-transparent border-none outline-none text-sm text-primary placeholder:text-tertiary"
-                    />
+                <div className="flex items-center gap-4 px-6 py-6 border-b border-main" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                    <Search size={22} className="shrink-0" style={{ color: 'var(--accent-blue)' }} />
+                    <div className="flex-1 relative flex items-center">
+                        <input
+                            ref={inputRef}
+                            type="text"
+                            value={queryText}
+                            onChange={e => setQueryText(e.target.value)}
+                            onKeyDown={handleKeyDown}
+                            placeholder="Search models, commands..."
+                            className="w-full outline-none px-5 py-3 rounded-xl transition-all font-medium"
+                            style={{
+                                background: 'color-mix(in srgb, var(--bg-surface-raised) 70%, transparent)',
+                                border: '1px solid var(--border-main)',
+                                color: 'var(--text-primary)',
+                                fontSize: 18,
+                            }}
+                        />
+                    </div>
                     <button
                         type="button"
                         onClick={() => setRegexEnabled(!regexEnabled)}
@@ -210,7 +222,7 @@ export default function CommandPalette({
                 )}
 
                 {/* Results */}
-                <div className="max-h-[300px] overflow-y-auto custom-scrollbar py-1">
+                <div className="max-h-[450px] overflow-y-auto custom-scrollbar py-2">
                     {results.length === 0 ? (
                         <div className="px-4 py-6 text-center text-sm text-tertiary">No results found</div>
                     ) : (
@@ -223,15 +235,17 @@ export default function CommandPalette({
                                     return (
                                         <button
                                             key={item.id}
-                                            className={`w-full flex items-center gap-3 px-4 py-2 text-xs text-left transition-colors outline-none border-none cursor-pointer ${
-                                                idx === selectedIndex ? 'bg-surface-raised text-primary' : 'text-secondary'
+                                            className={`w-full flex items-center gap-4 px-6 py-3 text-sm text-left transition-all outline-none border-none cursor-pointer ${
+                                                idx === selectedIndex ? 'text-primary' : 'text-secondary'
                                             }`}
-                                            style={idx === selectedIndex ? { background: 'var(--bg-surface-hover)' } : { background: 'transparent' }}
+                                            style={idx === selectedIndex
+                                                ? { background: 'var(--color-accent-faint)', borderLeft: '3px solid var(--accent-blue)' }
+                                                : { background: 'transparent', borderLeft: '3px solid transparent' }}
                                             onMouseEnter={() => setSelectedIndex(idx)}
                                             onClick={() => handleSelect(item)}
                                         >
-                                            <Icon size={14} className="opacity-60 shrink-0" />
-                                            <span className="font-medium flex-1">{item.label}</span>
+                                            <Icon size={16} className="shrink-0" style={{ opacity: idx === selectedIndex ? 1 : 0.6, color: idx === selectedIndex ? 'var(--accent-blue)' : undefined }} />
+                                            <span className="font-medium flex-1" style={{ transform: idx === selectedIndex ? 'translateX(4px)' : 'none', transition: 'transform 0.15s ease' }}>{item.label}</span>
                                             {item.category && <span className="text-[10px] text-tertiary">{item.category}</span>}
                                         </button>
                                     );

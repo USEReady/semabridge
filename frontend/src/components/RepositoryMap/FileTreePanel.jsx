@@ -95,7 +95,7 @@ const TreeNode = memo(function TreeNode({
                     fontSize: 12,
                     color: isSelected ? '#fff' : 'var(--text-primary)',
                     background: isSelected
-                        ? 'linear-gradient(90deg, #6366F1 0%, #818CF8 100%)'
+                        ? 'linear-gradient(90deg, var(--accent-blue-dark) 0%, var(--accent-blue) 100%)'
                         : 'transparent',
                     borderRadius: isSelected ? 4 : 0,
                     transition: 'background .12s, color .12s',
