@@ -1956,6 +1956,73 @@ class TestMetricViewGeneration:
         assert stmts == []
         assert any(d.get("reason") == "PREREQUISITE_MISSING" for d in details)
 
+    def test_nested_measure_references_resolve_recursively(self):
+        """Nested measure refs should expand to SQL instead of collapsing to NULL drafts."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(measure_view_type="metric_view")
+        )
+        model = SMLModel(
+            unique_name="Customer Profitability",
+            datasets=[
+                SMLDataset(
+                    unique_name="Fact",
+                    columns=[
+                        SMLColumn(unique_name="Revenue", data_type=DataType.DECIMAL),
+                        SMLColumn(unique_name="COGS", data_type=DataType.DECIMAL),
+                    ],
+                )
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="Total Revenue",
+                    dataset="Fact",
+                    source_column="Revenue",
+                    aggregation=AggregationType.SUM,
+                ),
+                SMLMetric(
+                    unique_name="Total COGS",
+                    dataset="Fact",
+                    source_column="COGS",
+                    aggregation=AggregationType.SUM,
+                ),
+                SMLMetric(
+                    unique_name="Gross Margin",
+                    dataset="Fact",
+                    expression="[Total Revenue] - [Total COGS]",
+                ),
+                SMLMetric(
+                    unique_name="GM_Pct",
+                    dataset="Fact",
+                    expression="DIVIDE([Gross Margin], [Total Revenue])",
+                ),
+            ],
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        with patch.object(
+            publisher,
+            "_resolve_existing_source_for_dataset",
+            return_value="`main`.`public`.`fact`",
+        ), patch.object(
+            publisher,
+            "_get_source_table_columns",
+            return_value={"revenue", "cogs"},
+        ):
+            stmts, created, skipped, details = publisher.generate_measure_view_statements(
+                model,
+                view_type_override=VIEW_TYPE_METRIC,
+            )
+
+        assert created == 1
+        assert skipped == 0
+        assert not details
+        assert "CAST(NULL AS DOUBLE)" not in stmts[0]
+        assert "Gross_Margin" in stmts[0]
+        assert "SUM(`Revenue`)" in stmts[0]
+        assert "SUM(`COGS`)" in stmts[0]
+        assert "NULLIF" in stmts[0]
+        assert "DIVIDE(" not in stmts[0]
+
     def test_combined_metric_view_ignores_invalid_relationship_columns(self):
         """Combined view should not emit JOIN predicates for relationship columns missing from datasets."""
         behavior = ConnectorBehavior(

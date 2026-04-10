@@ -93,31 +93,104 @@ class DatabricksMeasureTranslator:
     ) -> tuple[str, bool]:
         """Iteratively replace [Measure] refs with resolved SQL snippets."""
         text = str(expression or "")
-        pattern = re.compile(r"\[([^\]]+)\]")
 
-        for _ in range(max_passes):
+        def _replace_once(source: str) -> tuple[str, bool, bool]:
+            output: list[str] = []
             changed = False
             unresolved = False
+            index = 0
+            while index < len(source):
+                if source[index] != "[":
+                    output.append(source[index])
+                    index += 1
+                    continue
 
-            def _replace(match: re.Match[str]) -> str:
-                nonlocal changed, unresolved
-                measure_name = str(match.group(1) or "")
+                prev = source[index - 1] if index > 0 else ""
+                if prev and (prev.isalnum() or prev in "_'\"]"):
+                    output.append(source[index])
+                    index += 1
+                    continue
+
+                end = source.find("]", index + 1)
+                if end < 0:
+                    output.append(source[index:])
+                    unresolved = True
+                    break
+
+                measure_name = source[index + 1 : end].strip()
                 resolved = str(
                     measure_sql_map.get(self.measure_ref_key(measure_name), "")
                 ).strip()
                 if not resolved:
+                    output.append(source[index : end + 1])
                     unresolved = True
-                    return match.group(0)
-                changed = True
-                return f"({resolved})"
+                else:
+                    output.append(f"({resolved})")
+                    changed = True
+                index = end + 1
 
-            updated = pattern.sub(_replace, text)
-            text = updated
+            return "".join(output), changed, unresolved
 
+        for _ in range(max_passes):
+            text, changed, unresolved = _replace_once(text)
             if not changed:
-                return text, bool(unresolved or pattern.search(text))
+                return text, unresolved or ("[" in text and "]" in text)
 
-        return text, bool(pattern.search(text))
+        return text, "[" in text and "]" in text
+
+    def rewrite_if_calls(self, expression: str) -> str:
+        """Rewrite DAX IF(condition, true, false) into SQL CASE expressions."""
+        text = str(expression or "")
+        output: list[str] = []
+        cursor = 0
+
+        while True:
+            match = re.search(r"(?i)\bIF\s*\(", text[cursor:])
+            if not match:
+                output.append(text[cursor:])
+                break
+
+            start = cursor + match.start()
+            open_paren = cursor + match.end() - 1
+            output.append(text[cursor:start])
+
+            depth = 1
+            idx = open_paren + 1
+            in_single = False
+            in_double = False
+            while idx < len(text) and depth > 0:
+                ch = text[idx]
+                if ch == "'" and not in_double:
+                    in_single = not in_single
+                elif ch == '"' and not in_single:
+                    in_double = not in_double
+                elif not in_single and not in_double:
+                    if ch == "(":
+                        depth += 1
+                    elif ch == ")":
+                        depth -= 1
+                idx += 1
+
+            if depth != 0:
+                output.append(text[start:])
+                break
+
+            inner = text[open_paren + 1 : idx - 1]
+            args = self.split_top_level_csv(inner)
+            if len(args) < 3:
+                output.append(text[start:idx])
+                cursor = idx
+                continue
+
+            condition = args[0]
+            true_expr = args[1]
+            false_expr = args[2]
+            if re.fullmatch(r"(?i)BLANK\s*\(\s*\)", false_expr or ""):
+                false_expr = "NULL"
+            output.append(f"CASE WHEN {condition} THEN {true_expr} ELSE {false_expr} END")
+            cursor = idx
+
+        return "".join(output)
 
     def split_top_level_csv(self, value: str) -> list[str]:
         """Split a comma-separated argument list while respecting nesting."""
@@ -319,6 +392,7 @@ class DatabricksMeasureTranslator:
             return None
 
         expanded_expr = re.sub(r"(?i)\bBLANK\(\)", "NULL", expanded_expr)
+        expanded_expr = self.rewrite_if_calls(expanded_expr)
         expanded_expr = self.rewrite_divide_calls(expanded_expr)
 
         if self.is_sql_arithmetic_expression(expanded_expr):

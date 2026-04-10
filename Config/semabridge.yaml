@@ -1,40 +1,37 @@
-project_name: cust-d
+project_name: "comp_d"
 source:
   type: fabric
-  identity_id: 8d13f780-a354-4e6e-85dd-2727f5795b72
-  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
-  workspace: semabridge
+  identity_id: "136c67ee-cf0d-4085-897f-f54b87d8f6c5"
+  workspace_id: "d875c0c3-59e9-4d55-a7f0-99595b756718"
+  workspace: "semabridge"
   models:
-    - Customer Profitability
+    - "Competitive Marketing Analysis orig"
 targets:
   - type: databricks
 mappings:
-  - source: Customer Profitability
-    target: CUSTOMER_PROFITABILITY
+  - source: "Competitive Marketing Analysis orig"
+    target: "COMPETITIVE_MARKETING_ANALYSIS_ORIG"
     type: table
     columns:
-      - source: id
-        target: ID
+      - source: "id"
+        target: "ID"
         type: integer
         primary_key: true
-      - source: name
-        target: NAME
+      - source: "name"
+        target: "NAME"
         type: string
-      - source: created_at
-        target: CREATED_AT
+      - source: "created_at"
+        target: "CREATED_AT"
         type: timestamp
-      - source: updated_at
-        target: UPDATED_AT
+      - source: "updated_at"
+        target: "UPDATED_AT"
         type: timestamp
 ui:
-  intermediate_format: osi
-  editor_mode: form
-  output_format: osi
+  intermediate_format: "osi"
+  editor_mode: "form"
 selection:
   model_ids:
-    - 83686c9b-2320-466a-a7a8-c3975d6998e7
+    - "6aa0a303-dc1f-4457-86b3-90888e995c0f"
 options:
   auto_relationships: true
   generate_descriptions: true
-target:
-  type: databricks

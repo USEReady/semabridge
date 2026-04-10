@@ -62,6 +62,7 @@ databricks:
     DEVICE_INVENTORY: "semabridge.public.device_inventory"
     Date: "semabridge.public.dim_date"
     Fact: "semabridge.public.fact"
+    SalesFact: "semabridge.public.fact"
     BU: "semabridge.public.bu"
     Calendar: "semabridge.public.calendar"
     Customer: "semabridge.public.customer"
@@ -72,17 +73,58 @@ databricks:
     State: "semabridge.public.state"
   # Optional semantic-column to physical-column overrides when warehouse names
   # differ from Fabric-friendly semantic names.
-  # source_column_mapping:
+  source_column_mapping:
+    Calendar:
+      "YearPeriod": "yearperiod"
+      "Year": "year"
+      "Period": "period"
+      "Date": "date"
+      "Month": "month"
+      "QtrID": "qtrid"
+      "Qtr": "qtr"
+    Customer:
+      "Customer": "name"
+      "Name": "name"
+      "City": "city"
+      "Postal Code": "postal_code"
+      "State": "state"
+      "Industry ID": "industry_id"
+      "Country/Region": "country_region"
+    BU:
+      "BU Key": "bu_key"
+      "BU": "bu_name"
+      "BU Name": "bu_name"
+    Scenario:
+      "Scenario Key": "scenario_key"
+      "Scenario": "scenario_name"
+      "Scenario Name": "scenario_name"
+    Product:
+      "Product Key": "product_key"
+      "Product": "product_name"
+      "Product Name": "product_name"
+    Industry:
+      "Industry ID": "industry_id"
+      "Industry": "industry_name"
+      "Industry Name": "industry_name"
+    State:
+      "State": "State"
+      "State Code": "StateCode"
+      "Region": "Region"
+  # Keep Fact financial columns unmapped here until upstream ingestion lands
+  # them physically in semabridge.public.fact.
   #   Fact:
-  #     "Customer Key": "customer_key"
-  #   Customer:
-  #     "Customer": "name"
-  #   "Customer.Industry ID": "industry_id"
-  #   CONTINENT_1: "analytics_catalog.raw.continent_data"
-  #   DIM_DATE: "analytics_catalog.raw.dim_date"
+  #     "Revenue": "revenue"
+  #     "Material Costs": "material_costs"
+  #     "Labor Costs Variable": "labor_costs_variable"
+  #     "Taxes": "taxes"
+  #     "Rev for Exp Travel": "rev_for_exp_travel"
+  #     "Travel Expenses": "travel_expenses"
+  #     "Cost Third Party": "cost_third_party"
+  #     "Subscription Revenue": "subscription_revenue"
+  #     "YearPeriod": "yearperiod"
   source_catalog: "semabridge" # Default catalog for source data tables
   source_schema: "public" # Default schema for source data tables
-  on_missing_source: "plan" # "plan" | "skip" | "fail"
+  on_missing_source: "skip" # "plan" | "skip" | "fail" ; continue sync by projecting NULL placeholders for missing source columns
 
   # Governance: auto-grant SELECT on deployed metric views
   grant_select_to_groups: []
