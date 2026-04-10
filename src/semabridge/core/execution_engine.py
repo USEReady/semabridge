@@ -106,6 +106,7 @@ class RunContext:
     source_type: Literal["snowflake", "fabric", "pbix"]
     target_type: Optional[Literal["snowflake", "fabric", "databricks"]] = None
     behavior: ConnectorBehavior = Field(default_factory=ConnectorBehavior)
+    account_id: Optional[str] = None  # Linked Account for multi-user credential scoping
     
     # Artifacts accumulated during execution
     source_format: Optional[SourceFormat] = None
@@ -235,6 +236,8 @@ class ExecutionEngine:
         dataset_id: Optional[str] = None,  # For Fabric source
         workspace_id: Optional[str] = None,  # For Fabric source
         pbix_path: Optional[str] = None,  # For PBIX source
+        # Multi-user: account-scoped credential injection
+        account_id: Optional[str] = None,  # Linked Account ID for per-user credentials
     ) -> RunSummary:
         """
         Execute the full 10-step pipeline.
@@ -299,6 +302,37 @@ class ExecutionEngine:
             )
             
             # Step 3: Resolve Authentication
+            # If an account_id is provided, inject its credentials into os.environ
+            # before validation. This enables per-user credential isolation.
+            self._account_env_ctx = None
+            if account_id:
+                try:
+                    from semabridge.auth.account_credential_resolver import scoped_account_env
+                    from semabridge.repository.account_repository import AccountRepository
+                    from semabridge.repository.orm.session_factory import db_manager
+
+                    session = db_manager.get_session_factory()()
+                    repo = AccountRepository(session)
+                    account = repo.get_account_by_id(account_id)
+                    if account:
+                        self._account_env_ctx = scoped_account_env(account, session)
+                        self._account_env_ctx.__enter__()
+                        context.account_id = account_id
+                        logger.info(
+                            "Account-scoped credentials injected for %s/%s",
+                            account.connector_type,
+                            account.identity_email or account.tag,
+                        )
+                        # Force settings cache clear so pydantic re-reads env vars
+                        get_settings.cache_clear()
+                        context.config = get_settings()
+                except Exception as acct_exc:
+                    logger.warning(
+                        "Account credential injection failed for %s: %s",
+                        account_id,
+                        acct_exc,
+                    )
+
             self._step3_resolve_auth(context)
             
             # Step 4: Extract from Source
@@ -356,6 +390,14 @@ class ExecutionEngine:
                 self._context or self._create_fallback_context(),
                 status
             )
+        finally:
+            # Always clean up the account-scoped env context
+            if hasattr(self, '_account_env_ctx') and self._account_env_ctx is not None:
+                try:
+                    self._account_env_ctx.__exit__(None, None, None)
+                except Exception:
+                    pass
+                self._account_env_ctx = None
     
     def _record_step(
         self,
@@ -668,14 +710,123 @@ class ExecutionEngine:
         if not identity_id:
             return False
         try:
-            from semabridge.api.main import _resolve_fabric_access_token
+            from semabridge.api.services.connection_domain_service import _resolve_fabric_access_token
 
             token = _resolve_fabric_access_token(None, identity_id)
             return bool(token)
         except Exception as exc:
             logger.warning("_has_fabric_identity_auth: identity lookup failed for %s: %s", identity_id, exc)
             return False
-    
+
+    def _has_snowflake_identity_auth(self, identity_id: str) -> bool:
+        """Return True when a linked Snowflake Account row has valid credentials."""
+        if not identity_id:
+            return False
+        try:
+            from sqlalchemy import select
+            from semabridge.repository.orm.models import Account
+            from semabridge.repository.orm.session_factory import db_manager
+
+            with db_manager.get_session() as session:
+                account = session.execute(
+                    select(Account).where(
+                        Account.connector_type == "SNOWFLAKE",
+                        Account.id == identity_id,
+                    )
+                ).scalars().first()
+                return bool(account and account.encrypted_token)
+        except Exception as exc:
+            logger.warning("_has_snowflake_identity_auth: lookup failed for %s: %s", identity_id, exc)
+            return False
+
+    def _has_databricks_identity_auth(self, identity_id: str) -> bool:
+        """Return True when a linked Databricks Account row has valid credentials."""
+        if not identity_id:
+            return False
+        try:
+            from sqlalchemy import select
+            from semabridge.repository.orm.models import Account
+            from semabridge.repository.orm.session_factory import db_manager
+
+            with db_manager.get_session() as session:
+                account = session.execute(
+                    select(Account).where(
+                        Account.connector_type == "DATABRICKS",
+                        Account.id == identity_id,
+                    )
+                ).scalars().first()
+                return bool(account and account.encrypted_token)
+        except Exception as exc:
+            logger.warning("_has_databricks_identity_auth: lookup failed for %s: %s", identity_id, exc)
+            return False
+
+    def _extract_snowflake_scoped(
+        self,
+        context: RunContext,
+        dataset_id: Optional[str],
+        identity_id: str,
+    ) -> SourceFormat:
+        """Run Snowflake extraction under scoped account credentials.
+
+        Looks up the Account row by ``identity_id``, decrypts its credential
+        bundle, injects credentials via ``scoped_account_env``, and delegates
+        to the standard extraction pipeline.
+
+        Args:
+            context: Current run context.
+            dataset_id: Optional dataset scope.
+            identity_id: Account row UUID.
+
+        Returns:
+            Extracted SourceFormat.
+
+        Raises:
+            ExtractionError: When identity cannot be resolved.
+        """
+        from sqlalchemy import select
+        from semabridge.repository.orm.models import Account
+        from semabridge.repository.orm.session_factory import db_manager
+        from semabridge.auth.account_credential_resolver import scoped_account_env
+
+        try:
+            with db_manager.get_session() as session:
+                account = session.execute(
+                    select(Account).where(
+                        Account.connector_type == "SNOWFLAKE",
+                        Account.id == identity_id,
+                    )
+                ).scalars().first()
+
+                if not account:
+                    raise ExtractionError(
+                        f"No Snowflake account found for identity_id '{identity_id}'. "
+                        "Please link this account in the Connections panel."
+                    )
+
+                with scoped_account_env(account, session):
+                    logger.info(
+                        "Snowflake extraction scoped to account %s (%s)",
+                        account.tag, identity_id,
+                    )
+                    # Reload settings to pick up injected env vars
+                    from semabridge.core.settings import reload_settings
+                    scoped_settings = reload_settings()
+                    context = RunContext(
+                        project_id=context.project_id,
+                        run_id=context.run_id,
+                        config=scoped_settings,
+                        source_type=context.source_type,
+                        target_type=context.target_type,
+                        behavior=context.behavior,
+                    )
+                    # Clear identity_id to prevent infinite recursion
+                    return self._extract_snowflake_unscoped(context, dataset_id)
+        except ExtractionError:
+            raise
+        except Exception as exc:
+            raise ExtractionError(
+                f"Failed to resolve Snowflake credentials for identity '{identity_id}': {exc}"
+            ) from exc
     # =========================================================================
     # Step 4: Extract from Source
     # =========================================================================
@@ -716,11 +867,24 @@ class ExecutionEngine:
         context: RunContext,
         dataset_id: Optional[str] = None,
     ) -> SourceFormat:
-        """Extract from Snowflake."""
+        """Extract from Snowflake.
+
+        When ``identity_id`` is present in the source config, credentials are
+        resolved from the linked Account row and injected via
+        ``scoped_account_env`` for the duration of this extraction.
+        Otherwise, falls back to global env vars (backward compatibility).
+        """
         from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
         from semabridge.utils.cache import MetadataCache
         
         config = context.config
+        source_config = getattr(config, "source", None)
+        identity_id: str = str(getattr(source_config, "identity_id", "") or "").strip()
+
+        # Resolve per-account credentials when identity_id is specified
+        if identity_id:
+            return self._extract_snowflake_scoped(context, dataset_id, identity_id)
+
         cache = MetadataCache(config.model.cache_dir) if config.model.cache_enabled else None
 
         # BACKUP (old behavior): serial extraction + only env-based include list
@@ -826,6 +990,94 @@ class ExecutionEngine:
         
         return source_format
 
+    def _extract_snowflake_unscoped(
+        self,
+        context: RunContext,
+        dataset_id: Optional[str] = None,
+    ) -> SourceFormat:
+        """Run Snowflake extraction without identity_id resolution.
+
+        Called by ``_extract_snowflake_scoped`` after credentials have been
+        injected into ``os.environ``. Delegates to the main extraction body
+        but skips the identity_id check to prevent infinite recursion.
+        """
+        from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
+        from semabridge.utils.cache import MetadataCache
+
+        config = context.config
+        cache = MetadataCache(config.model.cache_dir) if config.model.cache_enabled else None
+
+        include_tables, include_source = self._resolve_snowflake_include_tables(context)
+        semantic_view_name: Optional[str] = None
+        semantic_view_ddl: Optional[str] = None
+
+        if dataset_id:
+            scope_probe = SnowflakeExtractor(
+                config=config.snowflake,
+                cache=cache,
+                exclude_tables=config.model.excluded_table_list,
+                include_tables=None,
+            )
+            scoped_tables, semantic_view_name, semantic_view_ddl = self._resolve_snowflake_dataset_scope(
+                dataset_id,
+                scope_probe,
+            )
+            if scoped_tables:
+                include_tables = scoped_tables
+                include_source = "dataset_id.semantic_view" if semantic_view_name else "dataset_id.table"
+
+        parallel_enabled, max_workers = self._resolve_snowflake_parallelism(context)
+
+        extractor = SnowflakeExtractor(
+            config=config.snowflake,
+            cache=cache,
+            exclude_tables=config.model.excluded_table_list,
+            include_tables=include_tables,
+        )
+        metadata = extractor.extract_all(
+            parallel=parallel_enabled,
+            max_workers=max_workers,
+        )
+
+        strict_sources = {
+            "source.models",
+            "selection.model_ids",
+            "dataset_id.semantic_view",
+            "dataset_id.table",
+        }
+        if include_tables and not metadata.get("tables"):
+            if include_source in strict_sources:
+                raise ExtractionError(
+                    f"Include filter from {include_source} matched 0 tables for '{dataset_id}'. "
+                    "Refine the selected model or verify semantic view/table names."
+                )
+            if include_source != "model.include_tables":
+                extractor = SnowflakeExtractor(
+                    config=config.snowflake,
+                    cache=cache,
+                    exclude_tables=config.model.excluded_table_list,
+                    include_tables=None,
+                )
+                metadata = extractor.extract_all(
+                    parallel=parallel_enabled,
+                    max_workers=max_workers,
+                )
+
+        semantic_data = extractor.read_semantic_tables()
+        metadata["semantic_tables"] = semantic_data
+
+        source_format = from_snowflake_metadata(
+            project_id=context.project_id,
+            run_id=context.run_id,
+            metadata=metadata,
+            semantic_view_name=semantic_view_name,
+            semantic_view_ddl=semantic_view_ddl,
+        )
+
+        table_count = len(source_format.tables)
+        self._record_step(4, StepStatus.SUCCESS, f"Extracted {table_count} tables (scoped)")
+
+        return source_format
     def _resolve_snowflake_dataset_scope(
         self,
         dataset_id: str,
@@ -1020,22 +1272,30 @@ class ExecutionEngine:
 
             if identity_id:
                 try:
-                    from semabridge.api.main import _resolve_fabric_access_token
+                    from semabridge.api.services.connection_domain_service import _resolve_fabric_access_token
 
                     interactive_token = _resolve_fabric_access_token(None, identity_id)
                     logger.debug("_extract_fabric: injecting identity-scoped interactive token for %s", identity_id)
                 except Exception as identity_exc:
                     logger.warning(
-                        "_extract_fabric: failed to resolve token for identity %s; falling back to default interactive token: %s",
+                        "_extract_fabric: failed to resolve token for identity %s: %s",
                         identity_id,
                         identity_exc,
                     )
+                    raise ExtractionError(
+                        f"Could not resolve Fabric token for identity '{identity_id}'. "
+                        f"Please re-authenticate this account in the Connections panel."
+                    ) from identity_exc
 
-            if not interactive_token:
+            if not interactive_token and not identity_id:
+                # Only fall back to global credential store when NO identity_id is specified.
+                # This prevents cross-account contamination in multi-account scenarios.
                 token_data = cm.get_msal_token()
                 if cm.get_fabric_auth_method() == "interactive" and cm.has_valid_token() and token_data:
                     interactive_token = token_data.get("access_token")
-                    logger.debug("_extract_fabric: injecting interactive token from credential store")
+                    logger.debug("_extract_fabric: injecting interactive token from credential store (no identity_id)")
+        except ExtractionError:
+            raise
         except Exception as exc:
             logger.warning("_extract_fabric: credential lookup failed, falling back to env auth: %s", exc)
         
@@ -1979,39 +2239,92 @@ class ExecutionEngine:
             raise DeploymentError(f"Deployment failed: {e}") from e
     
     def _deploy_to_fabric(self, context: RunContext) -> None:
-        """Deploy to Fabric.
-
-        Re-injects credentials from the credential store into the live
-        process environment before creating the publisher.  This guarantees
-        the publisher sees the latest UI-selected workspace_id even when
-        the user changed it after the backend started.
-        """
+        """Deploy to Fabric with multi-account isolation."""
         from semabridge.connectors.fabric_publisher import FabricPublisher
 
-        # Re-inject stored credentials so FABRIC_WORKSPACE_ID reflects
-        # the latest UI selection (not just the .env value at boot time).
+        # Check for per-account identity_id scoping
+        target_configs = getattr(context.config, "targets", None) or []
+        identity_id = ""
+        for tc in target_configs:
+            if isinstance(tc, dict) and tc.get("type") == "fabric":
+                identity_id = str(tc.get("identity_id", "") or "").strip()
+                break
+
+        if not identity_id:
+            # Also check the flat target_config if present
+            target_config = getattr(context.config, "target", None)
+            if target_config and getattr(target_config, "type", "") == "fabric":
+                identity_id = str(getattr(target_config, "identity_id", "") or "").strip()
+
+        if identity_id:
+            from sqlalchemy import select
+            from semabridge.repository.orm.models import Account
+            from semabridge.repository.orm.session_factory import db_manager
+            from semabridge.auth.account_credential_resolver import scoped_account_env
+
+            with db_manager.get_session() as session:
+                account = session.execute(
+                    select(Account).where(
+                        Account.connector_type == "FABRIC",
+                        Account.id == identity_id,
+                    )
+                ).scalars().first()
+
+                if not account:
+                    raise DeploymentError(
+                        f"No Fabric account found for identity_id '{identity_id}'. "
+                        "Please link this account in the Connections panel."
+                    )
+
+                with scoped_account_env(account, session):
+                    logger.info(
+                        "Fabric deployment scoped to account %s (%s)",
+                        account.tag, identity_id,
+                    )
+                    from semabridge.core.settings import reload_settings
+                    scoped_settings = reload_settings()
+                    
+                    # Ensure the workspace_id explicitly requested by the project is used
+                    # instead of any default ambient workspace on the Account
+                    target_workspace = ""
+                    for tc in target_configs:
+                        if isinstance(tc, dict) and tc.get("type") == "fabric":
+                            target_workspace = str(tc.get("workspace_id", "") or "").strip()
+                            break
+                    if not target_workspace:
+                        if getattr(context.config, "target", None) and getattr(context.config.target, "type", "") == "fabric":
+                            target_workspace = getattr(context.config.target, "workspace_id", "")
+                    if target_workspace:
+                        scoped_settings.fabric.workspace_id = target_workspace
+
+                    publisher = FabricPublisher(scoped_settings.fabric)
+                    publisher.publish(
+                        sml_model=context.sml_model,
+                        model_name=context.project_id,
+                        snowflake_server=scoped_settings.snowflake.account,
+                        snowflake_warehouse=scoped_settings.snowflake.warehouse,
+                        snowflake_database=scoped_settings.snowflake.database,
+                        snowflake_schema=scoped_settings.snowflake.schema_name,
+                        overwrite=True,
+                    )
+                    return
+
+        # --- Fallback to legacy global logic ---
         try:
             from semabridge.repository.credential_manager import CredentialManager
             cm = CredentialManager()
             cm.inject_credentials_to_env("fabric")
-            injected_ws = os.environ.get("FABRIC_WORKSPACE_ID", "")
-            logger.info("Fabric deploy: FABRIC_WORKSPACE_ID env=%s", injected_ws or "(not set)")
         except Exception as _inj_exc:
-            logger.debug("Credential re-injection before Fabric deploy skipped: %s", _inj_exc)
+            logger.debug("Credential re-injection skipping: %s", _inj_exc)
 
-        # CRITICAL: Remove any stale FABRIC_ACCESS_TOKEN from env.
-        # If present (from .env or a prior injection), FabricPublisher
-        # treats it as a "pre-issued CI token" and uses it without refresh.
         os.environ.pop("FABRIC_ACCESS_TOKEN", None)
         os.environ.pop("FABRIC_REFRESH_TOKEN", None)
 
-        # Clear cached Settings so FabricConfig() reads the fresh env vars.
+        from semabridge.core.settings import get_settings
         get_settings.cache_clear()
         config = get_settings()
-        logger.info("Fabric deploy: config.fabric.workspace_id=%s", config.fabric.workspace_id)
 
         publisher = FabricPublisher(config.fabric)
-
         publisher.publish(
             sml_model=context.sml_model,
             model_name=context.project_id,
@@ -2024,17 +2337,65 @@ class ExecutionEngine:
     
     def _deploy_to_snowflake(self, context: RunContext) -> None:
         """
-        Deploy to Snowflake, dispatching based on ``deployment_method`` setting.
-
-        deployment_method values (set in SnowflakeConfig):
-          - ``ddl``                   — DDL Semantic View only (default, existing behaviour)
-          - ``yaml_stored_procedure`` — Cortex YAML via SYSTEM$CREATE_SEMANTIC_MODEL only
-          - ``both``                  — DDL first, then YAML stored-procedure path
+        Deploy to Snowflake, dispatching based on ``deployment_method`` setting
+        and utilizing single-tenant environment scoping if ``identity_id`` is supplied.
         """
         from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
 
-        config = context.config
-        sf_cfg = config.snowflake
+        target_configs = getattr(context.config, "targets", None) or []
+        identity_id = ""
+        for tc in target_configs:
+            if isinstance(tc, dict) and tc.get("type") == "snowflake":
+                identity_id = str(tc.get("identity_id", "") or "").strip()
+                break
+
+        if not identity_id:
+            # Also check the flat target config if present
+            target_config = getattr(context.config, "target", None)
+            if target_config and getattr(target_config, "type", "") == "snowflake":
+                identity_id = str(getattr(target_config, "identity_id", "") or "").strip()
+
+        if identity_id:
+            from sqlalchemy import select
+            from semabridge.repository.orm.models import Account
+            from semabridge.repository.orm.session_factory import db_manager
+            from semabridge.auth.account_credential_resolver import scoped_account_env
+
+            with db_manager.get_session() as session:
+                account = session.execute(
+                    select(Account).where(
+                        Account.connector_type == "SNOWFLAKE",
+                        Account.id == identity_id,
+                    )
+                ).scalars().first()
+
+                if not account:
+                    raise DeploymentError(
+                        f"No Snowflake account found for identity_id '{identity_id}'. "
+                        "Please link this account in the Connections panel."
+                    )
+
+                with scoped_account_env(account, session):
+                    logger.info(
+                        "Snowflake deployment scoped to account %s (%s)",
+                        account.tag, identity_id,
+                    )
+                    from semabridge.core.settings import reload_settings
+                    scoped_settings = reload_settings()
+                    
+                    # Override default roles and warehouses if specified in target config
+                    sf_cfg = scoped_settings.snowflake
+                    self._do_snowflake_deploy(context, sf_cfg)
+                    return
+
+        # Fallback to legacy global execution
+        sf_cfg = context.config.snowflake
+        self._do_snowflake_deploy(context, sf_cfg)
+
+    def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
+        """Inner helper to perform Snowflake deployment with resolved config."""
+        from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+        
         emitter = SnowflakeEmitter(sf_cfg, behavior=context.behavior)
         deployment_method = getattr(sf_cfg, "deployment_method", "ddl") or "ddl"
 
@@ -2071,9 +2432,61 @@ class ExecutionEngine:
             self._sync_fabric_measures(context, emitter)
 
     def _deploy_to_databricks(self, context: RunContext) -> None:
-        """Deploy SML metadata projection and measure views to Databricks."""
+        """Deploy SML metadata projection and measure views to Databricks.
+
+        When ``identity_id`` is present in the target config, credentials
+        are resolved from the linked Account row.
+        """
         from semabridge.connectors.databricks_publisher import DatabricksPublisher
 
+        # Check for per-account identity_id scoping
+        target_configs = getattr(context.config, "targets", None) or []
+        identity_id = ""
+        for tc in target_configs:
+            if isinstance(tc, dict) and tc.get("type") == "databricks":
+                identity_id = str(tc.get("identity_id", "") or "").strip()
+                break
+
+        if not identity_id:
+            # Also check the flat target_config if present
+            target_config = getattr(context.config, "target", None)
+            if target_config:
+                identity_id = str(getattr(target_config, "identity_id", "") or "").strip()
+
+        if identity_id:
+            from sqlalchemy import select
+            from semabridge.repository.orm.models import Account
+            from semabridge.repository.orm.session_factory import db_manager
+            from semabridge.auth.account_credential_resolver import scoped_account_env
+
+            with db_manager.get_session() as session:
+                account = session.execute(
+                    select(Account).where(
+                        Account.connector_type == "DATABRICKS",
+                        Account.id == identity_id,
+                    )
+                ).scalars().first()
+
+                if not account:
+                    raise DeploymentError(
+                        f"No Databricks account found for identity_id '{identity_id}'. "
+                        "Please link this account in the Connections panel."
+                    )
+
+                with scoped_account_env(account, session):
+                    logger.info(
+                        "Databricks deployment scoped to account %s (%s)",
+                        account.tag, identity_id,
+                    )
+                    from semabridge.core.settings import reload_settings
+                    scoped_settings = reload_settings()
+                    publisher = DatabricksPublisher(
+                        scoped_settings.databricks, behavior=context.behavior
+                    )
+                    publisher.publish(context.sml_model)
+                    return
+
+        # Default: use global env vars
         publisher = DatabricksPublisher(context.config.databricks, behavior=context.behavior)
         publisher.publish(context.sml_model)
 

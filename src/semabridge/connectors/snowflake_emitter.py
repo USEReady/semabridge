@@ -13,7 +13,11 @@ import re
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import snowflake.connector.cursor
+    from semabridge.converter.measure_triage import TriageResult
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -1039,15 +1043,9 @@ class SnowflakeEmitter(BaseEmitter):
     def authenticate(self) -> None:
         """Establish connection to Snowflake."""
         import snowflake.connector
-        self._connection = snowflake.connector.connect(
-            user=self.config.user,
-            password=self.config.password.get_secret_value(),
-            account=self.config.account,
-            warehouse=self.config.warehouse,
-            database=self.config.database,
-            schema=self.config.schema_name,
-            role=self.config.role,
-        )
+        from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+        kwargs = get_snowflake_connect_kwargs(self.config)
+        self._connection = snowflake.connector.connect(**kwargs)
 
     def discover(self) -> Dict[str, Any]:
         """List tables and views in the schema."""
@@ -1218,18 +1216,16 @@ class SnowflakeEmitter(BaseEmitter):
         import snowflake.connector
 
         logger.info(f"Opening Snowflake session for batch deployment: {self.config.account}")
-        self._session_conn = snowflake.connector.connect(
-            user=self.config.user,
-            password=self.config.password.get_secret_value(),
-            account=self.config.account,
-            warehouse=self._resolve_warehouse(operation),
-            database=self.config.database,
-            schema=self.config.schema_name,
-            role=self.config.role,
-            session_parameters={
-                "QUERY_TAG": self.sf_behavior.query_tag or "Semabridge_Connector"
-            },
-        )
+        from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+        kwargs = get_snowflake_connect_kwargs(self.config)
+        # Override warehouse if operation-specific mapping exists
+        resolved_wh = self._resolve_warehouse(operation)
+        if resolved_wh:
+            kwargs["warehouse"] = resolved_wh
+        kwargs["session_parameters"] = {
+            "QUERY_TAG": self.sf_behavior.query_tag or "Semabridge_Connector"
+        }
+        self._session_conn = snowflake.connector.connect(**kwargs)
 
     def close_session(self) -> None:
         """Close the shared Snowflake session and reset caches."""
@@ -1352,19 +1348,13 @@ class SnowflakeEmitter(BaseEmitter):
                 logger.debug("Reusing shared Snowflake session connection")
             else:
                 import snowflake.connector
+                from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
                 logger.info(f"Connecting to Snowflake: {self.config.account}")
-                conn = snowflake.connector.connect(
-                    user=self.config.user,
-                    password=self.config.password.get_secret_value(),
-                    account=self.config.account,
-                    warehouse=self.config.warehouse,
-                    database=self.config.database,
-                    schema=self.config.schema_name,
-                    role=self.config.role,
-                    session_parameters={
-                        "QUERY_TAG": self.sf_behavior.query_tag or "Semabridge_Connector"
-                    }
-                )
+                kwargs = get_snowflake_connect_kwargs(self.config)
+                kwargs["session_parameters"] = {
+                    "QUERY_TAG": self.sf_behavior.query_tag or "Semabridge_Connector"
+                }
+                conn = snowflake.connector.connect(**kwargs)
                 owns_conn = True
             
             logger.info("Starting deployment with STRICT sanitization rules")
@@ -3735,18 +3725,12 @@ class SnowflakeEmitter(BaseEmitter):
                     type_map.append((col, "VARCHAR(500)"))
         
         try:
-            conn = snowflake.connector.connect(
-                user=self.config.user,
-                password=self.config.password.get_secret_value(),
-                account=self.config.account,
-                warehouse=self.config.warehouse,
-                database=self.config.database,
-                schema=self.config.schema_name,
-                role=self.config.role,
-                session_parameters={
-                    "QUERY_TAG": self.sf_behavior.query_tag or "Semabridge_MeasureSync"
-                }
-            )
+            from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+            kwargs = get_snowflake_connect_kwargs(self.config)
+            kwargs["session_parameters"] = {
+                "QUERY_TAG": self.sf_behavior.query_tag or "Semabridge_MeasureSync"
+            }
+            conn = snowflake.connector.connect(**kwargs)
             cur = conn.cursor()
             
             try:
@@ -3914,15 +3898,9 @@ class SnowflakeEmitter(BaseEmitter):
                         ]
                         try:
                             import snowflake.connector
-                            conn = snowflake.connector.connect(
-                                user=self.config.user,
-                                password=self.config.password.get_secret_value(),
-                                account=self.config.account,
-                                warehouse=self.config.warehouse,
-                                database=self.config.database,
-                                schema=self.config.schema_name,
-                                role=self.config.role,
-                            )
+                            from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+                            kwargs = get_snowflake_connect_kwargs(self.config)
+                            conn = snowflake.connector.connect(**kwargs)
                             cur = conn.cursor()
                             try:
                                 self.evolve_schema(cur, shadow_table, new_cols)
@@ -4096,15 +4074,9 @@ class SnowflakeEmitter(BaseEmitter):
                         ]
                         try:
                             import snowflake.connector
-                            conn = snowflake.connector.connect(
-                                user=self.config.user,
-                                password=self.config.password.get_secret_value(),
-                                account=self.config.account,
-                                warehouse=self.config.warehouse,
-                                database=self.config.database,
-                                schema=self.config.schema_name,
-                                role=self.config.role,
-                            )
+                            from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+                            kwargs = get_snowflake_connect_kwargs(self.config)
+                            conn = snowflake.connector.connect(**kwargs)
                             cur = conn.cursor()
                             try:
                                 self.evolve_schema(cur, shadow_table, new_cols)
@@ -4254,19 +4226,13 @@ class SnowflakeEmitter(BaseEmitter):
                 owns_conn = False
                 logger.debug("Reusing shared Snowflake session connection (OSI path)")
             else:
+                from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
                 logger.info(f"Connecting to Snowflake: {self.config.account}")
-                conn = snowflake.connector.connect(
-                    user=self.config.user,
-                    password=self.config.password.get_secret_value(),
-                    account=self.config.account,
-                    warehouse=self.config.warehouse,
-                    database=self.config.database,
-                    schema=self.config.schema_name,
-                    role=self.config.role,
-                    session_parameters={
-                        "QUERY_TAG": self.sf_behavior.query_tag or "Semabridge_Connector"
-                    },
-                )
+                kwargs = get_snowflake_connect_kwargs(self.config)
+                kwargs["session_parameters"] = {
+                    "QUERY_TAG": self.sf_behavior.query_tag or "Semabridge_Connector"
+                }
+                conn = snowflake.connector.connect(**kwargs)
                 owns_conn = True
 
             logger.info("Starting OSI deployment with STRICT sanitization rules")

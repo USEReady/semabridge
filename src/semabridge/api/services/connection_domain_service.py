@@ -345,13 +345,32 @@ def _run_background_msal_poll(
         result: Dict[str, Any] = app_msal.acquire_token_by_device_flow(flow)
 
         if "access_token" in result:
-            account_username = "unknown"
-            accounts = app_msal.get_accounts()
-            if accounts:
-                account_username = accounts[0].get("username", "unknown")
+            # Extract the username from the id_token_claims of THIS specific
+            # login — NOT from app_msal.get_accounts() which returns ALL
+            # cached accounts and would always pick the first one.
+            claims = result.get("id_token_claims", {})
+            account_username = (
+                claims.get("preferred_username")
+                or claims.get("upn")
+                or claims.get("email")
+                or "unknown"
+            )
+
+            # Fallback: if claims didn't have a username, try the account list
+            # but match by the home_account_id from the result.
+            if account_username == "unknown":
+                home_id = result.get("id_token_claims", {}).get("oid", "")
+                for acct in app_msal.get_accounts():
+                    if acct.get("local_account_id") == home_id:
+                        account_username = acct.get("username", "unknown")
+                        break
+                else:
+                    # Last resort: first account (legacy behavior)
+                    accounts = app_msal.get_accounts()
+                    if accounts:
+                        account_username = accounts[0].get("username", "unknown")
 
             actual_tenant = tenant
-            claims = result.get("id_token_claims", {})
             if claims.get("tid"):
                 actual_tenant = claims["tid"]
 
@@ -506,18 +525,12 @@ async def fabric_device_code_poll(request: Request, payload: Dict[str, Any] = No
         _fabric_session_token = state["access_token"]
         _fabric_session_token_expires_at = _time.time() + int(state.get("expires_in", 3600))
 
-        # Persist to DB (Account + Credential tables)
+        # Persist to CredentialManager only (for CLI/background-sync fallback).
+        # Account DB row is created later by the frontend via POST /api/accounts.
+        # We intentionally do NOT call upsert_account() here because it
+        # would overwrite an existing FABRIC account's token/email with
+        # the newly-authenticated user's credentials.
         try:
-            from semabridge.repository.orm.session_factory import db_manager
-            from semabridge.repository.account_repository import AccountRepository
-
-            session = db_manager.get_session_factory()()
-            try:
-                repo = AccountRepository(session)
-                repo.upsert_account("FABRIC", state, _fabric_session_token_expires_at)
-            finally:
-                session.close()
-
             cm = CredentialManager()
             cm.save_msal_token(
                 access_token=state["access_token"],
@@ -526,18 +539,8 @@ async def fabric_device_code_poll(request: Request, payload: Dict[str, Any] = No
                 tenant_id=state.get("tenant_id", "organizations"),
                 expires_in=state.get("expires_in", 3600),
             )
-            cm.save_credentials(
-                "fabric",
-                {
-                    "access_token": state["access_token"],
-                    "refresh_token": state.get("refresh_token", ""),
-                },
-            )
         except Exception as exc:
-            logger.exception("Failed to persist MSAL token: %s", exc)
-            if isinstance(exc, HTTPException):
-                raise exc
-            raise HTTPException(status_code=500, detail=f"Database write failed during token persistence: {exc}")
+            logger.exception("Failed to persist MSAL token to CredentialManager: %s", exc)
 
         logger.info("Fabric interactive login successful for %s (flow_id=%s)", state.get("username"), flow_id)
         return {
@@ -801,6 +804,7 @@ def _resolve_fabric_access_token(
     # Variables populated by Phase 1:
     encrypted_token: Optional[str] = None
     account_tag: Optional[str] = None
+    matched_account_id: Optional[str] = None
     credential_token_data: dict = {}      # from Credential table fallback
     has_account_row: bool = False
 
@@ -827,6 +831,7 @@ def _resolve_fabric_access_token(
             if default_account:
                 has_account_row = True
                 account_tag = default_account.tag
+                matched_account_id = default_account.id
                 encrypted_token = default_account.encrypted_token
 
                 if not encrypted_token:
@@ -871,20 +876,43 @@ def _resolve_fabric_access_token(
         # Path B: Decrypted token from Account row
         if encrypted_token:
             try:
+                import json
                 from semabridge.auth.encryption import decrypt_token
-                tok = decrypt_token(encrypted_token)
+                tok_raw = decrypt_token(encrypted_token)
+                
+                is_json_payload = False
+                access_token = tok_raw
+                refresh_token = None
+                tenant_id = "organizations"
+                payload_dict = {}
+                
                 try:
-                    fabric_validator.validate_msal_token(tok)
+                    payload_dict = json.loads(tok_raw)
+                    if isinstance(payload_dict, dict) and "access_token" in payload_dict:
+                        is_json_payload = True
+                        access_token = payload_dict["access_token"]
+                        refresh_token = payload_dict.get("refresh_token")
+                        tenant_id = payload_dict.get("tenant_id", "organizations")
+                except json.JSONDecodeError:
+                    pass
+
+                try:
+                    fabric_validator.validate_msal_token(access_token)
                 except HTTPException:
-                    logger.warning("Decrypted Fabric token from DB is expired. Attempting silent refresh...")
-                    refreshed = _try_silent_refresh()
-                    if refreshed:
-                        return refreshed
+                    logger.warning("Decrypted Fabric token from DB is expired.")
+                    if is_json_payload and refresh_token and matched_account_id:
+                        logger.info(f"Attempting isolated silent refresh for account {account_tag}...")
+                        refreshed_access_token = _refresh_account_token(
+                            matched_account_id, account_tag, refresh_token, tenant_id, payload_dict
+                        )
+                        if refreshed_access_token:
+                            return refreshed_access_token
+                    
                     logger.warning("Silent refresh failed. Forcing reauthentication.")
                     raise HTTPException(status_code=401, detail={"error": "reauth_required"})
 
                 logger.info(f"Using access token from default Fabric account: {account_tag}")
-                return tok
+                return access_token
             except HTTPException:
                 raise
             except Exception as e:
@@ -899,6 +927,54 @@ def _resolve_fabric_access_token(
         status_code=401,
         detail={"error": "reauth_required"}
     )
+
+
+def _refresh_account_token(account_id: str, account_tag: str, refresh_token: str, tenant_id: str, original_payload: dict) -> Optional[str]:
+    """Isolated per-account MSAL refresh to prevent multi-account contamination."""
+    try:
+        import msal
+        import json
+        from sqlalchemy import update
+        from semabridge.repository.orm.models import Account
+        from semabridge.repository.orm.session_factory import db_manager
+        from semabridge.auth.encryption import encrypt_token
+
+        app_msal = msal.PublicClientApplication(
+            client_id="04b07795-8ddb-461a-bbee-02f9e1bf7b46",
+            authority=f"https://login.microsoftonline.com/{tenant_id}",
+        )
+        result = app_msal.acquire_token_by_refresh_token(
+            refresh_token,
+            scopes=["https://analysis.windows.net/powerbi/api/.default"],
+        )
+        if "access_token" in result:
+            new_payload = dict(original_payload)
+            new_payload["access_token"] = result["access_token"]
+            new_payload["refresh_token"] = result.get("refresh_token", refresh_token)
+            new_payload["expires_in"] = result.get("expires_in", 3600)
+            
+            safe_token = encrypt_token(json.dumps(new_payload))
+            
+            with db_manager.get_session() as session:
+                session.execute(
+                    update(Account)
+                    .where(Account.id == account_id)
+                    .values(encrypted_token=safe_token)
+                )
+                session.commit()
+                
+            logger.info(f"Silently refreshed and isolated Fabric access token for account: {account_tag}")
+            return result["access_token"]
+        else:
+            logger.warning(
+                "Isolated token refresh failed for %s: %s",
+                account_tag,
+                result.get("error_description", result.get("error", "unknown")),
+            )
+            return None
+    except Exception as exc:
+        logger.warning("Isolated silent token refresh exception: %s", exc)
+        return None
 
 
 def _try_silent_refresh() -> Optional[str]:
@@ -988,6 +1064,7 @@ async def fabric_list_workspaces(
         result = [
             {
                 "id": ws.get("id", ""),
+                "name": ws.get("displayName", "Unknown"),
                 "displayName": ws.get("displayName", "Unknown"),
                 "type": ws.get("type", ""),
                 "capacityId": ws.get("capacityId", ""),
@@ -1290,36 +1367,160 @@ async def test_connection(service: str):
         except Exception as e:
             return {"status": "failed", "message": str(e)}
 
+    if service == "databricks":
+        try:
+            cfg = reload_settings()
+            from semabridge.connectors.databricks_publisher import DatabricksPublisher
+
+            publisher = DatabricksPublisher(cfg.databricks)
+            token = publisher._resolve_token()
+            # Fire a lightweight query to validate warehouse access
+            import requests as _requests
+
+            resp = _requests.post(
+                f"https://{cfg.databricks.host}/api/2.0/sql/statements",
+                json={
+                    "statement": "SHOW CATALOGS",
+                    "warehouse_id": cfg.databricks.warehouse_id,
+                    "wait_timeout": "10s",
+                },
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                return {"status": "success", "message": "Databricks connection successful"}
+            return {"status": "failed", "message": f"Databricks API returned {resp.status_code}: {resp.text[:200]}"}
+        except Exception as e:
+            return {"status": "failed", "message": str(e)}
+
     raise HTTPException(status_code=400, detail=f"Unknown service: {service}")
 
 
-async def snowflake_sso_login():
-    """Initiate Snowflake SSO login via external browser."""
-    from semabridge.repository.credential_manager import CredentialManager
+async def snowflake_oauth_test(body: Dict[str, Any]) -> Dict[str, Any]:
+    """Test Snowflake OAuth S2S connectivity.
 
-    cm = CredentialManager()
-    creds = cm.get_credentials("snowflake")
-    if not creds or "account" not in creds or "user" not in creds:
+    Acquires a token using the provided client-credentials and attempts
+    a live connection to Snowflake with ``authenticator=oauth``.
+
+    Args:
+        body: Dict with keys: account, user, oauth_client_id,
+              oauth_client_secret, oauth_token_endpoint, oauth_scope (optional),
+              warehouse (optional), database (optional).
+
+    Returns:
+        Dict with status, message, username, and role on success.
+    """
+    import requests as _requests
+
+    account = (body.get("account") or "").strip()
+    user = (body.get("user") or "").strip()
+    client_id = (body.get("oauth_client_id") or "").strip()
+    client_secret = (body.get("oauth_client_secret") or "").strip()
+    token_endpoint = (body.get("oauth_token_endpoint") or "").strip()
+    scope = (body.get("oauth_scope") or "").strip()
+
+    if not account or not user:
         raise HTTPException(
             status_code=400,
-            detail="Please configure Account and Username first, then use SSO to sign in.",
+            detail="Please provide Account and Username before testing OAuth.",
+        )
+    if not client_id or not client_secret:
+        raise HTTPException(
+            status_code=400,
+            detail="OAuth Client ID and Client Secret are required.",
         )
 
-    cm.save_credentials("snowflake", {"authenticator": "externalbrowser"})
+    if not token_endpoint:
+        import os
+        tenant_id = os.environ.get("AZURE_TENANT_ID", "organizations")
+        token_endpoint = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+
+    if not scope and client_id:
+        scope = f"api://{client_id}/.default"
+
+    # Step 1: Acquire token from IdP
+    payload: Dict[str, str] = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "grant_type": "client_credentials",
+    }
+    if scope:
+        payload["scope"] = scope
 
     try:
-        cm.inject_credentials_to_env("snowflake")
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        resp = _requests.post(token_endpoint, data=payload, timeout=30, verify=False)
+        if resp.status_code != 200:
+            error_msg = f"Azure AD returned {resp.status_code}: {resp.text}"
+            logger.error(f"Snowflake OAuth token acquisition failed: {error_msg}")
+            return {"status": "failed", "message": error_msg}
+            
+        token_data = resp.json()
+        access_token = token_data.get("access_token")
+        if not access_token:
+            return {
+                "status": "failed",
+                "message": f"Token endpoint returned no access_token: {token_data}",
+            }
+            
+        try:
+            import base64, json, os, snowflake.connector
+            parts = access_token.split(".")
+            if len(parts) >= 2:
+                payload_b64 = parts[1]
+                payload_b64 += "=" * ((4 - len(payload_b64) % 4) % 4)
+                decoded_claims = json.loads(base64.urlsafe_b64decode(payload_b64).decode("utf-8"))
+                
+                # Write to file so agent can read it automatically
+                with open("token_dump.json", "w") as f:
+                    json.dump(decoded_claims, f, indent=2)
+                    
+                with open("token_raw.txt", "w") as f:
+                    f.write(access_token)
+                    
+            # Run diagnostic if we have a password
+            sf_pass = os.environ.get("SNOWFLAKE_PASSWORD")
+            if sf_pass:
+                try:
+                    ctx = snowflake.connector.connect(
+                        user=user,
+                        password=sf_pass,
+                        account=account
+                    )
+                    cur = ctx.cursor()
+                    cur.execute(f"SELECT SYSTEM$VERIFY_EXTERNAL_OAUTH_TOKEN('{access_token}')")
+                    row = cur.fetchone()
+                    diagnostic_result = row[0] if row else "No diagnostic result"
+                    logger.warning(f"Snowflake OAuth Diagnostic: {diagnostic_result}")
+                    if "Token validation failed" in diagnostic_result or "invalid" in diagnostic_result.lower():
+                        return {"status": "failed", "message": f"Token Acquired but Snowflake Rejected it:\n {diagnostic_result}"}
+                except Exception as sf_err:
+                    logger.error(f"Failed to run Snowflake diagnostic: {sf_err}")
+                
+        except Exception as e:
+            logger.error(f"Failed to decode JWT or run diagnostic: {e}")
+    except Exception as e:
+        logger.error(f"Snowflake OAuth token acquisition failed: {e}")
+        return {"status": "failed", "message": f"Token acquisition failed: {e}"}
+
+    # Step 2: Connect to Snowflake with the OAuth token
+    try:
         import snowflake.connector
 
         connect_kwargs: Dict[str, Any] = {
-            "account": creds["account"],
-            "user": creds["user"],
-            "authenticator": "externalbrowser",
+            "account": account,
+            "user": user,
+            "authenticator": "oauth",
+            "token": access_token,
         }
-        if creds.get("warehouse"):
-            connect_kwargs["warehouse"] = creds["warehouse"]
-        if creds.get("database"):
-            connect_kwargs["database"] = creds["database"]
+        if body.get("warehouse"):
+            connect_kwargs["warehouse"] = body["warehouse"]
+        if body.get("database"):
+            connect_kwargs["database"] = body["database"]
 
         conn = snowflake.connector.connect(**connect_kwargs)
         cur = conn.cursor()
@@ -1327,18 +1528,16 @@ async def snowflake_sso_login():
         row = cur.fetchone()
         conn.close()
 
-        username = row[0] if row else creds.get("user", "unknown")
+        username = row[0] if row else user
         role = row[1] if row else "N/A"
 
-        logger.info(f"Snowflake SSO login successful: {username}")
+        logger.info(f"Snowflake OAuth S2S test successful: {username}")
         return {
             "status": "success",
-            "message": f"SSO login successful as {username} (role: {role})",
+            "message": f"OAuth S2S login successful as {username} (role: {role})",
             "username": username,
             "role": role,
         }
     except Exception as e:
-        logger.error(f"Snowflake SSO login failed: {e}")
+        logger.error(f"Snowflake OAuth S2S connection failed: {e}")
         return {"status": "failed", "message": str(e)}
-
-

@@ -256,10 +256,24 @@ async def databricks_device_code_poll(request: Request, payload: Dict[str, Any] 
             )
             cm.save_credentials("databricks", {"client_id": state.get("client_id")})
 
-            import os
+            # Persist to Account table for multi-user token refresh
+            from semabridge.repository.orm.session_factory import db_manager
+            from semabridge.repository.account_repository import AccountRepository
 
-            os.environ["DATABRICKS_HOST"] = state.get("host", "")
-            os.environ["DATABRICKS_WAREHOUSE_ID"] = state.get("warehouse_id", "")
+            _expires_at = _time.time() + int(state.get("expires_in", 3600))
+            acct_state = {
+                "access_token": state["access_token"],
+                "refresh_token": state.get("refresh_token", ""),
+                "username": state.get("username", "unknown"),
+                "auth_type": state.get("auth_type", "interactive"),
+            }
+            session = db_manager.get_session_factory()()
+            try:
+                acct_repo = AccountRepository(session)
+                acct_repo.upsert_account("DATABRICKS", acct_state, _expires_at)
+            finally:
+                session.close()
+
             reload_settings()
         except Exception as exc:
             logger.exception("Failed to persist Databricks OAuth token: %s", exc)
@@ -313,11 +327,6 @@ def databricks_logout():
         cm.delete_credentials("databricks")
         _databricks_session_token = None
         _databricks_session_token_expires_at = 0.0
-
-        import os
-
-        for key in ["DATABRICKS_TOKEN", "DATABRICKS_HOST", "DATABRICKS_WAREHOUSE_ID"]:
-            os.environ.pop(key, None)
 
         reload_settings()
         logger.info("Databricks interactive session cleared")

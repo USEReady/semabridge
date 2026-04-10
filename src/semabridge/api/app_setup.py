@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import logging
@@ -63,19 +63,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 elif dialect == 'snowflake':
                     logger.debug('Snowflake: Skipping ORM table creation (tables should exist in production)')
                 else:
-                    from pathlib import Path
-                    from alembic import command as alembic_cmd
-                    from alembic.config import Config as AlembicConfig
-
-                    repo_root = Path(__file__).resolve().parents[3]
-                    ini = repo_root / 'config' / 'alembic.ini'
-                    if not ini.exists():
-                        ini = repo_root / 'alembic.ini'
-                    alembic_cfg = AlembicConfig(str(ini))
-                    alembic_cfg.set_main_option('script_location', str(repo_root / 'src' / 'semabridge' / 'migrations'))
-                    alembic_cfg.set_main_option('sqlalchemy.url', str(orm_engine.url))
-                    alembic_cmd.upgrade(alembic_cfg, 'head')
-                    logger.debug('Alembic migrations applied (dialect: %s)', dialect)
+                    # PostgreSQL: use create_all with checkfirst=True.
+                    # Alembic migrations are available for CI/CD but are skipped
+                    # at dev startup to avoid connection-pool deadlocks on Windows.
+                    from semabridge.repository.orm.base import Base
+                    Base.metadata.create_all(bind=orm_engine, checkfirst=True)
+                    logger.debug('PostgreSQL: ORM tables verified / created via create_all(checkfirst=True)')
                 return
             except Exception as exc:
                 error_str = str(exc).lower()
@@ -213,7 +206,12 @@ def configure_app(app: FastAPI) -> FastAPI:
     # Middleware stays centralized here so main.py only wires the app together.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=['*'],
+        allow_origins=[
+            'http://localhost:5173',   # Vite dev server
+            'http://localhost:3000',   # Alternative dev port
+            'http://127.0.0.1:5173',
+            'http://127.0.0.1:3000',
+        ],
         allow_credentials=True,
         allow_methods=['*'],
         allow_headers=['*'],

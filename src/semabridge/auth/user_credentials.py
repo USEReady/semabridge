@@ -52,6 +52,21 @@ _ENV_MAP: Dict[str, Dict[str, str]] = {
         "schema_name": "SNOWFLAKE_SCHEMA",
         "role": "SNOWFLAKE_ROLE",
     },
+    "databricks": {
+        "host": "DATABRICKS_HOST",
+        "auth_type": "DATABRICKS_AUTH_TYPE",
+        "token": "DATABRICKS_TOKEN",
+        "access_token": "DATABRICKS_ACCESS_TOKEN",
+        "refresh_token": "DATABRICKS_REFRESH_TOKEN",
+        "expires_at": "DATABRICKS_TOKEN_EXPIRES_AT",
+        "account_username": "DATABRICKS_ACCOUNT_USERNAME",
+        "tenant_id": "DATABRICKS_TENANT_ID",
+        "client_id": "DATABRICKS_CLIENT_ID",
+        "client_secret": "DATABRICKS_CLIENT_SECRET",
+        "warehouse_id": "DATABRICKS_WAREHOUSE_ID",
+        "catalog": "DATABRICKS_CATALOG",
+        "schema_name": "DATABRICKS_SCHEMA",
+    },
 }
 
 

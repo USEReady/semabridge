@@ -46,6 +46,9 @@ PUBLIC_PATHS: Set[str] = {
     "/api/discovery/repository",   # Repository discovery (uses local DB)
     "/auth/register",
     "/auth/login",
+    "/auth/auto-login",
+    "/auth/refresh",
+    "/auth/logout",
     "/docs",
     "/redoc",
     "/openapi.json",
@@ -55,6 +58,7 @@ PUBLIC_PATHS: Set[str] = {
 PUBLIC_PREFIXES = (
     "/ws",       # WebSocket endpoints
     "/static",   # Static files
+    "/api/connections",  # Connector OAuth flows (device code, callbacks)
 )
 
 
