@@ -166,6 +166,107 @@ class TestMetricColumnValidation:
         
         assert is_valid is True
         assert error is None
+
+    def test_repair_invalid_bare_table_sum_identifier(self, emitter):
+        """Repair SUM("TABLE") into SUM(alias.PREFERRED_NUMERIC_COLUMN)."""
+        metric_sql = 'DIV0(SUM("SPEND_FACT"), SUM("SPEND_FACT") OVER ())'
+        dataset_col_lookup = {
+            "SPEND_FACT": {
+                "TRANSACTION_USD_AMOUNT",
+                "SPEND_TYPE",
+                "SPEND_FACT_CK",
+                "GL_ACCOUNT_CK",
+            },
+        }
+        dataset_aliases = {
+            "SPEND_FACT": "SPEND_FACT",
+        }
+
+        repaired = emitter._normalize_metric_column_references(
+            metric_sql,
+            "SPEND_OF_TOTAL",
+            dataset_col_lookup,
+            dataset_aliases,
+            metric_names={"SPEND_OF_TOTAL", "TOTAL_SPEND"},
+        )
+
+        assert 'SUM(SPEND_FACT.TRANSACTION_USD_AMOUNT)' in repaired
+        assert 'SUM("SPEND_FACT")' not in repaired
+
+    def test_repair_preserves_real_metric_aggregate_wrappers(self, emitter):
+        """Do not rewrite valid semantic metric wrappers while repairing table-name wrappers."""
+        metric_sql = 'SUM("TOTAL_SPEND") + SUM("SPEND_FACT")'
+        dataset_col_lookup = {
+            "SPEND_FACT": {"TRANSACTION_USD_AMOUNT"},
+        }
+        dataset_aliases = {
+            "SPEND_FACT": "SPEND_FACT",
+        }
+
+        repaired = emitter._normalize_metric_column_references(
+            metric_sql,
+            "SPEND_OF_TOTAL",
+            dataset_col_lookup,
+            dataset_aliases,
+            metric_names={"TOTAL_SPEND", "SPEND_OF_TOTAL"},
+        )
+
+        # Existing metric wrapper is handled by wrapper rewrite to direct metric ref,
+        # while the invalid table-name wrapper is repaired to a physical column.
+        assert '"TOTAL_SPEND"' in repaired
+        assert 'SUM(SPEND_FACT.TRANSACTION_USD_AMOUNT)' in repaired
+
+    def test_partition_identifier_prefers_metric_entity_alias(self, emitter):
+        """Qualify partition key within metric entity when resolvable there."""
+        metric_sql = (
+            'DIV0(SUM(SPEND_FACT."TRANSACTION_USD_AMOUNT"), '
+            'SUM(SPEND_FACT."TRANSACTION_USD_AMOUNT") OVER (PARTITION BY "FUNCTION"))'
+        )
+        dataset_col_lookup = {
+            "SPEND_FACT": {"TRANSACTION_USD_AMOUNT", "SPEND_TYPE", "COST_CENTER"},
+            "COST_CENTER_HIERARCHY": {"FUNCTION", "GL_COST_CENTER_CK"},
+        }
+        dataset_aliases = {
+            "SPEND_FACT": "SPEND_FACT",
+            "COST_CENTER_HIERARCHY": "COST_CENTER_HIERARCHY",
+        }
+
+        repaired = emitter._normalize_metric_column_references(
+            metric_sql,
+            "SPEND_WITHIN_FUNCTION",
+            dataset_col_lookup,
+            dataset_aliases,
+            metric_names={"SPEND_WITHIN_FUNCTION", "SPEND_OF_TOTAL", "TOTAL_SPEND"},
+            preferred_table_alias="SPEND_FACT",
+        )
+
+        assert repaired == 'SUM(SPEND_FACT.TRANSACTION_USD_AMOUNT)'
+
+    def test_window_metric_expression_rewritten_for_semantic_metrics(self, emitter):
+        """Rewrite DIV0(SUM(x), SUM(x) OVER(...)) to SUM(x) for semantic safety."""
+        raw_expr = (
+            'DIV0(SUM(SPEND_FACT."TRANSACTION_USD_AMOUNT"), '
+            'SUM(SPEND_FACT."TRANSACTION_USD_AMOUNT") OVER (PARTITION BY SPEND_FACT."COST_CENTER"))'
+        )
+
+        rewritten = emitter._rewrite_window_metric_expression(raw_expr)
+        assert rewritten == 'SUM(SPEND_FACT."TRANSACTION_USD_AMOUNT")'
+
+    def test_metric_emission_alias_rehomed_to_expression_entity(self, emitter):
+        """Emit metrics under referenced entity when default alias is unrelated."""
+        dataset_aliases = {
+            "MEASURES": "MEASURES",
+            "SPEND_FACT": "SPEND_FACT",
+        }
+        expr = 'SUM(SPEND_FACT.TRANSACTION_USD_AMOUNT)'
+
+        resolved = emitter._resolve_metric_emission_alias(
+            "MEASURES",
+            expr,
+            dataset_aliases,
+        )
+
+        assert resolved == "SPEND_FACT"
     
     def test_mixed_valid_invalid_references(self, emitter):
         """Test that one invalid ref causes entire validation to fail."""

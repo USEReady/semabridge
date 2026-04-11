@@ -563,6 +563,7 @@ class SnowflakeEmitter(BaseEmitter):
                 dataset_col_lookup,
                 dataset_aliases,
                 metric_names=metric_name_set,
+                preferred_table_alias=table_alias,
             )
 
             is_valid, _ = self._validate_metric_column_references(
@@ -714,6 +715,7 @@ class SnowflakeEmitter(BaseEmitter):
         dataset_col_lookup: Dict[str, set[str]],
         dataset_aliases: Dict[str, str],
         metric_names: Optional[set[str]] = None,
+        preferred_table_alias: Optional[str] = None,
     ) -> str:
         """
         Normalize column references in metric SQL to use unquoted uppercase identifiers.
@@ -922,10 +924,266 @@ class SnowflakeEmitter(BaseEmitter):
             metric_names,
         )
 
+        normalized_sql = self._repair_bare_aggregate_identifiers(
+            normalized_sql,
+            metric_name,
+            dataset_col_lookup,
+            dataset_aliases,
+            metric_names,
+        )
+
         normalized_sql = self._normalize_date_part_arguments(normalized_sql)
+        normalized_sql = self._qualify_bare_partition_identifiers(
+            normalized_sql,
+            dataset_col_lookup,
+            dataset_aliases,
+            preferred_table_alias=preferred_table_alias,
+        )
+        normalized_sql = self._rewrite_window_metric_expression(normalized_sql)
         normalized_sql = self._normalize_rolling_monthindex_max_predicates(normalized_sql)
 
         return normalized_sql
+
+    @staticmethod
+    def _extract_referenced_table_aliases(metric_sql: str, valid_aliases: set[str]) -> set[str]:
+        """Return table aliases referenced as ``ALIAS.COLUMN`` in a metric expression."""
+        import re
+
+        if not metric_sql:
+            return set()
+
+        referenced: set[str] = set()
+        patterns = [
+            r'(\w+)\."([^"]+)"',
+            r'(\w+)\.([A-Za-z_][A-Za-z0-9_$]*)',
+        ]
+        for pattern in patterns:
+            for alias, _ in re.findall(pattern, metric_sql):
+                if alias in valid_aliases:
+                    referenced.add(alias)
+        return referenced
+
+    def _resolve_metric_emission_alias(
+        self,
+        default_alias: str,
+        metric_sql: str,
+        dataset_aliases: Dict[str, str],
+    ) -> str:
+        """Select a semantic metric entity alias that avoids unrelated-entity errors.
+
+        Snowflake semantic metrics can reject a metric defined under one entity
+        when the SQL expression only references a different entity. If a metric
+        expression clearly references exactly one table alias and it differs from
+        the default metric alias, emit the metric under that referenced alias.
+        """
+        valid_aliases = set(dataset_aliases.values())
+        referenced_aliases = self._extract_referenced_table_aliases(metric_sql, valid_aliases)
+        if len(referenced_aliases) == 1:
+            only_alias = next(iter(referenced_aliases))
+            if only_alias != default_alias:
+                return only_alias
+        return default_alias
+
+    @staticmethod
+    def _rewrite_window_metric_expression(metric_sql: str) -> str:
+        """Rewrite window-based metric SQL to semantic-safe aggregate SQL.
+
+        Snowflake semantic metrics disallow expressions that embed window
+        functions over related entities inside metric definitions.
+        Convert common ratio form:
+          DIV0(SUM(x), SUM(x) OVER (...))
+        into:
+          SUM(x)
+        so BI/query clients can apply grouping context dynamically.
+        """
+        import re
+
+        if not metric_sql or "OVER" not in metric_sql.upper():
+            return metric_sql
+
+        ratio_pattern = re.compile(
+            r'(?is)^\s*DIV0\s*\(\s*SUM\((?P<num>[^\)]+)\)\s*,\s*'
+            r'SUM\((?P<den>[^\)]+)\)\s+OVER\s*\([^\)]*\)\s*\)\s*$'
+        )
+        match = ratio_pattern.match(metric_sql.strip())
+        if not match:
+            return metric_sql
+
+        numerator = match.group("num").strip()
+        denominator = match.group("den").strip()
+
+        if numerator.upper() != denominator.upper():
+            return metric_sql
+
+        return f"SUM({numerator})"
+
+    def _qualify_bare_partition_identifiers(
+        self,
+        metric_sql: str,
+        dataset_col_lookup: Dict[str, set[str]],
+        dataset_aliases: Dict[str, str],
+        preferred_table_alias: Optional[str] = None,
+    ) -> str:
+        """Qualify bare PARTITION BY identifiers.
+
+        Prefer resolving identifiers against the current metric entity alias when
+        provided, then fall back to unique owner lookup across all datasets.
+        """
+        import re
+
+        if not metric_sql:
+            return metric_sql
+
+        alias_to_dataset = {alias: ds for ds, alias in dataset_aliases.items()}
+
+        # Replace only simple bare identifiers used directly after PARTITION BY.
+        # Example: PARTITION BY "FUNCTION" -> PARTITION BY COST_CENTER_HIERARCHY."FUNCTION"
+        pattern = re.compile(r'(?i)(PARTITION\s+BY\s+)("?[A-Z_][A-Z0-9_]*"?)')
+
+        def _replace(match: re.Match) -> str:
+            prefix = match.group(1)
+            raw_identifier = match.group(2)
+            identifier = self._sanitize_col_name(raw_identifier.strip('"'))
+
+            if preferred_table_alias:
+                preferred_dataset = alias_to_dataset.get(preferred_table_alias)
+                if preferred_dataset:
+                    preferred_columns = dataset_col_lookup.get(preferred_dataset, set())
+                    preferred_resolved = self._resolve_column_name_for_dataset(
+                        preferred_columns,
+                        identifier,
+                    )
+                    if preferred_resolved:
+                        return f'{prefix}{preferred_table_alias}."{preferred_resolved}"'
+
+            owners: list[str] = []
+            for ds_name, cols in dataset_col_lookup.items():
+                if identifier in cols:
+                    owners.append(ds_name)
+
+            if len(owners) != 1:
+                return match.group(0)
+
+            owner_alias = dataset_aliases.get(owners[0])
+            if not owner_alias:
+                return match.group(0)
+
+            return f'{prefix}{owner_alias}."{identifier}"'
+
+        return pattern.sub(_replace, metric_sql)
+
+    def _repair_bare_aggregate_identifiers(
+        self,
+        metric_sql: str,
+        metric_name: str,
+        dataset_col_lookup: Dict[str, set[str]],
+        dataset_aliases: Dict[str, str],
+        metric_names: Optional[set[str]] = None,
+    ) -> str:
+        """Repair invalid aggregate forms like ``SUM(\"TABLE_ALIAS\")``.
+
+        Some translated expressions accidentally keep only a dataset/table token
+        inside an aggregate function, which yields Snowflake errors such as
+        ``invalid identifier 'SPEND_FACT'``. When that happens, rewrite to a
+        deterministic physical column from the referenced dataset.
+        """
+        import re
+
+        if not metric_sql:
+            return metric_sql
+
+        alias_to_dataset = {alias: ds for ds, alias in dataset_aliases.items()}
+        sanitized_ds_to_dataset = {
+            self._sanitize_col_name(ds): ds for ds in dataset_aliases.keys()
+        }
+
+        agg_pattern = re.compile(
+            r'\b(SUM|AVG|MIN|MAX|COUNT|DISTINCTCOUNT)\s*\(\s*"?([A-Z_][A-Z0-9_]*)"?\s*\)',
+            flags=re.IGNORECASE,
+        )
+
+        def _replace(match: re.Match) -> str:
+            agg_fn = match.group(1).upper()
+            ident = self._sanitize_col_name(match.group(2))
+
+            # Keep valid semantic-metric aggregates untouched.
+            if metric_names and ident in metric_names:
+                return match.group(0)
+
+            dataset_name = alias_to_dataset.get(ident) or sanitized_ds_to_dataset.get(ident)
+            if not dataset_name:
+                return match.group(0)
+
+            dataset_alias = dataset_aliases.get(dataset_name)
+            known_columns = dataset_col_lookup.get(dataset_name, set())
+            preferred_col = self._pick_preferred_aggregate_column(
+                metric_name,
+                known_columns,
+            )
+            if not dataset_alias or not preferred_col:
+                return match.group(0)
+
+            if agg_fn == "DISTINCTCOUNT":
+                return f'COUNT(DISTINCT {dataset_alias}.{preferred_col})'
+            return f'{agg_fn}({dataset_alias}.{preferred_col})'
+
+        return agg_pattern.sub(_replace, metric_sql)
+
+    def _pick_preferred_aggregate_column(
+        self,
+        metric_name: str,
+        known_columns: set[str],
+    ) -> Optional[str]:
+        """Pick a deterministic physical column for aggregate repairs."""
+        if not known_columns:
+            return None
+
+        metric_tokens = [t for t in self._sanitize_col_name(metric_name).split("_") if t]
+        metric_token_set = set(metric_tokens)
+
+        value_terms = {
+            "AMOUNT", "REVENUE", "SALES", "SPEND", "VALUE", "COST", "PRICE",
+            "TOTAL", "QTY", "QUANTITY", "UNITS", "USD",
+        }
+        categorical_terms = {
+            "TYPE", "CATEGORY", "STATUS", "FLAG", "NAME", "DESC", "DESCRIPTION",
+            "CODE", "GROUP", "CLASS", "SEGMENT",
+        }
+        excluded_suffixes = ("_CK", "_ID", "_KEY", "_DATE")
+
+        scored: list[tuple[int, str]] = []
+        for col in sorted(known_columns):
+            tokens = [t for t in col.split("_") if t]
+            token_set = set(tokens)
+            score = 0
+
+            overlap = len(metric_token_set.intersection(token_set))
+            score += overlap * 10
+
+            if token_set.intersection(value_terms):
+                score += 8
+
+            if token_set.intersection(categorical_terms):
+                score -= 18
+
+            if col.endswith(excluded_suffixes):
+                score -= 20
+
+            if "AMOUNT" in token_set:
+                score += 4
+
+            scored.append((score, col))
+
+        if not scored:
+            return None
+
+        scored.sort(key=lambda item: (item[0], -len(item[1])), reverse=True)
+        best_score = scored[0][0]
+        if best_score < 1:
+            return None
+
+        best = [col for score, col in scored if score == best_score]
+        return sorted(best, key=lambda c: (len(c), c))[0]
 
     @staticmethod
     def _resolve_column_name_for_dataset(
@@ -1007,6 +1265,13 @@ class SnowflakeEmitter(BaseEmitter):
         # common drift: SALES_DATE -> DATE
         if candidate.endswith("_DATE") and "DATE" in known_columns:
             return "DATE"
+
+        # Metric partition-key fallback: DAX "Function" often corresponds to
+        # a cost-center attribute in fact tables.
+        if candidate == "FUNCTION":
+            for fallback in ("COST_CENTER", "SOURCE_COST_CENTER", "SUB_FUNCTION"):
+                if fallback in known_columns:
+                    return fallback
 
         return None
 
@@ -3768,6 +4033,7 @@ class SnowflakeEmitter(BaseEmitter):
                     dataset_col_lookup,
                     dataset_aliases,
                     metric_names=metric_name_set,
+                    preferred_table_alias=alias,
                 )
 
                 # ===== NEW: Enhanced Column Reference Validation =====
@@ -3860,8 +4126,15 @@ class SnowflakeEmitter(BaseEmitter):
                     )
                     continue
                 
-                logger.debug(f"Adding metric to DDL: {metric_name} = {expr}")
-                metrics_lines.append(f'  {alias}."{metric_name}" AS {expr}')
+                metric_entity_alias = self._resolve_metric_emission_alias(
+                    alias,
+                    expr,
+                    dataset_aliases,
+                )
+                logger.debug(
+                    f"Adding metric to DDL: {metric_entity_alias}.{metric_name} = {expr}"
+                )
+                metrics_lines.append(f'  {metric_entity_alias}."{metric_name}" AS {expr}')
 
             elif metric.expression:
                 basic_expr = self._try_basic_dax_metric_fallback_expression(
@@ -3894,7 +4167,12 @@ class SnowflakeEmitter(BaseEmitter):
                     skipped_metric_names=skipped_metric_names,
                 )
                 if llm_expr:
-                    metrics_lines.append(f'  {alias}."{metric_name}" AS {llm_expr}')
+                    metric_entity_alias = self._resolve_metric_emission_alias(
+                        alias,
+                        llm_expr,
+                        dataset_aliases,
+                    )
+                    metrics_lines.append(f'  {metric_entity_alias}."{metric_name}" AS {llm_expr}')
                 else:
                     logger.warning(
                         f"Skipping metric '{metric.unique_name}': no usable SQL expression and LLM fallback failed"
@@ -5853,8 +6131,13 @@ class SnowflakeEmitter(BaseEmitter):
                     expr = f'{self._format_physical_column_ref(alias, col_name, model_name=model_name)}'
                 else:
                     expr = f'{agg}({self._format_physical_column_ref(alias, col_name, model_name=model_name)})'
+                metric_entity_alias = self._resolve_metric_emission_alias(
+                    alias,
+                    expr,
+                    dataset_aliases,
+                )
                 metrics_lines.append(
-                    f'  {alias}."{metric_name}" AS {expr}'
+                    f'  {metric_entity_alias}."{metric_name}" AS {expr}'
                 )
 
             elif metric.sql_expression:
@@ -5933,6 +6216,7 @@ class SnowflakeEmitter(BaseEmitter):
                     dataset_col_lookup,
                     dataset_aliases,
                     metric_names=metric_name_set,
+                    preferred_table_alias=alias,
                 )
                 
                 # CRITICAL: Validate expression before appending to DDL
@@ -6027,7 +6311,12 @@ class SnowflakeEmitter(BaseEmitter):
                     skipped_metric_names=skipped_metric_names,
                 )
                 if llm_expr:
-                    metrics_lines.append(f'  {alias}."{metric_name}" AS {llm_expr}')
+                    metric_entity_alias = self._resolve_metric_emission_alias(
+                        alias,
+                        llm_expr,
+                        dataset_aliases,
+                    )
+                    metrics_lines.append(f'  {metric_entity_alias}."{metric_name}" AS {llm_expr}')
                 else:
                     logger.warning(
                         f"Skipping metric '{metric.unique_name}': no usable SQL expression and LLM fallback failed"
