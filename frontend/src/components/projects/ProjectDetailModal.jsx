@@ -159,7 +159,7 @@ export default function ProjectDetailModal({ project, open, onClose, onDuplicate
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>{project.name}</div>
             <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
-              {project.adapter || '—'} → {project.target_type || '—'}
+              {project.adapter || '—'} to {project.target_type || '—'}
             </div>
           </div>
 

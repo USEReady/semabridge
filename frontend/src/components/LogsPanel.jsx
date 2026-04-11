@@ -239,9 +239,9 @@ export default function LogsPanel({ isOpen, onClose }) {
                     <div className="flex items-center gap-4">
                         <div
                             className="p-2 rounded-lg"
-                            style={{ background: 'rgba(100,103,242,0.12)', border: '1px solid rgba(100,103,242,0.3)' }}
+                            style={{ background: 'rgba(37, 99, 235, 0.12)', border: '1px solid rgba(37, 99, 235, 0.3)' }}
                         >
-                            <Terminal size={22} color="#6467f2" />
+                            <Terminal size={22} color="#2563EB" />
                         </div>
                         <div>
                             <h2 className="text-xl font-black leading-none" style={{ color: '#e1e1e6' }}>Logs & Activity</h2>
@@ -289,8 +289,9 @@ export default function LogsPanel({ isOpen, onClose }) {
                             }}
                             className="px-5 py-1.5 rounded-lg text-xs font-black uppercase transition-all"
                             style={{
-                                background: activeFilter === id ? 'var(--accent-blue)' : 'transparent',
-                                color: activeFilter === id ? '#fff' : 'var(--text-tertiary)',
+                                background: activeFilter === id ? '#2563EB' : '#EFF6FF',
+                                color: activeFilter === id ? '#fff' : '#2563EB',
+                                border: `1px solid ${activeFilter === id ? '#2563EB' : '#BFDBFE'}`,
                             }}
                         >
                             {id}
@@ -299,13 +300,13 @@ export default function LogsPanel({ isOpen, onClose }) {
 
                     <div
                         className="ml-auto flex items-center gap-2 px-3 py-1.5 rounded-full"
-                        style={{ background: 'rgba(100,103,242,0.1)', border: '1px solid rgba(100,103,242,0.25)' }}
+                        style={{ background: 'rgba(37, 99, 235, 0.1)', border: '1px solid rgba(37, 99, 235, 0.25)' }}
                     >
                         <span
                             className={`h-2 w-2 rounded-full ${wsConnected ? 'animate-pulse' : ''}`}
-                            style={{ background: wsConnected ? '#6467f2' : '#9497ad' }}
+                            style={{ background: wsConnected ? '#2563EB' : '#9497ad' }}
                         />
-                        <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: wsConnected ? '#6467f2' : '#9497ad' }}>
+                        <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: wsConnected ? '#2563EB' : '#9497ad' }}>
                             {wsConnected ? 'Live Stream Active' : 'Stream Idle'}
                         </span>
                     </div>
@@ -349,7 +350,7 @@ export default function LogsPanel({ isOpen, onClose }) {
                                             >
                                                 <td className="px-6 py-4 text-xs font-mono font-bold" style={{ color: '#a9acc2' }}>{entry.timestamp}</td>
                                                 <td className="px-6 py-4"><GeometricSeverityPill severity={severity} /></td>
-                                                <td className="px-6 py-4 text-xs font-mono font-bold" style={{ color: '#6467f2' }} title={sourceText}>{sourceBreadcrumb}</td>
+                                                <td className="px-6 py-4 text-xs font-mono font-bold" style={{ color: '#2563EB' }} title={sourceText}>{sourceBreadcrumb}</td>
                                                 <td className="px-6 py-4 text-sm font-medium" style={{ color: '#e1e1e6' }}>{String(entry.message || '')}</td>
                                                 <td className="px-6 py-4" style={{ color: '#9497ad' }}>
                                                     {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -381,8 +382,12 @@ export default function LogsPanel({ isOpen, onClose }) {
                                                                             handleCopyJson(entry);
                                                                         }}
                                                                         type="button"
-                                                                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-black uppercase"
-                                                                        style={{ color: '#6467f2', border: '1px solid rgba(100,103,242,0.4)' }}
+                                                                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-black uppercase transition-all"
+                                                                        style={{
+                                                                            color: '#2563EB',
+                                                                            border: '1px solid rgba(37, 99, 235, 0.4)',
+                                                                            background: copiedEntryId === entry.id ? 'rgba(37, 99, 235, 0.1)' : 'transparent',
+                                                                        }}
                                                                     >
                                                                         {copiedEntryId === entry.id ? <Check size={12} /> : <Copy size={12} />}
                                                                         {copiedEntryId === entry.id ? 'Copied' : 'Copy JSON'}
@@ -446,7 +451,7 @@ export default function LogsPanel({ isOpen, onClose }) {
 
                         <button
                             className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider"
-                            style={{ background: '#6467f2', color: '#ffffff' }}
+                            style={{ background: '#2563EB', color: '#ffffff' }}
                             onClick={() => addLog('info', 'logs-panel', 'History fetch is not configured yet')}
                         >
                             <History size={14} />

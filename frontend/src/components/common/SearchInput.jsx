@@ -51,9 +51,10 @@ export default function SearchInput({
         <input
           type="text"
           value={query}
+          readOnly={Boolean(inputProps.onFocus)}
           onChange={(e) => onChange?.(e.target.value)}
           placeholder={placeholder}
-          className="w-full text-sm rounded-lg theme-transition"
+          className="w-full text-sm rounded-lg theme-transition cursor-text"
           style={{
             background: 'var(--bg-input)',
             border: `1px solid ${regexError ? 'var(--color-error)' : 'var(--border-main)'}`,
@@ -63,14 +64,27 @@ export default function SearchInput({
             outline: 'none',
             fontFamily: 'inherit',
             width: '100%',
+            cursor: inputProps.onFocus ? 'pointer' : 'text',
+          }}
+          onMouseEnter={(e) => {
+            if (!regexError) e.currentTarget.style.borderColor = 'var(--accent-blue)';
+            e.currentTarget.style.background = 'var(--bg-input-hover)';
+          }}
+          onMouseLeave={(e) => {
+            if (!regexError && document.activeElement !== e.currentTarget) {
+              e.currentTarget.style.borderColor = 'var(--border-main)';
+              e.currentTarget.style.background = 'var(--bg-input)';
+            }
           }}
           onFocus={(e) => {
             if (!regexError) e.currentTarget.style.borderColor = 'var(--accent-blue)';
+            inputProps.onFocus?.(e);
           }}
           onBlur={(e) => {
             e.currentTarget.style.borderColor = regexError ? 'var(--color-error)' : 'var(--border-main)';
+            e.currentTarget.style.background = 'var(--bg-input)';
+            inputProps.onBlur?.(e);
           }}
-          {...inputProps}
         />
 
         {allowRegex && (
@@ -88,16 +102,17 @@ export default function SearchInput({
               position: 'absolute',
               right: query ? 28 : 6,
               zIndex: 2,
-              width: 20,
-              height: 20,
-              borderRadius: 5,
+              width: 22,
+              height: 22,
+              borderRadius: 6,
               border: '1px solid var(--border-main)',
-              background: useRegex ? 'var(--accent-blue)18' : 'var(--bg-surface)',
-              color: useRegex ? 'var(--accent-blue)' : 'var(--text-tertiary)',
+              background: useRegex ? 'var(--color-accent-faint)' : 'var(--bg-surface-raised)',
+              color: useRegex ? 'var(--accent-blue)' : 'var(--text-secondary)',
               cursor: 'pointer',
               display: 'inline-flex',
               alignItems: 'center',
               justifyContent: 'center',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
             }}
           >
             <Regex size={11} />
@@ -119,16 +134,17 @@ export default function SearchInput({
               position: 'absolute',
               right: 6,
               zIndex: 2,
-              width: 20,
-              height: 20,
-              border: 'none',
-              borderRadius: 5,
-              background: 'transparent',
-              color: 'var(--text-tertiary)',
+              width: 22,
+              height: 22,
+              border: '1px solid var(--border-main)',
+              borderRadius: 6,
+              background: 'var(--bg-surface-raised)',
+              color: 'var(--text-secondary)',
               cursor: 'pointer',
               display: 'inline-flex',
               alignItems: 'center',
               justifyContent: 'center',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
             }}
           >
             <X size={12} />

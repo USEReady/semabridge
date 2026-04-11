@@ -24,7 +24,7 @@ export default function DetailPanel({ filePreview, selectedNode, onClose }) {
                     borderBottom: '1px solid var(--border-color)',
                 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <FileCode size={14} style={{ color: '#818CF8' }} />
+                        <FileCode size={14} style={{ color: 'var(--accent-blue)' }} />
                         <span style={{ fontSize: 12, fontWeight: 700 }}>
                             {filePreview.name}
                         </span>
@@ -43,7 +43,7 @@ export default function DetailPanel({ filePreview, selectedNode, onClose }) {
                     fontSize: 10,
                     fontWeight: 600,
                 }}>
-                    <Link2 size={11} style={{ color: '#818CF8' }} />
+                    <Link2 size={11} style={{ color: 'var(--accent-blue)' }} />
                     Inspector Source: Snapshot Explorer File Selection
                 </div>
 
@@ -197,7 +197,7 @@ export default function DetailPanel({ filePreview, selectedNode, onClose }) {
                         <span style={{ color: 'var(--text-tertiary)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em' }}>Source</span>
                         <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>{inspectionSource}</span>
                         <span style={{ color: 'var(--text-tertiary)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em' }}>Context</span>
-                        <span style={{ color: '#818CF8', fontFamily: 'monospace', fontWeight: 700, wordBreak: 'break-word' }}>{contextLabel}</span>
+                        <span style={{ color: 'var(--accent-blue)', fontFamily: 'monospace', fontWeight: 700, wordBreak: 'break-word' }}>{contextLabel}</span>
                     </div>
                 </div>
 
@@ -461,7 +461,7 @@ function CollapsibleSection({ title, icon, expanded, onToggle, children, subtitl
                     border: 'none', background: expanded ? 'var(--bg-surface)' : 'transparent', cursor: 'pointer',
                     color: 'var(--text-primary)', fontSize: 12, fontWeight: 700,
                     textAlign: 'left', transition: 'all 0.2s ease',
-                    borderLeft: expanded ? '3px solid #818CF8' : '3px solid transparent',
+                    borderLeft: expanded ? '3px solid var(--accent-blue)' : '3px solid transparent',
                     paddingLeft: '11px',
                 }}
                 onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-surface)'}
@@ -536,7 +536,7 @@ function Row({ label, value, code }) {
                     padding: '4px 6px',
                     borderRadius: 4,
                     border: '1px solid var(--border-color)',
-                    color: '#818CF8',
+                    color: 'var(--accent-blue)',
                     letterSpacing: '.2px',
                 })
             }}>
@@ -583,7 +583,7 @@ function OriginBadge({ tableName, schema }) {
             fontSize: 10,
             fontWeight: 700,
             background: isSystem ? 'rgba(245,158,11,.15)' : 'rgba(99,102,241,.15)',
-            color: isSystem ? '#F59E0B' : '#818CF8',
+            color: isSystem ? '#F59E0B' : 'var(--accent-blue)',
             border: `1px solid ${isSystem ? 'rgba(245,158,11,.35)' : 'rgba(99,102,241,.35)'}`,
         }}>
             {isSystem ? 'System Generated' : 'Original Schema'}

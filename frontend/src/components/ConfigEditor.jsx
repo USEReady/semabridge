@@ -104,8 +104,8 @@ export default function ConfigEditor() {
     <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: 12, padding: 24, fontSize: 13 }}>
        
        <div style={{ display: 'flex', gap: 12, marginBottom: 24, borderBottom: '1px solid var(--border-color)', paddingBottom: 12 }}>
-          <button onClick={() => setActiveTab('project')} style={{ background: 'transparent', border: 'none', fontWeight: activeTab === 'project' ? 'bold' : 'normal', color: activeTab === 'project' ? '#818CF8' : 'var(--text-primary)', cursor: 'pointer' }}>Project Overrides</button>
-          <button onClick={() => setActiveTab('yaml')} style={{ background: 'transparent', border: 'none', fontWeight: activeTab === 'yaml' ? 'bold' : 'normal', color: activeTab === 'yaml' ? '#818CF8' : 'var(--text-primary)', cursor: 'pointer' }}>Raw YAML View</button>
+          <button onClick={() => setActiveTab('project')} style={{ background: 'transparent', border: 'none', fontWeight: activeTab === 'project' ? 'bold' : 'normal', color: activeTab === 'project' ? 'var(--accent-blue)' : 'var(--text-primary)', cursor: 'pointer' }}>Project Overrides</button>
+          <button onClick={() => setActiveTab('yaml')} style={{ background: 'transparent', border: 'none', fontWeight: activeTab === 'yaml' ? 'bold' : 'normal', color: activeTab === 'yaml' ? 'var(--accent-blue)' : 'var(--text-primary)', cursor: 'pointer' }}>Raw YAML View</button>
        </div>
 
        {activeTab === 'project' && (
@@ -141,7 +141,7 @@ export default function ConfigEditor() {
           </div>
           <button 
              onClick={handleSave} 
-             style={{ background: '#818CF8', color: '#fff', border: 'none', padding: '6px 16px', borderRadius: 6, display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', fontWeight: 600 }}
+             style={{ background: 'var(--accent-blue)', color: '#fff', border: 'none', padding: '6px 16px', borderRadius: 6, display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', fontWeight: 600 }}
           >
              <Save size={14} /> Save Configuration
           </button>

@@ -860,9 +860,9 @@ export default function DependencyGraph({
                             fontSize: 11,
                             color: 'var(--text-secondary)',
                         }}>
-                            <Database size={12} style={{ color: '#818CF8' }} />
+                            <Database size={12} style={{ color: 'var(--accent-blue)' }} />
                             <span style={{ textTransform: 'uppercase', letterSpacing: '.04em', fontWeight: 700, color: 'var(--text-tertiary)' }}>Snapshot</span>
-                            <span style={{ color: '#818CF8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }}>
+                            <span style={{ color: 'var(--accent-blue)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }}>
                                 {String(snapshotId).slice(0, 8)}
                             </span>
                         </div>
@@ -871,19 +871,11 @@ export default function DependencyGraph({
 
                 <Controls
                     position="bottom-left"
-                    style={{
-                        background: 'var(--bg-surface)',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: 8,
-                    }}
+                    style={{ margin: 15 }}
                 />
                 <MiniMap
                     position="bottom-right"
-                    style={{
-                        background: 'var(--bg-surface)',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: 8,
-                    }}
+                    style={{ margin: 15 }}
                     nodeColor={n => {
                         if (n.data?.nodeType === 'model') return '#3B82F6';
                         if (n.data?.nodeType === 'table') return '#22C55E';
@@ -911,8 +903,8 @@ export default function DependencyGraph({
                                 title="Full Screen Relationship Diagram"
                                 style={{
                                     width: 44, height: 44,
-                                    background: '#18181b', color: '#818CF8',
-                                    border: '2.5px solid #818CF8', borderRadius: '50%',
+                                    background: '#18181b', color: 'var(--accent-blue)',
+                                    border: '2.5px solid var(--accent-blue)', borderRadius: '50%',
                                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                                     fontSize: 24, fontWeight: 900,
                                     boxShadow: '0 4px 16px rgba(0,0,0,.18)',
@@ -924,7 +916,7 @@ export default function DependencyGraph({
                                 onMouseOver={e => e.currentTarget.style.background = '#23234a'}
                                 onMouseOut={e => e.currentTarget.style.background = '#18181b'}
                             >
-                                <span style={{fontSize: 24, lineHeight: 1}}>⛶</span>
+                                <span style={{ fontSize: 24, lineHeight: 1 }}>+</span>
                             </button>
                         )}
                         <div style={{
@@ -942,7 +934,7 @@ export default function DependencyGraph({
                             {[
                                 ...(erMode ? [] : [{ color: '#3B82F6', label: 'Semantic Model' }]),
                                 { color: '#22C55E', label: 'Source Table' },
-                                ...(erMode ? [{ color: '#818CF8', label: 'Relationship' }] : [{ color: '#EAB308', label: 'Metric / Measure' }]),
+                                ...(erMode ? [{ color: 'var(--accent-blue)', label: 'Relationship' }] : [{ color: '#EAB308', label: 'Metric / Measure' }]),
                                 { color: '#EF4444', label: 'Broken Reference' },
                                 ...(diffMode ? [
                                     { color: '#22C55E', label: 'Diff: Added (green)' },
@@ -985,7 +977,7 @@ export default function DependencyGraph({
                         color: 'var(--text-secondary)',
                         fontSize: 12,
                     }}>
-                        <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: '#818CF8' }} />
+                        <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--accent-blue)' }} />
                         <span>{snapshotId ? 'Loading snapshot graph...' : 'Loading dependency graph...'}</span>
                     </div>
                 </div>

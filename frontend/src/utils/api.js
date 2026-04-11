@@ -122,7 +122,7 @@ function getFabricAuthHeaders() {
     if (token && Date.now() < expiresAt) {
         return { Authorization: `Bearer ${token}` };
     }
-    // Token expired or missing — clean up stale values.
+    // Token expired or missing - clean up stale values.
     localStorage.removeItem(FABRIC_TOKEN_KEY);
     localStorage.removeItem(FABRIC_TOKEN_EXPIRES_KEY);
     return {};
@@ -144,7 +144,7 @@ async function handleResponse(res) {
             }
         } catch(e) {}
         
-        // Token expired or invalid — clear it so the UI shows login
+        // Token expired or invalid - clear it so the UI shows login
         localStorage.removeItem(TOKEN_KEY);
         window.dispatchEvent(new Event('semabridge:auth-expired'));
     }
@@ -326,7 +326,7 @@ export const api = {
         return (data || []).map(normalizeWorkspace);
     },
 
-    // â”€â”€ Repository Map â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // --- Repository Map ---
     async getRepoTree() {
         const res = await authFetch(`${API_BASE_URL}/repo/tree`);
         return handleResponse(res);
@@ -437,7 +437,7 @@ export const api = {
         return handleResponse(res);
     },
 
-    // â”€â”€ PBIX Import â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // --- PBIX Import ---
     async importPbix(pbixPath) {
         const res = await authFetch(`${API_BASE_URL}/pbix/import`, {
             method: 'POST',
@@ -453,7 +453,7 @@ export const api = {
         return handleResponse(res);
     },
 
-    // â”€â”€ Composite Models â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // --- Composite Models ---
     async registerCompositeReport(reportName, sourcePath, workspaceId, connections) {
         const res = await authFetch(`${API_BASE_URL}/composite/register`, {
             method: 'POST',
@@ -478,7 +478,7 @@ export const api = {
         return handleResponse(res);
     },
 
-    // â”€â”€ Multi-Workspace Discovery â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // --- Multi-Workspace Discovery ---
     async discoverMultiWorkspace(workspaceIds) {
         const res = await authFetch(`${API_BASE_URL}/multi-workspace/discover`, {
             method: 'POST',
@@ -488,7 +488,7 @@ export const api = {
         return handleResponse(res);
     },
 
-    // â”€â”€ Connections (UI-Driven Auth) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // --- Connections (UI-Driven Auth) ---
     async getConnectionsStatus() {
         const res = await authFetch(`${API_BASE_URL}/connections/status`);
         return handleResponse(res);
@@ -517,7 +517,7 @@ export const api = {
         return handleResponse(res);
     },
 
-    // â”€â”€ Fabric Interactive Login (Device Code) â”€â”€â”€â”€â”€â”€
+    // --- Fabric Interactive Login (Device Code) ---
     async fabricLogin(tenantId = null) {
         const res = await authFetch(`${API_BASE_URL}/connections/fabric/login`, {
             method: 'POST',
@@ -567,7 +567,7 @@ export const api = {
         return handleResponse(res);
     },
 
-    // â”€â”€ Fabric Workspace Discovery â”€â”€â”€â”€â”€â”€
+    // --- Fabric Workspace Discovery ---
     async fabricListWorkspaces(accountId = '') {
         const resolvedConnectionId = String(accountId || '').trim();
         if (!resolvedConnectionId && !hasValidFabricToken()) {
@@ -630,7 +630,7 @@ export const api = {
         return handleResponse(res);
     },
 
-    // â”€â”€ DuckDB Snapshot Explorer â”€â”€â”€â”€â”€â”€
+    // --- DuckDB Snapshot Explorer ---
     async getSnapshotTree() {
         const res = await authFetch(`${API_BASE_URL}/repo/snapshots/tree`);
         return handleResponse(res);
@@ -670,7 +670,7 @@ export const api = {
         return handleResponse(res);
     },
 
-    // â”€â”€ Global Config (~/.semabridge/config.yaml) â”€â”€â”€â”€â”€â”€
+    // --- Global Config (~/.semabridge/config.yaml) ---
     async getGlobalConfig() {
         const res = await authFetch(`${API_BASE_URL}/global-config`);
         return handleResponse(res);
@@ -1129,7 +1129,7 @@ export const api = {
         return handleResponse(res);
     },
 
-    // ── Global Config — connector sections ───────────────────────────────
+    // -- Global Config - connector sections --
 
     async getGlobalConnectorConfig() {
         const res = await authFetch(`${API_BASE_URL}/config/global/connectors`);
@@ -1145,7 +1145,7 @@ export const api = {
         return handleResponse(res);
     },
 
-    // ── Global Config — settings sections ────────────────────────────────
+    // -- Global Config - settings sections --
 
     async getGlobalSettingsConfig() {
         const res = await authFetch(`${API_BASE_URL}/config/global/settings`);

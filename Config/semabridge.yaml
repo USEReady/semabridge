@@ -1,37 +1,19 @@
-project_name: "comp_d"
+project_name: f
 source:
   type: fabric
-  identity_id: "136c67ee-cf0d-4085-897f-f54b87d8f6c5"
-  workspace_id: "d875c0c3-59e9-4d55-a7f0-99595b756718"
-  workspace: "semabridge"
+  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
+  workspace: semabridge
   models:
-    - "Competitive Marketing Analysis orig"
-targets:
-  - type: databricks
-mappings:
-  - source: "Competitive Marketing Analysis orig"
-    target: "COMPETITIVE_MARKETING_ANALYSIS_ORIG"
-    type: table
-    columns:
-      - source: "id"
-        target: "ID"
-        type: integer
-        primary_key: true
-      - source: "name"
-        target: "NAME"
-        type: string
-      - source: "created_at"
-        target: "CREATED_AT"
-        type: timestamp
-      - source: "updated_at"
-        target: "UPDATED_AT"
-        type: timestamp
+    - Device
+target:
+  type: snowflake
 ui:
-  intermediate_format: "osi"
-  editor_mode: "form"
+  output_format: osi
 selection:
   model_ids:
-    - "6aa0a303-dc1f-4457-86b3-90888e995c0f"
+    - 974e7d48-4a76-4518-99d7-6ea751e37ce8
 options:
   auto_relationships: true
   generate_descriptions: true
+target:
+  type: snowflake
