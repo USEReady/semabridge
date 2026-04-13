@@ -134,6 +134,61 @@ function hasValidFabricToken() {
     return Boolean(token && Date.now() < expiresAt);
 }
 
+const AUTH_BASE = (import.meta.env.VITE_AUTH_BASE_URL || '/auth').replace(/\/$/, '');
+
+let _refreshPromise = null;
+
+/**
+ * Attempt to refresh the JWT access token using the HttpOnly refresh cookie.
+ * Falls back to auto-login if the refresh cookie is missing or expired.
+ * Uses a singleton promise to prevent concurrent refresh races.
+ *
+ * Industry pattern: coalesce all concurrent 401 recovery attempts into a
+ * single promise so that parallel API calls don't each trigger separate
+ * refresh/auto-login requests.
+ */
+async function tryRefreshToken() {
+    if (_refreshPromise) return _refreshPromise;
+    _refreshPromise = (async () => {
+        try {
+            // Step 1: Try refresh via HttpOnly cookie
+            const res = await fetch(`${AUTH_BASE}/refresh`, {
+                method: 'POST',
+                credentials: 'include',
+            });
+            if (res.ok) {
+                const data = await res.json();
+                if (data.access_token) {
+                    localStorage.setItem(TOKEN_KEY, data.access_token);
+                    window.dispatchEvent(new CustomEvent('semabridge:token-refreshed', { detail: data.access_token }));
+                    return data.access_token;
+                }
+            }
+
+            // Step 2: Refresh cookie failed — try auto-login (dev mode)
+            const autoRes = await fetch(`${AUTH_BASE}/auto-login`, {
+                method: 'POST',
+                credentials: 'include',
+            });
+            if (autoRes.ok) {
+                const autoData = await autoRes.json();
+                if (autoData.access_token) {
+                    localStorage.setItem(TOKEN_KEY, autoData.access_token);
+                    window.dispatchEvent(new CustomEvent('semabridge:token-refreshed', { detail: autoData.access_token }));
+                    return autoData.access_token;
+                }
+            }
+
+            return null;
+        } catch {
+            return null;
+        } finally {
+            _refreshPromise = null;
+        }
+    })();
+    return _refreshPromise;
+}
+
 async function handleResponse(res) {
     if (res.status === 401) {
         try {
@@ -144,9 +199,22 @@ async function handleResponse(res) {
             }
         } catch(e) {}
         
-        // Token expired or invalid - clear it so the UI shows login
-        localStorage.removeItem(TOKEN_KEY);
+        // Try refresh + auto-login before giving up
+        const _retryFn = res._retryFn;
+        if (_retryFn) {
+            const newToken = await tryRefreshToken();
+            if (newToken) {
+                // Retry the original request with the new token
+                const retryRes = await _retryFn(newToken);
+                if (retryRes.ok) return retryRes.json();
+            }
+        }
+
+        // All recovery failed — notify AuthContext to handle cleanup.
+        // Important: Do NOT clear localStorage here. AuthContext's
+        // silentRecover will decide whether to clear state.
         window.dispatchEvent(new Event('semabridge:auth-expired'));
+        throw new Error('Session expired. Please log in again.');
     }
     if (!res.ok) {
         const text = await res.text();
@@ -169,10 +237,41 @@ async function authFetch(url, options = {}) {
     if (workspaceId) {
         headers['X-Fabric-Context'] = workspaceId;
     }
-    return fetch(url, { ...options, headers });
+    const res = await fetch(url, { ...options, headers, credentials: 'include' });
+
+    // Attach retry info so handleResponse can retry on 401 with a fresh token
+    res._retryFn = (newToken) => {
+        const retryHeaders = { ...headers, Authorization: `Bearer ${newToken}` };
+        return fetch(url, { ...options, headers: retryHeaders, credentials: 'include' });
+    };
+    return res;
 }
 
 export const api = {
+    // ── Configuration ─────────────────────────────────────────────────────
+    async getConfig() {
+        const res = await authFetch(`${API_BASE_URL}/config`);
+        return handleResponse(res);
+    },
+
+    async saveConfig(newConfig) {
+        const res = await authFetch(`${API_BASE_URL}/config`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(newConfig),
+        });
+        return handleResponse(res);
+    },
+
+    async validateLive(payload) {
+        const res = await authFetch(`${API_BASE_URL}/config/validate-live`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res);
+    },
+
     // ── Auth & Identity Vault ──────────────────────────────────────────────
     async getAccounts(connectorType = '') {
         const query = connectorType ? `?connector_type=${encodeURIComponent(connectorType)}` : '';
@@ -591,10 +690,12 @@ export const api = {
         return handleResponse(res);
     },
 
-    // ── Snowflake SSO ──────
-    async snowflakeSsoLogin() {
-        const res = await authFetch(`${API_BASE_URL}/connections/snowflake/sso-login`, {
+    // ── Snowflake OAuth S2S ──────
+    async snowflakeOAuthTest(body) {
+        const res = await authFetch(`${API_BASE_URL}/connections/snowflake/oauth-test`, {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
         });
         return handleResponse(res);
     },

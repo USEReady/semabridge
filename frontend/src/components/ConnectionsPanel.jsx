@@ -185,8 +185,7 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
                         logged_in: true,
                         token_valid: true,
                     });
-                    addLog('info', 'Fabric Auth', `Signed in as ${result.username}`);
-                    alert(`Signed in successfully as ${result.username}`);
+                    addLog('info', 'Fabric Auth', `Signed in successfully as ${result.username}`);
                     fetchWorkspaces();
                 } else if (result.status === 'pending') {
                     startPolling();
@@ -413,7 +412,8 @@ const SNOWFLAKE_FIELDS = [
     { key: 'user', label: 'Username', placeholder: 'your_username', secret: false, required: true },
     { key: 'password', label: 'Password', placeholder: 'Enter your Snowflake password', secret: true, passwordOnly: true },
     { key: 'private_key', label: 'Private Key (PEM)', placeholder: 'Paste your private key content', secret: true, keypairOnly: true },
-    { key: 'role', label: 'Role (optional)', placeholder: 'SYSADMIN', secret: false },
+    { key: 'oauth_client_id', label: 'OAuth Client ID', placeholder: 'Enter your OAuth client ID', secret: false, oauthOnly: true },
+    { key: 'oauth_client_secret', label: 'OAuth Client Secret', placeholder: 'Enter your OAuth client secret', secret: true, oauthOnly: true },
 ];
 
 function SnowflakeAccountForm({ initialTag, status, onSave, onCancel }) {
@@ -422,9 +422,9 @@ function SnowflakeAccountForm({ initialTag, status, onSave, onCancel }) {
     const [saving, setSaving] = useState(false);
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState(null);
-    const [authMode, setAuthMode] = useState('password'); // 'password' | 'sso' | 'keypair'
-    const [ssoLoading, setSsoLoading] = useState(false);
-    const [ssoResult, setSsoResult] = useState(null);
+    const [authMode, setAuthMode] = useState('password'); // 'password' | 'oauth' | 'keypair'
+    const [oauthLoading, setOauthLoading] = useState(false);
+    const [oauthResult, setOauthResult] = useState(null);
     const { addLog } = useLogs();
 
     useEffect(() => {
@@ -441,8 +441,8 @@ function SnowflakeAccountForm({ initialTag, status, onSave, onCancel }) {
             const storedAuthType = status.credentials.auth_type;
             if (storedAuthType === 'keypair') {
                 setAuthMode('keypair');
-            } else if (storedAuthType === 'externalbrowser' || status.credentials.authenticator === 'externalbrowser') {
-                setAuthMode('sso');
+            } else if (storedAuthType === 'oauth') {
+                setAuthMode('oauth');
             } else {
                 setAuthMode('password');
             }
@@ -461,16 +461,21 @@ function SnowflakeAccountForm({ initialTag, status, onSave, onCancel }) {
             if (authMode === 'password') {
                 filtered.auth_type = 'password';
                 delete filtered.private_key;
-                delete filtered.authenticator;
-            } else if (authMode === 'sso') {
-                filtered.auth_type = 'externalbrowser';
-                filtered.authenticator = 'externalbrowser';
+                delete filtered.oauth_client_id;
+                delete filtered.oauth_client_secret;
+                delete filtered.oauth_token_endpoint;
+                delete filtered.oauth_scope;
+            } else if (authMode === 'oauth') {
+                filtered.auth_type = 'oauth';
                 delete filtered.password;
                 delete filtered.private_key;
             } else if (authMode === 'keypair') {
                 filtered.auth_type = 'keypair';
                 delete filtered.password;
-                delete filtered.authenticator;
+                delete filtered.oauth_client_id;
+                delete filtered.oauth_client_secret;
+                delete filtered.oauth_token_endpoint;
+                delete filtered.oauth_scope;
             }
 
             await api.saveConnection('snowflake', filtered);
@@ -478,11 +483,11 @@ function SnowflakeAccountForm({ initialTag, status, onSave, onCancel }) {
             const vaultAccounts = await api.createAccount({
                 connector_type: 'SNOWFLAKE',
                 tag: initialTag,
-                identity_email: filtered.user || filtered.account || 'N/A'
+                identity_email: filtered.user || filtered.account || 'N/A',
+                credentials: filtered,
             });
 
-            addLog('info', 'Connections', `Snowflake credentials saved (${authMode})`);
-            alert(`Snowflake credentials saved successfully! (Auth: ${authMode})`);
+            addLog('info', 'Connections', `Snowflake credentials saved successfully (Auth: ${authMode})`);
             if (onSave) onSave(vaultAccounts);
         } catch (err) {
             addLog('error', 'Connections', err.message);
@@ -501,40 +506,41 @@ function SnowflakeAccountForm({ initialTag, status, onSave, onCancel }) {
         } finally { setTesting(false); }
     };
 
-    const handleSsoLogin = async () => {
-        // First save account/user so the backend knows where to connect
+    const handleOAuthTest = async () => {
         const account = formData.account?.trim();
         const user = formData.user?.trim();
+        const clientId = formData.oauth_client_id?.trim();
+        const clientSecret = formData.oauth_client_secret?.trim();
         if (!account || !user) {
-            setTestResult({ status: 'failed', message: 'Please enter Account and Username before signing in via SSO.' });
+            setTestResult({ status: 'failed', message: 'Please enter Account and Username before testing OAuth.' });
+            return;
+        }
+        if (!clientId || !clientSecret) {
+            setTestResult({ status: 'failed', message: 'Please fill in Client ID and Client Secret.' });
             return;
         }
 
-        setSsoLoading(true);
-        setSsoResult(null);
+        setOauthLoading(true);
+        setOauthResult(null);
         setTestResult(null);
         try {
-            // Save creds first (without password)
-            const saveData = {};
-            for (const [k, v] of Object.entries(formData)) {
-                if (v && k !== 'password') saveData[k] = v;
-            }
-            await api.saveConnection('snowflake', saveData);
-
-            // Trigger SSO login (opens browser)
-            addLog('info', 'Snowflake SSO', 'Opening browser for SSO login...');
-            const result = await api.snowflakeSsoLogin();
-            setSsoResult(result);
+            const result = await api.snowflakeOAuthTest({
+                account, user,
+                oauth_client_id: clientId,
+                oauth_client_secret: clientSecret,
+                warehouse: formData.warehouse?.trim() || '',
+                database: formData.database?.trim() || '',
+            });
+            setOauthResult(result);
             if (result.status === 'success') {
-                addLog('info', 'Snowflake SSO', result.message);
-                alert(`Successfully signed in via Snowflake SSO!`);
+                addLog('info', 'Snowflake OAuth', `OAuth S2S test successful: ${result.message}`);
             } else {
-                addLog('warning', 'Snowflake SSO', result.message);
+                addLog('warning', 'Snowflake OAuth', result.message);
             }
         } catch (err) {
-            setSsoResult({ status: 'failed', message: err.message });
-            addLog('error', 'Snowflake SSO', err.message);
-        } finally { setSsoLoading(false); }
+            setOauthResult({ status: 'failed', message: err.message });
+            addLog('error', 'Snowflake OAuth', err.message);
+        } finally { setOauthLoading(false); }
     };
 
     const handleDelete = async () => {
@@ -543,7 +549,7 @@ function SnowflakeAccountForm({ initialTag, status, onSave, onCancel }) {
             await api.deleteConnection('snowflake');
             setFormData({});
             setTestResult(null);
-            setSsoResult(null);
+            setOauthResult(null);
         } catch (err) { addLog('error', 'Connections', err.message); }
     };
 
@@ -551,9 +557,9 @@ function SnowflakeAccountForm({ initialTag, status, onSave, onCancel }) {
 
     // Filter fields based on auth mode
     const visibleFields = SNOWFLAKE_FIELDS.filter(f => {
-        if (authMode === 'sso' && (f.passwordOnly || f.keypairOnly)) return false;
-        if (authMode === 'password' && f.keypairOnly) return false;
-        if (authMode === 'keypair' && f.passwordOnly) return false;
+        if (authMode === 'oauth' && (f.passwordOnly || f.keypairOnly)) return false;
+        if (authMode === 'password' && (f.keypairOnly || f.oauthOnly)) return false;
+        if (authMode === 'keypair' && (f.passwordOnly || f.oauthOnly)) return false;
         return true;
     });
 
@@ -575,7 +581,7 @@ function SnowflakeAccountForm({ initialTag, status, onSave, onCancel }) {
             <div className="flex mx-4 mt-3 rounded-lg overflow-hidden border"
                 style={{ borderColor: 'var(--border-main)' }}>
                 <button
-                    onClick={() => { setAuthMode('password'); setTestResult(null); setSsoResult(null); }}
+                    onClick={() => { setAuthMode('password'); setTestResult(null); setOauthResult(null); }}
                     className="flex-1 flex items-center justify-center gap-1.5 py-2 text-[11px] font-bold transition-all"
                     style={{
                         background: authMode === 'password' ? 'var(--color-accent)' : 'transparent',
@@ -584,16 +590,16 @@ function SnowflakeAccountForm({ initialTag, status, onSave, onCancel }) {
                     <Database size={11} /> Password
                 </button>
                 <button
-                    onClick={() => { setAuthMode('sso'); setTestResult(null); setSsoResult(null); }}
+                    onClick={() => { setAuthMode('oauth'); setTestResult(null); setOauthResult(null); }}
                     className="flex-1 flex items-center justify-center gap-1.5 py-2 text-[11px] font-bold transition-all"
                     style={{
-                        background: authMode === 'sso' ? 'linear-gradient(135deg, #29b5e8, #0ea5e9)' : 'transparent',
-                        color: authMode === 'sso' ? '#fff' : 'var(--text-tertiary)',
+                        background: authMode === 'oauth' ? 'linear-gradient(135deg, #29b5e8, #0ea5e9)' : 'transparent',
+                        color: authMode === 'oauth' ? '#fff' : 'var(--text-tertiary)',
                     }}>
-                    <LogIn size={11} /> SSO (Browser)
+                    <LogIn size={11} /> OAuth S2S
                 </button>
                 <button
-                    onClick={() => { setAuthMode('keypair'); setTestResult(null); setSsoResult(null); }}
+                    onClick={() => { setAuthMode('keypair'); setTestResult(null); setOauthResult(null); }}
                     className="flex-1 flex items-center justify-center gap-1.5 py-2 text-[11px] font-bold transition-all"
                     style={{
                         background: authMode === 'keypair' ? 'var(--color-accent)' : 'transparent',
@@ -640,32 +646,33 @@ function SnowflakeAccountForm({ initialTag, status, onSave, onCancel }) {
                     </div>
                 ))}
 
-                {/* SSO Login Button */}
-                {authMode === 'sso' && (
-                    <button onClick={handleSsoLogin} disabled={ssoLoading}
+
+                {/* OAuth Test Button */}
+                {authMode === 'oauth' && (
+                    <button onClick={handleOAuthTest} disabled={oauthLoading}
                         className="w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold transition-all hover:brightness-110"
                         style={{
                             background: 'linear-gradient(135deg, #29b5e8, #0ea5e9)',
                             color: '#fff',
-                            opacity: ssoLoading ? 0.7 : 1,
+                            opacity: oauthLoading ? 0.7 : 1,
                         }}>
-                        {ssoLoading ? (
-                            <><Loader2 size={16} className="animate-spin" /> Opening browser...</>
+                        {oauthLoading ? (
+                            <><Loader2 size={16} className="animate-spin" /> Testing OAuth...</>
                         ) : (
-                            <><LogIn size={16} /> Sign in via SSO</>
+                            <><LogIn size={16} /> Test OAuth Connection</>
                         )}
                     </button>
                 )}
 
-                {/* SSO Result */}
-                {ssoResult && (
+                {/* OAuth Result */}
+                {oauthResult && (
                     <div className="px-3 py-2 rounded-lg text-xs flex items-center gap-2"
                         style={{
-                            background: ssoResult.status === 'success' ? 'rgba(52,211,153,0.1)' : 'rgba(239,68,68,0.1)',
-                            color: ssoResult.status === 'success' ? '#34d399' : '#ef4444',
+                            background: oauthResult.status === 'success' ? 'rgba(52,211,153,0.1)' : 'rgba(239,68,68,0.1)',
+                            color: oauthResult.status === 'success' ? '#34d399' : '#ef4444',
                         }}>
-                        {ssoResult.status === 'success' ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
-                        {ssoResult.message}
+                        {oauthResult.status === 'success' ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
+                        {oauthResult.message}
                     </div>
                 )}
             </div>
@@ -799,20 +806,7 @@ function ConnectionManager({ type, title, subtitle, icon: Icon, color, FormCompo
                     </div>
                 ) : (
                     accounts.map(acc => (
-                        <div key={acc.id} className="grid grid-cols-4 gap-4 items-center px-4 py-3 bg-[#131620] border border-gray-100/10 rounded-lg hover:border-gray-100/20 transition-colors">
-                            <div className="flex items-center gap-2">
-                                {acc.is_default ? (
-                                    <span className="text-[11px] font-bold text-indigo-400">Default</span>
-                                ) : (
-                                    <button
-                                        onClick={() => handleSetDefault(acc.id)}
-                                        className="px-2 py-1 text-[11px] font-bold text-white bg-indigo-500 hover:bg-indigo-600 rounded transition-colors border border-indigo-500/60"
-                                        style={{ minWidth: 70 }}
-                                    >
-                                        Set Default
-                                    </button>
-                                )}
-                            </div>
+                        <div key={acc.id} className="grid grid-cols-3 gap-4 items-center px-4 py-3 bg-[#131620] border border-gray-100/10 rounded-lg hover:border-gray-100/20 transition-colors">
                             <div className="text-xs text-gray-400 truncate">{acc.identity}</div>
                             <div className="text-xs font-bold text-[#e2e8f0] truncate">{acc.tag}</div>
                             <div className="flex items-center gap-3 text-[11px] font-bold">
@@ -1064,6 +1058,7 @@ function GlobalConfigEditor() {
    ─────────────────────────────────────────────── */
 
 function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
+    const [authType, setAuthType] = useState('interactive'); // 'interactive' | 'service_principal' | 'pat'
     const [authStatus, setAuthStatus] = useState(null);
     const [loginPhase, setLoginPhase] = useState('idle'); // idle | requesting | polling | success | failed
     const [error, setError] = useState(null);
@@ -1071,29 +1066,48 @@ function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
     const flowIdRef = useRef(null);
     const { addLog } = useLogs();
 
-    // Post-login connection config
+    // Connection config
     const [hostInput, setHostInput] = useState('');
     const [warehouseId, setWarehouseId] = useState('');
-    const [catalog, setCatalog] = useState('main');
-    const [schemaName, setSchemaName] = useState('semabridge');
+    const [catalog, setCatalog] = useState('');
+    const [schemaName, setSchemaName] = useState('');
     const [configSaving, setConfigSaving] = useState(false);
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState(null);
 
-    // OAuth extra config
+    // Dynamic Extra Configs
     const [clientId, setClientId] = useState('');
+    const [clientSecret, setClientSecret] = useState('');
+    const [patToken, setPatToken] = useState('');
 
     useEffect(() => {
         // Populate fields from existing credentials
         if (status?.credentials) {
             setHostInput(status.credentials.host || '');
             setWarehouseId(status.credentials.warehouse_id || '');
-            setCatalog(status.credentials.catalog || 'main');
-            setSchemaName(status.credentials.schema_name || 'semabridge');
+            setCatalog(status.credentials.catalog || '');
+            setSchemaName(status.credentials.schema_name || '');
             
-            // Try to load client_id if we have it
+            if (status.credentials.auth_type) {
+                setAuthType(status.credentials.auth_type);
+            }
             if (status.credentials.client_id) {
                 setClientId(status.credentials.client_id);
+            }
+            if (status.credentials.client_secret) {
+                setClientSecret(status.credentials.client_secret);
+            }
+            if (status.credentials.token) {
+                setPatToken(status.credentials.token);
+            }
+            
+            // If already fully configured under a non-interactive mode, set dummy logged in status to render config pane
+            if (status.configured && (status.credentials.auth_type === 'service_principal' || status.credentials.auth_type === 'pat')) {
+                setAuthStatus({
+                    auth_method: status.credentials.auth_type,
+                    username: status.credentials.auth_type === 'pat' ? 'Personal Access Token' : 'Service Principal',
+                    logged_in: true,
+                });
             }
         }
         return () => { if (pollTimer.current) clearTimeout(pollTimer.current); };
@@ -1145,8 +1159,7 @@ function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
                         logged_in: true,
                         token_valid: true,
                     });
-                    addLog('info', 'Databricks Auth', `Signed in as ${result.username}`);
-                    alert(`Databricks authenticated successfully as ${result.username}`);
+                    addLog('info', 'Databricks Auth', `Signed in successfully as ${result.username}`);
                 } else if (result.status === 'pending') {
                     startPolling();
                 } else {
@@ -1175,26 +1188,54 @@ function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
     const handleSaveConfig = async () => {
         setConfigSaving(true);
         setTestResult(null);
+        setError(null);
         try {
             const configData = {
                 host: hostInput,
                 warehouse_id: warehouseId,
                 catalog,
                 schema_name: schemaName,
-                auth_type: 'interactive',
+                auth_type: authType,
                 account_tag: initialTag,
             };
+            
+            if (authType === 'interactive' || authType === 'service_principal') {
+                configData.client_id = clientId;
+            }
+            if (authType === 'service_principal') {
+                if (clientSecret && clientSecret !== '********') {
+                    configData.client_secret = clientSecret;
+                }
+            } else if (authType === 'pat') {
+                if (patToken && patToken !== '********') {
+                    configData.token = patToken;
+                }
+            }
+
             await api.saveConnection('databricks', configData);
 
             await api.createAccount({
                 connector_type: 'DATABRICKS',
                 tag: initialTag,
-                identity_email: authStatus?.username || hostInput || 'N/A',
+                identity_email: authStatus?.username || (authType === 'service_principal' ? 'Service Principal' : hostInput) || 'N/A',
+                credentials: configData,
             }).catch(e => console.log('Vault sync skipped', e));
 
             addLog('info', 'Connections', `Databricks config saved for ${initialTag}`);
+
+            // For non-interactive flows, visually switch to "logged in" state to enable Test button
+            if (authType !== 'interactive') {
+                 setAuthStatus({
+                     auth_method: authType,
+                     username: authType === 'service_principal' ? 'Service Principal' : 'Personal Access Token',
+                     logged_in: true,
+                     token_valid: true,
+                 });
+            }
+
             if (onSave) onSave();
         } catch (err) {
+            setError(err.message);
             addLog('error', 'Connections', err.message);
         } finally { setConfigSaving(false); }
     };
@@ -1233,6 +1274,42 @@ function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
             </div>
 
             <div className="space-y-4">
+                {/* Auth Mode Picker */}
+                {!isLoggedIn && (
+                    <div className="flex rounded-lg overflow-hidden border"
+                        style={{ borderColor: 'var(--border-main)' }}>
+                        <button
+                            onClick={() => { setAuthType('interactive'); setTestResult(null); }}
+                            className="flex-1 flex items-center justify-center gap-1.5 py-2 text-[11px] font-bold transition-all border-r"
+                            style={{
+                                background: authType === 'interactive' ? 'var(--color-accent)' : 'transparent',
+                                color: authType === 'interactive' ? '#fff' : 'var(--text-tertiary)',
+                                borderColor: 'var(--border-main)',
+                            }}>
+                            <LogIn size={11} /> OAuth (Browser)
+                        </button>
+                        <button
+                            onClick={() => { setAuthType('service_principal'); setTestResult(null); }}
+                            className="flex-1 flex items-center justify-center gap-1.5 py-2 text-[11px] font-bold transition-all border-r"
+                            style={{
+                                background: authType === 'service_principal' ? 'var(--color-accent)' : 'transparent',
+                                color: authType === 'service_principal' ? '#fff' : 'var(--text-tertiary)',
+                                borderColor: 'var(--border-main)',
+                            }}>
+                            <Database size={11} /> Service Principal
+                        </button>
+                        <button
+                            onClick={() => { setAuthType('pat'); setTestResult(null); }}
+                            className="flex-1 flex items-center justify-center gap-1.5 py-2 text-[11px] font-bold transition-all"
+                            style={{
+                                background: authType === 'pat' ? 'var(--color-accent)' : 'transparent',
+                                color: authType === 'pat' ? '#fff' : 'var(--text-tertiary)',
+                            }}>
+                            <Key size={11} /> PAT Token
+                        </button>
+                    </div>
+                )}
+
                 {/* Account Tag */}
                 <div>
                    <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Account Tag</label>
@@ -1249,17 +1326,45 @@ function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
                             className="w-full px-3 py-2 rounded-lg text-xs border outline-none"
                             style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)', opacity: isLoggedIn ? 0.6 : 1 }} />
                     </div>
-                    <div>
-                        <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>OAuth Client ID <span className="text-red-400">*</span></label>
-                        <input type="text" value={clientId} onChange={e => setClientId(e.target.value)}
-                            placeholder="e.g. from Custom OAuth App"
-                            disabled={isLoggedIn}
-                            className="w-full px-3 py-2 rounded-lg text-xs border outline-none"
-                            style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)', fontFamily: 'monospace', opacity: isLoggedIn ? 0.6 : 1 }} />
-                        <div className="text-[10px] mt-1" style={{color: 'var(--text-tertiary)'}}>
-                            Requires a Custom OAuth Application configured in your Databricks Account console with Redirect URI: <code>{window.location.origin}/api/connections/databricks/callback</code>
+
+                    {(authType === 'interactive' || authType === 'service_principal') && (
+                        <div>
+                            <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>OAuth Client ID <span className="text-red-400">*</span></label>
+                            <input type="text" value={clientId} onChange={e => setClientId(e.target.value)}
+                                placeholder="e.g. from Custom OAuth App / Service Principal"
+                                disabled={isLoggedIn}
+                                className="w-full px-3 py-2 rounded-lg text-xs border outline-none"
+                                style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)', fontFamily: 'monospace', opacity: isLoggedIn ? 0.6 : 1 }} />
+                            {authType === 'interactive' && (
+                                <div className="text-[10px] mt-1" style={{color: 'var(--text-tertiary)'}}>
+                                    Requires a Custom OAuth Application configured in Databricks with Redirect URI: <code>{window.location.origin}/api/connections/databricks/callback</code>
+                                </div>
+                            )}
                         </div>
-                    </div>
+                    )}
+
+                    {authType === 'service_principal' && (
+                        <div>
+                            <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>OAuth Client Secret <span className="text-red-400">*</span></label>
+                            <input type="password" value={clientSecret} onChange={e => setClientSecret(e.target.value)}
+                                placeholder="e.g. your service principal secret"
+                                disabled={isLoggedIn}
+                                className="w-full px-3 py-2 rounded-lg text-xs border outline-none"
+                                style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)', fontFamily: 'monospace', opacity: isLoggedIn ? 0.6 : 1 }} />
+                        </div>
+                    )}
+
+                    {authType === 'pat' && (
+                        <div>
+                            <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Personal Access Token <span className="text-red-400">*</span></label>
+                            <input type="password" value={patToken} onChange={e => setPatToken(e.target.value)}
+                                placeholder="dapi..."
+                                disabled={isLoggedIn}
+                                className="w-full px-3 py-2 rounded-lg text-xs border outline-none"
+                                style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)', fontFamily: 'monospace', opacity: isLoggedIn ? 0.6 : 1 }} />
+                        </div>
+                    )}
+
                     <div>
                         <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>SQL Warehouse ID</label>
                         <input type="text" value={warehouseId} onChange={e => setWarehouseId(e.target.value)}
@@ -1337,12 +1442,25 @@ function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
 
                 {/* ── Sign In Button (idle) ── */}
                 {!isLoggedIn && loginPhase === 'idle' && (
-                    <button onClick={handleLogin} disabled={!hostInput || !clientId}
-                        className="w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold transition-all hover:brightness-110 mt-2"
-                        style={{ background: 'linear-gradient(135deg, #ff3621, #e74924)', color: '#fff', opacity: (!hostInput || !clientId) ? 0.5 : 1 }}>
-                        <LogIn size={16} />
-                        Sign in with Databricks
-                    </button>
+                    <>
+                        {authType === 'interactive' && (
+                            <button onClick={handleLogin} disabled={!hostInput || !clientId}
+                                className="w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold transition-all hover:brightness-110 mt-2"
+                                style={{ background: 'var(--color-accent)', color: '#fff', opacity: (!hostInput || !clientId) ? 0.5 : 1 }}>
+                                <LogIn size={16} />
+                                Sign in with Databricks
+                            </button>
+                        )}
+                        
+                        {(authType === 'service_principal' || authType === 'pat') && (
+                            <button onClick={handleSaveConfig} disabled={configSaving || !hostInput || (authType === 'service_principal' ? !clientId : false)}
+                                className="w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold transition-all mt-2 hover:brightness-110"
+                                style={{ background: 'var(--color-accent)', color: '#fff', opacity: configSaving ? 0.6 : 1 }}>
+                                {configSaving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} 
+                                Save & Verify Config
+                            </button>
+                        )}
+                    </>
                 )}
 
                 {loginPhase === 'requesting' && (

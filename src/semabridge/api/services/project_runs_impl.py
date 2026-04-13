@@ -751,7 +751,7 @@ def _compat_existing_entity_mappings(project_id: str) -> Dict[str, Dict[str, Any
     return existing
 
 
-def _compat_build_project_entity_mappings(project_id: str) -> Dict[str, Any]:
+def _compat_build_project_entity_mappings(project_id: str, save_store: bool = True) -> Dict[str, Any]:
     _compat_ensure_loaded()
     if project_id not in _compat_projects:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -792,7 +792,8 @@ def _compat_build_project_entity_mappings(project_id: str) -> Dict[str, Any]:
         _compat_mappings[mapping_id] = merged
         persisted.append(merged)
 
-    _compat_save_store()
+    if save_store:
+        _compat_save_store()
     return {
         "project_id": project_id,
         "session_key": built.get("session_key"),
@@ -891,11 +892,14 @@ async def list_mappings_compat(project_id: Optional[str] = None):
     combined_target_fields: List[Dict[str, Any]] = []
     collisions: List[Dict[str, Any]] = []
     for pid in project_ids:
-        data = _compat_build_project_entity_mappings(pid)
+        data = _compat_build_project_entity_mappings(pid, save_store=False)
         combined_mappings.extend(data.get("mappings", []))
         combined_source_fields.extend(data.get("source_fields", []))
         combined_target_fields.extend(data.get("target_fields", []))
         collisions.extend(data.get("collisions", []))
+    
+    _compat_save_store()
+    
     return {
         "project_id": None,
         "source_fields": combined_source_fields,

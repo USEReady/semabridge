@@ -325,6 +325,7 @@ def _run_single_job(
     config_path: str,
     deploy_enabled: bool,
     resolved_workspace_id: str,
+    account_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     model_label = job["model_label"]
     repository = ModelRepository()
@@ -342,6 +343,7 @@ def _run_single_job(
             tag=str(config.get("version_tag", "v1.0")),
             deploy=deploy_enabled,
             dry_run=False,
+            account_id=account_id,
         )
         summary_data = summary.model_dump(mode="json")
         job_ok = str(summary_data.get("status", "")).upper() == "SUCCESS"
@@ -456,6 +458,7 @@ def _run_parallel_jobs(
     config_path: str,
     deploy_enabled: bool,
     resolved_workspace_id: str,
+    account_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     per_model_results: List[Dict[str, Any]] = []
 
@@ -469,6 +472,7 @@ def _run_parallel_jobs(
                 config_path=config_path,
                 deploy_enabled=deploy_enabled,
                 resolved_workspace_id=resolved_workspace_id,
+                account_id=account_id,
             )
             per_model_results.append(result)
             _log_model_console_trace(result)
@@ -486,6 +490,7 @@ def _run_parallel_jobs(
                 config_path=config_path,
                 deploy_enabled=deploy_enabled,
                 resolved_workspace_id=resolved_workspace_id,
+                account_id=account_id,
             ): job
             for job in sync_jobs
         }
@@ -522,7 +527,7 @@ def _run_parallel_jobs(
     return per_model_results
 
 
-def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fields) -> Dict[str, Any]:
+def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fields, account_id: Optional[str] = None) -> Dict[str, Any]:
     _write_content_if_provided(payload, normalize_yaml_windows_path_fields)
     reload_settings()
 
@@ -573,6 +578,7 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
             config_path=config_path,
             deploy_enabled=deploy_enabled,
             resolved_workspace_id=resolved_workspace_id,
+            account_id=account_id,
         )
     except Exception as exc:  # noqa: BLE001
         if executor_kind == "process":
@@ -598,6 +604,7 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
                 config_path=config_path,
                 deploy_enabled=deploy_enabled,
                 resolved_workspace_id=resolved_workspace_id,
+                account_id=account_id,
             )
         else:
             raise

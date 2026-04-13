@@ -21,6 +21,7 @@ class AccountCreate(BaseModel):
     tag: str
     identity_email: Optional[str] = None
     encrypted_token: Optional[str] = None
+    credentials: Optional[dict] = None  # Full credential bundle (Snowflake/Databricks)
 
 class AccountResponse(BaseModel):
     id: str
@@ -64,8 +65,35 @@ def create_account(body: AccountCreate, db: Session = Depends(get_db)):
         if existing:
             raise HTTPException(status_code=400, detail=f"Account with tag '{body.tag}' already exists.")
 
-        # Encrypt the token at rest
-        safe_token = encrypt_token(body.encrypted_token) if body.encrypted_token else None
+        # Encrypt the credential bundle at rest
+        safe_token = None
+        connector = body.connector_type.upper()
+
+        if body.credentials and connector in ("SNOWFLAKE", "DATABRICKS"):
+            # New path: full credential bundle as JSON
+            import json
+            # Strip empty values to keep the bundle clean
+            clean_creds = {k: v for k, v in body.credentials.items() if v}
+            payload_str = json.dumps(clean_creds)
+            safe_token = encrypt_token(payload_str)
+            logger.info(
+                "Stored full credential bundle for %s account %s (%d keys)",
+                connector, body.tag, len(clean_creds),
+            )
+        elif body.encrypted_token:
+            payload_str = body.encrypted_token
+            if connector == "FABRIC":
+                try:
+                    import json
+                    from semabridge.repository.credential_manager import CredentialManager
+                    cm = CredentialManager()
+                    full_token = cm.get_msal_token()
+                    if full_token and full_token.get("access_token") == payload_str:
+                        payload_str = json.dumps(full_token)
+                except Exception as e:
+                    logger.warning(f"Could not merge full MSAL payload for account {body.tag}: {e}")
+            
+            safe_token = encrypt_token(payload_str)
 
         new_account = Account(
             id=connection_id,

@@ -96,6 +96,11 @@ export default function CreateProjectPage() {
   const [fabricAccountId, setFabricAccountId] = useState('');
   const [selectedConnectionId, setSelectedConnectionId] = useState('');
   const [fabricAccounts, setFabricAccounts] = useState([]);
+  // Snowflake & Databricks multi-account
+  const [snowflakeAccountId, setSnowflakeAccountId] = useState('');
+  const [snowflakeAccounts, setSnowflakeAccounts] = useState([]);
+  const [databricksAccountId, setDatabricksAccountId] = useState('');
+  const [databricksAccounts, setDatabricksAccounts] = useState([]);
   const [fabricWorkspaceId, setFabricWorkspaceId] = useState('');
   const [snowflakeDatabase, setSnowflakeDatabase] = useState('');
   const [snowflakeSchema, setSnowflakeSchema] = useState('');
@@ -360,6 +365,42 @@ export default function CreateProjectPage() {
         }
       };
       fetchAccounts();
+    }
+
+    // Fetch Snowflake accounts when step 2 opens with a Snowflake source
+    const needsSnowflakeAccounts = sourceConnector === 'snowflake' || targetConnectors.has('snowflake');
+    if (step === 2 && needsSnowflakeAccounts) {
+      const fetchSnowflakeAccounts = async () => {
+        try {
+          const res = await api.getAccounts('SNOWFLAKE');
+          const list = Array.isArray(res) ? res : (res?.accounts || []);
+          setSnowflakeAccounts(list);
+          if (list.length > 0 && !snowflakeAccountId) {
+            setSnowflakeAccountId(String(list[0]?.id || ''));
+          }
+        } catch (e) {
+          console.warn('[SemaBridge] Failed to fetch Snowflake Accounts', e);
+        }
+      };
+      fetchSnowflakeAccounts();
+    }
+
+    // Fetch Databricks accounts when step 2 opens with a Databricks target
+    const needsDatabricksAccounts = targetConnectors.has('databricks') || sourceConnector === 'databricks';
+    if (step === 2 && needsDatabricksAccounts) {
+      const fetchDatabricksAccounts = async () => {
+        try {
+          const res = await api.getAccounts('DATABRICKS');
+          const list = Array.isArray(res) ? res : (res?.accounts || []);
+          setDatabricksAccounts(list);
+          if (list.length > 0 && !databricksAccountId) {
+            setDatabricksAccountId(String(list[0]?.id || ''));
+          }
+        } catch (e) {
+          console.warn('[SemaBridge] Failed to fetch Databricks Accounts', e);
+        }
+      };
+      fetchDatabricksAccounts();
     }
   }, [step, sourceConnector, targetConnectors, selectedConnectionId, fetchFabricWorkspaces]);
 
@@ -691,6 +732,7 @@ export default function CreateProjectPage() {
     }
 
     if (sourceConnector === 'snowflake') {
+      if (snowflakeAccountId) source.identity_id = snowflakeAccountId;
       if (snowflakeDatabase.trim()) source.database = snowflakeDatabase.trim();
       if (snowflakeSchema.trim()) source.schema = snowflakeSchema.trim();
       if (selectedModelNames.length > 0) {
@@ -733,6 +775,14 @@ export default function CreateProjectPage() {
         if (fabricAccountId) target.identity_id = fabricAccountId;
         if (fabricWorkspaceId) target.workspace_id = fabricWorkspaceId;
         if (selectedWorkspace?.name) target.workspace = selectedWorkspace.name;
+      }
+
+      if (connector === 'databricks') {
+        if (databricksAccountId) target.identity_id = databricksAccountId;
+      }
+
+      if (connector === 'snowflake') {
+        if (snowflakeAccountId) target.identity_id = snowflakeAccountId;
       }
 
       return target;
@@ -1025,6 +1075,12 @@ export default function CreateProjectPage() {
             fabricAccounts={fabricAccounts}
             fabricWorkspaceId={fabricWorkspaceId}
             setFabricWorkspaceId={setFabricWorkspaceId}
+            snowflakeAccountId={snowflakeAccountId}
+            setSnowflakeAccountId={setSnowflakeAccountId}
+            snowflakeAccounts={snowflakeAccounts}
+            databricksAccountId={databricksAccountId}
+            setDatabricksAccountId={setDatabricksAccountId}
+            databricksAccounts={databricksAccounts}
             snowflakeDatabase={snowflakeDatabase} setSnowflakeDatabase={setSnowflakeDatabase}
             snowflakeSchema={snowflakeSchema} setSnowflakeSchema={setSnowflakeSchema}
             targetDatabase={targetDatabase} setTargetDatabase={setTargetDatabase}
@@ -1467,6 +1523,12 @@ function StepConnectorConfig({
   fabricAccounts,
   fabricWorkspaceId,
   setFabricWorkspaceId,
+  snowflakeAccountId,
+  setSnowflakeAccountId,
+  snowflakeAccounts,
+  databricksAccountId,
+  setDatabricksAccountId,
+  databricksAccounts,
   snowflakeDatabase,
   setSnowflakeDatabase,
   snowflakeSchema,
@@ -1545,7 +1607,7 @@ function StepConnectorConfig({
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20, paddingBottom: 320 }}>
       <div>
         <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Connector Configuration</h2>
         <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
@@ -1646,26 +1708,48 @@ function StepConnectorConfig({
         )}
 
         {sourceConnector === 'snowflake' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div>
-              <label style={LABEL}>Source Database</label>
-              <input
-                type="text" value={snowflakeDatabase} onChange={e => setSnowflakeDatabase(e.target.value)}
-                placeholder="e.g. ANALYTICS_DB"
-                style={INPUT}
-                onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-                onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-              />
-            </div>
-            <div>
-              <label style={LABEL}>Source Schema</label>
-              <input
-                type="text" value={snowflakeSchema} onChange={e => setSnowflakeSchema(e.target.value)}
-                placeholder="e.g. PUBLIC"
-                style={INPUT}
-                onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-                onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-              />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Snowflake Account Selection */}
+            {snowflakeAccounts.length > 0 && (
+              <div>
+                <label style={LABEL}>Snowflake Account</label>
+                <select
+                  value={snowflakeAccountId}
+                  onChange={e => setSnowflakeAccountId(e.target.value)}
+                  style={INPUT}
+                >
+                  {snowflakeAccounts.map(acc => (
+                    <option key={acc.id} value={acc.id}>
+                      {(acc.tag || acc.identity_email || acc.id)} ({acc.identity_email || 'N/A'})
+                    </option>
+                  ))}
+                </select>
+                <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
+                  Select which Snowflake identity to use for discovery and sync.
+                </p>
+              </div>
+            )}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <label style={LABEL}>Source Database</label>
+                <input
+                  type="text" value={snowflakeDatabase} onChange={e => setSnowflakeDatabase(e.target.value)}
+                  placeholder="e.g. ANALYTICS_DB"
+                  style={INPUT}
+                  onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
+                  onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
+                />
+              </div>
+              <div>
+                <label style={LABEL}>Source Schema</label>
+                <input
+                  type="text" value={snowflakeSchema} onChange={e => setSnowflakeSchema(e.target.value)}
+                  placeholder="e.g. PUBLIC"
+                  style={INPUT}
+                  onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
+                  onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
+                />
+              </div>
             </div>
           </div>
         )}
@@ -1813,7 +1897,7 @@ function StepConnectorConfig({
           {selectedTargets.map(target => {
             const targetMeta = TARGET_CONNECTOR_TYPES.find(t => t.value === target) || { label: target };
             return (
-              <details key={target} open style={{ border: '1px solid var(--border-main)', borderRadius: 10, overflow: 'hidden' }}>
+              <details key={target} open style={{ border: '1px solid var(--border-main)', borderRadius: 10 }}>
                 <summary
                   style={{
                     listStyle: 'none',
@@ -1950,7 +2034,36 @@ function StepConnectorConfig({
                     </div>
                   )}
 
-                  {target !== 'snowflake' && target !== 'fabric' && (
+                  {target === 'databricks' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      {databricksAccounts.length > 0 && (
+                        <div>
+                          <label style={LABEL}>Databricks Account</label>
+                          <select
+                            value={databricksAccountId}
+                            onChange={e => setDatabricksAccountId(e.target.value)}
+                            style={INPUT}
+                          >
+                            {databricksAccounts.map(acc => (
+                              <option key={acc.id} value={acc.id}>
+                                {(acc.tag || acc.identity_email || acc.id)} ({acc.identity_email || 'N/A'})
+                              </option>
+                            ))}
+                          </select>
+                          <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
+                            Select which Databricks identity to use for deployment.
+                          </p>
+                        </div>
+                      )}
+                      {databricksAccounts.length === 0 && (
+                        <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+                          No Databricks accounts configured. This target will use global connection defaults from Settings.
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {target !== 'snowflake' && target !== 'fabric' && target !== 'databricks' && (
                     <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
                       This target will use global connection defaults from Settings.
                     </div>

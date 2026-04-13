@@ -240,7 +240,6 @@ _compat_store_loaded: bool = False
 def _compat_now_iso() -> str:
     return datetime.utcnow().isoformat()
 
-
 def _compat_store_path() -> Path:
     p = Path("config/.semabridge_compat_store.json")
     if p.exists():
@@ -248,6 +247,11 @@ def _compat_store_path() -> Path:
     legacy = Path(".semabridge_compat_store.json")
     if legacy.exists():
         return legacy
+    
+    # If config doesn't exist, write to current dir
+    if not Path("config").exists():
+        return legacy
+        
     return p
 
 

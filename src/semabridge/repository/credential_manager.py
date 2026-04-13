@@ -49,6 +49,10 @@ _ENV_MAP: Dict[str, Dict[str, str]] = {
         "private_key": "SNOWFLAKE_PRIVATE_KEY",
         "private_key_passphrase": "SNOWFLAKE_PRIVATE_KEY_PASSPHRASE",
         "authenticator": "SNOWFLAKE_AUTHENTICATOR",
+        "oauth_client_id": "SNOWFLAKE_OAUTH_CLIENT_ID",
+        "oauth_client_secret": "SNOWFLAKE_OAUTH_CLIENT_SECRET",
+        "oauth_token_endpoint": "SNOWFLAKE_OAUTH_TOKEN_ENDPOINT",
+        "oauth_scope": "SNOWFLAKE_OAUTH_SCOPE",
         "warehouse": "SNOWFLAKE_WAREHOUSE",
         "database": "SNOWFLAKE_DATABASE",
         "schema_name": "SNOWFLAKE_SCHEMA",
@@ -74,9 +78,19 @@ _ENV_MAP: Dict[str, Dict[str, str]] = {
 # Keys that are exclusive to each auth mode — used to purge stale
 # credentials when the user switches authentication methods.
 _AUTH_EXCLUSIVE_KEYS: Dict[str, list[str]] = {
-    "password": ["private_key", "private_key_passphrase", "authenticator"],
-    "keypair": ["password", "authenticator"],
-    "externalbrowser": ["password", "private_key", "private_key_passphrase"],
+    # Snowflake
+    "password": ["private_key", "private_key_passphrase", "authenticator",
+                 "oauth_client_id", "oauth_client_secret", "oauth_token_endpoint", "oauth_scope"],
+    "keypair": ["password", "authenticator",
+               "oauth_client_id", "oauth_client_secret", "oauth_token_endpoint", "oauth_scope"],
+    "externalbrowser": ["password", "private_key", "private_key_passphrase",
+                        "oauth_client_id", "oauth_client_secret", "oauth_token_endpoint", "oauth_scope"],
+    "oauth": ["password", "private_key", "private_key_passphrase", "authenticator"],
+    
+    # Databricks
+    "interactive": ["client_secret", "token"],
+    "service_principal": ["token", "access_token", "refresh_token", "expires_at", "account_username"],
+    "pat": ["client_id", "client_secret", "access_token", "refresh_token", "expires_at", "account_username"],
 }
 
 
@@ -158,7 +172,7 @@ class CredentialManager:
             with self._session() as session:
                 # Purge stale auth-mode-specific keys when auth_type changes
                 new_auth_type = credentials.get("auth_type")
-                if service == "snowflake" and new_auth_type:
+                if service in ("snowflake", "databricks") and new_auth_type:
                     keys_to_purge = _AUTH_EXCLUSIVE_KEYS.get(new_auth_type, [])
                     for stale_key in keys_to_purge:
                         existing_stale = session.get(
@@ -402,7 +416,7 @@ class CredentialManager:
         """Keys that contain secrets and should be masked."""
         secret_map = {
             "fabric": {"client_secret", "access_token", "refresh_token"},
-            "snowflake": {"password", "private_key", "private_key_passphrase"},
+            "snowflake": {"password", "private_key", "private_key_passphrase", "oauth_client_secret"},
             "fabric_token": {"access_token", "refresh_token"},
             "databricks": {"token", "client_secret", "access_token", "refresh_token"},
         }
@@ -430,6 +444,8 @@ class CredentialManager:
                 return base + ["private_key"]
             elif auth_type == "externalbrowser":
                 return base  # SSO needs no extra stored credential
+            elif auth_type == "oauth":
+                return base + ["oauth_client_id", "oauth_client_secret", "oauth_token_endpoint"]
             else:
                 return base + ["password"]
 

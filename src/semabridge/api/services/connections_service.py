@@ -3,6 +3,6 @@ from semabridge.api.services.connection_domain_service import (
     get_connections_status,
     list_workspaces,
     save_connection,
-    snowflake_sso_login,
+    snowflake_oauth_test,
     test_connection,
 )

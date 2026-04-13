@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react';
+import { api } from '../utils/api';
 
 const ConfigurationContext = createContext();
 
@@ -13,9 +14,7 @@ export function ConfigurationProvider({ children }) {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/config');
-      if (!response.ok) throw new Error('Failed to fetch configuration');
-      const data = await response.json();
+      const data = await api.getConfig();
       setConfig(data.project);
       setGlobalConfig(data.global_config);
       setGhostConfig(data.ghost);
@@ -29,15 +28,7 @@ export function ConfigurationProvider({ children }) {
   const saveConfig = async (newConfig) => {
     setError(null);
     try {
-      const response = await fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newConfig)
-      });
-      if (!response.ok) {
-        const errData = await response.json();
-        throw errData;
-      }
+      const data = await api.saveConfig(newConfig);
       // Re-fetch to get updated ghosting and confirmed saves
       await fetchConfig();
       return { success: true };

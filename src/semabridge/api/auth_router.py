@@ -16,10 +16,11 @@ except ``register`` and ``login`` which are public.
 
 from __future__ import annotations
 
-from typing import Dict, List
+from datetime import datetime, timezone
+from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import delete, select
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from semabridge.auth.deps import get_current_user
@@ -33,16 +34,85 @@ from semabridge.auth.schemas import (
     TokenResponse,
     UserResponse,
 )
-from semabridge.auth.tokens import create_access_token
-from semabridge.repository.orm.models import User, UserCredential
+from semabridge.auth.tokens import (
+    create_access_token,
+    create_token_pair,
+    generate_refresh_token,
+    get_refresh_token_expiry,
+    hash_refresh_token,
+)
+from semabridge.repository.orm.models import RefreshToken, User, UserCredential
 from semabridge.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+_REFRESH_COOKIE = "semabridge_refresh_token"
+
+
+# ── Auto-login (development) ────────────────────────────────────────────
+
+@router.post("/auto-login", response_model=TokenResponse)
+def auto_login(
+    response: Response,
+    db: Session = Depends(get_db),
+) -> TokenResponse:
+    """Auto-create a dev user and issue a JWT — no credentials needed.
+
+    Used during development to bypass the login page. In production,
+    disable by removing this route or checking an env flag.
+
+    Creates a default user ``dev`` on first call; reuses it on subsequent calls.
+    """
+    import os
+    import uuid
+
+    # Find or create default dev user
+    dev_user = db.execute(
+        select(User).where(User.username == "dev")
+    ).scalar_one_or_none()
+
+    if dev_user is None:
+        from semabridge.auth.passwords import hash_password as _hash
+        dev_user = User(
+            username="dev",
+            email=f"dev-{uuid.uuid4().hex[:8]}@semabridge.local",
+            password_hash=_hash(uuid.uuid4().hex),  # random pw, never used
+            role="admin",
+        )
+        db.add(dev_user)
+        db.commit()
+        db.refresh(dev_user)
+        logger.info("Auto-created dev user (id=%s)", dev_user.id)
+
+    # Issue tokens
+    access_token, raw_refresh = create_token_pair(dev_user.id, dev_user.username, dev_user.role)
+
+    rt = RefreshToken(
+        user_id=dev_user.id,
+        token_hash=hash_refresh_token(raw_refresh),
+        expires_at=get_refresh_token_expiry(),
+    )
+    db.add(rt)
+    db.commit()
+
+    response.set_cookie(
+        key=_REFRESH_COOKIE,
+        value=raw_refresh,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=7 * 24 * 60 * 60,
+        path="/auth",
+    )
+
+    logger.info("Auto-login issued for dev user (id=%s)", dev_user.id)
+    return TokenResponse(access_token=access_token)
+
 
 # ── Public endpoints ─────────────────────────────────────────────────────
+
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(body: RegisterRequest, db: Session = Depends(get_db)) -> UserResponse:
@@ -82,8 +152,16 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)) -> UserRespon
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(body: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
-    """Authenticate with username + password and receive a JWT."""
+def login(
+    body: LoginRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> TokenResponse:
+    """Authenticate with username + password and receive a JWT.
+
+    Returns an access token in the response body and sets a
+    refresh token as an HttpOnly cookie for session renewal.
+    """
     user = db.execute(
         select(User).where(User.username == body.username)
     ).scalar_one_or_none()
@@ -101,9 +179,130 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
             detail="Account deactivated",
         )
 
-    token = create_access_token(data={"sub": user.id, "role": user.role})
+    # Create access + refresh token pair
+    access_token, raw_refresh = create_token_pair(user.id, user.username, user.role)
+
+    # Persist refresh token hash in DB
+    rt = RefreshToken(
+        user_id=user.id,
+        token_hash=hash_refresh_token(raw_refresh),
+        expires_at=get_refresh_token_expiry(),
+    )
+    db.add(rt)
+    db.commit()
+
+    # Set refresh token as HttpOnly cookie
+    response.set_cookie(
+        key=_REFRESH_COOKIE,
+        value=raw_refresh,
+        httponly=True,
+        secure=False,  # Set True in production with HTTPS
+        samesite="lax",
+        max_age=7 * 24 * 60 * 60,  # 7 days
+        path="/auth",
+    )
+
     logger.info("User logged in: %s", user.username)
-    return TokenResponse(access_token=token)
+    return TokenResponse(access_token=access_token)
+
+
+@router.post("/refresh", response_model=TokenResponse)
+def refresh(
+    response: Response,
+    db: Session = Depends(get_db),
+    semabridge_refresh_token: Optional[str] = Cookie(None),
+) -> TokenResponse:
+    """Exchange a refresh token for a new access + refresh pair.
+
+    The old refresh token is consumed (one-time use) and a new
+    pair is issued. This prevents replay attacks.
+    """
+    if not semabridge_refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No refresh token provided",
+        )
+
+    token_hash = hash_refresh_token(semabridge_refresh_token)
+    stored = db.execute(
+        select(RefreshToken).where(
+            RefreshToken.token_hash == token_hash,
+            RefreshToken.is_revoked == False,  # noqa: E712
+        )
+    ).scalar_one_or_none()
+
+    if stored is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or already-used refresh token",
+        )
+
+    if stored.expires_at < datetime.now(timezone.utc):
+        stored.is_revoked = True
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token expired",
+        )
+
+    # Revoke old token (one-time use)
+    stored.is_revoked = True
+
+    # Load user
+    user = db.execute(
+        select(User).where(User.id == stored.user_id)
+    ).scalar_one_or_none()
+
+    if not user or not user.is_active:
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or deactivated",
+        )
+
+    # Issue new pair
+    access_token, raw_refresh = create_token_pair(user.id, user.username, user.role)
+
+    new_rt = RefreshToken(
+        user_id=user.id,
+        token_hash=hash_refresh_token(raw_refresh),
+        expires_at=get_refresh_token_expiry(),
+    )
+    db.add(new_rt)
+    db.commit()
+
+    response.set_cookie(
+        key=_REFRESH_COOKIE,
+        value=raw_refresh,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=7 * 24 * 60 * 60,
+        path="/auth",
+    )
+
+    logger.info("Token refreshed for user: %s", user.username)
+    return TokenResponse(access_token=access_token)
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(
+    response: Response,
+    db: Session = Depends(get_db),
+    semabridge_refresh_token: Optional[str] = Cookie(None),
+) -> None:
+    """Revoke the current refresh token and clear the cookie."""
+    if semabridge_refresh_token:
+        token_hash = hash_refresh_token(semabridge_refresh_token)
+        db.execute(
+            update(RefreshToken)
+            .where(RefreshToken.token_hash == token_hash)
+            .values(is_revoked=True)
+        )
+        db.commit()
+
+    response.delete_cookie(key=_REFRESH_COOKIE, path="/auth")
+    logger.info("User logged out")
 
 
 # ── Protected endpoints ──────────────────────────────────────────────────

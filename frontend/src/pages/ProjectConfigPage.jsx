@@ -118,6 +118,8 @@ export default function ProjectConfigPage() {
     schema: '',
     target_database: '',
     target_schema: '',
+    target_identity_id: '',
+    target_workspace_id: '',
     allow_models: '',
     block_models: '',
     auto_relationships: true,
@@ -126,6 +128,12 @@ export default function ProjectConfigPage() {
   const [fabricAccounts, setFabricAccounts] = useState([]);
   const [fabricWorkspaces, setFabricWorkspaces] = useState([]);
   const [fabricLoading, setFabricLoading] = useState(false);
+
+  // Target Fabric state (independent from source)
+  const [targetFabricAccounts, setTargetFabricAccounts] = useState([]);
+  const [targetFabricWorkspaces, setTargetFabricWorkspaces] = useState([]);
+  const [targetFabricLoading, setTargetFabricLoading] = useState(false);
+  const [databricksAccounts, setDatabricksAccounts] = useState([]);
 
   const [globalOpen, setGlobalOpen] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
@@ -413,6 +421,68 @@ export default function ProjectConfigPage() {
     }
   }, [configForm.source_type, configForm.identity_id]);
 
+  // ── Target Fabric: fetch accounts when target is fabric ──────────────────
+  useEffect(() => {
+    if (configForm.target_type !== 'fabric') {
+      setTargetFabricAccounts([]);
+      setTargetFabricWorkspaces([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.getAccounts('FABRIC');
+        const list = Array.isArray(res) ? res : (res?.accounts || []);
+        if (!cancelled) setTargetFabricAccounts(list);
+      } catch {
+        if (!cancelled) setTargetFabricAccounts([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [configForm.target_type]);
+
+  const refreshTargetFabricWorkspaces = async (identityId = configForm.target_identity_id) => {
+    if (!identityId) {
+      setTargetFabricWorkspaces([]);
+      return;
+    }
+    setTargetFabricLoading(true);
+    try {
+      const data = await api.fabricListWorkspaces(identityId);
+      const list = Array.isArray(data?.workspaces) ? data.workspaces : (Array.isArray(data) ? data : []);
+      setTargetFabricWorkspaces(list);
+    } catch {
+      setTargetFabricWorkspaces([]);
+    } finally {
+      setTargetFabricLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (configForm.target_type === 'fabric' && configForm.target_identity_id) {
+      refreshTargetFabricWorkspaces(configForm.target_identity_id);
+    }
+  }, [configForm.target_type, configForm.target_identity_id]);
+
+  // ── Target Databricks: fetch accounts when target is databricks ──────────────────
+  useEffect(() => {
+    if (configForm.target_type !== 'databricks') {
+      setDatabricksAccounts([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.getAccounts('DATABRICKS');
+        const list = Array.isArray(res) ? res : (res?.accounts || []);
+        if (!cancelled) setDatabricksAccounts(list);
+      } catch {
+        if (!cancelled) setDatabricksAccounts([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [configForm.target_type]);
+
   const isLikelyBinaryOrGarbage = (text) => {
     const t = String(text || '').trim();
     if (!t) return false;
@@ -504,6 +574,8 @@ export default function ProjectConfigPage() {
           schema: '',
           target_database: '',
           target_schema: '',
+          target_identity_id: '',
+          target_workspace_id: '',
           allow_models: '',
           block_models: '',
         },
@@ -554,6 +626,8 @@ export default function ProjectConfigPage() {
         schema: String(source.schema || ''),
         target_database: String(target.database || ''),
         target_schema: String(target.schema || ''),
+        target_identity_id: String(target.identity_id || ''),
+        target_workspace_id: String(target.workspace_id || ''),
         allow_models: allowModels.join(', '),
         block_models: blockedModels.join(', '),
         auto_relationships: options.auto_relationships !== false,
@@ -667,9 +741,20 @@ export default function ProjectConfigPage() {
       else delete nextTree.target.database;
       if (configForm.target_schema) nextTree.target.schema = configForm.target_schema;
       else delete nextTree.target.schema;
+      delete nextTree.target.identity_id;
+      delete nextTree.target.workspace_id;
+    } else if (configForm.target_type === 'fabric') {
+      if (configForm.target_identity_id) nextTree.target.identity_id = configForm.target_identity_id;
+      else delete nextTree.target.identity_id;
+      if (configForm.target_workspace_id) nextTree.target.workspace_id = configForm.target_workspace_id;
+      else delete nextTree.target.workspace_id;
+      delete nextTree.target.database;
+      delete nextTree.target.schema;
     } else {
       delete nextTree.target.database;
       delete nextTree.target.schema;
+      delete nextTree.target.identity_id;
+      delete nextTree.target.workspace_id;
     }
 
     if (block.length) nextTree.options.exclude_model = block;
@@ -1305,6 +1390,11 @@ export default function ProjectConfigPage() {
                 fabricWorkspaces={fabricWorkspaces}
                 fabricLoading={fabricLoading}
                 onRefreshFabricWorkspaces={() => refreshFabricWorkspaces()}
+                targetFabricAccounts={targetFabricAccounts}
+                targetFabricWorkspaces={targetFabricWorkspaces}
+                targetFabricLoading={targetFabricLoading}
+                onRefreshTargetFabricWorkspaces={() => refreshTargetFabricWorkspaces()}
+                databricksAccounts={databricksAccounts}
               />
             ) : (
               <div style={{ height: '100%', minHeight: 420 }}>
@@ -1945,6 +2035,11 @@ function FormEditor({
   fabricWorkspaces = [],
   fabricLoading = false,
   onRefreshFabricWorkspaces,
+  targetFabricAccounts = [],
+  targetFabricWorkspaces = [],
+  targetFabricLoading = false,
+  onRefreshTargetFabricWorkspaces,
+  databricksAccounts = [],
 }) {
   const patch = (k, v) => onChange(prev => ({ ...prev, [k]: v }));
   const [overridePbixPath, setOverridePbixPath] = useState(false);
@@ -1958,7 +2053,7 @@ function FormEditor({
   }, [value.source_type]);
 
   return (
-    <div style={{ maxWidth: 1080, margin: '0 auto', padding: 4, display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div style={{ maxWidth: 1080, margin: '0 auto', padding: 4, paddingBottom: 320, display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <div>
           <label style={LABEL}>Source Type</label>
@@ -1987,9 +2082,18 @@ function FormEditor({
         </select>
       </div>
 
+      {/* ── Source Configuration ── */}
+      <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, padding: 16, background: 'var(--bg-surface)' }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>
+          1. Source Configuration
+          <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--accent-blue)', marginLeft: 8 }}>
+            {value.source_type === 'fabric' ? 'Microsoft Fabric' : value.source_type === 'snowflake' ? 'Snowflake' : value.source_type === 'databricks' ? 'Databricks' : 'PBIX File'}
+          </span>
+        </div>
+
       {value.source_type === 'fabric' && (
         <>
-          <div>
+          <div style={{ marginBottom: 12 }}>
             <label style={LABEL}>Fabric Account</label>
             <select
               value={value.identity_id}
@@ -1999,15 +2103,18 @@ function FormEditor({
               <option value="">Select account</option>
               {fabricAccounts.map(acc => (
                 <option key={acc.id} value={acc.id}>
-                  {acc.tag || acc.identity_email || acc.id}
+                  {acc.tag} ({acc.identity_email || acc.id})
                 </option>
               ))}
             </select>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+              Select an authenticated identity to use for discovery and synchronization.
+            </div>
           </div>
 
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <label style={{ ...LABEL, margin: 0 }}>Workspace ID</label>
+              <label style={{ ...LABEL, margin: 0 }}>Fabric Workspace</label>
               <div style={{ flex: 1 }} />
               <button
                 type="button"
@@ -2026,21 +2133,23 @@ function FormEditor({
               </button>
             </div>
             {fabricWorkspaces.length > 0 ? (
-              <select
+              <SearchableSelect
+                items={fabricWorkspaces}
+                displayKey="name"
+                valueKey="id"
                 value={value.workspace_id}
-                onChange={e => patch('workspace_id', e.target.value)}
-                style={{ ...INPUT, cursor: 'pointer' }}
-              >
-                <option value="">Select workspace</option>
-                {fabricWorkspaces.map(ws => (
-                  <option key={ws.id || ws.workspace_id} value={ws.id || ws.workspace_id}>
-                    {ws.name || ws.displayName || ws.id || ws.workspace_id}
-                  </option>
-                ))}
-              </select>
+                placeholder="Choose a workspace"
+                onChange={(ws) => {
+                  const wsId = typeof ws === 'object' ? (ws?.id || ws?.workspace_id || '') : ws;
+                  patch('workspace_id', String(wsId));
+                }}
+              />
             ) : (
               <input value={value.workspace_id} onChange={e => patch('workspace_id', e.target.value)} style={INPUT} placeholder="fabric workspace id" />
             )}
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+              Pick one workspace here. Step 3 will show models from this workspace only.
+            </div>
           </div>
         </>
       )}
@@ -2107,6 +2216,16 @@ function FormEditor({
           </div>
         </div>
       )}
+      </div>
+
+      {/* ── Target Configuration ── */}
+      <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, padding: 16, background: 'var(--bg-surface)', overflow: 'visible', position: 'relative', zIndex: 5 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>
+          2. Target Configuration
+          <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--accent-blue)', marginLeft: 8 }}>
+            {value.target_type === 'fabric' ? 'Microsoft Fabric' : value.target_type === 'snowflake' ? 'Snowflake' : 'Databricks'}
+          </span>
+        </div>
 
       {value.target_type === 'snowflake' && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -2120,6 +2239,100 @@ function FormEditor({
           </div>
         </div>
       )}
+
+      {value.target_type === 'fabric' && (
+        <>
+          <div style={{ marginBottom: 12 }}>
+            <label style={LABEL}>Target Fabric Account</label>
+            <select
+              value={value.target_identity_id}
+              onChange={e => patch('target_identity_id', e.target.value)}
+              style={{ ...INPUT, cursor: 'pointer' }}
+            >
+              <option value="">Select target account</option>
+              {targetFabricAccounts.map(acc => (
+                <option key={acc.id} value={acc.id}>
+                  {acc.tag} ({acc.identity_email || acc.id})
+                </option>
+              ))}
+            </select>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+              Select the Fabric identity to use for deploying the semantic model.
+            </div>
+          </div>
+
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <label style={{ ...LABEL, margin: 0 }}>Target Workspace</label>
+              <div style={{ flex: 1 }} />
+              <button
+                type="button"
+                onClick={onRefreshTargetFabricWorkspaces}
+                disabled={targetFabricLoading || !value.target_identity_id}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-tertiary)',
+                  cursor: targetFabricLoading || !value.target_identity_id ? 'not-allowed' : 'pointer',
+                  fontSize: 11,
+                  padding: 0,
+                }}
+              >
+                {targetFabricLoading ? 'Loading...' : 'Refresh'}
+              </button>
+            </div>
+            {targetFabricWorkspaces.length > 0 ? (
+              <SearchableSelect
+                items={targetFabricWorkspaces}
+                displayKey="name"
+                valueKey="id"
+                value={value.target_workspace_id}
+                placeholder="Choose target workspace"
+                onChange={(ws) => {
+                  const wsId = typeof ws === 'object' ? (ws?.id || ws?.workspace_id || '') : ws;
+                  patch('target_workspace_id', String(wsId));
+                }}
+              />
+            ) : (
+              <input value={value.target_workspace_id} onChange={e => patch('target_workspace_id', e.target.value)} style={INPUT} placeholder="target workspace id" />
+            )}
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+              The workspace where the semantic model will be deployed.
+            </div>
+          </div>
+        </>
+      )}
+
+      {value.target_type === 'databricks' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {databricksAccounts.length > 0 && (
+            <div>
+              <label style={LABEL}>Target Databricks Account</label>
+              <select
+                value={value.target_identity_id || ''}
+                onChange={e => patch('target_identity_id', e.target.value)}
+                style={{ ...INPUT, cursor: 'pointer' }}
+              >
+                <option value="">Use global defaults</option>
+                {databricksAccounts.map(acc => (
+                  <option key={acc.id} value={acc.id}>
+                    {(acc.tag || acc.identity_email || acc.id)} ({acc.identity_email || 'N/A'})
+                  </option>
+                ))}
+              </select>
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                Select the Databricks identity to use for deployment.
+              </div>
+            </div>
+          )}
+          {databricksAccounts.length === 0 && (
+            <div style={{ fontSize: 12, color: 'var(--text-tertiary)', padding: 12, borderRadius: 8, background: 'var(--bg-input)', border: '1px solid var(--border-main)' }}>
+              This target will use global connection defaults from Settings.
+            </div>
+          )}
+        </div>
+      )}
+      </div>
 
       <div>
         <label style={LABEL}>Allow Models (comma-separated)</label>

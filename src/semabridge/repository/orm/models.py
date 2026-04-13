@@ -94,6 +94,10 @@ class User(Base):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
+    accounts: Mapped[List["Account"]] = relationship(
+        back_populates="owner",
+        lazy="selectin",
+    )
 
     def __repr__(self) -> str:
         return f"<User(id={self.id}, username={self.username!r}, role={self.role!r})>"
@@ -209,6 +213,10 @@ class ModelVersionHistory(Base):
 class Account(Base):
     """Account definition for multi-session connections/vault.
     Maps a user identity to a connector via OAuth tokens or credentials.
+
+    The ``refresh_token`` and ``token_expires_at`` columns enable automatic
+    token renewal for scheduled / headless pipeline runs without requiring
+    the user to re-authenticate interactively.
     """
 
     __tablename__ = "accounts"
@@ -218,18 +226,54 @@ class Account(Base):
     tag: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     identity_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     encrypted_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    token_expires_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
+    auth_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    owner_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id"), nullable=True,
+    )
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="Active")
     is_default: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
     )
 
     # Relationships
+    owner: Mapped[Optional["User"]] = relationship(back_populates="accounts")
     projects: Mapped[List["Project"]] = relationship(
         back_populates="account", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:
         return f"<Account(id={self.id!r}, tag={self.tag!r}, connector_type={self.connector_type!r})>"
+
+
+class RefreshToken(Base):
+    """JWT refresh token for session management.
+
+    Supports one-time-use rotation: each refresh token can only be
+    exchanged once for a new access + refresh pair. Reuse of an
+    already-consumed token triggers revocation of the entire family.
+    """
+
+    __tablename__ = "refresh_tokens"
+    __table_args__ = (
+        Index("ix_refresh_tokens_user_id", "user_id"),
+        Index("ix_refresh_tokens_token_hash", "token_hash", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
+    is_revoked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        _UTC_DT, server_default=func.now(), nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        return f"<RefreshToken(id={self.id}, user_id={self.user_id}, revoked={self.is_revoked})>"
 
 
 class LocalFolder(Base):

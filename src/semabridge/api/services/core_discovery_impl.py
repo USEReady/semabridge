@@ -1,4 +1,13 @@
 from semabridge.api.services.core_shared import *
+from semabridge.api.services.core_shared import (
+    _extract_bearer_token,
+    _resolve_fabric_access_token,
+    _discovery_cache,
+    _DISCOVERY_CACHE_TTL,
+    _time,
+)
+
+_snowflake_discovery_cache = {}
 
 
 async def discover_fabric_models(
@@ -99,36 +108,63 @@ async def discover_fabric_models_by_workspace(
     )
 
 
-async def discover_snowflake():
+async def discover_snowflake(identity_id: Optional[str] = Query(None)):
     import time
     from pydantic import ValidationError
     from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
+    from sqlalchemy import select
+    from semabridge.repository.orm.models import Account
+    from semabridge.repository.orm.session_factory import db_manager
+    from semabridge.auth.account_credential_resolver import scoped_account_env
 
     global _snowflake_discovery_cache
     if "_snowflake_discovery_cache" not in globals():
         _snowflake_discovery_cache = {}
 
-    cache_key = "views"
+    cache_key = f"views:{identity_id}" if identity_id else "views"
     if cache_key in _snowflake_discovery_cache:
         cached_data, cached_time = _snowflake_discovery_cache[cache_key]
         if time.monotonic() - cached_time < 300:
             return cached_data
 
     try:
-        settings = get_settings()
-        try:
-            snowflake_config = settings.snowflake
-        except ValidationError:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Snowflake is not configured. "
-                    "Set SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, and SNOWFLAKE_PASSWORD in .env or environment variables."
-                ),
-            )
+        if identity_id:
+            with db_manager.get_session() as session:
+                account = session.execute(
+                    select(Account).where(
+                        Account.connector_type == "SNOWFLAKE",
+                        Account.id == identity_id,
+                    )
+                ).scalars().first()
 
-        extractor = SnowflakeExtractor(snowflake_config)
-        views = extractor.discover_semantic_views()
+                if not account:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"No Snowflake account found for identity_id '{identity_id}'."
+                    )
+                    
+                with scoped_account_env(account, session):
+                    from semabridge.core.settings import reload_settings
+                    scoped_settings = reload_settings()
+                    extractor = SnowflakeExtractor(scoped_settings.snowflake)
+                    views = extractor.discover_semantic_views()
+        else:
+            settings = get_settings()
+            try:
+                snowflake_config = settings.snowflake
+            except ValidationError:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Snowflake is not configured. "
+                        "Set SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, and SNOWFLAKE_PASSWORD in .env or environment variables."
+                    ),
+                )
+            extractor = SnowflakeExtractor(snowflake_config)
+            views = extractor.discover_semantic_views()
+
+        # Build final view format
+        snowflake_cfg_to_use = scoped_settings.snowflake if identity_id and 'scoped_settings' in locals() else snowflake_config
         final_results = sorted([
             {
                 "id": v["name"],
@@ -137,11 +173,12 @@ async def discover_snowflake():
                 "status": "Available",
                 "description": v.get("comment") or "",
                 "created_on": v.get("created_on"),
-                "schema": v.get("schema", snowflake_config.schema_name),
-                "database": v.get("database", snowflake_config.database),
+                "schema": v.get("schema", snowflake_cfg_to_use.schema_name),
+                "database": v.get("database", snowflake_cfg_to_use.database),
             }
             for v in views
         ], key=lambda x: x["name"])
+        
         _snowflake_discovery_cache[cache_key] = (final_results, time.monotonic())
         return final_results
     except HTTPException:
