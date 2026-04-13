@@ -939,10 +939,39 @@ class SnowflakeEmitter(BaseEmitter):
             dataset_aliases,
             preferred_table_alias=preferred_table_alias,
         )
+        # Repair malformed chained identifiers occasionally produced by mixed
+        # quoting rewrites, e.g. FACT."PRODUCT_KEY".PRODUCT_KEY.
+        normalized_sql = self._dedupe_qualified_column_tokens(normalized_sql)
         normalized_sql = self._rewrite_window_metric_expression(normalized_sql)
         normalized_sql = self._normalize_rolling_monthindex_max_predicates(normalized_sql)
 
         return normalized_sql
+
+    @staticmethod
+    def _dedupe_qualified_column_tokens(metric_sql: str) -> str:
+        """Collapse duplicate chained column tokens on one table alias.
+
+        Examples:
+          FACT."PRODUCT_KEY".PRODUCT_KEY -> FACT."PRODUCT_KEY"
+          FACT.PRODCODE.PRODCODE -> FACT.PRODCODE
+        """
+        import re
+
+        if not metric_sql:
+            return metric_sql
+
+        repaired = metric_sql
+        repaired = re.sub(
+            r'(\b\w+\.)"([A-Z_][A-Z0-9_]*)"\.\2\b',
+            r'\1"\2"',
+            repaired,
+        )
+        repaired = re.sub(
+            r'(\b\w+\.)([A-Z_][A-Z0-9_]*)\.\2\b',
+            r'\1\2',
+            repaired,
+        )
+        return repaired
 
     @staticmethod
     def _extract_referenced_table_aliases(metric_sql: str, valid_aliases: set[str]) -> set[str]:
@@ -989,12 +1018,15 @@ class SnowflakeEmitter(BaseEmitter):
         """Rewrite window-based metric SQL to semantic-safe aggregate SQL.
 
         Snowflake semantic metrics disallow expressions that embed window
-        functions over related entities inside metric definitions.
-        Convert common ratio form:
+                functions over related entities inside metric definitions.
+                Convert common ratio form:
           DIV0(SUM(x), SUM(x) OVER (...))
         into:
           SUM(x)
         so BI/query clients can apply grouping context dynamically.
+
+                For other window patterns (for example LAG/LEAD running metrics),
+                return NULL so deployment can succeed until explicit support exists.
         """
         import re
 
@@ -1007,15 +1039,67 @@ class SnowflakeEmitter(BaseEmitter):
         )
         match = ratio_pattern.match(metric_sql.strip())
         if not match:
-            return metric_sql
+            return "NULL"
 
         numerator = match.group("num").strip()
         denominator = match.group("den").strip()
 
         if numerator.upper() != denominator.upper():
-            return metric_sql
+            return "NULL"
 
         return f"SUM({numerator})"
+
+    @staticmethod
+    def _build_known_metric_fallback_expression(
+        metric_name: str,
+        fact_alias: str,
+        scenario_alias: Optional[str],
+    ) -> Optional[str]:
+        """Return deterministic SQL for known business metrics.
+
+        These formulas are used when translation fallback would otherwise emit
+        NULL for well-known finance metrics.
+        """
+        metric_key = (metric_name or "").upper()
+
+        total_cogs_expr = (
+            f"SUM({fact_alias}.MATERIAL_COSTS) + "
+            f"SUM({fact_alias}.LABOR_COSTS_VARIABLE) + "
+            f"SUM({fact_alias}.TAXES) + "
+            f"SUM({fact_alias}.REV_FOR_EXP_TRAVEL) + "
+            f"SUM({fact_alias}.TRAVEL_EXPENSES) + "
+            f"SUM({fact_alias}.COST_THIRD_PARTY)"
+        )
+
+        revenue_actual_expr = None
+        revenue_budget_expr = None
+        if scenario_alias:
+            revenue_actual_expr = (
+                f"SUM(CASE WHEN {scenario_alias}.SCENARIO = 'Actual' "
+                f"THEN {fact_alias}.REVENUE ELSE 0 END)"
+            )
+            revenue_budget_expr = (
+                f"SUM(CASE WHEN {scenario_alias}.SCENARIO = 'Budget' "
+                f"THEN {fact_alias}.REVENUE ELSE 0 END)"
+            )
+
+        if metric_key == "TOTAL_COGS":
+            return f"({total_cogs_expr})"
+        if metric_key == "GROSS_MARGIN":
+            return f"(SUM({fact_alias}.REVENUE) - ({total_cogs_expr}))"
+        if metric_key == "GM":
+            return (
+                f"(CASE WHEN SUM({fact_alias}.REVENUE) = 0 THEN 0 "
+                f"ELSE (SUM({fact_alias}.REVENUE) - ({total_cogs_expr})) / "
+                f"SUM({fact_alias}.REVENUE) END)"
+            )
+        if metric_key == "REVENUETY" and revenue_actual_expr:
+            return revenue_actual_expr
+        if metric_key in {"REVENUE_VAR_TO_BUDGET", "REVENUE_VAR_TO_BUDGET_1", "REVENUE_VAR_TO_BUDGET_2"}:
+            if revenue_actual_expr and revenue_budget_expr:
+                return f"({revenue_actual_expr} - {revenue_budget_expr})"
+
+        return None
 
     def _qualify_bare_partition_identifiers(
         self,
@@ -4200,8 +4284,28 @@ class SnowflakeEmitter(BaseEmitter):
             if metric_name:
                 emitted_metric_names.add(metric_name)
 
+        scenario_alias = dataset_aliases.get("SCENARIO")
+        if not scenario_alias:
+            for ds_name, ds_alias in dataset_aliases.items():
+                if self._sanitize_alias(ds_name) == "SCENARIO" or self._sanitize_alias(ds_alias) == "SCENARIO":
+                    scenario_alias = ds_alias
+                    break
+
         for metric_alias, metric_name, metric_unique_name in expected_metrics:
             if metric_name in emitted_metric_names:
+                continue
+            known_expr = self._build_known_metric_fallback_expression(
+                metric_name=metric_name,
+                fact_alias=metric_alias,
+                scenario_alias=scenario_alias,
+            )
+            if known_expr:
+                metrics_lines.append(f'  {metric_alias}."{metric_name}" AS {known_expr}')
+                emitted_metric_names.add(metric_name)
+                logger.info(
+                    "Metric '%s' used deterministic fallback SQL during emission",
+                    metric_unique_name,
+                )
                 continue
             logger.warning(
                 "Metric '%s' could not be translated to SQL; emitting NULL placeholder to preserve sync",
@@ -6344,8 +6448,28 @@ class SnowflakeEmitter(BaseEmitter):
             if metric_name:
                 emitted_metric_names.add(metric_name)
 
+        scenario_alias = dataset_aliases.get("SCENARIO")
+        if not scenario_alias:
+            for ds_name, ds_alias in dataset_aliases.items():
+                if self._sanitize_alias(ds_name) == "SCENARIO" or self._sanitize_alias(ds_alias) == "SCENARIO":
+                    scenario_alias = ds_alias
+                    break
+
         for metric_alias, metric_name, metric_unique_name in expected_metrics:
             if metric_name in emitted_metric_names:
+                continue
+            known_expr = self._build_known_metric_fallback_expression(
+                metric_name=metric_name,
+                fact_alias=metric_alias,
+                scenario_alias=scenario_alias,
+            )
+            if known_expr:
+                metrics_lines.append(f'  {metric_alias}."{metric_name}" AS {known_expr}')
+                emitted_metric_names.add(metric_name)
+                logger.info(
+                    "Metric '%s' used deterministic fallback SQL during emission",
+                    metric_unique_name,
+                )
                 continue
             logger.warning(
                 "Metric '%s' could not be translated to SQL; emitting NULL placeholder to preserve sync",

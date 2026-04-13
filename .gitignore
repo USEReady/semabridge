@@ -127,6 +127,7 @@ src/.semantic_metadata/logs/
 git_concurrency_log.txt
 test_results.txt
 package-lock.json
+agent-skills/
 
 # ============================================================================
 # Generated Files & Logs
