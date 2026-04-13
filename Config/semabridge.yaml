@@ -1,17 +1,17 @@
-project_name: auth tes t cma
+project_name: test auth f
 source:
-  type: fabric
-  identity_id: 89b992d6-b830-421a-af5a-fb19ee7d041d
-  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
-  workspace: semabridge
-  models:
-    - Competitive Marketing Analysis orig
+  type: snowflake
+  database: ""
+  schema: ""
+  model: CONTINENT_SEMANTIC
 targets:
-  - type: databricks
-    identity_id: 2c32b24f-70cb-425c-babd-5a208b552525
+  - type: fabric
+    identity_id: 89b992d6-b830-421a-af5a-fb19ee7d041d
+    workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
+    workspace: semabridge
 mappings:
-  - source: Competitive Marketing Analysis orig
-    target: COMPETITIVE_MARKETING_ANALYSIS_ORIG
+  - source: CONTINENT_SEMANTIC
+    target: CONTINENT_SEMANTIC
     type: table
     columns:
       - source: id
@@ -33,9 +33,11 @@ ui:
   output_format: osi
 selection:
   model_ids:
-    - 6aa0a303-dc1f-4457-86b3-90888e995c0f
+    - CONTINENT_SEMANTIC
 options:
   auto_relationships: true
   generate_descriptions: true
 target:
-  type: databricks
+  type: fabric
+  identity_id: 89b992d6-b830-421a-af5a-fb19ee7d041d
+  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718

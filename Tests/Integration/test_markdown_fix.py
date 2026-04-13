@@ -21,36 +21,17 @@ config = SnowflakeConfig(
 
 emitter = SnowflakeEmitter(config)
 
-# Test cases
-test_cases = [
-    ("```sql\nSELECT SUM(amount)\n```", "SELECT SUM(amount)"),
-    ("```\nSUM(amount)\n```", "SUM(amount)"),
-    ("```python\nSUM(amount)\n```", "SUM(amount)"),
-    ("SELECT SUM(amount)", "SELECT SUM(amount)"),  # Already clean
-    ("  ```sql\n  SELECT * FROM table  \n  ```  ", "SELECT * FROM table"),  # With spaces
-    ("", ""),  # Empty string
-]
+def test_markdown_sanitization():
+    # Test cases
+    test_cases = [
+        ("```sql\nSELECT SUM(amount)\n```", "SELECT SUM(amount)"),
+        ("```\nSUM(amount)\n```", "SUM(amount)"),
+        ("```python\nSUM(amount)\n```", "SUM(amount)"),
+        ("SELECT SUM(amount)", "SELECT SUM(amount)"),  # Already clean
+        ("  ```sql\n  SELECT * FROM table  \n  ```  ", "SELECT * FROM table"),  # With spaces
+        ("", ""),  # Empty string
+    ]
 
-print("Testing markdown sanitization function...")
-print("=" * 60)
-
-all_passed = True
-for input_sql, expected in test_cases:
-    result = emitter._sanitize_sql_markdown(input_sql)
-    passed = result == expected
-    all_passed = all_passed and passed
-    
-    status = "✅ PASS" if passed else "❌ FAIL"
-    print(f"{status}")
-    print(f"  Input:    {repr(input_sql[:50])}")
-    print(f"  Expected: {repr(expected[:50])}")
-    print(f"  Got:      {repr(result[:50])}")
-    print()
-
-print("=" * 60)
-if all_passed:
-    print("✅ All markdown sanitization tests PASSED!")
-    sys.exit(0)
-else:
-    print("❌ Some tests FAILED")
-    sys.exit(1)
+    for input_sql, expected in test_cases:
+        result = emitter._sanitize_sql_markdown(input_sql)
+        assert result == expected, f"Failed for {input_sql}: Expected {expected}, got {result}"

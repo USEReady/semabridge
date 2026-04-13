@@ -12,6 +12,13 @@ from pathlib import Path
 
 import pytest
 
+# Load .env so SEMABRIDGE_DATABASE_URL (PostgreSQL) is visible to pytest
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent.parent / ".env", override=False)
+except ImportError:
+    pass  # python-dotenv not installed; rely on shell environment
+
 # Add src directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -63,8 +70,6 @@ def _set_test_database_env(request: pytest.FixtureRequest):
     os.environ["SEMABRIDGE_DB_BACKEND"] = "orm"
 
     # Clear cached engine and db_resolver so they pick up the new URL.
-    # Prefer the new DatabaseManager.reset() API; fall back to reset_engine()
-    # for forward compatibility if the module structure ever changes.
     try:
         from semabridge.repository.orm.session_factory import db_manager
         db_manager.reset()
@@ -108,6 +113,8 @@ def _set_test_database_env(request: pytest.FixtureRequest):
         clear_db_config_cache()
     except Exception:
         pass
+
+
 
 
 # -----------------------------------------------------------------------------

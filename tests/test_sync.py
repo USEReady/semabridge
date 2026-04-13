@@ -52,16 +52,10 @@ from semabridge.sync.models import (
 
 
 @pytest.fixture
-def tmp_db(tmp_path: Path) -> str:
-    """Return path to a temporary database file."""
-    return str(tmp_path / "test_sync.db")
-
-
-@pytest.fixture
-def sync_repo(tmp_db: str):
-    """Create a SyncRepository backed by a temp DB."""
+def sync_repo():
+    """Create a SyncRepository backed by an isolated in-memory DB for pure repo unit testing."""
     from semabridge.sync.repository import SyncRepository
-    return SyncRepository(url_override=f"sqlite:///{tmp_db}")
+    return SyncRepository(url_override="sqlite:///:memory:")
 
 
 @pytest.fixture
@@ -125,7 +119,7 @@ def sample_osi_model() -> OSIModel:
         ],
         relationships=[
             OSIRelationship(
-                unique_name="orders_to_customers",
+                unique_name="REL_ORDERS_CUSTOMER_ID__CUSTOMERS_CUSTOMER_ID",
                 from_dataset="orders",
                 from_columns=["customer_id"],
                 to_dataset="customers",
@@ -473,7 +467,7 @@ class TestConflictResolver:
                 {"unique_name": "total_revenue", "expression": "SUM(amount)"},
             ],
             "relationships": [
-                {"unique_name": "orders_to_customers"},
+                {"unique_name": "REL_ORDERS_CUSTOMER_ID__CUSTOMERS_CUSTOMER_ID"},
             ],
         }
 
@@ -515,7 +509,7 @@ class TestConflictResolver:
                 },
             ],
             "metrics": [{"unique_name": "total_revenue", "expression": "SUM(amount)"}],
-            "relationships": [{"unique_name": "orders_to_customers"}],
+            "relationships": [{"unique_name": "REL_ORDERS_CUSTOMER_ID__CUSTOMERS_CUSTOMER_ID"}],
         }
 
         conflicts = resolver.detect_conflicts(

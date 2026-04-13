@@ -30,7 +30,7 @@ try:
         print(f"\n[ER] Got status {response.status_code}")
         print(f"Error: {response.text}")
     
-except requests.exceptions.ConnectError as e:
+except requests.exceptions.ConnectionError as e:
     print(f"[ERROR] Cannot connect to backend!")
     print(f"Make sure backend is running on port 8000")
     print(f"  Command: python run_backend.py")

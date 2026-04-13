@@ -296,26 +296,51 @@ class TMSLToOSIConverter(BaseConverter):
         business_type = self._business_rule_type(table_name, col_name)
 
         type_map = {
+            # canonical lowercase TMSL names
             "int64": OSIDataType.INTEGER,
             "double": OSIDataType.FLOAT,
             "decimal": OSIDataType.DECIMAL,
             "boolean": OSIDataType.BOOLEAN,
             "dateTime": OSIDataType.DATETIME,
             "string": OSIDataType.STRING,
-            "binary": OSIDataType.BINARY
+            "binary": OSIDataType.BINARY,
+            # Fabric alternative (capitalised) type aliases
+            "Int64": OSIDataType.INTEGER,
+            "Double": OSIDataType.FLOAT,
+            "Decimal": OSIDataType.DECIMAL,
+            "Boolean": OSIDataType.BOOLEAN,
+            "DateTime": OSIDataType.DATETIME,
+            "String": OSIDataType.STRING,
+            "Binary": OSIDataType.BINARY,
+            # Fabric short-hand aliases not present in standard TMSL
+            "time": OSIDataType.TIME,
+            "Time": OSIDataType.TIME,
+            "date": OSIDataType.DATE,
+            "Date": OSIDataType.DATE,
+            "bool": OSIDataType.BOOLEAN,
+            "Bool": OSIDataType.BOOLEAN,
+            # Currency maps to DECIMAL (closest OSI equivalent)
+            "currency": OSIDataType.DECIMAL,
+            "Currency": OSIDataType.DECIMAL,
         }
 
-        # Layer 1: hard business rules.
-        if business_type is not None:
+        # Ambiguous TMSL types that need business-rule or inference refinement.
+        # Explicit types (bool, Currency, Date, Time, int64, etc.) should be
+        # trusted as-is; business rules are only for resolving ambiguity.
+        _ambiguous_tmsl_types = frozenset({"string", "String", "dateTime", "DateTime"})
+
+        # Layer 1: hard business rules — only for ambiguous TMSL types.
+        if tmsl_type in _ambiguous_tmsl_types and business_type is not None:
             mapped_type = business_type
         else:
-            # Layer 2: Fabric metadata.
+            # Layer 2: Fabric metadata — trust explicit type declarations.
             mapped_type = type_map.get(tmsl_type, OSIDataType.STRING)
-            if tmsl_type == "dateTime":
+            if tmsl_type in ("dateTime", "DateTime"):
                 mapped_type = self._infer_datetime_column_type(col_name, format_string)
             # Layer 3: fallback inference for string/unclear fields.
-            if mapped_type == OSIDataType.STRING:
+            if mapped_type == OSIDataType.STRING and tmsl_type in _ambiguous_tmsl_types:
                 mapped_type = self._infer_string_column_type(col_name, format_string)
+
 
         # Determine if key (heuristic on name pattern)
         is_key = False

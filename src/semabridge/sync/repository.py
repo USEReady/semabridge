@@ -1,4 +1,4 @@
-﻿"""
+"""
 Sync Repository â€” SQLAlchemy ORM persistence for the synchronization engine.
 
 Covers:
@@ -16,6 +16,7 @@ All tables are defined as SQLAlchemy ORM models in
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select, update, delete, and_
@@ -92,8 +93,41 @@ class SyncRepository:
         return self._SessionLocal()
 
     # -----------------------------------------------------------------
-    # Internal helpers: ORM row â†” Pydantic model conversion
+    # Internal helpers: ORM row ↔ Pydantic model conversion
     # -----------------------------------------------------------------
+
+    @staticmethod
+    def _dt_to_str(value: object) -> str | None:
+        """Convert a datetime (returned by PostgreSQL) to ISO-8601 string.
+
+        PostgreSQL TIMESTAMP columns return Python ``datetime`` objects.
+        Our Pydantic models store timestamps as ISO-8601 strings for
+        JSON/DuckDB compatibility.  This helper is the bridge.
+        """
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        # datetime / date objects
+        try:
+            return value.isoformat()  # type: ignore[union-attr]
+        except AttributeError:
+            return str(value)
+
+    @staticmethod
+    def _str_to_dt(value: object) -> datetime | None:
+        """Convert ISO-8601 string (from Pydantic) to python datetime (for SQLAlchemy)."""
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            try:
+                # python 3.10+ fromisoformat handles standard iso strings well, replace Z
+                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+        return None
 
     @staticmethod
     def _job_row_to_model(row: SyncJobRow) -> SyncJob:
@@ -102,9 +136,9 @@ class SyncRepository:
             "direction": row.direction,
             "status": row.status,
             "conflict_resolution": row.conflict_resolution,
-            "created_at": row.created_at,
-            "started_at": row.started_at,
-            "completed_at": row.completed_at,
+            "created_at": SyncRepository._dt_to_str(row.created_at),
+            "started_at": SyncRepository._dt_to_str(row.started_at),
+            "completed_at": SyncRepository._dt_to_str(row.completed_at),
             "initiated_by": row.initiated_by,
             "source_folder": row.source_folder,
             "source_connection": row.source_connection,
@@ -132,8 +166,8 @@ class SyncRepository:
             model_name=row.model_name,
             source_path=row.source_path,
             status=row.status,
-            started_at=row.started_at,
-            completed_at=row.completed_at,
+            started_at=SyncRepository._dt_to_str(row.started_at),
+            completed_at=SyncRepository._dt_to_str(row.completed_at),
             error_message=row.error_message,
             osi_snapshot=osi,
             target_artifact_id=row.target_artifact_id,
@@ -149,9 +183,9 @@ class SyncRepository:
             target_type=row.target_type,
             target_identifier=row.target_identifier,
             model_name=row.model_name,
-            last_synced_at=row.last_synced_at,
+            last_synced_at=SyncRepository._dt_to_str(row.last_synced_at),
             last_osi_hash=row.last_osi_hash,
-            created_at=row.created_at,
+            created_at=SyncRepository._dt_to_str(row.created_at),
             is_active=bool(row.is_active),
         )
 
@@ -176,7 +210,7 @@ class SyncRepository:
             schema_hash=row.schema_hash,
             schema_snapshot=snap,
             changes_from_previous=changes,
-            created_at=row.created_at,
+            created_at=SyncRepository._dt_to_str(row.created_at),
             created_by_job_id=row.created_by_job_id,
         )
 
@@ -205,9 +239,9 @@ class SyncRepository:
             source_value=src,
             target_value=tgt,
             resolution=row.resolution,
-            resolved_at=row.resolved_at,
+            resolved_at=SyncRepository._dt_to_str(row.resolved_at),
             resolved_by=row.resolved_by,
-            created_at=row.created_at,
+            created_at=SyncRepository._dt_to_str(row.created_at),
         )
 
     # -----------------------------------------------------------------
@@ -227,9 +261,9 @@ class SyncRepository:
                     conflict_resolution=job.conflict_resolution.value
                         if hasattr(job.conflict_resolution, "value")
                         else job.conflict_resolution,
-                    created_at=job.created_at,
-                    started_at=job.started_at,
-                    completed_at=job.completed_at,
+                    created_at=SyncRepository._str_to_dt(job.created_at),
+                    started_at=SyncRepository._str_to_dt(job.started_at),
+                    completed_at=SyncRepository._str_to_dt(job.completed_at),
                     initiated_by=job.initiated_by,
                     source_folder=job.source_folder,
                     source_connection=job.source_connection,
@@ -255,8 +289,8 @@ class SyncRepository:
                 .values(
                     status=job.status.value
                         if hasattr(job.status, "value") else job.status,
-                    started_at=job.started_at,
-                    completed_at=job.completed_at,
+                    started_at=SyncRepository._str_to_dt(job.started_at),
+                    completed_at=SyncRepository._str_to_dt(job.completed_at),
                     total_items=job.total_items,
                     completed_items=job.completed_items,
                     failed_items=job.failed_items,
@@ -329,8 +363,8 @@ class SyncRepository:
                 .values(
                     status=item.status.value
                         if hasattr(item.status, "value") else item.status,
-                    started_at=item.started_at,
-                    completed_at=item.completed_at,
+                    started_at=SyncRepository._str_to_dt(item.started_at),
+                    completed_at=SyncRepository._str_to_dt(item.completed_at),
                     error_message=item.error_message,
                     osi_snapshot=json.dumps(item.osi_snapshot)
                         if item.osi_snapshot else None,
@@ -372,7 +406,7 @@ class SyncRepository:
 
             if existing:
                 existing.model_name = mapping.model_name
-                existing.last_synced_at = mapping.last_synced_at
+                existing.last_synced_at = SyncRepository._str_to_dt(mapping.last_synced_at)
                 existing.last_osi_hash = mapping.last_osi_hash
                 existing.is_active = mapping.is_active
                 mapping = mapping.model_copy(update={"mapping_id": existing.mapping_id}) \
@@ -386,9 +420,9 @@ class SyncRepository:
                         target_type=mapping.target_type,
                         target_identifier=mapping.target_identifier,
                         model_name=mapping.model_name,
-                        last_synced_at=mapping.last_synced_at,
+                        last_synced_at=SyncRepository._str_to_dt(mapping.last_synced_at),
                         last_osi_hash=mapping.last_osi_hash,
-                        created_at=mapping.created_at,
+                        created_at=SyncRepository._str_to_dt(mapping.created_at),
                         is_active=mapping.is_active,
                     )
                 )
@@ -441,7 +475,7 @@ class SyncRepository:
                     schema_hash=version.schema_hash,
                     schema_snapshot=json.dumps(version.schema_snapshot),
                     changes_from_previous=json.dumps(version.changes_from_previous),
-                    created_at=version.created_at,
+                    created_at=SyncRepository._str_to_dt(version.created_at),
                     created_by_job_id=version.created_by_job_id,
                 )
             )
@@ -499,9 +533,9 @@ class SyncRepository:
                     resolution=conflict.resolution.value
                         if conflict.resolution and hasattr(conflict.resolution, "value")
                         else conflict.resolution,
-                    resolved_at=conflict.resolved_at,
+                    resolved_at=SyncRepository._str_to_dt(conflict.resolved_at),
                     resolved_by=conflict.resolved_by,
-                    created_at=conflict.created_at,
+                    created_at=SyncRepository._str_to_dt(conflict.created_at),
                 )
             )
             session.commit()
@@ -521,7 +555,7 @@ class SyncRepository:
                 .values(
                     resolution=resolution.value
                         if hasattr(resolution, "value") else resolution,
-                    resolved_at=_utc_now(),
+                    resolved_at=SyncRepository._str_to_dt(_utc_now()),
                     resolved_by=resolved_by,
                 )
             )
@@ -572,7 +606,7 @@ class SyncRepository:
                     last_processed_item_id=checkpoint.last_processed_item_id,
                     last_processed_index=checkpoint.last_processed_index,
                     state_snapshot=json.dumps(checkpoint.state_snapshot),
-                    created_at=checkpoint.created_at,
+                    created_at=SyncRepository._str_to_dt(checkpoint.created_at),
                 )
             )
             session.commit()
@@ -601,6 +635,6 @@ class SyncRepository:
                 last_processed_item_id=row.last_processed_item_id,
                 last_processed_index=row.last_processed_index,
                 state_snapshot=state,
-                created_at=row.created_at,
+                created_at=SyncRepository._dt_to_str(row.created_at),
             )
 
