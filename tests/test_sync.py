@@ -53,7 +53,7 @@ from semabridge.sync.models import (
 
 @pytest.fixture
 def tmp_db(tmp_path: Path) -> str:
-    """Return path to a temporary DuckDB database file."""
+    """Return path to a temporary database file."""
     return str(tmp_path / "test_sync.db")
 
 
@@ -61,8 +61,7 @@ def tmp_db(tmp_path: Path) -> str:
 def sync_repo(tmp_db: str):
     """Create a SyncRepository backed by a temp DB."""
     from semabridge.sync.repository import SyncRepository
-
-    return SyncRepository(db_path=tmp_db)
+    return SyncRepository(url_override=f"sqlite:///{tmp_db}")
 
 
 @pytest.fixture

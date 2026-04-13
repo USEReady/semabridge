@@ -46,7 +46,7 @@ semantic_model:
 # Databricks deployment behavior.
 # ---------------------------------------------------------------------------
 databricks:
-  create_metadata_table: false # OSI-first deploy: skip Semabridge metadata Delta table
+  create_metadata_table: true # OSI-first deploy: skip Semabridge metadata Delta table
   create_measure_views: true # Generate measure views for deployed measures
   measure_view_type: "metric_view" # "auto" | "metric_view" | "materialized_view" | "sql_view" | "none"
   measure_view_mode: "combined" # "per_measure" (one view each) or "combined" (single model-level joined view)

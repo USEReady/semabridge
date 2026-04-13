@@ -1,16 +1,17 @@
-project_name: core
+project_name: auth tes t cma
 source:
   type: fabric
-  identity_id: 136c67ee-cf0d-4085-897f-f54b87d8f6c5
+  identity_id: 89b992d6-b830-421a-af5a-fb19ee7d041d
   workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
   workspace: semabridge
   models:
-    - Core_Finance_v1
+    - Competitive Marketing Analysis orig
 targets:
-  - type: snowflake
+  - type: databricks
+    identity_id: 2c32b24f-70cb-425c-babd-5a208b552525
 mappings:
-  - source: Core_Finance_v1
-    target: CORE_FINANCE_V1
+  - source: Competitive Marketing Analysis orig
+    target: COMPETITIVE_MARKETING_ANALYSIS_ORIG
     type: table
     columns:
       - source: id
@@ -32,9 +33,9 @@ ui:
   output_format: osi
 selection:
   model_ids:
-    - bbe97d8c-bf99-457f-b322-6c5e7a948171
+    - 6aa0a303-dc1f-4457-86b3-90888e995c0f
 options:
   auto_relationships: true
   generate_descriptions: true
 target:
-  type: snowflake
+  type: databricks
