@@ -1,17 +1,38 @@
-project_name: f
+project_name: core
 source:
   type: fabric
+  identity_id: 136c67ee-cf0d-4085-897f-f54b87d8f6c5
   workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
   workspace: semabridge
   models:
-    - Device
-target:
-  type: snowflake
+    - Core_Finance_v1
+targets:
+  - type: snowflake
+mappings:
+  - source: Core_Finance_v1
+    target: CORE_FINANCE_V1
+    type: table
+    columns:
+      - source: id
+        target: ID
+        type: integer
+        primary_key: true
+      - source: name
+        target: NAME
+        type: string
+      - source: created_at
+        target: CREATED_AT
+        type: timestamp
+      - source: updated_at
+        target: UPDATED_AT
+        type: timestamp
 ui:
+  intermediate_format: osi
+  editor_mode: form
   output_format: osi
 selection:
   model_ids:
-    - 974e7d48-4a76-4518-99d7-6ea751e37ce8
+    - bbe97d8c-bf99-457f-b322-6c5e7a948171
 options:
   auto_relationships: true
   generate_descriptions: true

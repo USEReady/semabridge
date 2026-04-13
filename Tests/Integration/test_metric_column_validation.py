@@ -252,6 +252,62 @@ class TestMetricColumnValidation:
         rewritten = emitter._rewrite_window_metric_expression(raw_expr)
         assert rewritten == 'SUM(SPEND_FACT."TRANSACTION_USD_AMOUNT")'
 
+    def test_lag_window_metric_expression_downgraded_to_null(self, emitter):
+        """Unsupported LAG/OVER metrics should emit NULL to keep deployment valid."""
+        raw_expr = (
+            'LAG(SUM(FACT.REVENUE), 12) OVER '
+            '(PARTITION BY FACT."PRODUCT_KEY" ORDER BY CALENDAR.YEARPERIOD)'
+        )
+
+        rewritten = emitter._rewrite_window_metric_expression(raw_expr)
+        assert rewritten == "NULL"
+
+    def test_dedupe_malformed_qualified_partition_reference(self, emitter):
+        """Deduplicate malformed alias."COL".COL chains."""
+        metric_sql = (
+            'LAG(SUM(FACT.REVENUE), 12) OVER '
+            '(PARTITION BY FACT."PRODUCT_KEY".PRODUCT_KEY ORDER BY CALENDAR.YEARPERIOD)'
+        )
+
+        repaired = emitter._dedupe_qualified_column_tokens(metric_sql)
+
+        assert 'FACT."PRODUCT_KEY".PRODUCT_KEY' not in repaired
+        assert 'PARTITION BY FACT."PRODUCT_KEY"' in repaired
+
+    def test_known_finance_metric_fallback_expressions(self, emitter):
+        """Known finance metrics should receive deterministic SQL fallback."""
+        total_cogs = emitter._build_known_metric_fallback_expression(
+            metric_name="TOTAL_COGS",
+            fact_alias="FACT",
+            scenario_alias="SCENARIO",
+        )
+        gross_margin = emitter._build_known_metric_fallback_expression(
+            metric_name="GROSS_MARGIN",
+            fact_alias="FACT",
+            scenario_alias="SCENARIO",
+        )
+        gm = emitter._build_known_metric_fallback_expression(
+            metric_name="GM",
+            fact_alias="FACT",
+            scenario_alias="SCENARIO",
+        )
+        revenuety = emitter._build_known_metric_fallback_expression(
+            metric_name="REVENUETY",
+            fact_alias="FACT",
+            scenario_alias="SCENARIO",
+        )
+        rev_var = emitter._build_known_metric_fallback_expression(
+            metric_name="REVENUE_VAR_TO_BUDGET_1",
+            fact_alias="FACT",
+            scenario_alias="SCENARIO",
+        )
+
+        assert "SUM(FACT.MATERIAL_COSTS)" in total_cogs
+        assert "SUM(FACT.REVENUE)" in gross_margin
+        assert "CASE WHEN SUM(FACT.REVENUE) = 0" in gm
+        assert "SCENARIO.SCENARIO = 'Actual'" in revenuety
+        assert "SCENARIO.SCENARIO = 'Budget'" in rev_var
+
     def test_metric_emission_alias_rehomed_to_expression_entity(self, emitter):
         """Emit metrics under referenced entity when default alias is unrelated."""
         dataset_aliases = {
