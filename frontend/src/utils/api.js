@@ -945,8 +945,10 @@ export const api = {
 
     // ── Project Config (semabridge.yaml per-project blob) ─────────────────
 
-    async getProjectConfig(projectId) {
-        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/config`);
+    async getProjectConfig(projectId, options = {}) {
+        const preferRepo = Boolean(options?.preferRepo);
+        const query = preferRepo ? '?prefer_repo=true' : '';
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/config${query}`);
         return handleResponse(res);
     },
 

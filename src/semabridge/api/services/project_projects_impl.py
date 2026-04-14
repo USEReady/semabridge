@@ -127,7 +127,7 @@ async def delete_project_compat(project_id: str):
     return Response(status_code=204)
 
 
-async def get_project_config_compat(project_id: str):
+async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(default=False)):
     _compat_ensure_loaded()
     project = _compat_projects.get(project_id)
     if not project:
@@ -139,10 +139,16 @@ async def get_project_config_compat(project_id: str):
             "target": {"type": "snowflake"},
         })
         _compat_projects[project_id] = project
-    # IMPORTANT: prefer per-project config first so "Copy Presets" can load
-    # different YAMLs for different projects. Fall back to repository file only
-    # when the project has no stored config.
-    yaml_text = _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(project)
+    # IMPORTANT: default behavior prefers per-project config so "Copy Presets"
+    # can load different YAMLs for different projects. Some UI flows (for
+    # example Model Mapping) can opt into prefer_repo=True to reflect the
+    # workspace semabridge.yaml as the single source of truth.
+    repo_yaml = _compat_load_repo_yaml_text()
+    if prefer_repo and repo_yaml:
+        yaml_text = repo_yaml
+        _compat_project_configs[project_id] = repo_yaml
+    else:
+        yaml_text = _compat_project_configs.get(project_id) or repo_yaml or _compat_default_project_yaml(project)
     _compat_project_configs[project_id] = yaml_text
     return {"project_id": project_id, "config_yaml": yaml_text, "yaml_path": str(_compat_repo_yaml_path().resolve()).replace('\\\\', '/')}
 

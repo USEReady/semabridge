@@ -1,10 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
-import { Zap, RefreshCw, Link, Edit3, GripVertical, ArrowRight, X, Check } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, Check, Cloud, Database, Loader2, Play, RefreshCw, Rocket, Search, Snowflake } from 'lucide-react';
+import { parseDocument as parseYamlDocument } from 'yaml';
 import PageHeader from '../components/common/PageHeader';
-import Modal from '../components/common/Modal';
 import StatusBadge from '../components/common/StatusBadge';
-import SearchInput from '../components/common/SearchInput';
-import { matchesSmartQuery } from '../components/common/SmartSearchBar';
 import { api } from '../utils/api';
 
 const TYPE_COLORS = {
@@ -13,8 +11,21 @@ const TYPE_COLORS = {
   uuid: '#84cc16', text: '#6b7280', float: '#f97316',
 };
 
+const FILTERS = [
+  { id: 'all', label: 'All' },
+  { id: 'auto', label: 'Auto' },
+  { id: 'manual', label: 'Manual' },
+  { id: 'unmapped', label: 'Unmapped' },
+  { id: 'collision', label: 'Collision/Error' },
+];
+
+const SNOWFLAKE_RESERVED = new Set([
+  'SELECT', 'GROUP', 'ORDER', 'TABLE', 'COLUMN', 'DATE', 'FROM', 'WHERE',
+  'BY', 'JOIN', 'VIEW', 'UNION', 'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'DROP',
+]);
+
 function TypeBadge({ type }) {
-  const color = TYPE_COLORS[type?.toLowerCase()] ?? '#6b7280';
+  const color = TYPE_COLORS[String(type || '').toLowerCase()] ?? '#6b7280';
   return (
     <span
       style={{
@@ -28,437 +39,619 @@ function TypeBadge({ type }) {
         border: `1px solid ${color}30`,
       }}
     >
-      {type ?? '?'}
+      {type || '?'}
     </span>
   );
 }
 
-const VALIDATION_RULES = ['None', 'Not Null', 'Email Format', 'Phone Format', 'Custom Regex'];
+function getConnectorPresentation(type) {
+  const normalized = String(type || '').toLowerCase();
+  if (normalized.includes('fabric')) {
+    return { label: 'Microsoft Fabric', icon: <Cloud size={14} />, accent: '#60a5fa' };
+  }
+  if (normalized.includes('snowflake')) {
+    return { label: 'Snowflake', icon: <Snowflake size={14} />, accent: '#38bdf8' };
+  }
+  if (normalized.includes('databricks')) {
+    return { label: 'Databricks', icon: <Database size={14} />, accent: '#fb923c' };
+  }
+  return { label: normalized || 'Connector', icon: <Database size={14} />, accent: '#94a3b8' };
+}
+
+function normalizeStatus(item) {
+  const validation = String(item?.validation_status || '').toLowerCase();
+  const explicit = String(item?.status || '').toLowerCase();
+  if (validation === 'invalid' || validation === 'collision' || item?.collision_detected) return 'collision';
+  if (!String(item?.target_field || item?.target_name || '').trim()) return 'unmapped';
+  if (explicit === 'manual') return 'manual';
+  return 'auto';
+}
+
+function normalizeRows(data) {
+  const rows = [];
+  const tableMappings = Array.isArray(data?.mappings) ? data.mappings : [];
+
+  tableMappings.forEach((table, tableIndex) => {
+    const tableSource = String(table?.source || '').trim();
+    const tableTarget = String(table?.target || '').trim();
+    const columns = Array.isArray(table?.columns) ? table.columns : [];
+
+    if (columns.length === 0) {
+      rows.push({
+        id: String(table?.id || `${tableSource}-${tableIndex}`),
+        source_field: tableSource || `field_${tableIndex + 1}`,
+        source_type: table?.type || 'table',
+        target_field: tableTarget,
+        target_type: table?.type || 'table',
+        status: normalizeStatus({ ...table, target_field: tableTarget }),
+        validation_status: table?.validation_status || '',
+        validation_code: table?.validation_code || '',
+        validation_message: table?.validation_message || '',
+        suggested_target_name: table?.suggested_target_name || '',
+        isDirty: false,
+      });
+      return;
+    }
+
+    columns.forEach((column, columnIndex) => {
+      rows.push({
+        id: `${table?.id || tableSource || `t${tableIndex}`}:${column?.source_path || column?.source || columnIndex}`,
+        source_field: String(column?.source || '').trim() || `column_${columnIndex + 1}`,
+        source_type: column?.type || 'unknown',
+        target_field: String(column?.target || '').trim(),
+        target_type: column?.type || 'unknown',
+        status: normalizeStatus({ ...column, target_field: column?.target }),
+        validation_status: column?.validation_status || '',
+        validation_code: column?.validation_code || '',
+        validation_message: column?.validation_message || '',
+        suggested_target_name: column?.suggested_target_name || '',
+        parent_table: tableSource,
+        isDirty: false,
+      });
+    });
+  });
+
+  return rows;
+}
+
+function sanitizeIdentifier(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return 'UNNAMED';
+  const cleaned = raw
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  if (!cleaned) return 'UNNAMED';
+  return /^\d/.test(cleaned) ? `N_${cleaned}` : cleaned;
+}
+
+function validateTargetName(value, targetPlatform, sourceType, targetType) {
+  const next = String(value || '').trim();
+  if (!next) {
+    return { isValid: false, code: 'EMPTY_TARGET', message: 'Target field cannot be empty.', suggestion: 'UNNAMED' };
+  }
+
+  const platform = String(targetPlatform || '').toLowerCase();
+  const upper = next.toUpperCase();
+
+  if (platform.includes('snowflake') && SNOWFLAKE_RESERVED.has(upper)) {
+    return {
+      isValid: false,
+      code: 'RESERVED_KEYWORD',
+      message: 'Target field is a Snowflake reserved keyword.',
+      suggestion: `COL_${upper}`,
+    };
+  }
+
+  const sanitized = sanitizeIdentifier(next);
+  if (platform.includes('snowflake') && sanitized !== upper) {
+    return {
+      isValid: false,
+      code: 'UNSUPPORTED_CHARACTERS',
+      message: 'Target field has unsupported characters for Snowflake.',
+      suggestion: sanitized,
+    };
+  }
+
+  if (String(sourceType || '').toLowerCase() === 'boolean' && String(targetType || '').toLowerCase() === 'date') {
+    return {
+      isValid: false,
+      code: 'INCOMPATIBLE_TYPE',
+      message: 'Source and target data types are incompatible.',
+      suggestion: sanitized,
+    };
+  }
+
+  return { isValid: true, code: 'OK', message: '', suggestion: sanitized };
+}
+
+function parseProjectSemabridgeYaml(rawYaml) {
+  if (!rawYaml || typeof rawYaml !== 'string') {
+    return {
+      projectName: 'semabridge.yaml',
+      sourceName: 'Source Model',
+      sourceType: 'Unknown',
+      targetName: 'Target Model',
+      targetType: 'Unknown',
+      selectedModels: [],
+    };
+  }
+
+  try {
+    const parsedDoc = parseYamlDocument(rawYaml, { uniqueKeys: false, prettyErrors: true });
+    const tree = parsedDoc?.toJS ? parsedDoc.toJS() : {};
+    const source = tree?.source && typeof tree.source === 'object' ? tree.source : {};
+    const target = tree?.target && typeof tree.target === 'object'
+      ? tree.target
+      : (Array.isArray(tree?.targets) && tree.targets.length > 0 && typeof tree.targets[0] === 'object' ? tree.targets[0] : {});
+    const selectedModels = Array.isArray(source?.models)
+      ? source.models.map((item) => String(item || '').trim()).filter(Boolean)
+      : [];
+    const sourceName = selectedModels[0] || String(source?.name || source?.type || 'fabric');
+    const targetName = String(target?.name || target?.type || 'snowflake');
+
+    return {
+      projectName: String(tree?.project_name || 'semabridge.yaml'),
+      sourceName,
+      sourceType: String(source?.type || 'Unknown'),
+      targetName,
+      targetType: String(target?.type || 'Unknown'),
+      selectedModels,
+    };
+  } catch {
+    return {
+      projectName: 'semabridge.yaml',
+      sourceName: 'Source Model',
+      sourceType: 'Unknown',
+      targetName: 'Target Model',
+      targetType: 'Unknown',
+      selectedModels: [],
+    };
+  }
+}
 
 export default function ModelMappingPage() {
-  const [mappings, setMappings] = useState([]);
-  const [sourceFields, setSourceFields] = useState([]);
-  const [targetFields, setTargetFields] = useState([]);
-  const [sourceModel, setSourceModel] = useState({ name: 'Source Model', type: 'PostgreSQL', field_count: 0 });
-  const [targetModel, setTargetModel] = useState({ name: 'Target Model', type: 'Snowflake', field_count: 0 });
-  const [loading, setLoading] = useState(true);
-  const [autoMapping, setAutoMapping] = useState(false);
-  const [search, setSearch] = useState('');
-  const [searchUseRegex, setSearchUseRegex] = useState(false);
-  const [selectedMapping, setSelectedMapping] = useState(null);
-  const [editModalOpen, setEditModalOpen] = useState(false);
-  const [editForm, setEditForm] = useState({ transform: '', validation: 'None' });
-  const [editSaving, setEditSaving] = useState(false);
-
-  // Load existing mappings
-  useEffect(() => {
-    (async () => {
-      try {
-        const data = await api.getMappings();
-        if (data) {
-          setMappings(data.mappings ?? []);
-          setSourceFields(data.source_fields ?? []);
-          setTargetFields(data.target_fields ?? []);
-          if (data.source_model) setSourceModel(data.source_model);
-          if (data.target_model) setTargetModel(data.target_model);
-        }
-      } catch {
-        // Use demo data when no API available
-        const demo = generateDemoData();
-        setSourceFields(demo.source);
-        setTargetFields(demo.target);
-        setMappings(demo.mappings);
-        setSourceModel({ name: 'sales_transactions', type: 'PostgreSQL', field_count: demo.source.length });
-        setTargetModel({ name: 'fact_sales', type: 'Snowflake', field_count: demo.target.length });
-      } finally {
-        setLoading(false);
-      }
-    })();
+  const queryProjectId = useMemo(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('project_id') || '';
+    } catch {
+      return '';
+    }
   }, []);
 
-  const handleAutoMap = async () => {
-    setAutoMapping(true);
-    try {
-      const result = await api.autoMap();
-      if (result?.mappings) {
-        setMappings(result.mappings);
+  const [projects, setProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState(queryProjectId);
+  const [activeProjectLabel, setActiveProjectLabel] = useState('semabridge.yaml');
+  const [sourceModel, setSourceModel] = useState({ name: 'Source Model', type: 'Unknown', field_count: 0 });
+  const [targetModel, setTargetModel] = useState({ name: 'Target Model', type: 'Unknown', field_count: 0 });
+
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [isDryRunLoading, setIsDryRunLoading] = useState(false);
+  const [deployLoading, setDeployLoading] = useState(false);
+  const [hasDryRunResult, setHasDryRunResult] = useState(false);
+  const [pageError, setPageError] = useState('');
+  const [search, setSearch] = useState('');
+  const [activeFilter, setActiveFilter] = useState('all');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await api.listProjects();
+        if (cancelled) return;
+        setProjects(Array.isArray(list) ? list : []);
+        if (!selectedProjectId && Array.isArray(list) && list.length > 0) {
+          const preferred = list.find((project) => {
+            const name = String(project?.name || '').toLowerCase();
+            const label = String(project?.config_name || project?.project_name || '').toLowerCase();
+            return name.includes('semabridge') || label.includes('semabridge');
+          }) || list[0];
+          const firstId = String(preferred?.id || preferred?.project_id || '').trim();
+          if (firstId) {
+            setSelectedProjectId(firstId);
+            setActiveProjectLabel(String(preferred?.name || 'semabridge.yaml'));
+          }
+        }
+      } catch {
+        if (!cancelled) setProjects([]);
       }
-    } catch (err) {
-      console.error('Auto-map failed:', err);
-    } finally {
-      setAutoMapping(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProjectId]);
+
+  const loadProjectMappings = useCallback(async (projectId) => {
+    if (!projectId) {
+      setRows([]);
+      setLoading(false);
+      return;
     }
-  };
 
-  const openEditModal = (mapping) => {
-    setSelectedMapping(mapping);
-    setEditForm({ transform: mapping.transform ?? '', validation: mapping.validation ?? 'None' });
-    setEditModalOpen(true);
-  };
+    setLoading(true);
+    setPageError('');
+    setHasDryRunResult(false);
 
-  const handleSaveEdit = async () => {
-    if (!selectedMapping) return;
-    setEditSaving(true);
     try {
-      const updated = await api.updateMapping(selectedMapping.id, {
-        transform: editForm.transform,
-        validation: editForm.validation,
-        status: 'manual',
+      const config = await api.getProjectConfig(projectId, { preferRepo: true });
+      const semabridgeContext = parseProjectSemabridgeYaml(config?.config_yaml || '');
+
+      const mappingData = await api.autoMap({
+        project_id: projectId,
+        dry_run: true,
+        config_yaml: config?.config_yaml || '',
+        target_connector: String(semabridgeContext.targetType || 'snowflake'),
+        selected_model_names: semabridgeContext.selectedModels,
+        project_name: semabridgeContext.projectName,
       });
-      setMappings(m => m.map(x => x.id === selectedMapping.id ? { ...x, ...updated, status: 'manual' } : x));
-      setEditModalOpen(false);
-    } catch (err) {
-      // Optimistic update if API fails
-      setMappings(m => m.map(x => x.id === selectedMapping.id ? {
-        ...x,
-        transform: editForm.transform,
-        validation: editForm.validation,
-        status: 'manual',
-      } : x));
-      setEditModalOpen(false);
+
+      const nextRows = normalizeRows(mappingData);
+      setRows(nextRows);
+
+      const sourceLabel = String(semabridgeContext.sourceType || 'fabric');
+      const targetLabel = String(semabridgeContext.targetType || 'snowflake');
+      setActiveProjectLabel(String(semabridgeContext.projectName || 'semabridge.yaml'));
+      setSourceModel({
+        name: String(semabridgeContext.sourceName || 'fabric'),
+        type: sourceLabel,
+        field_count: nextRows.length,
+      });
+      setTargetModel({
+        name: String(semabridgeContext.targetName || 'snowflake'),
+        type: targetLabel,
+        field_count: nextRows.filter((row) => String(row.target_field || '').trim()).length,
+      });
+    } catch (error) {
+      setPageError(error?.message || 'Failed to load project mappings.');
+      setRows([]);
     } finally {
-      setEditSaving(false);
+      setLoading(false);
     }
-  };
+  }, []);
 
-  const filteredMappings = mappings.filter(m => !search || matchesSmartQuery(
-    `${m.source_field || ''} ${m.target_field || ''}`,
-    search,
-    searchUseRegex,
-  ));
+  useEffect(() => {
+    loadProjectMappings(selectedProjectId);
+  }, [loadProjectMappings, selectedProjectId]);
 
-  const autoCount = mappings.filter(m => m.status === 'auto').length;
-  const manualCount = mappings.filter(m => m.status === 'manual').length;
-  const unmappedCount = (sourceFields.length || mappings.length) - autoCount - manualCount;
+  const runDryMap = useCallback(async () => {
+    if (!selectedProjectId) return;
 
-  const inputStyle = {
-    width: '100%',
-    background: 'var(--bg-input)',
-    border: '1px solid var(--border-main)',
-    borderRadius: 8,
-    color: 'var(--text-primary)',
-    padding: '8px 12px',
-    fontSize: 13,
-    outline: 'none',
-    fontFamily: 'inherit',
-    boxSizing: 'border-box',
-  };
+    setIsDryRunLoading(true);
+    setPageError('');
+
+    try {
+      const projectConfig = await api.getProjectConfig(selectedProjectId, { preferRepo: true });
+      const semabridgeContext = parseProjectSemabridgeYaml(projectConfig?.config_yaml || '');
+      const result = await api.runProjectNow(selectedProjectId, {
+        project_id: selectedProjectId,
+        dry_run: true,
+        config_yaml: projectConfig?.config_yaml || '',
+        target_connector: String(semabridgeContext.targetType || targetModel.type || 'snowflake'),
+        selected_model_names: semabridgeContext.selectedModels,
+        project_name: semabridgeContext.projectName,
+      });
+      const nextRows = normalizeRows(result);
+      setRows(nextRows);
+      setHasDryRunResult(true);
+    } catch (error) {
+      setPageError(error?.message || 'Dry run failed for this project.');
+      setHasDryRunResult(false);
+    } finally {
+      setIsDryRunLoading(false);
+    }
+  }, [selectedProjectId, targetModel.type]);
+
+  const handleInlineTargetChange = useCallback((rowId, value) => {
+    setRows((prev) => prev.map((row) => {
+      if (row.id !== rowId) return row;
+      const validation = validateTargetName(value, targetModel.type, row.source_type, row.target_type);
+      if (validation.isValid) {
+        return {
+          ...row,
+          target_field: value,
+          status: 'manual',
+          validation_status: 'valid',
+          validation_code: 'OK',
+          validation_message: '',
+          suggested_target_name: validation.suggestion,
+          isDirty: true,
+        };
+      }
+      return {
+        ...row,
+        target_field: value,
+        status: 'collision',
+        validation_status: 'invalid',
+        validation_code: validation.code,
+        validation_message: validation.message,
+        suggested_target_name: validation.suggestion,
+        isDirty: true,
+      };
+    }));
+  }, [targetModel.type]);
+
+  const applySuggestion = useCallback((rowId) => {
+    setRows((prev) => prev.map((row) => {
+      if (row.id !== rowId) return row;
+      const suggested = String(row.suggested_target_name || '').trim();
+      if (!suggested) return row;
+      const validation = validateTargetName(suggested, targetModel.type, row.source_type, row.target_type);
+      return {
+        ...row,
+        target_field: suggested,
+        status: validation.isValid ? 'manual' : 'collision',
+        validation_status: validation.isValid ? 'valid' : 'invalid',
+        validation_code: validation.code,
+        validation_message: validation.message,
+        isDirty: true,
+      };
+    }));
+  }, [targetModel.type]);
+
+  const blockingCount = useMemo(
+    () => rows.filter((row) => row.status === 'collision' || row.status === 'unmapped').length,
+    [rows],
+  );
+
+  const counts = useMemo(() => {
+    const summary = { all: rows.length, auto: 0, manual: 0, unmapped: 0, collision: 0 };
+    rows.forEach((row) => {
+      if (summary[row.status] !== undefined) summary[row.status] += 1;
+    });
+    return summary;
+  }, [rows]);
+
+  const filteredRows = useMemo(() => {
+    const query = String(search || '').trim().toLowerCase();
+    return rows.filter((row) => {
+      if (activeFilter !== 'all' && row.status !== activeFilter) return false;
+      if (!query) return true;
+      const haystack = `${row.source_field} ${row.target_field} ${row.validation_message}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [activeFilter, rows, search]);
+
+  const deployMappings = useCallback(async () => {
+    if (!selectedProjectId || blockingCount > 0 || !hasDryRunResult) return;
+
+    setDeployLoading(true);
+    setPageError('');
+
+    try {
+      const dirtyRows = rows.filter((row) => row.isDirty && row.id);
+      for (const row of dirtyRows) {
+        await api.updateMapping(String(row.id), {
+          project_id: selectedProjectId,
+          target_name: row.target_field,
+          status: row.status,
+        });
+      }
+      await api.syncProject(selectedProjectId);
+      await loadProjectMappings(selectedProjectId);
+    } catch (error) {
+      setPageError(error?.message || 'Deploy failed. Resolve issues and retry.');
+    } finally {
+      setDeployLoading(false);
+    }
+  }, [blockingCount, hasDryRunResult, loadProjectMappings, rows, selectedProjectId]);
 
   return (
-    <div style={{ padding: '28px 32px', minHeight: '100%' }}>
+    <div style={{ padding: '24px 28px', minHeight: '100%', background: 'var(--bg-main)' }}>
       <PageHeader
         breadcrumb={['Projects', 'Model Mapping']}
-        title="Model Mapping"
-        description="Map source fields to target fields. Auto-detect or edit manually."
+        title="Model Mapping Workspace"
+        description="Run auto-map as a dry-run validation, resolve collisions, then deploy validated mappings."
         action={{
-          label: autoMapping ? 'Mapping…' : 'Run Auto-Map',
-          icon: autoMapping ? <RefreshCw size={14} className="animate-spin" /> : <Zap size={14} />,
-          onClick: handleAutoMap,
+          label: isDryRunLoading ? 'Running Auto-Map...' : 'Run Auto-Map',
+          icon: isDryRunLoading ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />,
+          onClick: runDryMap,
         }}
       />
 
-      {/* Source / Target info cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
-        {[
-          { label: 'SOURCE MODEL', model: sourceModel, iconBg: 'var(--color-success-muted)', iconColor: 'var(--color-success)' },
-          { label: 'TARGET MODEL',  model: targetModel,  iconBg: 'var(--color-accent-faint)',  iconColor: 'var(--accent-blue)' },
-        ].map(({ label, model, iconBg, iconColor }) => (
-          <div
-            key={label}
-            className="flex items-center gap-4 rounded-xl"
-            style={{
-              background: 'var(--bg-surface)',
-              border: '1px solid var(--border-main)',
-              padding: '16px 20px',
-            }}
-          >
-            <div
-              className="flex items-center justify-center rounded-xl"
-              style={{ width: 44, height: 44, background: iconBg, color: iconColor, fontSize: 22, flexShrink: 0 }}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+        <div style={{ border: '1px solid var(--border-main)', borderRadius: 999, background: 'var(--bg-surface-raised)', padding: '7px 12px', fontSize: 12, color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>Active Project</span>
+          <span>{activeProjectLabel}</span>
+        </div>
+        <div style={{ border: '1px solid var(--border-main)', borderRadius: 999, background: 'var(--bg-surface-raised)', padding: '7px 12px', fontSize: 12, color: 'var(--text-secondary)' }}>
+          semabridge.yaml is the single source of truth for this workspace.
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
+        <FlowCard label="SOURCE MODEL" model={sourceModel} />
+        <FlowCard label="TARGET MODEL" model={targetModel} />
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+        {FILTERS.map((filter) => {
+          const isActive = activeFilter === filter.id;
+          const isCollision = filter.id === 'collision';
+          const count = counts[filter.id] ?? counts.all;
+          return (
+            <button
+              key={filter.id}
+              type="button"
+              onClick={() => setActiveFilter(filter.id)}
+              style={{
+                borderRadius: 999,
+                border: isCollision ? '1px solid rgba(239, 68, 68, 0.45)' : '1px solid var(--border-main)',
+                background: isActive
+                  ? (isCollision ? 'rgba(239, 68, 68, 0.16)' : 'var(--accent-blue)22')
+                  : 'var(--bg-surface-raised)',
+                color: isCollision ? 'var(--color-error)' : 'var(--text-primary)',
+                fontSize: 11,
+                fontWeight: 700,
+                padding: '6px 10px',
+                cursor: 'pointer',
+              }}
             >
-              {label === 'SOURCE MODEL' ? '📦' : '🎯'}
-            </div>
-            <div className="min-w-0">
-              <p style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 2 }}>
-                {label}
-              </p>
-              <p className="text-primary font-semibold truncate" style={{ fontSize: 14 }}>{model.name}</p>
-              <p className="text-tertiary" style={{ fontSize: 11 }}>{model.type} · {model.field_count} fields</p>
-            </div>
+              {filter.label} ({count})
+            </button>
+          );
+        })}
+
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ position: 'relative' }}>
+            <Search size={13} style={{ position: 'absolute', left: 8, top: 8, color: 'var(--text-tertiary)' }} />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search fields..."
+              style={{
+                background: 'var(--bg-input)',
+                border: '1px solid var(--border-main)',
+                color: 'var(--text-primary)',
+                borderRadius: 8,
+                padding: '6px 10px 6px 28px',
+                width: 240,
+              }}
+            />
           </div>
-        ))}
-      </div>
-
-      {/* Summary bar */}
-      <div className="flex items-center gap-4 mb-4">
-        <div className="flex items-center gap-2">
-          <span
-            className="rounded-full font-bold text-xs px-2 py-0.5"
-            style={{ background: 'var(--color-success-muted)', color: 'var(--color-success)', letterSpacing: '0.04em' }}
-          >
-            {autoCount} AUTO
-          </span>
-          <span
-            className="rounded-full font-bold text-xs px-2 py-0.5"
-            style={{ background: 'var(--color-warning-muted)', color: 'var(--color-warning)', letterSpacing: '0.04em' }}
-          >
-            {manualCount} MANUAL
-          </span>
-          <span
-            className="rounded-full font-bold text-xs px-2 py-0.5"
-            style={{ background: 'var(--bg-surface-raised)', color: 'var(--text-tertiary)', letterSpacing: '0.04em' }}
-          >
-            {unmappedCount > 0 ? unmappedCount : 0} UNMAPPED
-          </span>
-        </div>
-        <div className="flex-1" />
-        <SearchInput
-          value={search}
-          onChange={setSearch}
-          useRegex={searchUseRegex}
-          onToggleRegex={setSearchUseRegex}
-          allowRegex
-          helperText={searchUseRegex ? 'Regex examples: ^cust_.* or amount|revenue' : 'Tip: enable regex to use patterns like ^cust_.*'}
-          placeholder="Search fields…"
-          width={240}
-        />
-      </div>
-
-      {/* Mapping table */}
-      {loading ? (
-        <div className="flex items-center justify-center" style={{ padding: '80px 0' }}>
-          <span className="text-tertiary text-sm">Loading mappings…</span>
-        </div>
-      ) : (
-        <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--border-main)' }}>
-          {/* Table header */}
-          <div
+          <button
+            type="button"
+            disabled={!hasDryRunResult || blockingCount > 0 || deployLoading || isDryRunLoading}
+            onClick={deployMappings}
             style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 40px 1fr 100px 60px',
-              gap: 0,
-              background: 'var(--bg-surface-raised)',
-              borderBottom: '1px solid var(--border-main)',
-              padding: '10px 14px',
+              border: 'none',
+              borderRadius: 8,
+              padding: '8px 12px',
+              background: 'var(--accent-blue)',
+              color: '#fff',
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: (!hasDryRunResult || blockingCount > 0 || deployLoading || isDryRunLoading) ? 'not-allowed' : 'pointer',
+              opacity: (!hasDryRunResult || blockingCount > 0 || deployLoading || isDryRunLoading) ? 0.55 : 1,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
             }}
           >
-            {['Source Field', '', 'Target Field', 'Status', ''].map((h, i) => (
-              <span key={i} style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em', textAlign: i === 3 ? 'center' : 'left' }}>
-                {h}
-              </span>
-            ))}
-          </div>
+            {deployLoading ? <Loader2 size={13} className="animate-spin" /> : <Rocket size={13} />}
+            Deploy Mapping
+          </button>
+        </div>
+      </div>
 
-          {filteredMappings.length === 0 ? (
-            <div className="flex items-center justify-center" style={{ padding: 40 }}>
-              <span className="text-tertiary text-sm">No mappings found.</span>
-            </div>
-          ) : (
-            filteredMappings.map((m, i) => (
-              <div
-                key={m.id ?? i}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 40px 1fr 100px 60px',
-                  gap: 0,
-                  padding: '11px 14px',
-                  borderBottom: i < filteredMappings.length - 1 ? '1px solid var(--border-main)' : 'none',
-                  alignItems: 'center',
-                  transition: 'background 0.15s',
-                }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface-hover)'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-              >
-                {/* Source field */}
-                <div className="flex items-center gap-2">
-                  <GripVertical size={12} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
-                  <span className="text-primary text-sm font-medium">{m.source_field}</span>
-                  <TypeBadge type={m.source_type} />
-                </div>
-
-                {/* Arrow */}
-                <div className="flex items-center justify-center">
-                  <Link size={13} style={{ color: m.status === 'auto' ? 'var(--color-success)' : m.status === 'manual' ? 'var(--color-warning)' : 'var(--text-tertiary)' }} />
-                </div>
-
-                {/* Target field */}
-                <div className="flex items-center gap-2">
-                  <span className="text-primary text-sm font-medium">{m.target_field || '—'}</span>
-                  {m.target_type && <TypeBadge type={m.target_type} />}
-                </div>
-
-                {/* Status */}
-                <div style={{ textAlign: 'center' }}>
-                  <StatusBadge
-                    status={m.status === 'auto' ? 'success' : m.status === 'manual' ? 'warning' : 'draft'}
-                    label={m.status === 'auto' ? 'Auto' : m.status === 'manual' ? 'Manual' : 'Unmapped'}
-                    size="sm"
-                  />
-                </div>
-
-                {/* Edit action */}
-                <div className="flex items-center justify-end">
-                  <button
-                    onClick={() => openEditModal(m)}
-                    className="flex items-center justify-center rounded-md theme-transition"
-                    style={{
-                      width: 28,
-                      height: 28,
-                      color: 'var(--text-tertiary)',
-                      background: 'transparent',
-                      border: 'none',
-                      cursor: 'pointer',
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface-hover)'; e.currentTarget.style.color = 'var(--accent-blue)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-tertiary)'; }}
-                    title="Edit mapping"
-                  >
-                    <Edit3 size={13} />
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
+      {pageError && (
+        <div style={{ border: '1px solid rgba(239, 68, 68, 0.45)', background: 'rgba(239, 68, 68, 0.12)', color: 'var(--color-error)', borderRadius: 8, padding: '10px 12px', marginBottom: 12, fontSize: 12 }}>
+          {pageError}
         </div>
       )}
 
-      {/* Edit Mapping Modal */}
-      <Modal
-        open={editModalOpen}
-        onClose={() => setEditModalOpen(false)}
-        title="Edit Mapping"
-        footer={
-          <>
-            <button
-              onClick={() => setEditModalOpen(false)}
-              className="rounded-lg text-sm font-medium px-4 py-2"
-              style={{ background: 'transparent', border: '1px solid var(--border-main)', color: 'var(--text-secondary)', cursor: 'pointer' }}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSaveEdit}
-              disabled={editSaving}
-              className="flex items-center gap-2 rounded-lg text-sm font-semibold px-4 py-2"
-              style={{
-                background: editSaving ? 'var(--bg-surface-raised)' : 'var(--accent-blue)',
-                color: editSaving ? 'var(--text-tertiary)' : '#fff',
-                border: 'none',
-                cursor: editSaving ? 'not-allowed' : 'pointer',
-              }}
-            >
-              {editSaving ? <RefreshCw size={12} className="animate-spin" /> : <Check size={12} />}
-              Apply Mapping
-            </button>
-          </>
-        }
-      >
-        {selectedMapping && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {/* Field info */}
-            <div
-              className="flex items-center gap-3 rounded-lg"
-              style={{ background: 'var(--bg-surface-raised)', padding: '12px 14px' }}
-            >
-              <div>
-                <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 2 }}>Source</p>
-                <div className="flex items-center gap-2">
-                  <span className="text-primary text-sm font-semibold">{selectedMapping.source_field}</span>
-                  <TypeBadge type={selectedMapping.source_type} />
+      <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, overflow: 'hidden' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 150px', background: 'var(--bg-surface-raised)', borderBottom: '1px solid var(--border-main)', padding: '10px 12px', fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)' }}>
+          <span>Source Field</span>
+          <span>Target Field</span>
+          <span>Status</span>
+        </div>
+
+        {loading ? (
+          <CenteredNotice icon={<Loader2 size={14} className="animate-spin" />} text="Loading project mappings..." />
+        ) : isDryRunLoading ? (
+          <CenteredNotice icon={<Loader2 size={14} className="animate-spin" />} text="Running auto-map validation..." />
+        ) : filteredRows.length === 0 ? (
+          <CenteredNotice text={hasDryRunResult ? 'No rows match current filters.' : 'Run Auto-Map to generate validated field mappings.'} />
+        ) : (
+          filteredRows.map((row, index) => (
+            <div key={row.id} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 150px', padding: '10px 12px', borderBottom: index < filteredRows.length - 1 ? '1px solid var(--border-main)' : 'none', background: row.status === 'collision' ? 'rgba(239, 68, 68, 0.07)' : 'transparent' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.source_field}</span>
+                <TypeBadge type={row.source_type} />
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input
+                    value={row.target_field || ''}
+                    onChange={(e) => handleInlineTargetChange(row.id, e.target.value)}
+                    placeholder="Enter target field"
+                    style={{
+                      width: '100%',
+                      background: 'var(--bg-input)',
+                      border: row.status === 'collision' ? '1px solid var(--color-error)' : '1px solid var(--border-main)',
+                      color: 'var(--text-primary)',
+                      borderRadius: 8,
+                      padding: '7px 9px',
+                      fontSize: 12,
+                    }}
+                  />
+                  {row.target_type ? <TypeBadge type={row.target_type} /> : null}
                 </div>
+                {row.status === 'collision' && row.validation_message ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--color-error)' }}>
+                    <AlertTriangle size={12} />
+                    <span>{row.validation_message}</span>
+                    {row.suggested_target_name ? (
+                      <button
+                        type="button"
+                        onClick={() => applySuggestion(row.id)}
+                        style={{
+                          marginLeft: 4,
+                          border: '1px solid rgba(239, 68, 68, 0.45)',
+                          background: 'rgba(239, 68, 68, 0.12)',
+                          color: 'var(--color-error)',
+                          borderRadius: 999,
+                          padding: '2px 8px',
+                          fontSize: 10,
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Use {row.suggested_target_name}
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
-              <ArrowRight size={16} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
-              <div>
-                <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 2 }}>Target</p>
-                <div className="flex items-center gap-2">
-                  <span className="text-primary text-sm font-semibold">{selectedMapping.target_field || '—'}</span>
-                  {selectedMapping.target_type && <TypeBadge type={selectedMapping.target_type} />}
-                </div>
+
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                <StatusBadge
+                  size="sm"
+                  status={row.status === 'collision' ? 'error' : row.status === 'manual' ? 'warning' : row.status === 'auto' ? 'success' : 'draft'}
+                  label={row.status === 'collision' ? 'Collision' : row.status === 'manual' ? 'Manual' : row.status === 'auto' ? 'Auto' : 'Unmapped'}
+                />
+                {row.isDirty ? <Check size={13} style={{ color: 'var(--color-success)', marginLeft: 8 }} /> : null}
               </div>
             </div>
-
-            {/* Transform */}
-            <div>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
-                Transformation Logic
-              </label>
-              <textarea
-                value={editForm.transform}
-                onChange={e => setEditForm(f => ({ ...f, transform: e.target.value }))}
-                placeholder="e.g. TRIM(LOWER(source.field_name))"
-                rows={3}
-                style={{
-                  ...inputStyle,
-                  fontFamily: 'monospace',
-                  fontSize: 12,
-                  resize: 'vertical',
-                }}
-                onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-                onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-              />
-            </div>
-
-            {/* Validation */}
-            <div>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
-                Validation Rule
-              </label>
-              <select
-                value={editForm.validation}
-                onChange={e => setEditForm(f => ({ ...f, validation: e.target.value }))}
-                style={{ ...inputStyle, cursor: 'pointer' }}
-              >
-                {VALIDATION_RULES.map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
-            </div>
-
-            {selectedMapping.status === 'auto' && (
-              <div
-                className="flex items-start gap-2 rounded-lg"
-                style={{ background: 'var(--color-warning-muted)', padding: '10px 12px', fontSize: 12, color: 'var(--color-warning)' }}
-              >
-                <Zap size={13} style={{ flexShrink: 0, marginTop: 1 }} />
-                Saving will override the auto-detected mapping and lock this field as manual.
-              </div>
-            )}
-          </div>
+          ))
         )}
-      </Modal>
+      </div>
+
+      <div style={{ marginTop: 12, borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-surface)', padding: '10px 12px', fontSize: 12, color: 'var(--text-secondary)' }}>
+        {hasDryRunResult
+          ? `Auto-map dry run complete. ${blockingCount} blocking row(s) remaining before deploy.`
+          : 'Auto-map has not been executed for this project session.'}
+      </div>
     </div>
   );
 }
 
-/* ── Demo data generator (used when API is unavailable) ── */
-function generateDemoData() {
-  const src = [
-    { name: 'transaction_id', type: 'UUID' },
-    { name: 'amount', type: 'Decimal' },
-    { name: 'customer_ref', type: 'String' },
-    { name: 'created_at', type: 'Timestamp' },
-    { name: 'status_code', type: 'Integer' },
-    { name: 'contact_email', type: 'String' },
-    { name: 'region_id', type: 'Integer' },
-    { name: 'product_sku', type: 'String' },
-  ];
-  const tgt = [
-    { name: 'txn_id', type: 'VARCHAR' },
-    { name: 'sale_amount', type: 'FLOAT' },
-    { name: 'customer_key', type: 'VARCHAR' },
-    { name: 'sale_date', type: 'DATE' },
-    { name: 'order_status', type: 'INTEGER' },
-    { name: 'email_address', type: 'VARCHAR' },
-    { name: 'region_key', type: 'INTEGER' },
-  ];
-  const statuses = ['auto', 'auto', 'auto', 'auto', 'manual', 'manual', 'auto', null];
-  const mappings = src.map((s, i) => ({
-    id: `m_${i}`,
-    source_field: s.name,
-    source_type: s.type,
-    target_field: tgt[i]?.name ?? null,
-    target_type: tgt[i]?.type ?? null,
-    status: statuses[i],
-    transform: '',
-    validation: 'None',
-  }));
-  return { source: src, target: tgt, mappings };
+function FlowCard({ label, model }) {
+  const connector = getConnectorPresentation(model.type);
+  return (
+    <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)', padding: '14px 16px', display: 'grid', gap: 8 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>{label}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ width: 30, height: 30, borderRadius: 8, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: `${connector.accent}1f`, color: connector.accent, border: `1px solid ${connector.accent}33` }}>
+          {connector.icon}
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{model.name}</div>
+          <div style={{ marginTop: 2, fontSize: 12, color: 'var(--text-tertiary)' }}>{connector.label} · {model.field_count} fields</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CenteredNotice({ icon = null, text }) {
+  return (
+    <div style={{ padding: '38px 0', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--text-tertiary)', fontSize: 13 }}>
+      {icon}
+      <span>{text}</span>
+    </div>
+  );
 }

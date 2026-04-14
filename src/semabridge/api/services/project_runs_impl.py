@@ -1,6 +1,23 @@
+import time as _time
 import uuid
 
 from semabridge.api.services.project_shared import *
+from semabridge.api.services.project_shared import (
+    _compat_default_project_yaml,
+    _compat_ensure_loaded,
+    _compat_folders,
+    _compat_job_config,
+    _compat_load_repo_yaml_text,
+    _compat_mappings,
+    _compat_now_iso,
+    _compat_project_configs,
+    _compat_project_runs,
+    _compat_project_schedules,
+    _compat_project_snapshots,
+    _compat_projects,
+    _compat_save_store,
+    _compat_snapshot_groups,
+)
 from semabridge.api.services.project_mapping_engine import build_entity_mappings
 
 
@@ -10,6 +27,34 @@ def _compat_parse_project_cfg_dict(project_cfg: str) -> Dict[str, Any]:
         return parsed if isinstance(parsed, dict) else {}
     except Exception:
         return {}
+
+
+def _compat_source_model_names_from_project_cfg(project_cfg: str) -> List[str]:
+    parsed = _compat_parse_project_cfg_dict(project_cfg)
+    source_cfg = parsed.get("source") if isinstance(parsed.get("source"), dict) else {}
+    model_names: List[str] = []
+
+    source_models = source_cfg.get("models") if isinstance(source_cfg.get("models"), list) else []
+    for raw_name in source_models:
+        name = str(raw_name or "").strip()
+        if name:
+            model_names.append(name)
+
+    if not model_names:
+        source_model = source_cfg.get("model")
+        if isinstance(source_model, str):
+            source_model = source_model.strip()
+            if source_model and source_model != "*":
+                model_names.append(source_model)
+
+    if not model_names:
+        top_level_models = parsed.get("models") if isinstance(parsed.get("models"), list) else []
+        for raw_name in top_level_models:
+            name = str(raw_name or "").strip()
+            if name:
+                model_names.append(name)
+
+    return model_names
 
 
 def _extract_source_type_from_project_cfg(project_cfg: str, fallback: str = "fabric") -> str:
@@ -567,6 +612,18 @@ async def restore_project_version_compat(project_id: str, payload: Dict[str, Any
 
 
 async def run_project_now_compat(project_id: str, background_tasks: BackgroundTasks, payload: Optional[Dict[str, Any]] = None):
+    if bool((payload or {}).get("dry_run", False)):
+        preview_payload = dict(payload or {})
+        preview_payload["project_id"] = project_id
+        preview_payload["dry_run"] = True
+        preview_result = await auto_map_compat(preview_payload)
+        return {
+            **preview_result,
+            "status": "ok",
+            "run_type": "DRY_RUN",
+            "message": "Dry run preview generated using the shared run pipeline.",
+        }
+
     run_type = str((payload or {}).get("run_type") or "SYNC").upper()
     if run_type not in {"SYNC", "RESTORE"}:
         run_type = "SYNC"
@@ -751,7 +808,11 @@ def _compat_existing_entity_mappings(project_id: str) -> Dict[str, Dict[str, Any
     return existing
 
 
-def _compat_build_project_entity_mappings(project_id: str, save_store: bool = True) -> Dict[str, Any]:
+def _compat_build_project_entity_mappings(
+    project_id: str,
+    save_store: bool = True,
+    target_connector: Optional[str] = None,
+) -> Dict[str, Any]:
     _compat_ensure_loaded()
     if project_id not in _compat_projects:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -761,8 +822,7 @@ def _compat_build_project_entity_mappings(project_id: str, save_store: bool = Tr
         project_cfg = _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(_compat_projects[project_id])
         parsed_cfg = _compat_parse_project_cfg_dict(project_cfg)
         fallback_model_name = str(parsed_cfg.get("project_name") or _compat_projects[project_id].get("name") or "model")
-        fallback_models = parsed_cfg.get("models") if isinstance(parsed_cfg.get("models"), list) else []
-        fallback_model_names = [str(item).strip() for item in fallback_models if str(item).strip()]
+        fallback_model_names = _compat_source_model_names_from_project_cfg(project_cfg)
         latest_model = {
             "unique_name": fallback_model_name,
             "datasets": [{"unique_name": model_name, "columns": []} for model_name in fallback_model_names],
@@ -774,6 +834,7 @@ def _compat_build_project_entity_mappings(project_id: str, save_store: bool = Tr
         model=latest_model,
         existing_mappings=_compat_existing_entity_mappings(project_id),
         session_key=f"{project_id}-mapping-session",
+        target_connector=target_connector,
     )
 
     persisted: List[Dict[str, Any]] = []
@@ -789,7 +850,8 @@ def _compat_build_project_entity_mappings(project_id: str, save_store: bool = Tr
                 merged["target_name"] = manual_target
                 merged["status"] = "manual"
                 merged["is_user_edited"] = True
-        _compat_mappings[mapping_id] = merged
+        if save_store:
+            _compat_mappings[mapping_id] = merged
         persisted.append(merged)
 
     if save_store:
@@ -808,7 +870,15 @@ def _compat_build_project_entity_mappings(project_id: str, save_store: bool = Tr
 def _compat_preview_model_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     selected_model_names = payload.get("selected_model_names") if isinstance(payload.get("selected_model_names"), list) else []
     normalized_model_names = [str(item or "").strip() for item in selected_model_names if str(item or "").strip()]
-    project_name = str(payload.get("project_name") or payload.get("name") or "model").strip() or "model"
+    if not normalized_model_names:
+        normalized_model_names = _compat_source_model_names_from_project_cfg(str(payload.get("config_yaml") or ""))
+    config_project_name = _compat_parse_project_cfg_dict(str(payload.get("config_yaml") or "")).get("project_name")
+    project_name = str(
+        config_project_name
+        or payload.get("project_name")
+        or payload.get("name")
+        or "model"
+    ).strip() or "model"
 
     datasets = []
     for raw_name in normalized_model_names:
@@ -844,6 +914,10 @@ def _compat_format_mapping_groups(mapping_payload: Dict[str, Any]) -> List[Dict[
                 "type": "table",
                 "status": "manual" if row.get("is_user_edited") else "auto-detected",
                 "collision_detected": bool(row.get("collision_detected")),
+                "validation_status": row.get("validation_status"),
+                "validation_code": row.get("validation_code"),
+                "validation_message": row.get("validation_message"),
+                "suggested_target_name": row.get("suggested_target_name"),
                 "columns": [],
             }
 
@@ -863,6 +937,10 @@ def _compat_format_mapping_groups(mapping_payload: Dict[str, Any]) -> List[Dict[
             "type": row.get("target_data_type") or row.get("source_data_type") or "unknown",
             "key": str(row.get("source_name") or "").lower() == "id",
             "collision_detected": bool(row.get("collision_detected")),
+            "validation_status": row.get("validation_status"),
+            "validation_code": row.get("validation_code"),
+            "validation_message": row.get("validation_message"),
+            "suggested_target_name": row.get("suggested_target_name"),
         })
 
     return list(grouped.values())
@@ -913,6 +991,11 @@ async def list_mappings_compat(project_id: Optional[str] = None):
 async def auto_map_compat(payload: dict):
     project_id = str((payload or {}).get("project_id") or "").strip()
     selected_model_names = (payload or {}).get("selected_model_names") if isinstance((payload or {}).get("selected_model_names"), list) else []
+    target_connectors = (payload or {}).get("target_connectors") if isinstance((payload or {}).get("target_connectors"), list) else []
+    explicit_target = str((payload or {}).get("target_connector") or "").strip()
+    target_connector = explicit_target or (str(target_connectors[0]).strip() if target_connectors else "")
+    dry_run = bool((payload or {}).get("dry_run", False))
+    config_yaml = str((payload or {}).get("config_yaml") or "").strip()
 
     if not project_id and not selected_model_names and _compat_projects:
         project_id = next(iter(_compat_projects.keys()))
@@ -920,26 +1003,34 @@ async def auto_map_compat(payload: dict):
         raise HTTPException(status_code=400, detail="project_id or selected_model_names is required")
 
     reset_manual = bool((payload or {}).get("reset_manual", False))
-    if project_id:
-        for mapping_id, mapping in list(_compat_mappings.items()):
-            if str(mapping.get("project_id") or "") != project_id:
-                continue
-            if reset_manual:
-                _compat_mappings.pop(mapping_id, None)
-                continue
-            mapping["status"] = "auto"
-            mapping["is_user_edited"] = False
-            mapping["target_name"] = ""
+    preview_mode = dry_run and (bool(config_yaml) or bool(selected_model_names))
+    if project_id and not preview_mode:
+        if not dry_run:
+            for mapping_id, mapping in list(_compat_mappings.items()):
+                if str(mapping.get("project_id") or "") != project_id:
+                    continue
+                if reset_manual:
+                    _compat_mappings.pop(mapping_id, None)
+                    continue
+                mapping["status"] = "auto"
+                mapping["is_user_edited"] = False
+                mapping["target_name"] = ""
 
-        data = _compat_build_project_entity_mappings(project_id)
+        data = _compat_build_project_entity_mappings(
+            project_id,
+            save_store=not dry_run,
+            target_connector=target_connector,
+        )
     else:
-        preview_project_id = f"preview-{uuid.uuid5(uuid.NAMESPACE_DNS, '|'.join(str(item) for item in selected_model_names)).hex[:12]}"
+        preview_seed = config_yaml or '|'.join(str(item) for item in selected_model_names)
+        preview_project_id = f"preview-{uuid.uuid5(uuid.NAMESPACE_DNS, preview_seed or project_id or 'preview').hex[:12]}"
         preview_model = _compat_preview_model_from_payload(payload or {})
         data = build_entity_mappings(
             project_id=preview_project_id,
             model=preview_model,
             existing_mappings={},
             session_key=f"{preview_project_id}-mapping-session",
+            target_connector=target_connector,
         )
         data = {
             "project_id": preview_project_id,

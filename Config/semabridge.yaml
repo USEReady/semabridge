@@ -1,19 +1,16 @@
-project_name: cust_sf
+project_name: hihi
 source:
   type: fabric
-  identity_id: 136c67ee-cf0d-4085-897f-f54b87d8f6c5
+  identity_id: 33393640-df14-49d8-9460-306461ea4555
   workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
   workspace: semabridge
   models:
-    - Customer Profitability
+    - Device
 targets:
-  - type: fabric
-    identity_id: 89b992d6-b830-421a-af5a-fb19ee7d041d
-    workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
-    workspace: semabridge
+  - type: snowflake
 mappings:
-  - source: Customer Profitability
-    target: CUSTOMER_PROFITABILITY
+  - source: Device
+    target: DEVICE
     type: table
     columns:
       - source: id
@@ -35,11 +32,9 @@ ui:
   output_format: osi
 selection:
   model_ids:
-    - 83686c9b-2320-466a-a7a8-c3975d6998e7
+    - 974e7d48-4a76-4518-99d7-6ea751e37ce8
 options:
   auto_relationships: true
   generate_descriptions: true
 target:
-  type: fabric
-  identity_id: 89b992d6-b830-421a-af5a-fb19ee7d041d
-  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
+  type: snowflake

@@ -5,9 +5,12 @@ import re
 import uuid
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from semabridge.utils.identifiers import IdentifierSanitizer, SNOWFLAKE_RESERVED_WORDS
+
 
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9]+")
 _MULTI_UNDERSCORE = re.compile(r"_+")
+_SNOWFLAKE_SANITIZER = IdentifierSanitizer(suppress_reserved=True)
 
 
 def sanitize_identifier(value: str, *, max_length: int = 120) -> str:
@@ -137,12 +140,71 @@ def _scope_key(entity: Dict[str, Any]) -> str:
     return f"entity::{kind}::{entity.get('model_name') or 'model'}"
 
 
+def _normalize_connector_name(value: Optional[str]) -> str:
+    return str(value or "").strip().lower()
+
+
+def _validate_target_name(
+    *,
+    target_name: str,
+    source_name: str,
+    collision_detected: bool,
+    target_connector: Optional[str],
+) -> Dict[str, str]:
+    connector = _normalize_connector_name(target_connector)
+    resolved_target = str(target_name or "").strip()
+    fallback = sanitize_identifier(source_name)
+
+    if collision_detected:
+        return {
+            "validation_status": "collision",
+            "validation_code": "NAME_COLLISION",
+            "validation_message": "Name collision resolved with deterministic suffix.",
+            "suggested_target_name": resolved_target or fallback,
+        }
+
+    if not resolved_target:
+        return {
+            "validation_status": "invalid",
+            "validation_code": "EMPTY_TARGET",
+            "validation_message": "Target name cannot be empty.",
+            "suggested_target_name": fallback,
+        }
+
+    if connector == "snowflake":
+        upper_name = resolved_target.upper()
+        if upper_name.lower() in SNOWFLAKE_RESERVED_WORDS:
+            return {
+                "validation_status": "invalid",
+                "validation_code": "RESERVED_KEYWORD",
+                "validation_message": "Target name is a Snowflake reserved keyword.",
+                "suggested_target_name": _SNOWFLAKE_SANITIZER.sanitize_alias(resolved_target),
+            }
+
+        sanitized = sanitize_identifier(resolved_target)
+        if sanitized != upper_name:
+            return {
+                "validation_status": "invalid",
+                "validation_code": "UNSUPPORTED_CHARACTERS",
+                "validation_message": "Target name has unsupported characters for Snowflake.",
+                "suggested_target_name": sanitized,
+            }
+
+    return {
+        "validation_status": "valid",
+        "validation_code": "OK",
+        "validation_message": "Identifier is valid.",
+        "suggested_target_name": resolved_target,
+    }
+
+
 def build_entity_mappings(
     *,
     project_id: str,
     model: Dict[str, Any],
     existing_mappings: Optional[Dict[str, Dict[str, Any]]] = None,
     session_key: Optional[str] = None,
+    target_connector: Optional[str] = None,
 ) -> Dict[str, Any]:
     existing = existing_mappings or {}
     entities = extract_model_entities(model)
@@ -189,6 +251,13 @@ def build_entity_mappings(
         else:
             claimed_names[scope][target_name] = source_path
 
+        validation = _validate_target_name(
+            target_name=target_name,
+            source_name=source_name,
+            collision_detected=collision_detected,
+            target_connector=target_connector,
+        )
+
         generated.append({
             "id": mapping_id,
             "project_id": project_id,
@@ -211,6 +280,10 @@ def build_entity_mappings(
             "hash_suffix": hash_suffix,
             "is_user_edited": is_manual,
             "is_active": True,
+            "validation_status": validation["validation_status"],
+            "validation_code": validation["validation_code"],
+            "validation_message": validation["validation_message"],
+            "suggested_target_name": validation["suggested_target_name"],
         })
 
     return {

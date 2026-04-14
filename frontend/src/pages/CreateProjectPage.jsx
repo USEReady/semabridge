@@ -161,6 +161,7 @@ export default function CreateProjectPage() {
   const [detectedEntityMappings, setDetectedEntityMappings] = useState([]);
   const [mappingLoading, setMappingLoading] = useState(false);
   const [mappingError, setMappingError] = useState('');
+  const [mappingReadyToProceed, setMappingReadyToProceed] = useState(true);
 
   // Step 5
   const [createReverseProject, setCreateReverseProject] = useState(false);
@@ -904,9 +905,44 @@ export default function CreateProjectPage() {
   /* ─── Step validity ─── */
   const canAdvance = () => {
     if (step === 1) return name.trim().length > 0;
+    if (step === 4) return mappingReadyToProceed;
     if (step === 5) return true;
     return true;
   };
+
+  const fetchMappings = useCallback(async ({ dryRun = false, resetManual = true } = {}) => {
+    setMappingError('');
+    setMappingLoading(true);
+    try {
+      const response = await api.autoMap({
+        project_name: name.trim() || 'Untitled Project',
+        source_connector: sourceConnector,
+        target_connectors: [...targetConnectors],
+        target_connector: [...targetConnectors][0] || '',
+        intermediate_format: intermediateFormat,
+        selected_model_names: selectedModelNames,
+        reset_manual: resetManual,
+        dry_run: dryRun,
+      });
+
+      const mappings = Array.isArray(response?.mappings) ? response.mappings : [];
+      const entityMappings = Array.isArray(response?.entity_mappings) ? response.entity_mappings : [];
+      setDetectedMappings(mappings);
+      setDetectedEntityMappings(entityMappings);
+
+      if (Array.isArray(response?.collisions) && response.collisions.length > 0) {
+        addLog('warning', 'Mapping', `${response.collisions.length} naming collision(s) auto-resolved with deterministic hash suffixes.`);
+      }
+      return { ok: true, response };
+    } catch (err) {
+      const msg = err?.message || 'Failed to generate mappings.';
+      setMappingError(msg);
+      addLog('error', 'Mapping', msg);
+      return { ok: false, error: msg };
+    } finally {
+      setMappingLoading(false);
+    }
+  }, [addLog, intermediateFormat, name, selectedModelNames, sourceConnector, targetConnectors]);
 
   const goNext = async () => {
     if (step === 5) { handleFinish(); return; }
@@ -923,33 +959,15 @@ export default function CreateProjectPage() {
       setDetectedMappings([]);
       setDetectedEntityMappings([]);
       sessionStorage.removeItem('detectedRelationships');
+      setMappingReadyToProceed(true);
 
       if (selectedModelNames.length > 0) {
-        setMappingLoading(true);
-        try {
-          const response = await api.autoMap({
-            project_name: name.trim() || 'Untitled Project',
-            source_connector: sourceConnector,
-            target_connectors: [...targetConnectors],
-            intermediate_format: intermediateFormat,
-            selected_model_names: selectedModelNames,
-            reset_manual: true,
-          });
-          const mappings = Array.isArray(response?.mappings) ? response.mappings : [];
-          const entityMappings = Array.isArray(response?.entity_mappings) ? response.entity_mappings : [];
-          setDetectedMappings(mappings);
-          setDetectedEntityMappings(entityMappings);
-          if (Array.isArray(response?.collisions) && response.collisions.length > 0) {
-            addLog('warning', 'Mapping', `${response.collisions.length} naming collision(s) auto-resolved with deterministic hash suffixes.`);
-          }
-        } catch (err) {
-          const msg = err?.message || 'Failed to generate mappings.';
-          setMappingError(msg);
-          addLog('error', 'Mapping', msg);
-        } finally {
-          setMappingLoading(false);
-        }
+        await fetchMappings({ dryRun: false, resetManual: true });
       }
+    }
+    if (step === 4 && !mappingReadyToProceed) {
+      setMappingError('Resolve blocking mapping validation issues before continuing.');
+      return;
     }
     setStep(s => Math.min(5, s + 1));
   };
@@ -1152,6 +1170,13 @@ export default function CreateProjectPage() {
             selectedModelNames={selectedModelNames}
             onUpdateTableTarget={updateTableMappingTarget}
             onUpdateColumnTarget={updateColumnMappingTarget}
+            onRunDryRun={() => fetchMappings({ dryRun: true, resetManual: false })}
+            onClearMappings={() => {
+              setDetectedMappings([]);
+              setDetectedEntityMappings([]);
+            }}
+            onProceedStateChange={setMappingReadyToProceed}
+            primaryTargetConnector={[...targetConnectors][0] || ''}
           />
         )}
         {step === 5 && (
@@ -2666,12 +2691,51 @@ function StepMappingOptions({
   selectedModelNames,
   onUpdateTableTarget,
   onUpdateColumnTarget,
+  onRunDryRun,
+  onClearMappings,
+  onProceedStateChange,
+  primaryTargetConnector,
 }) {
+  const [autoMappingMode, setAutoMappingMode] = useState(true);
+  const [dryRunCompleted, setDryRunCompleted] = useState(false);
+  const [dryRunError, setDryRunError] = useState('');
   const [expandedMapping, setExpandedMapping] = useState(null);
   const [mappingSearch, setMappingSearch] = useState('');
   const [showOnlyCollisions, setShowOnlyCollisions] = useState(false);
   const [showOnlyEdited, setShowOnlyEdited] = useState(false);
   const [showOnlyExpandedColumns, setShowOnlyExpandedColumns] = useState(true);
+
+  const isSnowflakeTarget = String(primaryTargetConnector || '').toLowerCase() === 'snowflake';
+  const snowflakeReserved = useMemo(() => new Set([
+    'TABLE', 'COLUMN', 'DATE', 'GROUP', 'ORDER', 'JOIN', 'VIEW', 'SELECT', 'FROM', 'WHERE',
+    'AND', 'OR', 'NOT', 'NULL', 'TRUE', 'FALSE', 'AS', 'BY', 'ON', 'IN', 'IS',
+    'HAVING', 'LIMIT', 'OFFSET', 'UNION', 'EXCEPT', 'INTERSECT', 'INTO',
+    'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'DROP', 'ALTER', 'COUNT', 'SUM', 'AVG',
+    'MIN', 'MAX', 'CURRENT', 'SESSION', 'ACCOUNT', 'DATABASE', 'SCHEMA', 'USER', 'ROLE',
+    'WAREHOUSE', 'PRIMARY', 'FOREIGN', 'KEY', 'REFERENCES',
+  ]), []);
+
+  const sanitizeTarget = useCallback((value) => {
+    const raw = String(value || '').trim();
+    if (!raw) return 'UNNAMED';
+    const cleaned = raw
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_+|_+$/g, '');
+    const resolved = cleaned || 'UNNAMED';
+    return /^\d/.test(resolved) ? `N_${resolved}` : resolved;
+  }, []);
+
+  const isBlockingTarget = useCallback((target, collisionDetected) => {
+    if (collisionDetected) return false;
+    const resolved = String(target || '').trim();
+    if (!resolved) return true;
+    if (!isSnowflakeTarget) return false;
+    const upper = resolved.toUpperCase();
+    if (snowflakeReserved.has(upper)) return true;
+    return sanitizeTarget(resolved) !== upper;
+  }, [isSnowflakeTarget, sanitizeTarget, snowflakeReserved]);
 
   // Get relationships from session storage (read-only)
   const detectedRelationships = (() => {
@@ -2711,6 +2775,48 @@ function StepMappingOptions({
   const editedCount = useMemo(() => (
     (detectedMappings || []).filter((mapping) => String(mapping?.status || '').toLowerCase() === 'manual').length
   ), [detectedMappings]);
+
+  const blockingIssueCount = useMemo(() => {
+    let total = 0;
+    (detectedMappings || []).forEach((mapping) => {
+      if (isBlockingTarget(mapping?.target, mapping?.collision_detected)) total += 1;
+      (mapping?.columns || []).forEach((column) => {
+        if (isBlockingTarget(column?.target, column?.collision_detected)) total += 1;
+      });
+    });
+    return total;
+  }, [detectedMappings, isBlockingTarget]);
+
+  const manualEditLocked = !autoMappingMode && !dryRunCompleted;
+
+  useEffect(() => {
+    const ready = autoMappingMode || (dryRunCompleted && blockingIssueCount === 0);
+    onProceedStateChange?.(ready);
+  }, [autoMappingMode, blockingIssueCount, dryRunCompleted, onProceedStateChange]);
+
+  const toggleAutoMappingMode = useCallback(() => {
+    setDryRunError('');
+    setExpandedMapping(null);
+    setAutoMappingMode((prev) => {
+      const next = !prev;
+      if (!next) {
+        setDryRunCompleted(false);
+        onClearMappings?.();
+      }
+      return next;
+    });
+  }, [onClearMappings]);
+
+  const runDryRun = useCallback(async () => {
+    setDryRunError('');
+    const result = await onRunDryRun?.();
+    if (result?.ok) {
+      setDryRunCompleted(true);
+      return;
+    }
+    setDryRunCompleted(false);
+    setDryRunError(result?.error || 'Dry run failed.');
+  }, [onRunDryRun]);
 
   const filteredMappings = useMemo(() => {
     const query = String(mappingSearch || '').trim().toLowerCase();
@@ -2765,6 +2871,61 @@ function StepMappingOptions({
         <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
           Review detected mappings and relationships before proceeding. These will transform your source model.
         </p>
+      </div>
+
+      <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)', display: 'grid', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>Auto-Detect Mapping</div>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+              Switch off to enter manual override mode. Manual mode requires a dry run before edits are allowed.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={toggleAutoMappingMode}
+            style={{
+              ...filterButtonStyle,
+              minWidth: 180,
+              background: autoMappingMode ? 'var(--color-success-bg)' : 'rgba(245, 158, 11, 0.14)',
+              color: autoMappingMode ? 'var(--color-success)' : 'var(--accent-orange)',
+              border: autoMappingMode ? '1px solid rgba(34, 197, 94, 0.35)' : '1px solid rgba(245, 158, 11, 0.35)',
+            }}
+          >
+            {autoMappingMode ? 'AUTO MODE ON' : 'MANUAL MODE'}
+          </button>
+        </div>
+
+        {!autoMappingMode && (
+          <div style={{ borderRadius: 8, border: '1px dashed var(--border-main)', padding: 12, display: 'grid', gap: 10 }}>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+              Dry run is required to validate names against target constraints before manual edits.
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={runDryRun}
+                disabled={mappingLoading}
+                style={{
+                  ...filterButtonStyle,
+                  background: 'var(--accent-blue)',
+                  color: '#fff',
+                  border: '1px solid var(--accent-blue)',
+                  opacity: mappingLoading ? 0.7 : 1,
+                  cursor: mappingLoading ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {mappingLoading ? 'Running Dry Run...' : 'Run Dry Run'}
+              </button>
+              <span style={{ fontSize: 11, color: dryRunCompleted ? 'var(--color-success)' : 'var(--text-tertiary)' }}>
+                {dryRunCompleted ? 'Dry run complete. Manual editing is unlocked.' : 'Dry run pending.'}
+              </span>
+            </div>
+            {dryRunError && (
+              <div style={{ fontSize: 11, color: 'var(--accent-orange)' }}>{dryRunError}</div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* TABLE MAPPINGS SECTION */}
@@ -2935,8 +3096,9 @@ function StepMappingOptions({
                       <label style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>Destination table name</label>
                       <input
                         value={mapping.target || ''}
+                        disabled={manualEditLocked}
                         onChange={(e) => onUpdateTableTarget?.(mapping.id, e.target.value)}
-                        style={{ ...INPUT, fontSize: 11, padding: '6px 8px', maxWidth: 320 }}
+                        style={{ ...INPUT, fontSize: 11, padding: '6px 8px', maxWidth: 320, opacity: manualEditLocked ? 0.6 : 1 }}
                       />
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -2947,8 +3109,9 @@ function StepMappingOptions({
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                             <input
                               value={col.target || ''}
+                              disabled={manualEditLocked}
                               onChange={(e) => onUpdateColumnTarget?.(mapping.id, col.source, e.target.value)}
-                              style={{ ...INPUT, fontSize: 11, padding: '4px 8px', minWidth: 140, flex: '1 1 180px' }}
+                              style={{ ...INPUT, fontSize: 11, padding: '4px 8px', minWidth: 140, flex: '1 1 180px', opacity: manualEditLocked ? 0.6 : 1 }}
                             />
                             <span style={{ fontSize: 10, color: 'var(--text-tertiary)', background: 'var(--border-main)20', padding: '1px 6px', borderRadius: 3 }}>
                               {col.type}
@@ -3047,7 +3210,9 @@ function StepMappingOptions({
 
       <div style={{ padding: 12, borderRadius: 8, background: 'var(--accent-blue)08', border: '1px solid var(--accent-blue)20' }}>
         <p style={{ fontSize: 11, color: 'var(--accent-blue)', margin: 0, lineHeight: 1.6 }}>
-          ✓ <strong>Ready to proceed:</strong> All mappings have been verified and are ready for transformation. Click "Continue" to move to the next step.
+          {autoMappingMode || (dryRunCompleted && blockingIssueCount === 0)
+            ? '✓ Ready to proceed: Mapping validation is complete for the current mode. Click "Continue" to move to the next step.'
+            : `⚠ Action required: Run dry run and resolve ${blockingIssueCount} blocking issue(s) before continuing.`}
         </p>
       </div>
     </div>

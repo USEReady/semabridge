@@ -78,6 +78,10 @@ def _apply_schema_compatibility_fixes() -> None:
         pending_alters.append(
             f"ALTER TABLE accounts ADD COLUMN token_expires_at {expires_type}"
         )
+    if "auth_type" not in existing_columns:
+        pending_alters.append("ALTER TABLE accounts ADD COLUMN auth_type VARCHAR(50)")
+    if "owner_id" not in existing_columns:
+        pending_alters.append("ALTER TABLE accounts ADD COLUMN owner_id INTEGER")
 
     if not pending_alters:
         return
