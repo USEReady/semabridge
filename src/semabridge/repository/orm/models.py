@@ -96,7 +96,7 @@ class User(Base):
     )
     accounts: Mapped[List["Account"]] = relationship(
         back_populates="owner",
-        lazy="select",
+        lazy="selectin",
     )
 
     def __repr__(self) -> str:

@@ -327,10 +327,6 @@ export const api = {
         return handleResponse(res);
     },
 
-    async getConfig() {
-        const res = await authFetch(`${API_BASE_URL}/config`);
-        return handleResponse(res);
-    },
 
     async generateConfig(payload) {
         const res = await authFetch(`${API_BASE_URL}/config/generate`, {
@@ -524,11 +520,6 @@ export const api = {
         return handleResponse(res);
     },
 
-    // Live Validation
-    async validateLive() {
-        const res = await authFetch(`${API_BASE_URL}/config/validate-live`, { method: 'POST' });
-        return handleResponse(res);
-    },
 
     // Version snapshot
     async getVersionSnapshot(versionId) {
