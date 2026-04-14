@@ -43,6 +43,52 @@ install_websocket_alert_handler()
 logger = logging.getLogger('semabridge.api')
 
 
+def _apply_schema_compatibility_fixes() -> None:
+    """Apply lightweight column-level compatibility fixes for existing DBs.
+
+    ``create_all()`` only creates missing tables; it does not add new columns to
+    existing tables. Older repositories may therefore miss recently introduced
+    columns and fail at runtime when ORM models select them.
+    """
+    from sqlalchemy import inspect, text
+
+    from semabridge.repository.orm.session_factory import get_engine
+
+    engine = get_engine()
+    inspector = inspect(engine)
+
+    if "accounts" not in set(inspector.get_table_names()):
+        return
+
+    existing_columns = {col["name"] for col in inspector.get_columns("accounts")}
+    dialect = engine.dialect.name
+
+    if dialect == "postgresql":
+        expires_type = "TIMESTAMP WITH TIME ZONE"
+    elif dialect == "duckdb":
+        expires_type = "TIMESTAMPTZ"
+    else:
+        # SQLite and generic fallback
+        expires_type = "TIMESTAMP"
+
+    pending_alters: list[str] = []
+    if "refresh_token" not in existing_columns:
+        pending_alters.append("ALTER TABLE accounts ADD COLUMN refresh_token TEXT")
+    if "token_expires_at" not in existing_columns:
+        pending_alters.append(
+            f"ALTER TABLE accounts ADD COLUMN token_expires_at {expires_type}"
+        )
+
+    if not pending_alters:
+        return
+
+    with engine.begin() as conn:
+        for ddl in pending_alters:
+            conn.execute(text(ddl))
+
+    logger.info("Applied accounts schema compatibility fixes: %s", ", ".join(pending_alters))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     async def _create_orm_tables_with_retry() -> None:
@@ -101,6 +147,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     try:
         await _create_orm_tables_with_retry()
+        try:
+            _apply_schema_compatibility_fixes()
+        except Exception as fix_exc:
+            logger.warning('Schema compatibility fix skipped: %s', fix_exc)
     except Exception as exc:
         logger.error('ORM table setup failed: %s', exc)
 

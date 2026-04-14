@@ -10,7 +10,6 @@ import { useUIStore } from './store/uiStore';
 import DashboardLayout from './layouts/DashboardLayout';
 
 // Pages
-import LoginPage        from './pages/LoginPage';
 import ExplorePage      from './pages/ExplorePage';
 import ProjectsPage     from './pages/ProjectsPage';
 import CreateProjectPage from './pages/CreateProjectPage';
@@ -21,9 +20,8 @@ import SettingsPage    from './pages/SettingsPage';
 import ProjectDetailPage from './pages/ProjectDetailPage';
 
 /**
- * Auth gate — shows loading spinner while auto-login resolves.
- * In dev mode, auto-login runs transparently so user never sees the login page.
- * Falls back to login page redirect only if auto-login fails.
+ * Auth gate — shows loading spinner while auth bootstrap resolves.
+ * Temporary dev behavior: bypass login UI and route directly to app pages.
  */
 function ProtectedRoute({ children }) {
   const { isAuthenticated, loading } = useAuth();
@@ -50,9 +48,9 @@ function ProtectedRoute({ children }) {
     );
   }
 
-  // If auto-login failed and user is still not authenticated, show login
+  // Temporary bypass: render app even when auth is unavailable.
   if (!isAuthenticated) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
+    return children;
   }
 
   return children;
@@ -81,8 +79,8 @@ export default function App() {
   return (
     <div style={{ minHeight: '100vh' }}>
       <Routes>
-        {/* Public: Login page (for future production use) */}
-        <Route path="/login" element={<LoginPage />} />
+        {/* Temporary: disable login page route */}
+        <Route path="/login" element={<Navigate to="/projects" replace />} />
 
         {/* Protected: All app routes — auto-login handles auth transparently */}
         <Route element={

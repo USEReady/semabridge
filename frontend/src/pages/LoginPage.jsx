@@ -11,7 +11,9 @@ export default function LoginPage() {
   const { login, register, error, clearError, loading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const from = location.state?.from?.pathname ?? '/explore';
+  const from = typeof location.state?.from === 'string'
+    ? location.state.from
+    : (location.state?.from?.pathname ?? '/explore');
 
   const [mode, setMode] = useState('login'); // 'login' | 'register'
   const [username, setUsername] = useState('');
