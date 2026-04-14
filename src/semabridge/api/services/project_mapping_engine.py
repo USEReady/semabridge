@@ -11,6 +11,9 @@ from semabridge.utils.identifiers import IdentifierSanitizer, SNOWFLAKE_RESERVED
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9]+")
 _MULTI_UNDERSCORE = re.compile(r"_+")
 _SNOWFLAKE_SANITIZER = IdentifierSanitizer(suppress_reserved=True)
+_METRIC_DAX_TABLE_REF = re.compile(r"(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_]*))\s*\[")
+_METRIC_SQL_QUOTED_REF = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*\"")
+_METRIC_SQL_PLAIN_REF = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*[A-Za-z_][A-Za-z0-9_]*")
 
 
 def sanitize_identifier(value: str, *, max_length: int = 120) -> str:
@@ -85,12 +88,49 @@ def _metric_name(metric: Dict[str, Any]) -> str:
     ).strip()
 
 
+def _extract_metric_source_tables(
+    metric: Dict[str, Any],
+    available_dataset_names: Dict[str, str],
+) -> List[str]:
+    ordered: List[str] = []
+    seen: set[str] = set()
+
+    def _add_candidate(raw_value: Any) -> None:
+        value = str(raw_value or "").strip()
+        if not value:
+            return
+        key = value.lower()
+        canonical = available_dataset_names.get(key)
+        if not canonical:
+            return
+        if canonical.lower() in seen:
+            return
+        seen.add(canonical.lower())
+        ordered.append(canonical)
+
+    for hint_key in ("dataset", "dataset_name", "source_table", "table_name", "table"):
+        _add_candidate(metric.get(hint_key))
+
+    expression = str(metric.get("expression") or "")
+    if expression:
+        for match in _METRIC_DAX_TABLE_REF.findall(expression):
+            _add_candidate(match[0] or match[1])
+        for table_name in _METRIC_SQL_QUOTED_REF.findall(expression):
+            _add_candidate(table_name)
+        for table_name in _METRIC_SQL_PLAIN_REF.findall(expression):
+            _add_candidate(table_name)
+
+    return ordered
+
+
 def extract_model_entities(model: Dict[str, Any]) -> List[Dict[str, Any]]:
     entities: List[Dict[str, Any]] = []
     model_name = str(model.get("unique_name") or model.get("name") or model.get("label") or "model").strip()
+    dataset_lookup: Dict[str, str] = {}
 
     for dataset in _iter_datasets(model):
         dataset_name = _dataset_name(dataset)
+        dataset_lookup[dataset_name.lower()] = dataset_name
         dataset_path = f"datasets.{dataset_name}"
         entities.append({
             "entity_kind": "table",
@@ -117,13 +157,18 @@ def extract_model_entities(model: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     for metric in _iter_metrics(model):
         metric_name = _metric_name(metric)
+        measure_tables = _extract_metric_source_tables(metric, dataset_lookup)
+        metric_parent = f"datasets.{measure_tables[0]}" if len(measure_tables) == 1 else None
+        metric_expression = str(metric.get("expression") or "").strip()
         entities.append({
             "entity_kind": "metric",
             "model_name": model_name,
             "source_name": metric_name,
             "source_path": f"metrics.{metric_name}",
-            "parent_source_path": None,
+            "parent_source_path": metric_parent,
             "data_type": metric.get("data_type"),
+            "measure_source_tables": measure_tables,
+            "source_expression": metric_expression,
         })
 
     return entities
@@ -144,6 +189,13 @@ def _normalize_connector_name(value: Optional[str]) -> str:
     return str(value or "").strip().lower()
 
 
+def _default_target_identifier(source_name: str, target_connector: Optional[str]) -> str:
+    connector = _normalize_connector_name(target_connector)
+    if connector == "snowflake":
+        return _SNOWFLAKE_SANITIZER.sanitize_alias(source_name)
+    return sanitize_identifier(source_name)
+
+
 def _validate_target_name(
     *,
     target_name: str,
@@ -153,7 +205,7 @@ def _validate_target_name(
 ) -> Dict[str, str]:
     connector = _normalize_connector_name(target_connector)
     resolved_target = str(target_name or "").strip()
-    fallback = sanitize_identifier(source_name)
+    fallback = _default_target_identifier(source_name, target_connector)
 
     if collision_detected:
         return {
@@ -181,7 +233,7 @@ def _validate_target_name(
                 "suggested_target_name": _SNOWFLAKE_SANITIZER.sanitize_alias(resolved_target),
             }
 
-        sanitized = sanitize_identifier(resolved_target)
+        sanitized = _SNOWFLAKE_SANITIZER.sanitize_alias(resolved_target)
         if sanitized != upper_name:
             return {
                 "validation_status": "invalid",
@@ -207,6 +259,7 @@ def build_entity_mappings(
     target_connector: Optional[str] = None,
 ) -> Dict[str, Any]:
     existing = existing_mappings or {}
+    normalized_target_connector = _normalize_connector_name(target_connector)
     entities = extract_model_entities(model)
     session = session_key or f"map-session-{uuid.uuid4().hex[:12]}"
     claimed_names: Dict[str, Dict[str, str]] = {}
@@ -220,7 +273,7 @@ def build_entity_mappings(
 
         mapping_id = str(existing.get(source_path, {}).get("id") or f"{project_id}-{uuid.uuid5(uuid.NAMESPACE_URL, f'{project_id}:{source_path}').hex[:16]}")
         source_name = str(entity.get("source_name") or "").strip() or "unnamed"
-        sanitized = sanitize_identifier(source_name)
+        sanitized = _default_target_identifier(source_name, normalized_target_connector)
         scope = _scope_key(entity)
         claimed_names.setdefault(scope, {})
         collision_key = sanitized
@@ -255,7 +308,7 @@ def build_entity_mappings(
             target_name=target_name,
             source_name=source_name,
             collision_detected=collision_detected,
-            target_connector=target_connector,
+            target_connector=normalized_target_connector,
         )
 
         generated.append({
@@ -269,6 +322,8 @@ def build_entity_mappings(
             "source_path": source_path,
             "parent_source_path": entity.get("parent_source_path"),
             "source_data_type": entity.get("data_type"),
+            "measure_source_tables": list(entity.get("measure_source_tables") or []),
+            "source_expression": str(entity.get("source_expression") or ""),
             "sanitized_name": sanitized,
             "target_name": target_name,
             "target_path": source_path,

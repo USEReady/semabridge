@@ -20,7 +20,9 @@ databricks:
   measure_view_mode: "combined" # "per_measure" (one view each) or "combined" (single model-level joined view)
   view_prefix: "mv" # Prefix for measure view names
   enable_simple_dax_translation: true # Translate simple DAX (SUM, COUNT, etc.) to SQL
+  metric_view_only_sum_translation: true # Restrict simple DAX SUM translation to native metric-view generation only
   enable_cross_table_joins: true # Build explicit joins from model relationships when measures span datasets
+  enable_cross_table_sql_fallback: false # Auto-route cross-table models to SQL views when metric-view cannot safely resolve them
   enable_low_confidence_drafts: true # Emit draft placeholders for low-confidence measures instead of dropping them
   emit_metric_views_for_all_datasets: true # Create fallback metric views for dimension-only datasets
 

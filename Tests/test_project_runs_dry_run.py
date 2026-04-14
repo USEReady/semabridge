@@ -25,7 +25,7 @@ from semabridge.api.services import project_runs_impl as pri
 
 
 @pytest.mark.asyncio
-async def test_auto_map_dry_run_prefers_yaml_preview_model(monkeypatch):
+async def test_auto_map_dry_run_prefers_project_backed_mappings(monkeypatch):
     build_calls = []
     compat_calls = []
 
@@ -67,10 +67,8 @@ async def test_auto_map_dry_run_prefers_yaml_preview_model(monkeypatch):
 
     result = await pri.auto_map_compat(payload)
 
-    assert len(build_calls) == 1
-    assert len(compat_calls) == 0
-    assert build_calls[0]["project_id"].startswith("preview-")
-    assert build_calls[0]["model"]["unique_name"] == "map"
-    assert [dataset["unique_name"] for dataset in build_calls[0]["model"]["datasets"]] == ["Device"]
-    assert result["project_id"].startswith("preview-")
+    assert len(build_calls) == 0
+    assert len(compat_calls) == 1
+    assert compat_calls[0][0][0] == "project-1"
+    assert result["project_id"] == "project-1"
     assert result["status"] == "ok"

@@ -44,6 +44,57 @@ function TypeBadge({ type }) {
   );
 }
 
+function FieldKindBadge({ fieldType }) {
+  const kind = String(fieldType || 'column').toLowerCase();
+  const isMeasure = kind === 'measure';
+  return (
+    <span
+      style={{
+        fontSize: 10,
+        fontWeight: 700,
+        padding: '2px 6px',
+        borderRadius: 999,
+        border: isMeasure ? '1px solid rgba(56, 189, 248, 0.45)' : '1px solid var(--border-main)',
+        background: isMeasure ? 'rgba(56, 189, 248, 0.14)' : 'var(--bg-surface-raised)',
+        color: isMeasure ? '#7dd3fc' : 'var(--text-secondary)',
+      }}
+    >
+        {isMeasure ? 'fx Measure' : 'Column'}
+    </span>
+  );
+}
+
+function SourceTableBadge({ tables, hasIssue = false }) {
+  const uniqueTables = Array.isArray(tables)
+    ? [...new Set(tables.map((name) => String(name || '').trim()).filter(Boolean))]
+    : [];
+  if (uniqueTables.length === 0) return null;
+
+  const isMulti = uniqueTables.length > 1;
+  const label = isMulti ? 'Table: Multi-table' : `Table: ${uniqueTables[0]}`;
+  const tooltip = isMulti ? uniqueTables.join(', ') : uniqueTables[0];
+  return (
+    <span
+      title={tooltip}
+      style={{
+        fontSize: 10,
+        fontWeight: 700,
+        padding: '2px 6px',
+        borderRadius: 999,
+        border: hasIssue ? '1px solid rgba(239, 68, 68, 0.45)' : '1px solid rgba(56, 189, 248, 0.45)',
+        background: hasIssue ? 'rgba(239, 68, 68, 0.12)' : 'rgba(56, 189, 248, 0.12)',
+        color: hasIssue ? 'var(--color-error)' : '#7dd3fc',
+        maxWidth: 190,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
 function getConnectorPresentation(type) {
   const normalized = String(type || '').toLowerCase();
   if (normalized.includes('fabric')) {
@@ -67,7 +118,91 @@ function normalizeStatus(item) {
   return 'auto';
 }
 
+function isBlockingRow(row) {
+  const status = String(row?.status || '').toLowerCase();
+  if (status === 'collision' || status === 'unmapped') return true;
+
+  const validationStatus = String(row?.validation_status || '').toLowerCase();
+  if (validationStatus === 'invalid' || validationStatus === 'collision') return true;
+
+  const validationCode = String(row?.validation_code || '').toUpperCase();
+  if (validationCode && validationCode !== 'OK') return true;
+
+  return false;
+}
+
+function parseDatasetFromPath(pathValue) {
+  const path = String(pathValue || '').trim();
+  if (!path) return '';
+  const direct = /^datasets\.([^\.]+)$/i.exec(path);
+  if (direct?.[1]) return String(direct[1]).trim();
+  const nested = /^datasets\.([^\.]+)\./i.exec(path);
+  if (nested?.[1]) return String(nested[1]).trim();
+  return '';
+}
+
+function resolveMeasureSourceTables(row) {
+  const fromRow = Array.isArray(row?.measure_source_tables)
+    ? row.measure_source_tables.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  if (fromRow.length > 0) return [...new Set(fromRow)];
+
+  const fallback = parseDatasetFromPath(row?.parent_source_path);
+  return fallback ? [fallback] : [];
+}
+
+function resolveColumnSourceTable(row, parentTable = '') {
+  const fromPath = parseDatasetFromPath(row?.source_path);
+  if (fromPath) return fromPath;
+
+  const fromParentPath = parseDatasetFromPath(row?.parent_source_path);
+  if (fromParentPath) return fromParentPath;
+
+  const fallbackParent = String(parentTable || row?.parent_table || '').trim();
+  return fallbackParent;
+}
+
+function resolveMeasureExpression(row) {
+  const expression = String(row?.source_expression || row?.expression || '').trim();
+  if (!expression) return '';
+  return expression;
+}
+
 function normalizeRows(data) {
+  const entityRows = Array.isArray(data?.entity_mappings) ? data.entity_mappings : [];
+  if (entityRows.length > 0) {
+    return entityRows
+      .filter((row) => {
+        const kind = String(row?.entity_kind || '').toLowerCase();
+        return kind === 'column' || kind === 'metric';
+      })
+      .map((row, index) => {
+        const kind = String(row?.entity_kind || '').toLowerCase();
+        const sourceName = String(row?.source_name || '').trim();
+        const targetName = String(row?.target_name || '').trim();
+        return {
+          id: String(row?.id || `${sourceName || 'field'}-${index}`),
+          source_field: sourceName || `field_${index + 1}`,
+          source_path: String(row?.source_path || '').trim(),
+          entity_kind: kind || 'column',
+          parent_source_path: String(row?.parent_source_path || '').trim(),
+          source_type: row?.source_data_type || kind || 'unknown',
+          field_type: kind === 'metric' ? 'measure' : 'column',
+          measure_source_tables: kind === 'metric' ? resolveMeasureSourceTables(row) : [],
+          source_table_name: kind === 'column' ? resolveColumnSourceTable(row) : '',
+          measure_expression: kind === 'metric' ? resolveMeasureExpression(row) : '',
+          target_field: targetName,
+          target_type: row?.target_data_type || row?.source_data_type || 'unknown',
+          status: normalizeStatus({ ...row, target_field: targetName }),
+          validation_status: row?.validation_status || '',
+          validation_code: row?.validation_code || '',
+          validation_message: row?.validation_message || '',
+          suggested_target_name: row?.suggested_target_name || '',
+          isDirty: false,
+        };
+      });
+  }
+
   const rows = [];
   const tableMappings = Array.isArray(data?.mappings) ? data.mappings : [];
 
@@ -80,7 +215,10 @@ function normalizeRows(data) {
       rows.push({
         id: String(table?.id || `${tableSource}-${tableIndex}`),
         source_field: tableSource || `field_${tableIndex + 1}`,
+        source_path: String(table?.source_path || tableSource || '').trim(),
+        entity_kind: String(table?.entity_kind || table?.type || 'table').toLowerCase(),
         source_type: table?.type || 'table',
+        field_type: String(table?.type || '').toLowerCase() === 'metric' ? 'measure' : 'column',
         target_field: tableTarget,
         target_type: table?.type || 'table',
         status: normalizeStatus({ ...table, target_field: tableTarget }),
@@ -97,7 +235,11 @@ function normalizeRows(data) {
       rows.push({
         id: `${table?.id || tableSource || `t${tableIndex}`}:${column?.source_path || column?.source || columnIndex}`,
         source_field: String(column?.source || '').trim() || `column_${columnIndex + 1}`,
+        source_path: String(column?.source_path || '').trim(),
+        entity_kind: String(column?.entity_kind || 'column').toLowerCase(),
         source_type: column?.type || 'unknown',
+        field_type: String(column?.field_type || column?.type || '').toLowerCase() === 'metric' ? 'measure' : 'column',
+        source_table_name: resolveColumnSourceTable(column, tableSource),
         target_field: String(column?.target || '').trim(),
         target_type: column?.type || 'unknown',
         status: normalizeStatus({ ...column, target_field: column?.target }),
@@ -289,6 +431,7 @@ export default function ModelMappingPage() {
 
       const nextRows = normalizeRows(mappingData);
       setRows(nextRows);
+      setHasDryRunResult(true);
 
       const sourceLabel = String(semabridgeContext.sourceType || 'fabric');
       const targetLabel = String(semabridgeContext.targetType || 'snowflake');
@@ -391,9 +534,33 @@ export default function ModelMappingPage() {
   }, [targetModel.type]);
 
   const blockingCount = useMemo(
-    () => rows.filter((row) => row.status === 'collision' || row.status === 'unmapped').length,
+    () => rows.filter((row) => isBlockingRow(row)).length,
     [rows],
   );
+
+  const dirtyRowsCount = useMemo(
+    () => rows.filter((row) => row.isDirty && row.id).length,
+    [rows],
+  );
+
+  const deployReadiness = useMemo(() => {
+    if (deployLoading) {
+      return { canDeploy: false, reason: 'Deploy is currently running.' };
+    }
+    if (isDryRunLoading || loading) {
+      return { canDeploy: false, reason: 'Wait for mapping validation to finish.' };
+    }
+    if (!hasDryRunResult) {
+      return { canDeploy: false, reason: 'Run Auto-Map first to generate a dry-run result.' };
+    }
+    if (blockingCount > 0) {
+      return { canDeploy: false, reason: `Resolve ${blockingCount} blocking row(s) before deploy.` };
+    }
+    if (dirtyRowsCount <= 0) {
+      return { canDeploy: false, reason: 'No edited mappings to deploy yet.' };
+    }
+    return { canDeploy: true, reason: '' };
+  }, [blockingCount, deployLoading, dirtyRowsCount, hasDryRunResult, isDryRunLoading, loading]);
 
   const counts = useMemo(() => {
     const summary = { all: rows.length, auto: 0, manual: 0, unmapped: 0, collision: 0 };
@@ -408,13 +575,18 @@ export default function ModelMappingPage() {
     return rows.filter((row) => {
       if (activeFilter !== 'all' && row.status !== activeFilter) return false;
       if (!query) return true;
-      const haystack = `${row.source_field} ${row.target_field} ${row.validation_message}`.toLowerCase();
-      return haystack.includes(query);
+      const haystack = `${row.source_field} ${row.target_field} ${row.validation_message} ${row.field_type}`.toLowerCase();
+      const originHaystack = Array.isArray(row.measure_source_tables)
+        ? row.measure_source_tables.join(' ').toLowerCase()
+        : '';
+      const columnTableHaystack = String(row.source_table_name || '').toLowerCase();
+      const expressionHaystack = String(row.measure_expression || '').toLowerCase();
+      return `${haystack} ${originHaystack} ${columnTableHaystack} ${expressionHaystack}`.includes(query);
     });
   }, [activeFilter, rows, search]);
 
   const deployMappings = useCallback(async () => {
-    if (!selectedProjectId || blockingCount > 0 || !hasDryRunResult) return;
+    if (!selectedProjectId || !deployReadiness.canDeploy) return;
 
     setDeployLoading(true);
     setPageError('');
@@ -424,6 +596,9 @@ export default function ModelMappingPage() {
       for (const row of dirtyRows) {
         await api.updateMapping(String(row.id), {
           project_id: selectedProjectId,
+          source_path: row.source_path,
+          entity_kind: row.entity_kind,
+          source_name: row.source_field,
           target_name: row.target_field,
           status: row.status,
         });
@@ -435,7 +610,7 @@ export default function ModelMappingPage() {
     } finally {
       setDeployLoading(false);
     }
-  }, [blockingCount, hasDryRunResult, loadProjectMappings, rows, selectedProjectId]);
+  }, [deployReadiness.canDeploy, loadProjectMappings, rows, selectedProjectId]);
 
   return (
     <div style={{ padding: '24px 28px', minHeight: '100%', background: 'var(--bg-main)' }}>
@@ -510,28 +685,30 @@ export default function ModelMappingPage() {
               }}
             />
           </div>
-          <button
-            type="button"
-            disabled={!hasDryRunResult || blockingCount > 0 || deployLoading || isDryRunLoading}
-            onClick={deployMappings}
-            style={{
-              border: 'none',
-              borderRadius: 8,
-              padding: '8px 12px',
-              background: 'var(--accent-blue)',
-              color: '#fff',
-              fontSize: 12,
-              fontWeight: 700,
-              cursor: (!hasDryRunResult || blockingCount > 0 || deployLoading || isDryRunLoading) ? 'not-allowed' : 'pointer',
-              opacity: (!hasDryRunResult || blockingCount > 0 || deployLoading || isDryRunLoading) ? 0.55 : 1,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-            }}
-          >
-            {deployLoading ? <Loader2 size={13} className="animate-spin" /> : <Rocket size={13} />}
-            Deploy Mapping
-          </button>
+          <span title={deployReadiness.canDeploy ? 'Deploy validated mapping changes' : deployReadiness.reason}>
+            <button
+              type="button"
+              disabled={!deployReadiness.canDeploy}
+              onClick={deployMappings}
+              style={{
+                border: 'none',
+                borderRadius: 8,
+                padding: '8px 12px',
+                background: 'var(--accent-blue)',
+                color: '#fff',
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: deployReadiness.canDeploy ? 'pointer' : 'not-allowed',
+                opacity: deployReadiness.canDeploy ? 1 : 0.55,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              {deployLoading ? <Loader2 size={13} className="animate-spin" /> : <Rocket size={13} />}
+              Deploy Mapping
+            </button>
+          </span>
         </div>
       </div>
 
@@ -557,9 +734,32 @@ export default function ModelMappingPage() {
         ) : (
           filteredRows.map((row, index) => (
             <div key={row.id} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 150px', padding: '10px 12px', borderBottom: index < filteredRows.length - 1 ? '1px solid var(--border-main)' : 'none', background: row.status === 'collision' ? 'rgba(239, 68, 68, 0.07)' : 'transparent' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.source_field}</span>
-                <TypeBadge type={row.source_type} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                  <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.source_field}</span>
+                  <TypeBadge type={row.source_type} />
+                  <FieldKindBadge fieldType={row.field_type} />
+                  {row.field_type === 'measure' ? (
+                    <SourceTableBadge tables={row.measure_source_tables} hasIssue={row.status === 'collision'} />
+                  ) : row.source_table_name ? (
+                    <SourceTableBadge tables={[row.source_table_name]} hasIssue={row.status === 'collision'} />
+                  ) : null}
+                </div>
+                {row.field_type === 'measure' && row.measure_expression ? (
+                  <div
+                    title={row.measure_expression}
+                    style={{
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      color: 'var(--text-tertiary)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Expr: {row.measure_expression}
+                  </div>
+                ) : null}
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -622,7 +822,9 @@ export default function ModelMappingPage() {
 
       <div style={{ marginTop: 12, borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-surface)', padding: '10px 12px', fontSize: 12, color: 'var(--text-secondary)' }}>
         {hasDryRunResult
-          ? `Auto-map dry run complete. ${blockingCount} blocking row(s) remaining before deploy.`
+          ? (deployReadiness.canDeploy
+            ? `Ready to deploy ${dirtyRowsCount} edited mapping row(s).`
+            : `Deploy blocked: ${deployReadiness.reason}`)
           : 'Auto-map has not been executed for this project session.'}
       </div>
     </div>

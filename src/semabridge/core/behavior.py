@@ -120,9 +120,23 @@ class DatabricksBehavior(BaseModel):
         default=True,
         description="Translate simple DAX patterns (SUM, COUNT, etc.) to SQL for view creation"
     )
+    metric_view_only_sum_translation: bool = Field(
+        default=False,
+        description=(
+            "When true, simple DAX SUM(Table[Column]) translation is allowed only "
+            "for native metric-view generation and disabled for SQL view paths."
+        ),
+    )
     enable_cross_table_joins: bool = Field(
         default=False,
         description="Build explicit joins for measures that reference multiple datasets"
+    )
+    enable_cross_table_sql_fallback: bool = Field(
+        default=False,
+        description=(
+            "When measure_view_type is metric_view, allow auto-routing cross-table "
+            "models to SQL view generation. Keep disabled to enforce metric-view-first deployment."
+        ),
     )
     enable_low_confidence_drafts: bool = Field(
         default=False,

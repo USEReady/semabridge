@@ -150,6 +150,77 @@ class ExecutionEngine:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    @staticmethod
+    def _apply_mapping_overrides_from_config(sml_model: SMLModel, config_path: Path) -> None:
+        """Apply user-edited mapping overrides from config to SML names before deploy."""
+        try:
+            if not config_path.exists():
+                return
+            parsed = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+            if not isinstance(parsed, dict):
+                return
+        except Exception as exc:
+            logger.debug("Skipping mapping override load from %s: %s", config_path, exc)
+            return
+
+        raw_overrides = parsed.get("mappings_overrides")
+        if not isinstance(raw_overrides, list):
+            return
+
+        overrides: Dict[str, str] = {}
+        for row in raw_overrides:
+            if not isinstance(row, dict):
+                continue
+            source_path = str(row.get("source_path") or "").strip()
+            target_name = str(row.get("target_name") or "").strip()
+            if source_path and target_name:
+                overrides[source_path] = target_name
+
+        if not overrides:
+            return
+
+        renamed_columns = 0
+        renamed_metrics = 0
+
+        dataset_by_name: Dict[str, Any] = {}
+        for dataset in sml_model.datasets:
+            dataset_by_name[str(dataset.unique_name)] = dataset
+
+        for source_path, target_name in overrides.items():
+            if source_path.startswith("metrics."):
+                metric_name = source_path[len("metrics."):]
+                for metric in sml_model.metrics:
+                    if str(metric.unique_name) == metric_name:
+                        if str(metric.unique_name) != target_name:
+                            metric.unique_name = target_name
+                            metric.label = target_name
+                            renamed_metrics += 1
+                        break
+                continue
+
+            if source_path.startswith("datasets.") and ".columns." in source_path:
+                prefix = "datasets."
+                col_sep = ".columns."
+                dataset_name = source_path[len(prefix): source_path.index(col_sep)]
+                column_name = source_path[source_path.index(col_sep) + len(col_sep):]
+                dataset = dataset_by_name.get(dataset_name)
+                if not dataset:
+                    continue
+                for column in dataset.columns:
+                    if str(column.unique_name) == column_name:
+                        if str(column.unique_name) != target_name:
+                            column.unique_name = target_name
+                            column.label = target_name
+                            renamed_columns += 1
+                        break
+
+        if renamed_columns or renamed_metrics:
+            logger.info(
+                "Applied mapping overrides from config: columns=%s metrics=%s",
+                renamed_columns,
+                renamed_metrics,
+            )
+
     # -------------------------------------------------------------------------
     @classmethod
     def from_yaml(cls, config_path: "Path") -> "ExecutionEngine":
@@ -351,6 +422,7 @@ class ExecutionEngine:
             
             # Step 6: Convert to Canonical SML
             sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id)
+            self._apply_mapping_overrides_from_config(sml_model, Path(config_path))
             context.sml_model = sml_model
             
             # Step 7: Persist Artifacts

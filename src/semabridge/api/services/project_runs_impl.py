@@ -628,7 +628,18 @@ async def run_project_now_compat(project_id: str, background_tasks: BackgroundTa
     if run_type not in {"SYNC", "RESTORE"}:
         run_type = "SYNC"
     restore_snapshot_id = str((payload or {}).get("restore_snapshot_id") or "").strip() or None
-    run, project_cfg, started = _create_project_run(project_id, "Manual", run_type=run_type, restore_snapshot_id=restore_snapshot_id)
+    config_override = None
+    if run_type == "SYNC":
+        base_cfg = _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(_compat_projects.get(project_id, {}))
+        config_override = _compat_apply_manual_mapping_overrides_to_cfg(base_cfg, project_id)
+        _compat_project_configs[project_id] = config_override
+    run, project_cfg, started = _create_project_run(
+        project_id,
+        "Manual",
+        run_type=run_type,
+        project_cfg_override=config_override,
+        restore_snapshot_id=restore_snapshot_id,
+    )
     background_tasks.add_task(_run_project_background, run, project_cfg, started)
     return {"run_id": run["id"], "status": "running", "run_type": run_type, "message": "Sync started in background"}
 
@@ -794,6 +805,37 @@ def _compat_mapping_project_ids(project_id: str = "") -> List[str]:
     return [str(row.get("project_id") or row.get("id") or "").strip() for row in _compat_projects.values() if str(row.get("project_id") or row.get("id") or "").strip()]
 
 
+def _compat_collect_manual_mapping_overrides(project_id: str) -> List[Dict[str, str]]:
+    overrides: List[Dict[str, str]] = []
+    for mapping in _compat_mappings.values():
+        if not isinstance(mapping, dict):
+            continue
+        if str(mapping.get("project_id") or "") != str(project_id):
+            continue
+        if not bool(mapping.get("is_user_edited")):
+            continue
+        source_path = str(mapping.get("source_path") or "").strip()
+        target_name = str(mapping.get("target_name") or "").strip()
+        if not source_path or not target_name:
+            continue
+        overrides.append({
+            "source_path": source_path,
+            "target_name": target_name,
+            "entity_kind": str(mapping.get("entity_kind") or "").strip().lower(),
+            "source_name": str(mapping.get("source_name") or "").strip(),
+        })
+    return overrides
+
+
+def _compat_apply_manual_mapping_overrides_to_cfg(config_yaml: str, project_id: str) -> str:
+    parsed = _compat_parse_project_cfg_dict(config_yaml) or {}
+    overrides = _compat_collect_manual_mapping_overrides(project_id)
+    if not overrides:
+        return config_yaml
+    parsed["mappings_overrides"] = overrides
+    return yaml.safe_dump(parsed, sort_keys=False, allow_unicode=False)
+
+
 def _compat_existing_entity_mappings(project_id: str) -> Dict[str, Dict[str, Any]]:
     existing: Dict[str, Dict[str, Any]] = {}
     for mapping in _compat_mappings.values():
@@ -806,6 +848,47 @@ def _compat_existing_entity_mappings(project_id: str) -> Dict[str, Dict[str, Any
             continue
         existing[source_path] = dict(mapping)
     return existing
+
+
+def _compat_hydrate_missing_metrics_from_manual_mappings(
+    latest_model: Dict[str, Any],
+    existing_mappings: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    model = dict(latest_model or {})
+    metrics = model.get("metrics") if isinstance(model.get("metrics"), list) else []
+    metrics = [row for row in metrics if isinstance(row, dict)]
+    present_metric_names = {
+        str(row.get("unique_name") or row.get("name") or row.get("label") or "").strip()
+        for row in metrics
+    }
+    present_metric_names.discard("")
+
+    hydrated = list(metrics)
+    added = 0
+    for mapping in existing_mappings.values():
+        if not isinstance(mapping, dict):
+            continue
+        if not bool(mapping.get("is_user_edited")):
+            continue
+        if str(mapping.get("entity_kind") or "").lower() != "metric":
+            continue
+        source_path = str(mapping.get("source_path") or "").strip()
+        if not source_path.startswith("metrics."):
+            continue
+        metric_name = source_path[len("metrics."):].strip()
+        if not metric_name or metric_name in present_metric_names:
+            continue
+        hydrated.append({
+            "unique_name": metric_name,
+            "data_type": mapping.get("source_data_type") or "decimal",
+        })
+        present_metric_names.add(metric_name)
+        added += 1
+
+    if added:
+        logger.debug("Hydrated %s manual metric mapping(s) into latest model state", added)
+    model["metrics"] = hydrated
+    return model
 
 
 def _compat_build_project_entity_mappings(
@@ -829,10 +912,13 @@ def _compat_build_project_entity_mappings(
             "metrics": [],
         }
 
+    existing_mappings = _compat_existing_entity_mappings(project_id)
+    latest_model = _compat_hydrate_missing_metrics_from_manual_mappings(latest_model, existing_mappings)
+
     built = build_entity_mappings(
         project_id=project_id,
         model=latest_model,
-        existing_mappings=_compat_existing_entity_mappings(project_id),
+        existing_mappings=existing_mappings,
         session_key=f"{project_id}-mapping-session",
         target_connector=target_connector,
     )
@@ -946,6 +1032,92 @@ def _compat_format_mapping_groups(mapping_payload: Dict[str, Any]) -> List[Dict[
     return list(grouped.values())
 
 
+def _compat_extract_invalid_identifier(message: str) -> str:
+    text = str(message or "")
+    if not text:
+        return ""
+    marker = "invalid identifier '"
+    idx = text.lower().find(marker)
+    if idx < 0:
+        return ""
+    start = idx + len(marker)
+    end = text.find("'", start)
+    if end <= start:
+        return ""
+    return text[start:end].strip()
+
+
+def _compat_latest_identifier_diagnostics(project_id: str) -> List[Dict[str, str]]:
+    for run in _compat_project_runs.get(project_id, []):
+        if not isinstance(run, dict):
+            continue
+
+        candidates: List[str] = []
+        candidates.extend([str(item) for item in (run.get("logs") or []) if str(item or "").strip()])
+        if isinstance(run.get("summary"), dict):
+            for err in (run.get("summary", {}).get("errors") or []):
+                if isinstance(err, dict):
+                    candidates.append(str(err.get("message") or ""))
+        candidates.append(str(run.get("error") or ""))
+        candidates.append(str(run.get("message") or ""))
+
+        diagnostics: List[Dict[str, str]] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            actual_identifier = _compat_extract_invalid_identifier(candidate)
+            if not actual_identifier:
+                continue
+            key = actual_identifier.upper()
+            if key in seen:
+                continue
+            seen.add(key)
+            parts = actual_identifier.split(".")
+            source_hint = (parts[-1] if parts else actual_identifier).replace('"', "").strip().upper()
+            diagnostics.append({
+                "code": "INVALID_IDENTIFIER_REFERENCE",
+                "actual_identifier": actual_identifier,
+                "source_hint": source_hint,
+                "message": f"Deploy SQL references invalid identifier {actual_identifier}.",
+            })
+
+        if diagnostics:
+            return diagnostics
+    return []
+
+
+def _compat_apply_identifier_diagnostics_to_mappings(
+    mappings: List[Dict[str, Any]],
+    diagnostics: List[Dict[str, str]],
+) -> None:
+    if not diagnostics:
+        return
+    for mapping in mappings:
+        if not isinstance(mapping, dict):
+            continue
+        if str(mapping.get("entity_kind") or "").lower() != "metric":
+            continue
+
+        source_name = str(mapping.get("source_name") or "").upper()
+        target_name = str(mapping.get("target_name") or "").upper()
+        source_path = str(mapping.get("source_path") or "").upper()
+
+        for diag in diagnostics:
+            hint = str(diag.get("source_hint") or "").upper()
+            if not hint:
+                continue
+            if hint in source_name or hint in target_name or hint in source_path:
+                mapping["collision_detected"] = True
+                mapping["validation_status"] = "invalid"
+                mapping["validation_code"] = str(diag.get("code") or "INVALID_IDENTIFIER_REFERENCE")
+                mapping["validation_message"] = str(diag.get("message") or "Invalid identifier reference during deploy.")
+                mapping["validation_debug"] = {
+                    "actual_identifier": str(diag.get("actual_identifier") or ""),
+                    "source_hint": hint,
+                    "stage": "deploy_sql_compile",
+                }
+                break
+
+
 async def list_mappings_compat(project_id: Optional[str] = None):
     _compat_ensure_loaded()
     project_ids = _compat_mapping_project_ids(str(project_id or "").strip())
@@ -1003,7 +1175,10 @@ async def auto_map_compat(payload: dict):
         raise HTTPException(status_code=400, detail="project_id or selected_model_names is required")
 
     reset_manual = bool((payload or {}).get("reset_manual", False))
-    preview_mode = dry_run and (bool(config_yaml) or bool(selected_model_names))
+    # Only use synthetic preview mode when there is no concrete project context.
+    # For project-scoped dry runs, use project-backed mappings so measure rows
+    # from the latest model state are preserved.
+    preview_mode = (not project_id) and dry_run and (bool(config_yaml) or bool(selected_model_names))
     if project_id and not preview_mode:
         if not dry_run:
             for mapping_id, mapping in list(_compat_mappings.items()):
@@ -1042,6 +1217,9 @@ async def auto_map_compat(payload: dict):
             "collisions": data.get("collisions", []),
         }
 
+    diagnostics = _compat_latest_identifier_diagnostics(project_id) if project_id else []
+    _compat_apply_identifier_diagnostics_to_mappings(data.get("mappings", []), diagnostics)
+
     grouped_mappings = _compat_format_mapping_groups(data)
     return {
         "project_id": data.get("project_id") or project_id,
@@ -1050,17 +1228,33 @@ async def auto_map_compat(payload: dict):
         "mappings": grouped_mappings,
         "entity_mappings": data.get("mappings", []),
         "collisions": data.get("collisions", []),
+        "diagnostics": diagnostics,
         "status": "ok",
     }
 
 
 async def update_mapping_compat(mapping_id: str, payload: dict):
     _compat_ensure_loaded()
-    existing = _compat_mappings.get(mapping_id, {"id": mapping_id, "project_id": (payload or {}).get("project_id")})
-    existing.update(payload or {})
+    incoming = payload or {}
+    existing = _compat_mappings.get(mapping_id, {"id": mapping_id, "project_id": incoming.get("project_id")})
+
+    # Backfill canonical identity fields for clients that only send target_name.
+    if not str(existing.get("source_path") or "").strip():
+        project_id = str(incoming.get("project_id") or existing.get("project_id") or "").strip()
+        if project_id:
+            try:
+                built = _compat_build_project_entity_mappings(project_id, save_store=False)
+                for candidate in built.get("mappings", []):
+                    if str(candidate.get("id") or "") == mapping_id:
+                        existing = {**candidate, **existing}
+                        break
+            except Exception as exc:
+                logger.debug("Mapping identity backfill skipped for %s: %s", mapping_id, exc)
+
+    existing.update(incoming)
     existing["id"] = mapping_id
-    if "target_name" in (payload or {}):
-        existing["target_name"] = str((payload or {}).get("target_name") or "").strip()
+    if "target_name" in incoming:
+        existing["target_name"] = str(incoming.get("target_name") or "").strip()
         existing["status"] = "manual"
         existing["is_user_edited"] = True
     existing["updated_at"] = _compat_now_iso()

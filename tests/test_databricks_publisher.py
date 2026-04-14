@@ -4,9 +4,11 @@ import re
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from semabridge.connectors.databricks_publisher import (
     CONFIDENCE_HIGH,
+    CONFIDENCE_LOW,
     CONFIDENCE_MEDIUM,
     CONFIDENCE_NONE,
     DEPLOY_REASON_CROSS_TABLE,
@@ -24,6 +26,13 @@ from semabridge.connectors.databricks_publisher import (
     DatabricksPublishError,
     DatabricksPublisher,
     ResolvedMeasure,
+)
+from semabridge.connectors.databricks_measure_translation import (
+    TIER_DEFERRED,
+    TIER_FILTERED_CONDITIONAL_AGGREGATION,
+    TIER_RELATIONSHIP_AWARE_FILTERED_AGGREGATION,
+    TIER_SCALAR_SYSTEM_FUNCTION,
+    TIER_STANDARD_AGGREGATION,
 )
 from semabridge.core.behavior import ConnectorBehavior, DatabricksBehavior
 from semabridge.core.settings import DatabricksConfig
@@ -330,10 +339,10 @@ class TestMeasureViewGeneration:
             view_type_override=VIEW_TYPE_SQL,
         )
 
-        assert len(stmts) == 1
-        assert created == 1
-        assert skipped == 0
-        assert any(d.get("reason") == DEPLOY_REASON_CROSS_TABLE for d in details)
+        assert len(stmts) == 0
+        assert created == 0
+        assert skipped == 1
+        assert details[0]["reason"] == DEPLOY_REASON_CROSS_TABLE
 
     def test_aggregation_source_column_creates_view(self):
         """aggregation + source_column builds a view when no sql_expression."""
@@ -376,6 +385,403 @@ class TestMeasureViewGeneration:
         assert "SUM(`REVENUE`)" in stmts[0]
         assert "CREATE OR REPLACE VIEW" in stmts[0]
 
+    def test_sql_view_skips_simple_sum_when_metric_view_only_policy_enabled(self):
+        """SQL view generation should skip simple DAX SUM when metric-view-only policy is enabled."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                measure_view_type="sql_view",
+                metric_view_only_sum_translation=True,
+            )
+        )
+        model = SMLModel(
+            unique_name="DaxModel",
+            datasets=[
+                SMLDataset(
+                    unique_name="Sales",
+                    columns=[
+                        SMLColumn(unique_name="REVENUE", data_type=DataType.DECIMAL),
+                    ],
+                )
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="Total_Revenue",
+                    dataset="Sales",
+                    expression="SUM('Sales'[REVENUE])",
+                    aggregation=AggregationType.SUM,
+                )
+            ],
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        stmts, created, skipped, details = publisher.generate_measure_view_statements(
+            model,
+            view_type_override=VIEW_TYPE_SQL,
+        )
+
+        assert stmts == []
+        assert created == 0
+        assert skipped == 1
+        assert details[0]["reason"] == DEPLOY_REASON_DAX_NOT_SUPPORTED
+
+    def test_metric_view_still_translates_simple_sum_with_metric_view_only_policy(self):
+        """Metric-view generation should continue translating simple DAX SUM under the policy."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                measure_view_type="metric_view",
+                metric_view_only_sum_translation=True,
+            )
+        )
+        model = SMLModel(
+            unique_name="DaxModel",
+            datasets=[
+                SMLDataset(
+                    unique_name="Sales",
+                    columns=[
+                        SMLColumn(unique_name="REVENUE", data_type=DataType.DECIMAL),
+                    ],
+                )
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="Total_Revenue",
+                    dataset="Sales",
+                    expression="SUM('Sales'[REVENUE])",
+                    aggregation=AggregationType.SUM,
+                )
+            ],
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        stmts, created, skipped, details = publisher.generate_measure_view_statements(
+            model,
+            view_type_override=VIEW_TYPE_METRIC,
+        )
+
+        assert created == 1
+        assert skipped == 0
+        assert "sum(revenue)" in stmts[0].lower()
+
+    def test_metric_view_renders_project_measures_sum_and_refresh_max(self):
+        """Metric-view generation should keep Project Measures SUMs translated instead of nulling them out."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                measure_view_type="metric_view",
+                metric_view_only_sum_translation=True,
+            )
+        )
+        model = SMLModel(
+            unique_name="Inventory Semantic Model",
+            datasets=[
+                SMLDataset(unique_name="Project Measures", columns=[]),
+                SMLDataset(
+                    unique_name="Inventory Fact",
+                    columns=[
+                        SMLColumn(unique_name="Source Value Total Stock", data_type=DataType.DECIMAL),
+                        SMLColumn(unique_name="WAC Value Total Stock", data_type=DataType.DECIMAL),
+                    ],
+                ),
+                SMLDataset(
+                    unique_name="Corporate DSI Last Refreshed",
+                    columns=[
+                        SMLColumn(unique_name="GL_Refresh_Datetime", data_type=DataType.DATE),
+                    ],
+                ),
+                SMLDataset(
+                    unique_name="Inventory Fact Last Refreshed",
+                    columns=[
+                        SMLColumn(unique_name="GL_Refresh_Datetime", data_type=DataType.DATE),
+                    ],
+                ),
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="Today",
+                    dataset="Project Measures",
+                    expression="TODAY()",
+                    aggregation=AggregationType.NONE,
+                ),
+                SMLMetric(
+                    unique_name="Source Value Total Stock",
+                    dataset="Project Measures",
+                    expression="SUM('Inventory Fact'[Source Value Total Stock])",
+                    aggregation=AggregationType.SUM,
+                ),
+                SMLMetric(
+                    unique_name="Corporate DSI Last Refreshed",
+                    dataset="Project Measures",
+                    expression='CONCATENATE("Last Refreshed: ", MAX(\'Corporate DSI Last Refreshed\'[GL_Refresh_Datetime]))',
+                    aggregation=AggregationType.NONE,
+                ),
+                SMLMetric(
+                    unique_name="Inventory Fact Last Refreshed",
+                    dataset="Project Measures",
+                    expression='CONCATENATE("Last Refreshed: ", MAX(\'Inventory Fact Last Refreshed\'[GL_Refresh_Datetime]))',
+                    aggregation=AggregationType.NONE,
+                ),
+                SMLMetric(
+                    unique_name="WAC Value Total Stock",
+                    dataset="Project Measures",
+                    expression="SUM('Inventory Fact'[WAC Value Total Stock])",
+                    aggregation=AggregationType.SUM,
+                ),
+            ],
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        def _mock_columns(source_table: str):
+            lowered = source_table.lower()
+            if "inventory_fact" in lowered:
+                return {"source_value_total_stock", "wac_value_total_stock"}
+            if "last_refreshed" in lowered:
+                return {"gl_refresh_datetime"}
+            if "project_measures" in lowered:
+                return {"gl_refresh_datetime"}
+            return set()
+
+        with patch.object(
+            publisher,
+            "_resolve_existing_source_for_dataset",
+            side_effect=lambda dataset, expected: expected,
+        ), patch.object(
+            publisher,
+            "_get_source_table_columns",
+            side_effect=_mock_columns,
+        ), patch.object(
+            publisher,
+            "_reconcile_dataset_schema",
+            return_value=None,
+        ):
+            stmts, created, skipped, details = publisher.generate_measure_view_statements(
+                model,
+                view_type_override=VIEW_TYPE_METRIC,
+            )
+
+        assert created >= 1
+        assert skipped == 0
+        assert not details
+        project_measures_stmt = next(
+            stmt for stmt in stmts if "mv_Inventory_Semantic_Model_Project_Measures" in stmt
+        )
+        lowered = project_measures_stmt.lower()
+        assert "sum(source_value_total_stock)" in lowered
+        assert "sum(wac_value_total_stock)" in lowered
+        assert "concat('last refreshed: ', cast(max(gl_refresh_datetime) as string))" in project_measures_stmt.lower()
+
+    def test_today_translated_creates_view(self):
+        """TODAY() translates directly to current_date()."""
+        model = SMLModel(
+            unique_name="TodayModel",
+            datasets=[
+                SMLDataset(
+                    unique_name="Sales",
+                    columns=[
+                        SMLColumn(unique_name="REVENUE", data_type=DataType.DECIMAL),
+                    ],
+                )
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="Today",
+                    dataset="Sales",
+                    expression="TODAY()",
+                )
+            ],
+        )
+        publisher = DatabricksPublisher(_cfg())
+
+        stmts, created, skipped, details = publisher.generate_measure_view_statements(model)
+
+        assert created == 1
+        assert skipped == 0
+        assert "current_date()" in stmts[0]
+
+    def test_concatenate_last_refreshed_translated_creates_view(self):
+        """CONCATENATE + MAX translates to concat(...) + max(...)."""
+        model = SMLModel(
+            unique_name="RefreshModel",
+            datasets=[
+                SMLDataset(
+                    unique_name="Sales",
+                    columns=[
+                        SMLColumn(unique_name="GL_Refresh_Datetime", data_type=DataType.DATE),
+                    ],
+                )
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="Corporate DSI Last Refreshed",
+                    dataset="Sales",
+                    expression='CONCATENATE("Last Refreshed: ", MAX(\'Sales\'[GL_Refresh_Datetime]))',
+                )
+            ],
+        )
+        publisher = DatabricksPublisher(_cfg())
+
+        stmts, created, skipped, details = publisher.generate_measure_view_statements(model)
+
+        assert created == 1
+        assert skipped == 0
+        lowered = stmts[0].lower()
+        assert "concat('last refreshed: ', cast(max(" in lowered
+        assert " as string))" in lowered
+        assert "gl_refresh_datetime" in lowered
+
+    def test_calculate_sum_with_filter_translates_to_case_when(self):
+        """CALCULATE(SUM(...), Dates[...] < fiscalMonth) becomes conditional aggregation."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(enable_cross_table_joins=True)
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        sql_expr = publisher._measure_translator.try_simple_dax_to_sql(
+            "CALCULATE(SUM('Sales'[IOH_EXCLDNG_LIFO_AMT]), 'Dates'[FISCAL_YR_PERIOD] < fiscalMonth)"
+        )
+
+        assert sql_expr is not None
+        assert sql_expr.startswith("SUM(CASE WHEN ")
+        assert "`dates`.`FISCAL_YR_PERIOD`" in sql_expr
+        assert "fiscalMonth" in sql_expr
+        assert "`IOH_EXCLDNG_LIFO_AMT`" in sql_expr
+
+    def test_direct_column_aggregation_patterns_translate(self):
+        """Type A parser support: SUM(Table[Column]) patterns are translated."""
+        publisher = DatabricksPublisher(_cfg())
+
+        source_value_sql = publisher._measure_translator.try_simple_dax_to_sql(
+            "SUM('Inventory Fact'[Source Value Total Stock])"
+        )
+        wac_value_sql = publisher._measure_translator.try_simple_dax_to_sql(
+            "SUM('Inventory Fact'[WAC Value Total Stock])"
+        )
+
+        assert source_value_sql == "sum(source_value_total_stock)"
+        assert wac_value_sql == "sum(wac_value_total_stock)"
+
+    def test_direct_column_aggregation_preserves_table_with_cross_table_joins_enabled(self):
+        """Join-aware mode should preserve table lineage for simple SUM translations."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(enable_cross_table_joins=True)
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        source_value_sql = publisher._measure_translator.try_simple_dax_to_sql(
+            "SUM('Inventory Fact'[Source Value Total Stock])"
+        )
+
+        assert source_value_sql == "sum(inventory_fact.source_value_total_stock)"
+
+    def test_string_aggregation_pattern_translates_with_string_cast(self):
+        """Type B parser support: CONCATENATE(..., MAX(Table[Column])) becomes concat + cast."""
+        publisher = DatabricksPublisher(_cfg())
+
+        sql_expr = publisher._measure_translator.try_simple_dax_to_sql(
+            "CONCATENATE('Last Refreshed: ', MAX('Corporate DSI Last Refreshed'[GL Refresh Datetime]))"
+        )
+
+        assert sql_expr is not None
+        assert sql_expr == "concat('Last Refreshed: ', cast(max(gl_refresh_datetime) as string))"
+
+    def test_string_aggregation_keeps_max_unqualified_with_cross_table_joins_enabled(self):
+        """Join-aware mode should not over-qualify MAX in refresh text expressions."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(enable_cross_table_joins=True)
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        sql_expr = publisher._measure_translator.try_simple_dax_to_sql(
+            "CONCATENATE('Last Refreshed: ', MAX('Corporate DSI Last Refreshed'[GL Refresh Datetime]))"
+        )
+
+        assert sql_expr is not None
+        assert sql_expr == "concat('Last Refreshed: ', cast(max(gl_refresh_datetime) as string))"
+
+    def test_calculate_max_with_filter_translates_to_case_when_max(self):
+        """CALCULATE(MAX(...), filter) should translate using MAX(CASE WHEN ...)."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(enable_cross_table_joins=True)
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        sql_expr = publisher._measure_translator.try_simple_dax_to_sql(
+            "CALCULATE(MAX('Dates'[FISCAL_YR_PERIOD]), 'Dates'[CAL_DT] = TODAY())"
+        )
+
+        assert sql_expr is not None
+        assert sql_expr.startswith("MAX(CASE WHEN ")
+        assert "`dates`.`CAL_DT` = current_date()" in sql_expr
+        assert "THEN `Dates`.`FISCAL_YR_PERIOD` ELSE NULL END" in sql_expr
+
+    def test_var_return_with_today_inlines_and_translates(self):
+        """Simple VAR/RETURN expressions should inline scalar vars and translate."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(enable_cross_table_joins=True)
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        sql_expr = publisher._measure_translator.try_simple_dax_to_sql(
+            "VAR _today = TODAY() RETURN CALCULATE(MAX('Dates'[FISCAL_YR_PERIOD]), 'Dates'[CAL_DT] = _today)"
+        )
+
+        assert sql_expr is not None
+        assert sql_expr.startswith("MAX(CASE WHEN ")
+        assert "`dates`.`CAL_DT` = (current_date())" in sql_expr
+        assert "THEN `Dates`.`FISCAL_YR_PERIOD` ELSE NULL END" in sql_expr
+
+    def test_metric_view_yaml_normalizes_easy_measure_expressions(self):
+        """Measure-only datasets should still emit metric-view YAML for easy Tier-1 measures."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(enable_low_confidence_drafts=False)
+        )
+        model = SMLModel(
+            unique_name="Inventory Semantic Model",
+            datasets=[
+                SMLDataset(unique_name="Project Measures", columns=[]),
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="Source Value Total Stock",
+                    dataset="Project Measures",
+                    expression="SUM('Inventory Fact'[Source Value Total Stock])",
+                    aggregation=AggregationType.SUM,
+                ),
+                SMLMetric(
+                    unique_name="WAC Value Total Stock",
+                    dataset="Project Measures",
+                    expression="SUM('Inventory Fact'[WAC Value Total Stock])",
+                    aggregation=AggregationType.SUM,
+                ),
+                SMLMetric(
+                    unique_name="Corporate DSI Last Refreshed",
+                    dataset="Project Measures",
+                    expression='CONCATENATE("Last Refreshed: ", MAX(\'Corporate DSI Last Refreshed\'[GL Refresh Datetime]))',
+                    aggregation=AggregationType.NONE,
+                ),
+                SMLMetric(
+                    unique_name="Inventory Fact Last Refreshed",
+                    dataset="Project Measures",
+                    expression='CONCATENATE("Last Refreshed: ", MAX(\'Inventory Fact Last Refreshed\'[GL Refresh Datetime]))',
+                    aggregation=AggregationType.NONE,
+                ),
+            ],
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        stmts, created, skipped, details = publisher.generate_measure_view_statements(
+            model,
+            view_type_override=VIEW_TYPE_METRIC,
+        )
+
+        assert created == 1
+        assert skipped == 0
+        assert not details
+        assert len(stmts) == 1
+        yaml_text = stmts[0].lower()
+        assert "sum(source_value_total_stock)" in yaml_text
+        assert "sum(wac_value_total_stock)" in yaml_text
+        assert "concat('last refreshed: ', cast(max(gl_refresh_datetime) as string))" in yaml_text
+        assert "gl_refresh_datetime" in yaml_text
+
     def test_complex_dax_skipped_no_view(self):
         """Complex DAX (CALCULATE, IF, etc.) is skipped — no view created."""
         model = _sales_model(dax_only=True)  # Uses CALCULATE — too complex
@@ -387,6 +793,39 @@ class TestMeasureViewGeneration:
         assert skipped == 1
         assert len(stmts) == 0
         assert details[0]["reason"] == DEPLOY_REASON_DAX_NOT_SUPPORTED
+
+    def test_dax_tier_classifier_standard_aggregation(self):
+        publisher = DatabricksPublisher(_cfg())
+        tier = publisher._measure_translator.classify_dax_measure_tier(
+            "SUM('Fact'[Amount])"
+        )
+        assert tier == TIER_STANDARD_AGGREGATION
+
+    def test_dax_tier_classifier_scalar_system_function(self):
+        publisher = DatabricksPublisher(_cfg())
+        tier = publisher._measure_translator.classify_dax_measure_tier("TODAY()")
+        assert tier == TIER_SCALAR_SYSTEM_FUNCTION
+
+    def test_dax_tier_classifier_filtered_conditional_same_table(self):
+        publisher = DatabricksPublisher(_cfg())
+        tier = publisher._measure_translator.classify_dax_measure_tier(
+            "CALCULATE(SUM('Sales'[Amount]), 'Sales'[Status] = \"Closed\")"
+        )
+        assert tier == TIER_FILTERED_CONDITIONAL_AGGREGATION
+
+    def test_dax_tier_classifier_relationship_aware_cross_table(self):
+        publisher = DatabricksPublisher(_cfg())
+        tier = publisher._measure_translator.classify_dax_measure_tier(
+            "CALCULATE(SUM('Fact'[Amount]), 'DimDate'[Date] < TODAY())"
+        )
+        assert tier == TIER_RELATIONSHIP_AWARE_FILTERED_AGGREGATION
+
+    def test_dax_tier_classifier_deferred_for_complex_callout(self):
+        publisher = DatabricksPublisher(_cfg())
+        tier = publisher._measure_translator.classify_dax_measure_tier(
+            "VAR _sel = SELECTEDVALUE('Business Units'[Business Unit]) RETURN SWITCH(TRUE(), ISBLANK(_sel), \"\", \"x\")"
+        )
+        assert tier == TIER_DEFERRED
 
     def test_no_group_by_pure_aggregate(self):
         """No group_by_dimensions → pure aggregate (no GROUP BY clause)."""
@@ -1048,6 +1487,235 @@ class TestCombinedViewMode:
         assert created == 1
         assert skipped == 0
 
+    def test_combined_sql_mode_does_not_emit_python_none_literals(self):
+        """Combined SQL should never render unresolved measures as Python None literals."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                measure_view_mode="combined",
+                measure_view_type="sql_view",
+                enable_low_confidence_drafts=True,
+            )
+        )
+        model = SMLModel(
+            unique_name="Inventory Semantic Model",
+            datasets=[
+                SMLDataset(
+                    unique_name="Project Measures",
+                    columns=[],
+                )
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="Today",
+                    dataset="Project Measures",
+                    expression="TODAY()",
+                    aggregation=AggregationType.NONE,
+                ),
+                SMLMetric(
+                    unique_name="Corporate IOH",
+                    dataset="Project Measures",
+                    expression="VAR _today = [Today] RETURN CALCULATE(SUM('Corporate DSI Aggregate'[IOH_EXCLDNG_LIFO_AMT]), Dates[FISCAL_YR_PERIOD] < _today)",
+                    aggregation=AggregationType.NONE,
+                ),
+            ],
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        with patch.object(
+            publisher,
+            "_resolve_existing_source_for_dataset",
+            return_value="`main`.`public`.`Project_Measures`",
+        ):
+            stmts, created, skipped, details = publisher.generate_measure_view_statements(
+                model,
+                view_type_override=VIEW_TYPE_SQL,
+            )
+
+        assert created == 1
+        assert len(stmts) == 1
+        assert " None AS `Corporate_IOH`" not in stmts[0]
+        assert "CAST(NULL AS DOUBLE) AS `Corporate_IOH`" in stmts[0]
+
+    def test_combined_sql_mode_renders_project_measures_scalar_sum_and_refresh_max(self):
+        """Project Measures should compile with scalar-subquery SUMs and local MAX refresh measures."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                measure_view_mode="combined",
+                measure_view_type="sql_view",
+                enable_cross_table_joins=True,
+                enable_low_confidence_drafts=True,
+            )
+        )
+        model = SMLModel(
+            unique_name="Inventory Semantic Model",
+            datasets=[
+                SMLDataset(unique_name="Project Measures", columns=[]),
+                SMLDataset(
+                    unique_name="Inventory Fact",
+                    columns=[
+                        SMLColumn(unique_name="Source Value Total Stock", data_type=DataType.DECIMAL),
+                        SMLColumn(unique_name="WAC Value Total Stock", data_type=DataType.DECIMAL),
+                    ],
+                ),
+                SMLDataset(
+                    unique_name="Corporate DSI Last Refreshed",
+                    columns=[
+                        SMLColumn(unique_name="GL_Refresh_Datetime", data_type=DataType.DATE),
+                    ],
+                ),
+                SMLDataset(
+                    unique_name="Inventory Fact Last Refreshed",
+                    columns=[
+                        SMLColumn(unique_name="GL_Refresh_Datetime", data_type=DataType.DATE),
+                    ],
+                ),
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="Today",
+                    dataset="Project Measures",
+                    expression="TODAY()",
+                    aggregation=AggregationType.NONE,
+                ),
+                SMLMetric(
+                    unique_name="Source Value Total Stock",
+                    dataset="Project Measures",
+                    expression="SUM('Inventory Fact'[Source Value Total Stock])",
+                    aggregation=AggregationType.SUM,
+                ),
+                SMLMetric(
+                    unique_name="Corporate DSI Last Refreshed",
+                    dataset="Project Measures",
+                    expression='CONCATENATE("Last Refreshed: ", MAX(\'Corporate DSI Last Refreshed\'[GL_Refresh_Datetime]))',
+                    aggregation=AggregationType.NONE,
+                ),
+                SMLMetric(
+                    unique_name="Inventory Fact Last Refreshed",
+                    dataset="Project Measures",
+                    expression='CONCATENATE("Last Refreshed: ", MAX(\'Inventory Fact Last Refreshed\'[GL_Refresh_Datetime]))',
+                    aggregation=AggregationType.NONE,
+                ),
+                SMLMetric(
+                    unique_name="WAC Value Total Stock",
+                    dataset="Project Measures",
+                    expression="SUM('Inventory Fact'[WAC Value Total Stock])",
+                    aggregation=AggregationType.SUM,
+                ),
+            ],
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        with patch.object(
+            publisher,
+            "_resolve_existing_source_for_dataset",
+            side_effect=lambda dataset, expected: expected,
+        ):
+            stmts, created, skipped, details = publisher.generate_measure_view_statements(
+                model,
+                view_type_override="sql_view",
+            )
+
+        assert created == 1
+        assert skipped == 0
+        assert not details
+        assert "(SELECT SUM(`source_value_total_stock`) FROM `main`.`public`.`Inventory_Fact`)" in stmts[0]
+        assert "(SELECT SUM(`wac_value_total_stock`) FROM `main`.`public`.`Inventory_Fact`)" in stmts[0]
+        assert "CAST(NULL AS DOUBLE) AS `gl_refresh_datetime`" in stmts[0]
+
+    def test_combined_sql_mode_downgrades_unresolved_quoted_columns_to_draft(self):
+        """Combined SQL should not emit unresolved quoted columns from external table refs."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                measure_view_mode="combined",
+                measure_view_type="sql_view",
+                enable_low_confidence_drafts=True,
+            )
+        )
+        model = SMLModel(
+            unique_name="Inventory Semantic Model",
+            datasets=[
+                SMLDataset(
+                    unique_name="Project Measures",
+                    columns=[],
+                )
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="Corporate DSI Last Refreshed",
+                    dataset="Project Measures",
+                    expression="CONCATENATE('Last Refreshed: ', MAX('Corporate DSI Last Refreshed'[GL Refresh Datetime]))",
+                    aggregation=AggregationType.NONE,
+                ),
+            ],
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        with patch.object(
+            publisher,
+            "_resolve_existing_source_for_dataset",
+            return_value="`main`.`public`.`Project_Measures`",
+        ), patch.object(
+            publisher,
+            "_get_source_table_columns",
+            return_value={"_semabridge_placeholder"},
+        ):
+            stmts, created, skipped, details = publisher.generate_measure_view_statements(
+                model,
+                view_type_override=VIEW_TYPE_SQL,
+            )
+
+        assert created == 1
+        assert len(stmts) == 1
+        assert "MAX(`GL_Refresh_Datetime`)" not in stmts[0]
+        assert "CAST(NULL AS DOUBLE) AS `Corporate_DSI_Last_Refreshed`" in stmts[0]
+
+    def test_combined_mode_emits_synthetic_view_for_dataset_without_metrics_when_enabled(self):
+        """Combined mode should attempt all datasets when emit_metric_views_for_all_datasets is enabled."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                measure_view_mode="combined",
+                measure_view_type="sql_view",
+                emit_metric_views_for_all_datasets=True,
+            )
+        )
+        model = SMLModel(
+            unique_name="CoverageModel",
+            datasets=[
+                SMLDataset(
+                    unique_name="Fact",
+                    columns=[SMLColumn(unique_name="amount", data_type=DataType.DECIMAL)],
+                ),
+                SMLDataset(
+                    unique_name="DimOnly",
+                    columns=[SMLColumn(unique_name="id", data_type=DataType.INTEGER)],
+                ),
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="Total Amount",
+                    dataset="Fact",
+                    source_column="amount",
+                    aggregation=AggregationType.SUM,
+                )
+            ],
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        with patch.object(
+            publisher,
+            "_resolve_existing_source_for_dataset",
+            side_effect=lambda dataset, expected: expected,
+        ):
+            stmts, created, skipped, details = publisher.generate_measure_view_statements(
+                model,
+                view_type_override=VIEW_TYPE_SQL,
+            )
+
+        assert created == 2
+        assert len(stmts) == 2
+        assert any("mv_CoverageModel_DimOnly_measures" in stmt for stmt in stmts)
+        assert any("COUNT(*) AS `total_rows`" in stmt for stmt in stmts)
+
     def test_salesforce_style_source_alias_view_is_generated(self):
         """Databricks shim views should expose Salesforce field names over snake_case tables."""
         dataset = SMLDataset(
@@ -1129,8 +1797,190 @@ class TestCombinedViewMode:
 
         assert "CAST(NULL AS DECIMAL(38, 10)) AS `daily_delivery_ld_rate`" in yaml_text
         assert "CAST(NULL AS DECIMAL(38, 10)) AS `daily_delivery_ld_rate_dim`" in yaml_text
-        assert "  - name: daily_delivery_ld_rate" in yaml_text
-        assert "  - name: daily_delivery_ld_rate_dim" in yaml_text
+        assert '  - name: "daily_delivery_ld_rate"' in yaml_text
+        assert '  - name: "daily_delivery_ld_rate_dim"' in yaml_text
+
+    def test_metric_view_yaml_escapes_special_characters(self):
+        """Metric-view YAML should remain parseable with quote-heavy names/labels."""
+        dataset = SMLDataset(
+            unique_name="Inventory",
+            label='Inventory "Primary"',
+            columns=[
+                SMLColumn(unique_name="fiscalMonth", data_type=DataType.STRING),
+            ],
+        )
+        model = SMLModel(
+            unique_name="Inventory Semantic Model Project",
+            label='Inventory "Semantic" Model',
+            datasets=[dataset],
+            metrics=[],
+        )
+        publisher = DatabricksPublisher(_cfg())
+
+        with patch.object(publisher, "_get_source_table_columns", return_value={"fiscalmonth"}):
+            bindings = publisher._build_metric_view_column_bindings(
+                dataset,
+                "`main`.`public`.`inventory`",
+                model,
+            )
+            yaml_text = publisher._generate_metric_view_yaml(
+                model,
+                dataset,
+                "`main`.`public`.`inventory`",
+                [
+                    ResolvedMeasure(
+                        name='Corporate DSI "Monthly"',
+                        sql_expression="SUM(CASE WHEN `fiscalMonth` < '2026-04' THEN `fiscalMonth` ELSE '0' END)",
+                        translation_type=TRANSLATION_TYPE_DAX_TRANSLATED,
+                        confidence=CONFIDENCE_MEDIUM,
+                    )
+                ],
+                bindings,
+            )
+
+        parsed = yaml.safe_load(yaml_text)
+        assert parsed["version"] == 1.1
+        assert "Semabridge:" in parsed["comment"]
+        assert parsed["measures"][0]["name"] == 'Corporate DSI "Monthly"'
+        assert "SUM(CASE WHEN" in parsed["measures"][0]["expr"]
+
+    def test_metric_view_yaml_handles_multiline_original_dax_warning(self):
+        """Low-confidence draft warnings should not leak raw multiline DAX into YAML."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(enable_low_confidence_drafts=True)
+        )
+        dataset = SMLDataset(
+            unique_name="Project Measures",
+            columns=[
+                SMLColumn(unique_name="FISCAL_YR_PERIOD", data_type=DataType.INTEGER),
+            ],
+        )
+        model = SMLModel(unique_name="FabricModel", datasets=[dataset], metrics=[])
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        with patch.object(publisher, "_get_source_table_columns", return_value={"fiscal_yr_period"}):
+            bindings = publisher._build_metric_view_column_bindings(
+                dataset,
+                "`main`.`public`.`Project_Measures`",
+                model,
+            )
+            yaml_text = publisher._generate_metric_view_yaml(
+                model,
+                dataset,
+                "`main`.`public`.`Project_Measures`",
+                [
+                    ResolvedMeasure(
+                        name="Corporate_IOH",
+                        sql_expression="CAST(NULL AS DOUBLE)",
+                        translation_type=TRANSLATION_TYPE_DAX_SKIPPED,
+                        confidence=CONFIDENCE_LOW,
+                        original_dax=(
+                            "Var _today = [Today]\n"
+                            "Var fiscalMonth = CALCULATE(MAX(Dates[FISCAL_YR_PERIOD]), Dates[CAL_DT] = _today)\n"
+                            "RETURN CALCULATE(SUM('Corporate DSI Aggregate'[IOH_EXCLDNG_LIFO_AMT]), Dates[FISCAL_YR_PERIOD] < fiscalMonth)"
+                        ),
+                        warnings=["DAX translation deferred to Tier-5 batch (Tier 4)"],
+                    )
+                ],
+                bindings,
+            )
+
+        parsed = yaml.safe_load(yaml_text)
+        assert parsed["measures"][0]["name"] == "Corporate_IOH"
+        assert "\nVar fiscalMonth" not in yaml_text
+
+    def test_metric_view_unresolved_quoted_column_downgrades_to_draft(self):
+        """Unknown quoted identifiers should not be emitted as deployable metric expressions."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                measure_view_type="metric_view",
+                enable_low_confidence_drafts=True,
+                enable_cross_table_joins=True,
+            )
+        )
+        model = SMLModel(
+            unique_name="Inventory Semantic Model Project",
+            datasets=[
+                SMLDataset(
+                    unique_name="Project Measures",
+                    columns=[],
+                )
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="Corporate DSI Last Refreshed",
+                    dataset="Project Measures",
+                    expression="CONCATENATE(\"Last Refreshed: \", MAX('Corporate DSI Last Refreshed'[GL Refresh Datetime]))",
+                    aggregation=AggregationType.NONE,
+                )
+            ],
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        with patch.object(
+            publisher,
+            "_resolve_existing_source_for_dataset",
+            return_value="`main`.`public`.`Project_Measures`",
+        ), patch.object(
+            publisher,
+            "_get_source_table_columns",
+            return_value={"other_column"},
+        ):
+            stmts, created, skipped, details = publisher.generate_measure_view_statements(
+                model,
+                view_type_override=VIEW_TYPE_METRIC,
+            )
+
+        assert created == 1
+        assert skipped == 0
+        assert not details
+        assert len(stmts) == 1
+        assert "CAST(NULL AS DOUBLE)" in stmts[0]
+        assert "MAX(`GL_Refresh_Datetime`)" not in stmts[0]
+
+    def test_metric_view_yaml_uses_empty_dimensions_list_when_no_bindings(self):
+        """Metric-view YAML should emit dimensions as [] instead of null when no bindings exist."""
+        dataset = SMLDataset(unique_name="Project Measures", columns=[])
+        model = SMLModel(unique_name="FabricModel", datasets=[dataset], metrics=[])
+        publisher = DatabricksPublisher(_cfg())
+
+        yaml_text = publisher._generate_metric_view_yaml(
+            model,
+            dataset,
+            "`main`.`public`.`Project_Measures`",
+            [
+                ResolvedMeasure(
+                    name="Today",
+                    sql_expression="current_date()",
+                    translation_type=TRANSLATION_TYPE_DAX_TRANSLATED,
+                    confidence=CONFIDENCE_HIGH,
+                )
+            ],
+            [],
+        )
+
+        parsed = yaml.safe_load(yaml_text)
+        assert parsed["dimensions"] == []
+        assert parsed["measures"][0]["name"] == "Today"
+
+    def test_metric_view_rewrite_uses_physical_columns_when_bindings_missing(self):
+        """When semantic bindings are missing, physical source columns should keep simple measures deployable."""
+        dataset = SMLDataset(unique_name="Project Measures", columns=[])
+        publisher = DatabricksPublisher(_cfg())
+
+        with patch.object(
+            publisher,
+            "_get_source_table_columns",
+            return_value={"source_value_total_stock"},
+        ):
+            rewritten = publisher._rewrite_metric_view_measure_expression(
+                "SUM(`Source_Value_Total_Stock`)",
+                dataset,
+                "`main`.`public`.`Project_Measures`",
+                [],
+            )
+
+        assert rewritten == "SUM(`Source_Value_Total_Stock`)"
 
     def test_metric_view_rewrites_same_dataset_qualified_sql_and_projects_hidden_columns(self):
         """Metric views should project hidden measure columns and rewrite same-table SQL refs."""
@@ -1954,6 +2804,111 @@ class TestMetricViewGeneration:
         assert stmts == []
         
 
+
+    def test_metric_view_routes_cross_table_models_to_sql_generation(self):
+        """Cross-table measures should route Databricks metric-view mode to join-capable SQL views."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                measure_view_type="metric_view",
+                measure_view_mode="combined",
+                enable_cross_table_joins=True,
+                enable_cross_table_sql_fallback=True,
+            )
+        )
+        model = SMLModel(
+            unique_name="CrossTableModel",
+            datasets=[
+                SMLDataset(
+                    unique_name="Fact",
+                    columns=[
+                        SMLColumn(unique_name="amount", data_type=DataType.DECIMAL),
+                        SMLColumn(unique_name="date_id", data_type=DataType.STRING),
+                    ],
+                ),
+                SMLDataset(
+                    unique_name="Dim",
+                    columns=[
+                        SMLColumn(unique_name="date_id", data_type=DataType.STRING),
+                        SMLColumn(unique_name="calendar_day", data_type=DataType.DATE),
+                    ],
+                ),
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="Cross_Table_Total",
+                    dataset="Fact",
+                    expression="CALCULATE(SUM('Fact'[amount]), Dim[date_id] < TODAY())",
+                    aggregation=AggregationType.SUM,
+                )
+            ],
+            relationships=[
+                SMLRelationship(
+                    unique_name="fact_to_dim",
+                    from_dataset="Fact",
+                    from_columns=["date_id"],
+                    to_dataset="Dim",
+                    to_columns=["date_id"],
+                )
+            ],
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        def _mock_columns(source_table: str):
+            lowered = source_table.lower()
+            if "fact" in lowered:
+                return {"amount", "date_id"}
+            if "dim" in lowered:
+                return {"date_id", "calendar_day"}
+            return set()
+
+        with patch.object(
+            publisher,
+            "_resolve_existing_source_for_dataset",
+            side_effect=lambda dataset, expected: expected,
+        ), patch.object(
+            publisher,
+            "_get_source_table_columns",
+            side_effect=_mock_columns,
+        ):
+            stmts, created, skipped, details = publisher.generate_measure_view_statements(
+                model,
+                view_type_override="metric_view",
+            )
+
+        assert created == 1
+        assert skipped == 0
+        assert not details
+        assert "WITH METRICS LANGUAGE YAML" not in stmts[0]
+        assert "CREATE OR REPLACE VIEW" in stmts[0]
+        assert "LEFT JOIN" in stmts[0]
+
+    def test_simple_table_qualified_sum_is_classified_as_cross_table(self):
+        """Canonical SUM('Table'[Column]) should be eligible for cross-table fallback routing."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(enable_cross_table_joins=True)
+        )
+        model = SMLModel(
+            unique_name="SimpleAggModel",
+            datasets=[
+                SMLDataset(
+                    unique_name="Inventory Fact",
+                    columns=[
+                        SMLColumn(unique_name="Source Value Total Stock", data_type=DataType.DECIMAL),
+                    ],
+                )
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="Source_Value_Total_Stock",
+                    dataset="Inventory Fact",
+                    expression="SUM('Inventory Fact'[Source Value Total Stock])",
+                    aggregation=AggregationType.SUM,
+                )
+            ],
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        assert publisher._is_cross_table_measure(model.metrics[0]) is True
     def test_nested_measure_references_resolve_recursively(self):
         """Nested measure refs should expand to SQL instead of collapsing to NULL drafts."""
         behavior = ConnectorBehavior(

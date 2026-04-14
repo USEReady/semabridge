@@ -8,6 +8,13 @@ from semabridge.core.behavior import DatabricksBehavior
 from semabridge.sml.models import SMLMetric
 
 
+TIER_STANDARD_AGGREGATION = "TIER_1_STANDARD_AGGREGATION"
+TIER_SCALAR_SYSTEM_FUNCTION = "TIER_2_SCALAR_SYSTEM_FUNCTION"
+TIER_FILTERED_CONDITIONAL_AGGREGATION = "TIER_3_FILTERED_CONDITIONAL_AGGREGATION"
+TIER_RELATIONSHIP_AWARE_FILTERED_AGGREGATION = "TIER_4_RELATIONSHIP_AWARE_FILTERED_AGGREGATION"
+TIER_DEFERRED = "TIER_5_DEFERRED"
+
+
 class DatabricksMeasureTranslator:
     """Encapsulates DAX-to-SQL measure translation helpers.
 
@@ -404,6 +411,51 @@ class DatabricksMeasureTranslator:
         """Translate common simple DAX patterns to Databricks SQL."""
         expr = " ".join(dax_expression.split())
 
+        # Minimal VAR/RETURN support for scalar variables that can be translated
+        # deterministically (e.g., TODAY()). Complex variable chains are skipped.
+        var_return_sql = self._try_simple_var_return_to_sql(expr)
+        if var_return_sql:
+            return var_return_sql
+
+        # Bulletproof Tier-1 parser: top-level single-column aggregates.
+        # Preserve table qualifier when present so cross-table join resolution
+        # can map lineage downstream. Keep unqualified output for same-table
+        # expressions to preserve existing behavior.
+        m_simple_agg = re.match(
+            r"^\s*(SUM|AVERAGE|MIN|MAX|COUNT|DISTINCTCOUNT)\s*\(\s*(?:'(?P<table_q>[^']+)'|(?P<table>[A-Za-z_][A-Za-z0-9_]*))?\s*\[(?P<column>[^\]]+)\]\s*\)\s*$",
+            expr,
+            re.IGNORECASE,
+        )
+        if m_simple_agg:
+            func = m_simple_agg.group(1).lower()
+            table = self._sanitize_identifier(
+                str(m_simple_agg.group("table_q") or m_simple_agg.group("table") or "")
+            ).lower()
+            col = self._sanitize_identifier(m_simple_agg.group("column")).lower()
+            qualify_for_join = {
+                "sum",
+                "average",
+                "count",
+                "distinctcount",
+            }
+            col_ref = (
+                f"{table}.{col}"
+                if (table and self._behavior.enable_cross_table_joins and func in qualify_for_join)
+                else col
+            )
+            if func == "average":
+                func = "avg"
+            elif func == "distinctcount":
+                return f"count(distinct {col_ref})"
+            return f"{func}({col_ref})"
+
+        def _col_ref(name: str) -> str:
+            return f"`{self._sanitize_identifier(name)}`"
+
+        # TODAY() -> current_date()
+        if re.match(r"(?i)^TODAY\(\s*\)$", expr):
+            return "current_date()"
+
         # COUNTROWS('Table') -> COUNT(*)
         if re.match(r"(?i)^COUNTROWS\(\s*'[^']+'\s*\)$", expr):
             return "COUNT(*)"
@@ -425,17 +477,67 @@ class DatabricksMeasureTranslator:
         )
         if m_agg:
             func = m_agg.group(1).upper()
-            col = self._sanitize_identifier(m_agg.group(2))
+            col_ref = _col_ref(m_agg.group(2))
 
             func_map = {
-                "SUM": f"SUM(`{col}`)",
-                "AVERAGE": f"AVG(`{col}`)",
-                "COUNT": f"COUNT(`{col}`)",
-                "DISTINCTCOUNT": self._distinct_count_expression(f"`{col}`"),
-                "MIN": f"MIN(`{col}`)",
-                "MAX": f"MAX(`{col}`)",
+                "SUM": f"SUM({col_ref})",
+                "AVERAGE": f"AVG({col_ref})",
+                "COUNT": f"COUNT({col_ref})",
+                "DISTINCTCOUNT": self._distinct_count_expression(col_ref),
+                "MIN": f"MIN({col_ref})",
+                "MAX": f"MAX({col_ref})",
             }
             return func_map.get(func)
+
+        # CONCATENATE("text", MAX('Table'[Column])) -> concat('text', MAX(`Column`))
+        m_concat = re.match(
+            r'(?is)^CONCATENATE\(\s*("(?:[^"]|"")*"|\'[^\']*\')\s*,\s*(.+)\s*\)$',
+            expr,
+        )
+        if m_concat:
+            prefix = m_concat.group(1)
+            suffix = m_concat.group(2).strip()
+            suffix_sql = self.try_simple_dax_to_sql(suffix) or suffix
+            if re.match(r"(?is)^(MIN|MAX|SUM|AVG|COUNT)\s*\(", suffix_sql.strip()):
+                suffix_sql = f"cast({suffix_sql} as string)"
+            if prefix.startswith('"') and prefix.endswith('"'):
+                literal = prefix[1:-1].replace('""', '"').replace("'", "''")
+                prefix_sql = f"'{literal}'"
+            else:
+                prefix_sql = prefix
+            return f"concat({prefix_sql}, {suffix_sql})"
+
+        # CALCULATE(AGG('Table'[Column]), condition)
+        # -> AGG(CASE WHEN ... THEN `Column` ELSE <agg-neutral> END)
+        m_calculate = re.match(
+            r"(?is)^CALCULATE\(\s*(SUM|AVERAGE|COUNT|MIN|MAX)\(\s*(?:(?:'(?P<table_q>[^']+)'|(?P<table>[A-Za-z_][A-Za-z0-9_]*))\s*)?\[([^\]]+)\]\s*\)\s*,\s*(.+)\s*\)$",
+            expr,
+        )
+        if m_calculate:
+            agg_func = m_calculate.group(1).upper()
+            base_table = str(m_calculate.group("table_q") or m_calculate.group("table") or "").strip()
+            base_col = self._sanitize_identifier(m_calculate.group(4))
+            condition_expr = m_calculate.group(5).strip()
+
+            base_col_sql = f"`{base_col}`"
+            if base_table:
+                base_col_sql = f"`{self._sanitize_identifier(base_table)}`.{base_col_sql}"
+
+            if condition_expr.upper().startswith("FILTER(") and condition_expr.endswith(")"):
+                filter_args = self.split_top_level_csv(condition_expr[7:-1])
+                if len(filter_args) >= 2:
+                    condition_expr = filter_args[1]
+
+            condition_sql = self._translate_simple_dax_condition(condition_expr)
+            if condition_sql:
+                case_expr_by_agg = {
+                    "SUM": f"SUM(CASE WHEN {condition_sql} THEN {base_col_sql} ELSE 0 END)",
+                    "AVERAGE": f"AVG(CASE WHEN {condition_sql} THEN {base_col_sql} ELSE NULL END)",
+                    "COUNT": f"COUNT(CASE WHEN {condition_sql} THEN {base_col_sql} ELSE NULL END)",
+                    "MIN": f"MIN(CASE WHEN {condition_sql} THEN {base_col_sql} ELSE NULL END)",
+                    "MAX": f"MAX(CASE WHEN {condition_sql} THEN {base_col_sql} ELSE NULL END)",
+                }
+                return case_expr_by_agg.get(agg_func)
 
         # Simple [Column] reference (bare column ref without aggregation)
         m_bare = re.match(r"^\[([^\]]+)\]$", expr)
@@ -445,3 +547,138 @@ class DatabricksMeasureTranslator:
 
         # Pattern too complex for deterministic translation
         return None
+
+    def classify_dax_measure_tier(self, dax_expression: str) -> str:
+        """Classify DAX measures into deterministic sync tiers for Databricks.
+
+        Tier order:
+            1) Standard single-table aggregations
+            2) Scalar system functions
+            3) Filtered/conditional same-table aggregations
+            4) Relationship-aware cross-table aggregations
+            5) Deferred/unsupported
+        """
+        expr = " ".join(str(dax_expression or "").split())
+        if not expr:
+            return TIER_DEFERRED
+
+        # Tier 2: scalar system functions
+        if re.match(r"(?i)^(TODAY|NOW|USEROBJECTID)\s*\(\s*\)$", expr):
+            return TIER_SCALAR_SYSTEM_FUNCTION
+
+        # Tier 1: standard aggregations over one table/column
+        if re.match(
+            r"(?i)^(SUM|AVERAGE|COUNT|DISTINCTCOUNT|MIN|MAX)"
+            r"\(\s*(?:(?:'[^']+'|[A-Za-z_][A-Za-z0-9_]*)\s*)?\[[^\]]+\]\s*\)$",
+            expr,
+        ):
+            return TIER_STANDARD_AGGREGATION
+
+        # Tier 1: table row counts
+        if re.match(r"(?i)^COUNTROWS\(\s*(?:'[^']+'|[A-Za-z_][A-Za-z0-9_]*)\s*\)$", expr):
+            return TIER_STANDARD_AGGREGATION
+
+        # Tier 3/4: CALCULATE over aggregate with filter predicates
+        if re.match(r"(?is)^CALCULATE\s*\(", expr):
+            # Use table references inside [table][column] refs to distinguish same-table vs cross-table.
+            table_refs = re.findall(
+                r"(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_]*))\s*\[[^\]]+\]",
+                expr,
+            )
+            tables = {
+                str(table_q or table or "").strip().lower()
+                for table_q, table in table_refs
+                if str(table_q or table or "").strip()
+            }
+            if len(tables) > 1:
+                return TIER_RELATIONSHIP_AWARE_FILTERED_AGGREGATION
+            if len(tables) == 1:
+                return TIER_FILTERED_CONDITIONAL_AGGREGATION
+
+        # VAR/RETURN wrappers can hide CALCULATE body; inspect table refs.
+        if re.search(r"(?i)\bVAR\b", expr) and re.search(r"(?i)\bRETURN\b", expr):
+            table_refs = re.findall(
+                r"(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_]*))\s*\[[^\]]+\]",
+                expr,
+            )
+            tables = {
+                str(table_q or table or "").strip().lower()
+                for table_q, table in table_refs
+                if str(table_q or table or "").strip()
+            }
+            if len(tables) > 1:
+                return TIER_RELATIONSHIP_AWARE_FILTERED_AGGREGATION
+            if len(tables) == 1 and re.search(r"(?i)\bCALCULATE\s*\(", expr):
+                return TIER_FILTERED_CONDITIONAL_AGGREGATION
+
+        return TIER_DEFERRED
+
+    def _translate_simple_dax_condition(self, condition: str) -> Optional[str]:
+        """Translate a simple DAX filter predicate into SQL-safe text."""
+        expr = " ".join(str(condition or "").split())
+        if not expr:
+            return None
+
+        def _replace_column_ref(match: re.Match) -> str:
+            table_name = str(match.group("table_q") or match.group("table") or "").strip()
+            column_name = self._sanitize_identifier(match.group("col") or "")
+            if table_name and self._behavior.enable_cross_table_joins:
+                table_alias = self._sanitize_identifier(table_name).lower()
+                return f"`{table_alias}`.`{column_name}`"
+            return f"`{column_name}`"
+
+        expr = re.sub(
+            r"(?:'(?P<table_q>[^']+)'|(?P<table>[A-Za-z_][A-Za-z0-9_]*))\s*\[(?P<col>[^\]]+)\]",
+            _replace_column_ref,
+            expr,
+        )
+        expr = re.sub(r"(?i)\bTODAY\s*\(\s*\)", "current_date()", expr)
+
+        if re.search(
+            r"(?i)\b(TOTALYTD|CALCULATE|SAMEPERIODLASTYEAR|DATESYTD|FILTER|ALL|EARLIER|SUMX|AVERAGEX|IF|DIVIDE)\b",
+            expr,
+        ):
+            return None
+
+        if re.fullmatch(r"(?is)[A-Za-z0-9_`\"().,+\-*/%\s=<>!|&:'$]+", expr):
+            return expr
+        return None
+
+    def _try_simple_var_return_to_sql(self, normalized_expr: str) -> Optional[str]:
+        """Translate simple VAR...RETURN expressions via scalar inlining.
+
+        Supports only scalar vars that can be translated by try_simple_dax_to_sql
+        without requiring other variables or measure references.
+        """
+        expr = str(normalized_expr or "").strip()
+        if not expr or "RETURN" not in expr.upper() or "VAR" not in expr.upper():
+            return None
+
+        m_return = re.search(r"(?is)\bRETURN\b\s*(.+)$", expr)
+        if not m_return:
+            return None
+        return_expr = str(m_return.group(1) or "").strip()
+        var_block = expr[: m_return.start()]
+
+        var_matches = re.findall(r"(?is)\bVAR\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)(?=\bVAR\s+[A-Za-z_][A-Za-z0-9_]*\s*=|\Z)", var_block)
+        if not var_matches:
+            return None
+
+        var_sql: dict[str, str] = {}
+        for var_name, var_expr in var_matches:
+            candidate = " ".join(str(var_expr or "").split()).strip()
+            if not candidate:
+                return None
+            translated = self.try_simple_dax_to_sql(candidate)
+            if not translated:
+                return None
+            # Keep this lightweight: only inline scalar-like translations.
+            if re.search(r"(?i)\b(CASE|SELECT|FROM|JOIN)\b", translated):
+                return None
+            var_sql[var_name.lower()] = translated
+
+        inlined = return_expr
+        for var_name, translated in var_sql.items():
+            inlined = re.sub(rf"(?i)\b{re.escape(var_name)}\b", f"({translated})", inlined)
+
+        return self.try_simple_dax_to_sql(inlined)

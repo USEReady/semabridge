@@ -11,6 +11,8 @@ Deployment produces three layers:
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 import re
 import time
 import threading
@@ -697,6 +699,32 @@ class DatabricksPublisher:
             ") AS `semabridge_src`"
         )
 
+    def _build_inline_null_source_relation(self, source_fq: str, column_names: list[str]) -> str:
+        """Build a source relation that projects typed NULL placeholders."""
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for column_name in column_names:
+            safe_name = self._sanitize_identifier(column_name)
+            if not safe_name:
+                continue
+            key = safe_name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(safe_name)
+
+        if not deduped:
+            return source_fq
+
+        select_list = ",\n".join(f"  CAST(NULL AS DOUBLE) AS `{name}`" for name in deduped)
+        return (
+            "(\n"
+            "SELECT\n"
+            f"{select_list}\n"
+            f"FROM {source_fq}\n"
+            ") AS `semabridge_src`"
+        )
+
     def _discover_source_table_schema(self, source_table: str) -> str | None:
         """Find a table with the same name in an alternate schema in the catalog."""
         parsed = self._parse_table_reference(source_table)
@@ -1287,6 +1315,7 @@ class DatabricksPublisher:
 
         allowed_prefixes = self._metric_view_allowed_prefixes(dataset, source_fq)
         column_lookup: dict[str, str] = {}
+        physical_cols = {str(c).lower() for c in self._get_source_table_columns(source_fq)}
         for binding in bindings:
             keys = {
                 binding.projected_name,
@@ -1306,7 +1335,16 @@ class DatabricksPublisher:
             normalized = self._sanitize_identifier(column_name).lower()
             if not normalized:
                 return None
-            return column_lookup.get(normalized)
+            projected = column_lookup.get(normalized)
+            if projected:
+                return projected
+
+            # Fallback for sparse semantic models: if the physical source table
+            # has this column, allow it as-is so translatable measures are not
+            # dropped solely due to missing semantic bindings.
+            if normalized in physical_cols:
+                return self._sanitize_identifier(column_name)
+            return None
 
         qualified_pattern = re.compile(
             r"(?:`(?P<prefix_bt>[^`]+)`|\"(?P<prefix_dq>[^\"]+)\"|(?P<prefix>[A-Za-z_][A-Za-z0-9_]*))\s*\.\s*"
@@ -1340,13 +1378,19 @@ class DatabricksPublisher:
         quoted_pattern = re.compile(r"`([^`]+)`|\"([^\"]+)\"")
 
         def _replace_quoted(match: re.Match[str]) -> str:
+            nonlocal unresolved
             column_name = match.group(1) or match.group(2) or ""
             projected = _resolve_projected_name(column_name)
             if not projected:
+                if not dataset.columns:
+                    return f"`{self._sanitize_identifier(column_name)}`"
+                unresolved = True
                 return match.group(0)
             return f"`{projected}`"
 
         expr = quoted_pattern.sub(_replace_quoted, expr)
+        if unresolved:
+            return None
         return expr
 
     def _rewrite_sql_view_measure_expression(
@@ -1367,6 +1411,7 @@ class DatabricksPublisher:
             return None
 
         allowed_prefixes = self._metric_view_allowed_prefixes(dataset, source_fq)
+        physical_cols = {str(c).lower() for c in self._get_source_table_columns(source_fq)}
         column_lookup: dict[str, str] = {}
         for col in dataset.columns:
             resolved_column = self._resolve_physical_source_column(
@@ -1424,13 +1469,24 @@ class DatabricksPublisher:
         quoted_pattern = re.compile(r"`([^`]+)`|\"([^\"]+)\"")
 
         def _replace_quoted(match: re.Match[str]) -> str:
+            nonlocal unresolved
             column_name = match.group(1) or match.group(2) or ""
             resolved_column = _resolve_column_name(column_name)
             if not resolved_column:
+                # Fail closed for SQL fallback when source schema is known and
+                # the quoted identifier is absent. This avoids emitting invalid
+                # SQL that later fails with UNRESOLVED_COLUMN in Databricks.
+                normalized = self._sanitize_identifier(column_name).lower()
+                if physical_cols and normalized not in physical_cols:
+                    unresolved = True
+                    return match.group(0)
                 return f"`{self._sanitize_identifier(column_name)}`"
             return f"`{resolved_column}`"
 
-        return quoted_pattern.sub(_replace_quoted, expr)
+        rewritten = quoted_pattern.sub(_replace_quoted, expr)
+        if unresolved:
+            return None
+        return rewritten
 
     def _generate_metric_view_yaml(
         self,
@@ -1458,6 +1514,7 @@ class DatabricksPublisher:
         """
         model_label = self._escape_literal(sml_model.label or sml_model.unique_name)
         ds_label = self._escape_literal(dataset.label or dataset.unique_name)
+        yaml_quote = self._yaml_quote
 
         # Build the source — use inline SQL query when no physical table is mapped
         ds_name = self._sanitize_identifier(
@@ -1467,16 +1524,36 @@ class DatabricksPublisher:
 
         lines: list[str] = [
             "version: 1.1",
-            f'comment: "Semabridge: {model_label} - {ds_label}"',
+            f"comment: {yaml_quote(f'Semabridge: {model_label} - {ds_label}')}",
         ]
 
-        if has_explicit_mapping:
+        inline_measure_source_required = not bindings and not dataset.columns and resolved_measures
+
+        if inline_measure_source_required:
+            inline_cols: list[str] = []
+            used_cols: set[str] = set()
+            for rm in resolved_measures:
+                for col_name in self._extract_inline_source_columns_from_sql_expression(rm.sql_expression):
+                    if col_name in used_cols:
+                        continue
+                    used_cols.add(col_name)
+                    inline_cols.append(f"CAST(NULL AS DOUBLE) AS `{col_name}`")
+            if inline_cols:
+                lines.append("source: |")
+                lines.append("  SELECT")
+                for index, inline_col in enumerate(inline_cols):
+                    suffix = "," if index < len(inline_cols) - 1 else ""
+                    lines.append(f"  {inline_col}{suffix}")
+                lines.append(f"  FROM {source_fq.replace('`', '')}")
+            else:
+                lines.append(f"source: {yaml_quote(source_fq.replace('`', ''))}")
+        elif has_explicit_mapping:
             if self._requires_source_alias_query(source_fq, bindings):
                 # Use an aliasing source query when mapped physical columns do
                 # not match semantic names.
                 lines.append("source: " + self._build_metric_view_source_query(bindings, source_fq))
             else:
-                lines.append(f"source: {source_fq.replace('`', '')}")
+                lines.append(f"source: {yaml_quote(source_fq.replace('`', ''))}")
         else:
             # Inline SQL query as source — no physical table needed
             # Generates a typed schema SELECT using CAST(NULL AS type)
@@ -1498,25 +1575,28 @@ class DatabricksPublisher:
             else:
                 # Fallback: reference the table directly
                 source_for_yaml = source_fq.replace("`", "")
-                lines.append(f"source: {source_for_yaml}")
+                lines.append(f"source: {yaml_quote(source_for_yaml)}")
 
         lines.append("")
         lines.append("dimensions:")
-
+        dimensions_added = 0
         for binding in bindings:
             if not binding.include_as_dimension:
                 continue
-            lines.append(f"  - name: {binding.projected_name}")
-            lines.append(f'    expr: "`{binding.projected_name}`"')
+            lines.append(f"  - name: {yaml_quote(binding.projected_name)}")
+            lines.append(f"    expr: {yaml_quote(f'`{binding.projected_name}`')}")
+            dimensions_added += 1
+        if dimensions_added == 0:
+            lines[-1] = "dimensions: []"
 
         lines.append("")
         lines.append("measures:")
-
+        measures_added = 0
         for rm in resolved_measures:
             if not rm.sql_expression:
                 continue
 
-            dbx_expr = rm.sql_expression.replace('"', '`').strip()
+            dbx_expr = self._normalize_metric_view_sql_expression(rm.sql_expression)
             if not dbx_expr or not dbx_expr.strip('`').strip():
                 logger.warning(
                     "Skipping malformed metric-view measure '%s' for dataset '%s': empty SQL expression",
@@ -1530,12 +1610,57 @@ class DatabricksPublisher:
                 original_dax = (rm.original_dax or "").replace('"', "'")
                 lines.append(f"  # TRANSLATION WARNING: {warning}")
                 if original_dax:
-                    lines.append(f"  # Original DAX: {original_dax[:200]}")
+                    dax_preview = re.sub(r"\s+", " ", original_dax).strip()[:200]
+                    lines.append(f"  # Original DAX: {dax_preview}")
 
-            lines.append(f"  - name: {rm.name}")
-            lines.append(f"    expr: {dbx_expr}")
+            lines.append(f"  - name: {yaml_quote(rm.name)}")
+            lines.append(f"    expr: {yaml_quote(dbx_expr)}")
+            measures_added += 1
+        if measures_added == 0:
+            lines[-1] = "measures: []"
 
         return "\n".join(lines)
+
+    def _yaml_quote(self, value: str) -> str:
+        """Encode a value as a YAML-safe scalar via JSON string quoting."""
+        return json.dumps(str(value or ""))
+
+    def _normalize_metric_view_sql_expression(self, sql_expression: str) -> str:
+        """Normalize SQL expressions for metric-view YAML readability."""
+        expr = str(sql_expression or "").strip().replace("`", "")
+        if not expr:
+            return expr
+
+        parts = re.split(r"('(?:''|[^'])*')", expr)
+        normalized_parts: list[str] = []
+        for index, part in enumerate(parts):
+            if not part:
+                continue
+            if index % 2 == 1:
+                normalized_parts.append(part)
+            else:
+                normalized_parts.append(part.lower())
+        return "".join(normalized_parts)
+
+    def _extract_inline_source_columns_from_sql_expression(self, sql_expression: str) -> list[str]:
+        """Extract likely source column names from translated SQL for inline YAML sources."""
+        expr = str(sql_expression or "")
+        raw_columns = set(re.findall(r"`([^`]+)`", expr))
+        raw_columns.update(
+            re.findall(
+                r"(?i)\b(?:sum|average|min|max|count|countif|distinctcount)\s*\(\s*(?:distinct\s+)?([a-z_][a-z0-9_]*)\s*\)",
+                expr,
+            )
+        )
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for raw_col in raw_columns:
+            column_name = self._sanitize_identifier(raw_col).lower()
+            if not column_name or column_name in seen:
+                continue
+            seen.add(column_name)
+            deduped.append(column_name)
+        return deduped
 
     def _has_source_table_mapping(self, ds_name: str) -> bool:
         """Check if a dataset has an explicit source table mapping.
@@ -1659,6 +1784,12 @@ class DatabricksPublisher:
                     source_fq,
                     bindings,
                 )
+                if not metric_view_expr:
+                    metric_view_expr = self._build_scalar_subquery_aggregate_expression(
+                        sql_expr,
+                        dataset,
+                        sml_model,
+                    )
                 if not metric_view_expr:
                     if self._dbx_behavior.enable_cross_table_joins:
                         resolved.append(ResolvedMeasure(
@@ -1898,14 +2029,63 @@ class DatabricksPublisher:
             alias_by_dataset[ds_name] = self._make_unique_projected_name(preferred, used_aliases, suffix="join").lower()
 
         graph = self._build_relationship_graph(sml_model)
-        from_relation = f"{source_by_dataset[base_dataset_name]} AS `{alias_by_dataset[base_dataset_name]}`"
-        included = {base_dataset_name}
+        candidate_bases = [base_dataset_name] + [name for name in sorted(tables_involved) if name != base_dataset_name]
+        chosen_base = ""
+        chosen_paths: dict[str, list[tuple[str, str, Any, bool]]] = {}
+
+        for candidate in candidate_bases:
+            if candidate not in dataset_by_name:
+                continue
+            candidate_paths: dict[str, list[tuple[str, str, Any, bool]]] = {}
+            candidate_ok = True
+            for target in sorted(tables_involved):
+                if target == candidate:
+                    continue
+                path = self._find_relationship_path(graph, candidate, target)
+                if not path:
+                    candidate_ok = False
+                    break
+                candidate_paths[target] = path
+            if candidate_ok:
+                chosen_base = candidate
+                chosen_paths = candidate_paths
+                break
+
+        if not chosen_base:
+            # Last-resort fallback for simple single-foreign-table aggregates:
+            # embed the aggregate as a scalar subquery over the referenced table.
+            if len(tables_involved) == 2:
+                foreign_dataset_name = next((name for name in sorted(tables_involved) if name != base_dataset_name), "")
+                foreign_ds = dataset_by_name.get(foreign_dataset_name)
+                foreign_source = source_by_dataset.get(foreign_dataset_name, "")
+                if foreign_ds and foreign_source:
+                    subquery_match = re.match(
+                        r"(?is)^\s*(SUM|AVERAGE|COUNT|DISTINCTCOUNT|MIN|MAX)\s*\(\s*(?:`(?P<prefix_bt>[^`]+)`|\"(?P<prefix_dq>[^\"]+)\"|(?P<prefix>[A-Za-z_][A-Za-z0-9_]*))\s*\.\s*(?:`(?P<col_bt>[^`]+)`|\"(?P<col_dq>[^\"]+)\"|(?P<col>[A-Za-z_][A-Za-z0-9_]*))\s*\)\s*$",
+                        expr,
+                    )
+                    if subquery_match:
+                        agg_func = subquery_match.group(1).upper()
+                        column_name = subquery_match.group("col_bt") or subquery_match.group("col_dq") or subquery_match.group("col") or ""
+                        column_sql = self._sanitize_identifier(column_name)
+                        if agg_func == "DISTINCTCOUNT":
+                            agg_sql = f"COUNT(DISTINCT `{column_sql}`)"
+                        else:
+                            agg_sql = f"{agg_func}(CASE WHEN 1=1 THEN `{column_sql}` ELSE NULL END)" if agg_func in {"AVERAGE", "COUNT", "MIN", "MAX"} else f"SUM(`{column_sql}`)"
+                        return (
+                            f"(SELECT {agg_sql} FROM {foreign_source} AS `{alias_by_dataset[foreign_dataset_name]}`)"
+                            ,
+                            f"{source_by_dataset[base_dataset_name]} AS `{alias_by_dataset[base_dataset_name]}`",
+                        )
+            return None
+
+        from_relation = f"{source_by_dataset[chosen_base]} AS `{alias_by_dataset[chosen_base]}`"
+        included = {chosen_base}
         join_lines: list[str] = []
 
         for target in sorted(tables_involved):
             if target in included:
                 continue
-            path = self._find_relationship_path(graph, base_dataset_name, target)
+            path = chosen_paths.get(target)
             if not path:
                 return None
 
@@ -1990,6 +2170,72 @@ class DatabricksPublisher:
 
         joined_from_clause = "\n".join([from_relation] + join_lines)
         return rewritten_expr, joined_from_clause
+
+    def _build_scalar_subquery_aggregate_expression(
+        self,
+        sql_expression: str,
+        dataset: SMLDataset,
+        sml_model: SMLModel,
+    ) -> str | None:
+        """Build a scalar subquery for a simple table-qualified aggregate."""
+        expr = str(sql_expression or "").strip()
+        if not expr:
+            return None
+
+        agg_match = re.match(
+            r"(?is)^\s*(SUM|AVERAGE|COUNT|DISTINCTCOUNT|MIN|MAX)\s*\(\s*(?:`(?P<prefix_bt>[^`]+)`|\"(?P<prefix_dq>[^\"]+)\"|(?P<prefix>[A-Za-z_][A-Za-z0-9_]*))\s*\.\s*(?:`(?P<col_bt>[^`]+)`|\"(?P<col_dq>[^\"]+)\"|(?P<col>[A-Za-z_][A-Za-z0-9_]*))\s*\)\s*$",
+            expr,
+        )
+        if not agg_match:
+            return None
+
+        agg_func = agg_match.group(1).upper()
+        prefix = str(
+            agg_match.group("prefix_bt")
+            or agg_match.group("prefix_dq")
+            or agg_match.group("prefix")
+            or ""
+        ).strip().lower()
+        column_name = str(
+            agg_match.group("col_bt")
+            or agg_match.group("col_dq")
+            or agg_match.group("col")
+            or ""
+        ).strip()
+        if not prefix or not column_name:
+            return None
+
+        prefix_map = self._build_dataset_prefix_map(sml_model)
+        target_dataset_name = prefix_map.get(prefix)
+        if not target_dataset_name:
+            return None
+
+        current_dataset_name = str(dataset.unique_name or "").strip().lower()
+        if target_dataset_name.strip().lower() == current_dataset_name:
+            return None
+
+        target_dataset = sml_model.get_dataset(target_dataset_name)
+        if not target_dataset:
+            return None
+
+        target_source = self._resolve_source_table(target_dataset)
+        target_source = self._resolve_existing_source_for_dataset(target_dataset, target_source) or target_source
+        resolved_column = self._resolve_physical_source_column(target_dataset, column_name, target_source)
+        if not resolved_column:
+            return None
+
+        agg_sql = {
+            "SUM": f"SUM(`{resolved_column}`)",
+            "AVERAGE": f"AVG(`{resolved_column}`)",
+            "COUNT": f"COUNT(`{resolved_column}`)",
+            "DISTINCTCOUNT": f"COUNT(DISTINCT `{resolved_column}`)",
+            "MIN": f"MIN(`{resolved_column}`)",
+            "MAX": f"MAX(`{resolved_column}`)",
+        }.get(agg_func)
+        if not agg_sql:
+            return None
+
+        return f"(SELECT {agg_sql} FROM {target_source})"
 
     def _sql_type(self, normalized_type: str, source_type: str = "", column_name: str = "") -> str:
         # Calendar-like dimension columns do not need BIGINT width.
@@ -2080,6 +2326,55 @@ class DatabricksPublisher:
         safe = re.sub(r"[^0-9A-Za-z_]", "_", raw)
         safe = re.sub(r"_+", "_", safe).strip("_")
         return safe or "unnamed"
+
+    def _debug_sql_artifact_dir(self, model_name: str) -> Path:
+        """Return the output directory for Databricks SQL debug artifacts."""
+        safe_model = self._sanitize_identifier(model_name)
+        return Path("output") / "debug" / "databricks" / safe_model
+
+    def _extract_view_name_from_sql(self, view_sql: str) -> str:
+        """Extract fully-qualified view name from a CREATE VIEW statement."""
+        match = re.search(
+            r"(?is)CREATE\s+OR\s+REPLACE\s+VIEW\s+(`[^`]+`\.`[^`]+`\.`[^`]+`)",
+            str(view_sql or ""),
+        )
+        if not match:
+            return "unknown_view"
+        return str(match.group(1) or "unknown_view")
+
+    def _persist_sql_debug_artifact(self, model_name: str, view_sql: str) -> str | None:
+        """Persist generated SQL to disk for post-failure debugging."""
+        try:
+            artifact_dir = self._debug_sql_artifact_dir(model_name)
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            view_name = self._extract_view_name_from_sql(view_sql)
+            safe_view = self._sanitize_identifier(view_name.replace("`", "").replace(".", "_"))
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            file_name = f"{timestamp}_{safe_view}.sql"
+            artifact_path = artifact_dir / file_name
+
+            counter = 2
+            while artifact_path.exists():
+                artifact_path = artifact_dir / f"{timestamp}_{safe_view}_{counter}.sql"
+                counter += 1
+
+            artifact_path.write_text(str(view_sql or "") + "\n", encoding="utf-8")
+            return str(artifact_path)
+        except OSError as exc:
+            logger.warning("Failed to persist Databricks SQL debug artifact: %s", exc)
+            return None
+
+    def _persist_sql_debug_error_artifact(self, sql_artifact_path: str, error_msg: str) -> str | None:
+        """Persist deploy error details next to the emitted SQL artifact."""
+        if not sql_artifact_path:
+            return None
+        try:
+            error_path = Path(sql_artifact_path).with_suffix(".error.txt")
+            error_path.write_text(str(error_msg or "") + "\n", encoding="utf-8")
+            return str(error_path)
+        except OSError as exc:
+            logger.warning("Failed to persist Databricks SQL error artifact: %s", exc)
+            return None
 
     def _count_schema_objects(self) -> int | None:
         """Return current number of tables/views in the target schema."""
@@ -2232,11 +2527,24 @@ class DatabricksPublisher:
 
     # ── Measure SQL Resolution ───────────────────────────────────────────────
 
+    def _is_simple_sum_dax_expression(self, dax_expression: str) -> bool:
+        """Return True for canonical SUM(Table[Column]) DAX expressions."""
+        expr = " ".join(str(dax_expression or "").split())
+        if not expr:
+            return False
+        return bool(
+            re.match(
+                r"(?is)^\s*SUM\s*\(\s*(?:(?:'[^']+'|[A-Za-z_][A-Za-z0-9_]*)\s*)?\[[^\]]+\]\s*\)\s*$",
+                expr,
+            )
+        )
+
     def _resolve_measure_sql(
         self,
         metric: SMLMetric,
         dataset: Optional[SMLDataset],
         measure_sql_map: Optional[dict[str, str]] = None,
+        allow_simple_sum_translation: bool = True,
     ) -> tuple[Optional[str], str]:
         """Resolve the executable SQL expression for a metric.
 
@@ -2269,7 +2577,17 @@ class DatabricksPublisher:
         if self._dbx_behavior.enable_simple_dax_translation:
             dax_expr = (metric.expression or "").strip()
             if dax_expr:
-                translated = self._try_simple_dax_to_sql(dax_expr)
+                if (
+                    not allow_simple_sum_translation
+                    and self._is_simple_sum_dax_expression(dax_expr)
+                ):
+                    logger.info(
+                        "Skipped simple SUM DAX translation for measure '%s' in SQL-view mode by policy",
+                        metric.unique_name,
+                    )
+                    return None, TRANSLATION_TYPE_DAX_SKIPPED
+
+                translated = self._measure_translator.try_simple_dax_to_sql(dax_expr)
                 if translated:
                     logger.info(
                         "Translated DAX to SQL for measure '%s': %s → %s",
@@ -2435,21 +2753,53 @@ class DatabricksPublisher:
         references (TABLE.COLUMN patterns with distinct table prefixes),
         treat it as cross-table.
         """
-        sql_expr = (metric.sql_expression or "").strip()
-        if not sql_expr:
-            return False
+        exprs = [
+            (metric.sql_expression or "").strip(),
+            (metric.expression or "").strip(),
+        ]
+        for sql_expr in exprs:
+            if not sql_expr:
+                continue
 
-        # Find TABLE.COLUMN patterns
-        ref_matches = re.findall(
-            r'(?:`([^`]+)`|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))\s*\.\s*(?:`[^`]+`|"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)',
-            sql_expr,
-        )
-        unique_tables = {
-            str(prefix_bt or prefix_dq or prefix or "").strip().lower()
-            for prefix_bt, prefix_dq, prefix in ref_matches
-            if str(prefix_bt or prefix_dq or prefix or "").strip()
-        }
-        return len(unique_tables) > 1
+            # Plain table-qualified aggregates like SUM('Fact'[Amount]) are the
+            # important cross-table case for Databricks fallback routing.
+            # Keep MAX-based refresh text unclassified so those measures stay
+            # on the fast local translation path.
+            m_simple_agg = re.match(
+                r"(?is)^\s*(SUM|AVERAGE|COUNT|DISTINCTCOUNT)\s*\(\s*(?:'(?P<table_q>[^']+)'|(?P<table>[A-Za-z_][A-Za-z0-9_]*))\s*\[[^\]]+\]\s*\)\s*$",
+                sql_expr,
+            )
+            if m_simple_agg:
+                table_name = str(m_simple_agg.group("table_q") or m_simple_agg.group("table") or "").strip().lower()
+                dataset_name = self._sanitize_identifier(metric.dataset).lower()
+                if table_name and table_name != dataset_name:
+                    return True
+
+            ref_matches = re.findall(
+                r'(?:`([^`]+)`|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))\s*\.\s*(?:`[^`]+`|"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)',
+                sql_expr,
+            )
+            unique_tables = {
+                str(prefix_bt or prefix_dq or prefix or "").strip().lower()
+                for prefix_bt, prefix_dq, prefix in ref_matches
+                if str(prefix_bt or prefix_dq or prefix or "").strip()
+            }
+            if len(unique_tables) > 1:
+                return True
+
+            dax_table_refs = re.findall(
+                r"(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_]*))\s*\[([^\]]+)\]",
+                sql_expr,
+            )
+            dax_tables = {
+                str(table_q or table or "").strip().lower()
+                for table_q, table, _ in dax_table_refs
+                if str(table_q or table or "").strip()
+            }
+            if len(dax_tables) > 1:
+                return True
+
+        return False
 
     # ── View Name Generation ─────────────────────────────────────────────────
 
@@ -2477,7 +2827,12 @@ class DatabricksPublisher:
 
     # ── Parallel Metric Resolution (CP-Level Optimization) ──────────────────
 
-    def _resolve_metric_sql_cached(self, metric: SMLMetric, sml_model: SMLModel) -> dict:
+    def _resolve_metric_sql_cached(
+        self,
+        metric: SMLMetric,
+        sml_model: SMLModel,
+        allow_simple_sum_translation: bool = True,
+    ) -> dict:
         """Resolve SQL for one metric in parallel context.
         
         Returns dict with metric id, sql_expr, translation_type for thread-safe result passing.
@@ -2496,6 +2851,7 @@ class DatabricksPublisher:
             metric,
             dataset,
             measure_sql_map=measure_sql_map,
+            allow_simple_sum_translation=allow_simple_sum_translation,
         )
         return {
             "metric_id": id(metric),
@@ -2505,7 +2861,12 @@ class DatabricksPublisher:
             "dataset": dataset,
         }
 
-    def _resolve_all_metrics_parallel(self, sml_model: SMLModel, max_workers: int = 8) -> dict:
+    def _resolve_all_metrics_parallel(
+        self,
+        sml_model: SMLModel,
+        max_workers: int = 8,
+        allow_simple_sum_translation: bool = True,
+    ) -> dict:
         """Resolve SQL for all metrics in parallel (CP-Level: 8 workers for DAX translation).
         
         Parallelizes the heavy DAX→SQL translation work across multiple threads.
@@ -2515,6 +2876,13 @@ class DatabricksPublisher:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [
                 executor.submit(self._resolve_metric_sql_cached, metric, sml_model)
+                if allow_simple_sum_translation
+                else executor.submit(
+                    self._resolve_metric_sql_cached,
+                    metric,
+                    sml_model,
+                    False,
+                )
                 for metric in sml_model.metrics
             ]
             for future in as_completed(futures):
@@ -2559,6 +2927,23 @@ class DatabricksPublisher:
 
         # Native metric view path
         if vtype == "metric_view":
+            if (
+                self._dbx_behavior.enable_cross_table_joins
+                and self._dbx_behavior.enable_cross_table_sql_fallback
+                and any(
+                self._is_cross_table_measure(metric) for metric in sml_model.metrics
+                )
+            ):
+                logger.info(
+                    "Cross-table measures detected in model '%s'; routing Databricks measure views to SQL generation "
+                    "(mode=%s, fallback=sql_view)",
+                    sml_model.unique_name,
+                    self._dbx_behavior.measure_view_mode,
+                )
+                view_mode = self._dbx_behavior.measure_view_mode
+                if view_mode == "combined":
+                    return self._generate_combined_views(sml_model, model_name)
+                return self._generate_per_measure_views(sml_model, model_name)
             return self._generate_metric_view_statements(sml_model, model_name)
 
         # SQL view path (per_measure or combined)
@@ -2581,7 +2966,12 @@ class DatabricksPublisher:
 
         # CP-LEVEL: Resolve all metrics in parallel (8 workers for DAX translation)
         logger.info("Resolving SQL for %d metrics in parallel (8 workers)...", len(sml_model.metrics))
-        metric_sql_cache = self._resolve_all_metrics_parallel(sml_model, max_workers=8)
+        allow_simple_sum_translation = not self._dbx_behavior.metric_view_only_sum_translation
+        metric_sql_cache = self._resolve_all_metrics_parallel(
+            sml_model,
+            max_workers=8,
+            allow_simple_sum_translation=allow_simple_sum_translation,
+        )
 
         for metric in sml_model.metrics:
             measure_name = metric_name_index.get(
@@ -2696,6 +3086,9 @@ class DatabricksPublisher:
         skipped_count = 0
         skipped_details: list[dict[str, str]] = []
         metric_name_index = self._build_metric_name_index(sml_model)
+        dataset_attempted = 0
+        dataset_skipped_no_metrics = 0
+        dataset_skipped_missing_source = 0
 
         # Group metrics by dataset
         metrics_by_dataset: dict[str, list[SMLMetric]] = {}
@@ -2705,29 +3098,39 @@ class DatabricksPublisher:
                 continue
             metrics_by_dataset.setdefault(ds_name, []).append(metric)
 
-        for ds_name, metrics in metrics_by_dataset.items():
-            dataset = sml_model.get_dataset(metrics[0].dataset)
-            if not dataset:
-                for m in metrics:
-                    skipped_count += 1
-                    skipped_details.append({
-                        "name": self._sanitize_identifier(m.unique_name),
-                        "reason": DEPLOY_REASON_VALIDATION_FAILED,
-                    })
+        ordered_datasets: list[tuple[str, SMLDataset]] = []
+        for dataset in sml_model.datasets:
+            ds_name = self._sanitize_identifier(dataset.unique_name)
+            if not ds_name:
                 continue
+            ordered_datasets.append((ds_name, dataset))
+
+        for ds_name, dataset in ordered_datasets:
+            metrics = metrics_by_dataset.get(ds_name, [])
+            if not metrics and not self._dbx_behavior.emit_metric_views_for_all_datasets:
+                dataset_skipped_no_metrics += 1
+                logger.info(
+                    "Skipping dataset '%s' in combined mode: no metrics found",
+                    dataset.unique_name,
+                )
+                continue
+
+            dataset_attempted += 1
 
             expected_source = self._resolve_source_table(dataset)
             existing_source = self._resolve_existing_source_for_dataset(dataset, expected_source)
             if not existing_source:
-                for m in metrics:
-                    skipped_count += 1
-                    skipped_details.append({
-                        "name": metric_name_index.get(
-                            id(m),
-                            self._normalize_metric_identifier(m.unique_name),
-                        ),
-                        "reason": DEPLOY_REASON_PREREQUISITE_MISSING,
-                    })
+                dataset_skipped_missing_source += 1
+                if metrics:
+                    for m in metrics:
+                        skipped_count += 1
+                        skipped_details.append({
+                            "name": metric_name_index.get(
+                                id(m),
+                                self._normalize_metric_identifier(m.unique_name),
+                            ),
+                            "reason": DEPLOY_REASON_PREREQUISITE_MISSING,
+                        })
                 logger.warning(
                     "Skipped combined SQL dataset '%s': source prerequisite missing (expected=%s)",
                     dataset.unique_name,
@@ -2737,10 +3140,24 @@ class DatabricksPublisher:
 
             source_table = existing_source
             source_relation = self._build_reconciled_sql_source_relation(dataset, source_table)
+            source_relation_is_joined = False
+            inline_source_columns: set[str] = set()
 
             measure_expressions: list[str] = []
             combined_group_by: set[str] = set()
             used_projection_names: set[str] = set()
+
+            if not metrics:
+                safe_measure_alias = self._make_unique_projected_name(
+                    "total_rows",
+                    used_projection_names,
+                    suffix="metric",
+                )
+                measure_expressions.append(f"    COUNT(*) AS `{safe_measure_alias}`")
+                logger.info(
+                    "Combined mode emitted synthetic measure for dataset '%s' (no metrics)",
+                    dataset.unique_name,
+                )
 
             for metric in metrics:
                 measure_name = metric_name_index.get(
@@ -2765,6 +3182,7 @@ class DatabricksPublisher:
                     metric,
                     dataset,
                     measure_sql_map=measure_sql_map,
+                    allow_simple_sum_translation=not self._dbx_behavior.metric_view_only_sum_translation,
                 )
                 if not sql_expr:
                     sql_view_expr = None
@@ -2774,29 +3192,40 @@ class DatabricksPublisher:
                         dataset,
                         source_table,
                     )
+                    if not sql_view_expr:
+                        sql_view_expr = self._build_scalar_subquery_aggregate_expression(
+                            sql_expr,
+                            dataset,
+                            sml_model,
+                        )
+                    if not dataset.columns:
+                        inline_source_columns.update(
+                            self._extract_inline_source_columns_from_sql_expression(sql_expr)
+                        )
                     if not sql_view_expr and self._dbx_behavior.enable_cross_table_joins:
                         resolved_cross_table = self._resolve_cross_table_query(sql_expr, dataset, sml_model)
                         if resolved_cross_table:
                             sql_view_expr, source_relation = resolved_cross_table
+                            source_relation_is_joined = True
 
-                    if not sql_view_expr:
-                        if self._dbx_behavior.enable_low_confidence_drafts:
-                            measure_expressions.append(
-                                self._build_draft_measure_expression(
-                                    metric,
-                                    measure_name,
-                                    metric.sync_failure_reason
-                                    or DEPLOY_REASON_DAX_NOT_SUPPORTED,
-                                )
+                if not sql_view_expr:
+                    if self._dbx_behavior.enable_low_confidence_drafts:
+                        measure_expressions.append(
+                            self._build_draft_measure_expression(
+                                metric,
+                                measure_name,
+                                metric.sync_failure_reason
+                                or DEPLOY_REASON_DAX_NOT_SUPPORTED,
                             )
-                        else:
-                            skipped_count += 1
-                            skipped_details.append({
-                                "name": measure_name,
-                                "reason": DEPLOY_REASON_CROSS_TABLE if sql_expr else DEPLOY_REASON_DAX_NOT_SUPPORTED,
-                                "translation_type": translation_type,
-                            })
-                        continue
+                        )
+                    else:
+                        skipped_count += 1
+                        skipped_details.append({
+                            "name": measure_name,
+                            "reason": DEPLOY_REASON_CROSS_TABLE if sql_expr else DEPLOY_REASON_DAX_NOT_SUPPORTED,
+                            "translation_type": translation_type,
+                        })
+                    continue
 
                 group_cols = self._resolve_group_by_columns(metric, dataset)
                 combined_group_by.update(group_cols)
@@ -2813,6 +3242,12 @@ class DatabricksPublisher:
 
             if not measure_expressions:
                 continue
+
+            if not dataset.columns and inline_source_columns and not source_relation_is_joined:
+                source_relation = self._build_inline_null_source_relation(
+                    source_relation,
+                    sorted(inline_source_columns),
+                )
 
             # Build combined view
             prefix = self._sanitize_identifier(self._dbx_behavior.view_prefix or "mv")
@@ -2838,6 +3273,17 @@ class DatabricksPublisher:
             created += 1
             logger.info("Created combined measure view: %s", view_fq)
 
+        logger.info(
+            "Combined dataset coverage for model '%s': expected=%d, attempted=%d, created=%d, "
+            "skipped_no_metrics=%d, skipped_missing_source=%d",
+            sml_model.unique_name,
+            len(ordered_datasets),
+            dataset_attempted,
+            created,
+            dataset_skipped_no_metrics,
+            dataset_skipped_missing_source,
+        )
+
         return stmts, created, skipped_count, skipped_details
 
     def _resolve_group_by_columns(
@@ -2848,6 +3294,12 @@ class DatabricksPublisher:
         """Resolve GROUP BY columns for a measure view.
 
         Logic:
+                    if not sql_view_expr:
+                        sql_view_expr = self._build_scalar_subquery_aggregate_expression(
+                            sql_expr,
+                            dataset,
+                            sml_model,
+                        )
             - If metric.group_by_dimensions is set → use those explicitly
             - Otherwise → no GROUP BY (pure aggregate)
 
@@ -2950,6 +3402,10 @@ class DatabricksPublisher:
                     metric,
                     dataset,
                     measure_sql_map=measure_sql_map,
+                    allow_simple_sum_translation=(
+                        view_type_override != VIEW_TYPE_SQL
+                        or not self._dbx_behavior.metric_view_only_sum_translation
+                    ),
                 )
                 if sql_expr:
                     deployed_measures[m_name] = translation_type
@@ -3225,6 +3681,7 @@ class DatabricksPublisher:
 
             views_success = 0
             views_failed = 0
+            failed_view_names: list[str] = []
 
             def _deploy_single_view(view_sql: str) -> tuple[str, bool, str]:
                 """Deploy a single view with retry via RetryManager.
@@ -3266,6 +3723,7 @@ class DatabricksPublisher:
                             logger.info("✅ Deployed measure view: %s", view_name)
                         else:
                             views_failed += 1
+                            failed_view_names.append(view_name)
                             logger.warning(
                                 "⚠️  Measure view %s failed: %s",
                                 view_name, error_msg,
@@ -3278,22 +3736,28 @@ class DatabricksPublisher:
                 )
 
             if views_failed:
+                failed_views_preview = ", ".join(failed_view_names[:5])
                 logger.warning(
                     "⚠️  %d/%d measure views failed (source table/column mismatch in "
-                    "Databricks). Metadata table deployed OK. Verify source table "
-                    "names and physical column names used by the semantic model.",
+                    "Databricks). Failed views: %s%s. Metadata table deployed OK. "
+                    "Verify source table names and physical column names used by "
+                    "the semantic model.",
                     views_failed,
                     len(view_stmts),
+                    failed_views_preview or "unknown",
+                    "..." if len(failed_view_names) > 5 else "",
                 )
 
             if (
                 resolved_view_type == VIEW_TYPE_METRIC
                 and view_stmts
-                and views_success == 0
+                and views_failed > 0
             ):
                 logger.warning(
-                    "Native Databricks metric-view deployment produced 0 successful "
-                    "views. Falling back to SQL views for model '%s'.",
+                    "Native Databricks metric-view deployment had %d failed "
+                    "view(s). Falling back to SQL views for model '%s' to keep "
+                    "measure sync complete.",
+                    views_failed,
                     sml_model.unique_name,
                 )
                 fallback_view_stmts, _, _, _ = self.generate_measure_view_statements(
@@ -3303,15 +3767,21 @@ class DatabricksPublisher:
 
                 fallback_failed = 0
                 if fallback_view_stmts:
-                    logger.info("Deploying %d SQL fallback views in parallel batches...", len(fallback_view_stmts))
+                    sql_debug_artifacts: list[str] = []
+                    for view_sql in fallback_view_stmts:
+                        artifact_path = self._persist_sql_debug_artifact(sml_model.unique_name, view_sql)
+                        sql_debug_artifacts.append(artifact_path or "")
+                        if artifact_path:
+                            logger.info("Saved SQL fallback debug statement: %s", artifact_path)
+
+                    logger.info("Deploying %d SQL fallback views concurrently...", len(fallback_view_stmts))
                     try:
-                        # Deploy fallback views in parallel batches
-                        self.execute_statements(fallback_view_stmts, batch_size=10, max_workers=5)
+                        self.execute_statements(fallback_view_stmts, concurrent=True)
                         logger.info("✓ All %d SQL fallback views deployed successfully", len(fallback_view_stmts))
                     except DatabricksPublishError as exc:
-                        # Fall back to individual deployment
-                        logger.warning("Batch fallback deployment failed: %s. Attempting individual deployment...", str(exc)[:200])
-                        for view_sql in fallback_view_stmts:
+                        # Fall back to individual deployment for better diagnostics.
+                        logger.warning("Concurrent fallback deployment failed: %s. Attempting individual deployment...", str(exc)[:200])
+                        for idx, view_sql in enumerate(fallback_view_stmts):
                             view_name = "unknown"
                             match = re.search(r'VIEW\s+(`[^`]+`\.`[^`]+`\.`[^`]+`)', view_sql)
                             if match:
@@ -3321,6 +3791,10 @@ class DatabricksPublisher:
                                 logger.info("Deployed SQL fallback view: %s", view_name)
                             except DatabricksPublishError as e:
                                 fallback_failed += 1
+                                self._persist_sql_debug_error_artifact(
+                                    sql_debug_artifacts[idx] if idx < len(sql_debug_artifacts) else "",
+                                    str(e),
+                                )
                                 logger.warning(
                                     "SQL fallback view %s failed. Error: %s",
                                     view_name,
