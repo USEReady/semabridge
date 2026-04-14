@@ -685,16 +685,12 @@ class CLIExecutor:
         from semabridge.converter.tmsl_to_sml import TMSLTransformer
 
         behavior = getattr(self.config, "behavior", None)
-        metric_overrides = (
-            behavior.semantic_model.metric_overrides if behavior is not None else {}
-        )
         transformer = TMSLTransformer()
         return transformer.transform(
             self._source_format.tmsl_definition,
             self._source_format.workspace_id,
             self._source_format.dataset_id,
             row_counts=self._source_format.row_counts,
-            metric_overrides=metric_overrides,
             behavior=behavior,
         )
     

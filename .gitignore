@@ -120,6 +120,7 @@ tmp/
 logs/
 .semabridge_cache/
 .semabridge/
+Config/.semabridge_compat_store.json
 .llm_dax_cache.json
 src/.semantic_metadata/logs/
 *.bim

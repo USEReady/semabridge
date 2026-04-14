@@ -404,80 +404,51 @@ _TMSL_SALESFACT = {
 }
 
 
-class TestTMSLTransformerOverrideSanitization:
-    """Verify metric_overrides are sanitized before being stored on
-    SMLMetric.sql_expression so that invalid UPPERCASE.col patterns
-    (e.g. SALESFACT.SCORE) never reach the Snowflake emitter.
+class TestTMSLTransformerAutomatedTranslation:
+    """Verify automated DAX translation paths for SalesFact measures.
 
-    Reproduces the root cause of Snowflake error 000904:
-        invalid identifier 'SALESFACT.SCORE'
+    Manual SQL overrides are no longer supported in the transform pipeline.
     """
 
     @pytest.fixture
     def transformer(self):
         return TMSLTransformer()
 
-    def test_uppercase_alias_bare_col_is_sanitized(
-        self, transformer
-    ) -> None:
-        """SALESFACT.SCORE in metric_overrides → salesfact."SCORE" on sql_expression."""
-        overrides = {"Score Total": 'SUM(SALESFACT.SCORE)'}
-        sml = transformer.transform(
-            _TMSL_SALESFACT, "ws-1", "ds-1", metric_overrides=overrides
-        )
-        metric = next(
-            (m for m in sml.metrics if m.unique_name == "Score Total"), None
-        )
-        assert metric is not None
-        assert metric.sql_expression is not None
-        assert 'salesfact."SCORE"' in metric.sql_expression
-        # The raw UPPERCASE.bareCol pattern must not survive
-        assert "SALESFACT.SCORE" not in metric.sql_expression
-
-    def test_quoted_uppercase_alias_is_sanitized(
-        self, transformer
-    ) -> None:
-        """SALESFACT."SCORE" (quoted col) → salesfact."SCORE"."""
-        overrides = {"Score Total": 'SUM(SALESFACT."SCORE")'}
-        sml = transformer.transform(
-            _TMSL_SALESFACT, "ws-1", "ds-1", metric_overrides=overrides
-        )
-        metric = next(
-            (m for m in sml.metrics if m.unique_name == "Score Total"), None
-        )
-        assert metric is not None
-        assert metric.sql_expression is not None
-        assert 'salesfact."SCORE"' in metric.sql_expression
-        assert "SALESFACT" not in metric.sql_expression
-
-    def test_short_alias_resolved_via_behavior(
-        self, transformer
-    ) -> None:
-        """Short alias FACT.SCORE resolved to salesfact."SCORE" via override_alias_map."""
-        from semabridge.core.behavior import ConnectorBehavior
-
-        behavior = ConnectorBehavior()
-        behavior.semantic_model.override_alias_map = {"FACT": "SalesFact"}
-        overrides = {"Score Total": "SUM(FACT.SCORE)"}
-        sml = transformer.transform(
-            _TMSL_SALESFACT, "ws-1", "ds-1",
-            metric_overrides=overrides, behavior=behavior,
-        )
-        metric = next(
-            (m for m in sml.metrics if m.unique_name == "Score Total"), None
-        )
-        assert metric is not None
-        assert metric.sql_expression is not None
-        assert 'salesfact."SCORE"' in metric.sql_expression
-        assert "FACT.SCORE" not in metric.sql_expression
-
-    def test_no_overrides_uses_dax_translation(self, transformer) -> None:
-        """Without overrides the DAX translator still produces valid sql_expression."""
+    def test_automated_translation_uses_safe_alias(self, transformer) -> None:
+        """Automated translation emits lowercase alias + quoted identifiers."""
         sml = transformer.transform(_TMSL_SALESFACT, "ws-1", "ds-1")
         metric = next(
             (m for m in sml.metrics if m.unique_name == "Score Total"), None
         )
         assert metric is not None
-        if metric.sql_expression:
-            # DAX translator always emits lowercase alias + quoted col
-            assert "SALESFACT.SCORE" not in metric.sql_expression
+        assert metric.sql_expression is not None
+        assert 'salesfact."SCORE"' in metric.sql_expression
+        assert "SALESFACT.SCORE" not in metric.sql_expression
+
+    def test_transform_does_not_accept_metric_overrides(self, transformer) -> None:
+        """Manual override injection is intentionally unsupported."""
+        with pytest.raises(TypeError):
+            transformer.transform(
+                _TMSL_SALESFACT,
+                "ws-1",
+                "ds-1",
+                metric_overrides={"Score Total": "SUM(SALESFACT.SCORE)"},
+            )
+
+    def test_behavior_no_longer_has_override_alias_map(self) -> None:
+        """Connector behavior no longer exposes override alias mapping."""
+        from semabridge.core.behavior import ConnectorBehavior
+
+        behavior = ConnectorBehavior()
+        assert not hasattr(behavior.semantic_model, "override_alias_map")
+
+    def test_no_overrides_uses_dax_translation(self, transformer) -> None:
+        """Automated translator still produces valid sql_expression."""
+        sml = transformer.transform(_TMSL_SALESFACT, "ws-1", "ds-1")
+        metric = next(
+            (m for m in sml.metrics if m.unique_name == "Score Total"), None
+        )
+        assert metric is not None
+        assert metric.sql_expression is not None
+        assert 'salesfact."SCORE"' in metric.sql_expression
+        assert "SALESFACT.SCORE" not in metric.sql_expression

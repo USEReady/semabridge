@@ -86,3 +86,54 @@ def test_from_osi_keeps_explicit_metrics_without_auto_generating_duplicates():
 
     assert sml_model.metric_count == 1
     assert sml_model.metrics[0].unique_name == "Total Revenue"
+
+
+def test_from_osi_resolves_metric_dependencies_after_all_metrics_loaded():
+    converter = OSIToSMLConverter()
+    osi_model = OSIModel(
+        unique_name="finance-model",
+        label="Finance Model",
+        source_platform="fabric",
+        datasets=[
+            OSIDataset(
+                unique_name="Fact",
+                columns=[
+                    OSIColumn(unique_name="Revenue", data_type=OSIDataType.FLOAT),
+                    OSIColumn(unique_name="COGS", data_type=OSIDataType.FLOAT),
+                ],
+            )
+        ],
+        # Put dependent metric first to verify second-pass resolution.
+        metrics=[
+            OSIMetric(
+                unique_name="Gross Margin",
+                label="Gross Margin",
+                dataset="Fact",
+                expression="[Total Revenue] - [Total COGS]",
+                aggregation=OSIAggregationType.NONE,
+            ),
+            OSIMetric(
+                unique_name="Total Revenue",
+                label="Total Revenue",
+                dataset="Fact",
+                expression="SUM([Revenue])",
+                aggregation=OSIAggregationType.NONE,
+            ),
+            OSIMetric(
+                unique_name="Total COGS",
+                label="Total COGS",
+                dataset="Fact",
+                expression="SUM([COGS])",
+                aggregation=OSIAggregationType.NONE,
+            ),
+        ],
+    )
+
+    sml_model = converter.from_osi(osi_model)
+    metric_sql = {m.unique_name: m.sql_expression for m in sml_model.metrics}
+
+    assert metric_sql["Total Revenue"] is not None
+    assert metric_sql["Total COGS"] is not None
+    assert metric_sql["Gross Margin"] is not None
+    assert 'SUM(fact."REVENUE")' in metric_sql["Gross Margin"]
+    assert 'SUM(fact."COGS")' in metric_sql["Gross Margin"]

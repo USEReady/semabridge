@@ -10,6 +10,7 @@ from __future__ import annotations
 import time
 import yaml
 import re
+import os
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -52,12 +53,35 @@ from semabridge.core.settings import SnowflakeConfig
 from semabridge.core.behavior import ConnectorBehavior, SnowflakeBehavior
 from semabridge.formats.sml.models import SMLModel, SMLDataset, SMLMetric, SMLDimension, SMLRelationship, AggregationType, DataType
 from semabridge.utils.identifiers import IdentifierSanitizer, SQL_FUNCTION_NAMES
-try:
+if TYPE_CHECKING:
     from semabridge.intermediate.models import (
-        OSIModel, OSIDataset, OSIMetric, OSIDimension, OSIAttribute, OSIColumn, OSIDataType,
+        OSIModel,
+        OSIDataset,
+        OSIMetric,
+        OSIDimension,
+        OSIAttribute,
+        OSIColumn,
+        OSIDataType,
     )
-except ImportError:
-    OSIModel = OSIDataset = OSIMetric = OSIDimension = OSIAttribute = OSIColumn = OSIDataType = None
+else:
+    try:
+        from semabridge.intermediate.models import (
+            OSIModel,
+            OSIDataset,
+            OSIMetric,
+            OSIDimension,
+            OSIAttribute,
+            OSIColumn,
+            OSIDataType,
+        )
+    except ImportError:
+        OSIModel: TypeAlias = Any
+        OSIDataset: TypeAlias = Any
+        OSIMetric: TypeAlias = Any
+        OSIDimension: TypeAlias = Any
+        OSIAttribute: TypeAlias = Any
+        OSIColumn: TypeAlias = Any
+        OSIDataType = None
 from semabridge.utils.logger import get_logger
 from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
 
@@ -233,7 +257,7 @@ class SnowflakeEmitter(BaseEmitter):
                     preferred_name=f"{label_alias}_{label_idx}",
                 )
 
-    def _precompute_duplicate_mappings_for_osi(self, osi: "OSIModel") -> None:
+    def _precompute_duplicate_mappings_for_osi(self, osi: OSIModel) -> None:
         """Persist duplicate mappings for all OSI datasets/metrics before emit."""
         for dataset in osi.datasets:
             self._collect_physical_source_columns_osi(dataset)
@@ -336,11 +360,20 @@ class SnowflakeEmitter(BaseEmitter):
         metric: SMLMetric,
         table_alias: str,
         dataset_col_lookup: Dict[str, set[str]],
+           model: Optional[SMLModel] = None,
+           dataset_by_name: Optional[Dict[str, SMLDataset]] = None,
     ) -> Optional[str]:
         """Translate a small set of common DAX expressions without LLM.
 
         This is primarily used for Fabric -> Snowflake sync when metrics come
         from Fabric as DAX and no ``sql_expression`` is available.
+       
+           Args:
+               metric: The metric to translate
+               table_alias: The table alias for the metric's dataset
+               dataset_col_lookup: Map of dataset name -> available columns
+               model: Optional SML model for accessing relationships
+               dataset_by_name: Optional map of dataset name -> SMLDataset for relationship lookup
         """
         raw_expr = (metric.expression or "").strip()
         if not raw_expr:
@@ -382,7 +415,365 @@ class SnowflakeEmitter(BaseEmitter):
                 return f'COUNT(DISTINCT {table_alias}."{col_name}")'
             return f'{agg}({table_alias}."{col_name}")'
 
+        # Deterministic DAX translation for safe dependency chains, static filters,
+        # and period-to-date measures. Reuse the shared translator now that it
+        # handles nested measure expansion correctly.
+        if model is not None and getattr(model, "metrics", None):
+            # Prefer semantic-metric windows for TOTALYTD([Metric], Date) because
+            # Snowflake semantic metrics require window functions to operate over
+            # same-entity metrics or metric-level aggregates.
+            m_totalytd_metric_ref = re.match(
+                r"(?i)^TOTALYTD\(\s*\[([^\]]+)\]\s*,\s*(?:'[^']+'\s*)?\[[^\]]+\]\s*\)$",
+                expr,
+            )
+            if m_totalytd_metric_ref:
+                ref_name = m_totalytd_metric_ref.group(1).strip()
+                metrics_by_name = {
+                    str(getattr(m, "unique_name", "")).strip().casefold(): m
+                    for m in list(model.metrics)
+                    if getattr(m, "unique_name", None)
+                }
+                ref_metric = metrics_by_name.get(ref_name.casefold())
+                if ref_metric and str(getattr(ref_metric, "dataset", "")).casefold() == str(metric.dataset).casefold():
+                    ref_metric_name = self._sanitize_semantic_name(str(getattr(ref_metric, "unique_name", ref_name)))
+                    year_col = self._resolve_year_partition_column(known_cols)
+                    order_col = self._resolve_ytd_order_column(known_cols)
+                    if year_col and order_col:
+                        return (
+                            f'SUM({table_alias}."{ref_metric_name}") OVER '
+                            f'(PARTITION BY {table_alias}."{year_col}" '
+                            f'ORDER BY {table_alias}."{order_col}")'
+                        )
+
+            try:
+                from semabridge.converter.dax_translator import DAXTranslator
+
+                translated = DAXTranslator().translate(
+                    raw_expr,
+                    table_alias,
+                    metric.dataset,
+                    metric_name=metric.unique_name,
+                    metrics_context=list(model.metrics),
+                )
+                if translated.is_success and translated.sql:
+                    return translated.sql
+            except Exception as exc:
+                logger.debug(
+                    "Deterministic DAX translation fallback failed for metric '%s': %s",
+                    metric.unique_name,
+                    exc,
+                )
+
+        # TOTALYTD(SUM([Value]), [DateTagOrColumn])
+        m_totalytd = re.match(
+            r"(?i)^TOTALYTD\(\s*(SUM|AVERAGE|COUNT|MIN|MAX)\(\s*(?:'[^']+'\s*)?\[([^\]]+)\]\s*\)\s*,\s*(?:'[^']+'\s*)?\[([^\]]+)\]\s*\)$",
+            expr,
+        )
+        if m_totalytd:
+            agg = m_totalytd.group(1).upper()
+            value_col = self._sanitize_col_name(m_totalytd.group(2))
+            date_token = self._sanitize_col_name(m_totalytd.group(3))
+
+            if known_cols and value_col not in known_cols:
+                return None
+
+            primary_date_col = self._resolve_primary_date_column(known_cols)
+            # Treat PRIMARY_DATE/PRIMARYDATE as semantic tags, not physical names.
+            if date_token in {"PRIMARY_DATE", "PRIMARYDATE"}:
+                date_col = primary_date_col
+            else:
+                date_col = date_token if (not known_cols or date_token in known_cols) else primary_date_col
+
+            if not date_col:
+                return None
+
+            agg_map = {
+                "SUM": "SUM",
+                "AVERAGE": "AVG",
+                "COUNT": "COUNT",
+                "MIN": "MIN",
+                "MAX": "MAX",
+            }
+            sql_agg = agg_map.get(agg, "SUM")
+            year_col = self._resolve_year_partition_column(known_cols)
+            
+            # For Snowflake semantic models, PARTITION BY and ORDER BY must reference
+            # actual dimensions, not scalar functions like YEAR(). Only use the window
+            # function if we have an actual YEAR dimension column.
+            if year_col:
+                date_ref = f'{table_alias}."{date_col}"'
+                partition_expr = f'{table_alias}."{year_col}"'
+                return (
+                    f'{sql_agg}({table_alias}."{value_col}") OVER ('
+                    f'PARTITION BY {partition_expr} '
+                    f'ORDER BY {date_ref} '
+                    'ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)'
+                )
+
+            logger.debug(
+                "TOTALYTD window pattern for metric '%s' requires YEAR dimension column; falling back to NULL",
+                metric.unique_name,
+            )
+            return None
+
+        # CALCULATE(SUM([Value]), SAMEPERIODLASTYEAR([DateTagOrColumn]))
+        m_sply = re.match(
+            r"(?i)^CALCULATE\(\s*(SUM|AVERAGE|COUNT|MIN|MAX)\(\s*(?:'[^']+'\s*)?\[([^\]]+)\]\s*\)\s*,\s*SAMEPERIODLASTYEAR\(\s*(?:'[^']+'\s*)?\[([^\]]+)\]\s*\)\s*\)$",
+            expr,
+        )
+        if m_sply:
+            agg = m_sply.group(1).upper()
+            value_col = self._sanitize_col_name(m_sply.group(2))
+            date_token = self._sanitize_col_name(m_sply.group(3))
+
+            if known_cols and value_col not in known_cols:
+                return None
+
+            primary_date_col = self._resolve_primary_date_column(known_cols)
+            if date_token in {"PRIMARY_DATE", "PRIMARYDATE"}:
+                date_col = primary_date_col
+            else:
+                date_col = date_token if (not known_cols or date_token in known_cols) else primary_date_col
+
+            if not date_col:
+                return None
+
+            # Optional fast-path signal: only consider precomputed offset keys when
+            # explicitly enabled. We still use the universal window fallback unless
+            # runtime checksum validation is available.
+            enable_offset_fastpath = str(
+                os.getenv("SEMABRIDGE_SNOWFLAKE_ENABLE_SPLY_OFFSET_FASTPATH", "false")
+            ).strip().lower() in {"1", "true", "yes", "on"}
+            offset_key_col = self._resolve_sply_offset_key_column(known_cols)
+            if enable_offset_fastpath and offset_key_col:
+                logger.info(
+                    "SPLY offset key '%s' detected for metric '%s', but deterministic translation "
+                    "cannot run checksum validation here; using safe window fallback.",
+                    offset_key_col,
+                    metric.unique_name,
+                )
+
+            agg_map = {
+                "SUM": "SUM",
+                "AVERAGE": "AVG",
+                "COUNT": "COUNT",
+                "MIN": "MIN",
+                "MAX": "MAX",
+            }
+            sql_agg = agg_map.get(agg, "SUM")
+            
+            # For Snowflake semantic models, PARTITION BY and ORDER BY must reference
+            # actual dimensions, not scalar functions like MONTH(). Check if we have
+            # dedicated MONTH and YEAR dimension columns; if not, we cannot use this pattern.
+            month_col = self._resolve_month_dimension_column(known_cols)
+            year_col = self._resolve_year_dimension_column(known_cols)
+            
+            if not month_col or not year_col:
+                # Cannot generate valid Snowflake semantic model window without dimension columns
+                logger.debug(
+                    "SPLY window pattern for metric '%s' requires MONTH and YEAR dimension columns; "
+                    "none found in model. Falling back to NULL (will require manual DAX or disabled metric).",
+                    metric.unique_name,
+                )
+                return None
+            
+            date_ref = f'{table_alias}."{date_col}"'
+            month_ref = f'{table_alias}."{month_col}"'
+            year_ref = f'{table_alias}."{year_col}"'
+            
+            return (
+                f'LAG({sql_agg}({table_alias}."{value_col}"), 12) OVER ('
+                f'PARTITION BY {month_ref} '
+                f'ORDER BY {year_ref}, {month_ref}'
+                ')'
+            )
+
+        self._warn_non_sync_friendly_dax(metric, expr)
         return None
+
+    @staticmethod
+    def _warn_non_sync_friendly_dax(metric: SMLMetric, normalized_expr: str) -> None:
+        """Emit warn-only guidance for high-risk DAX patterns that miss deterministic translation."""
+        expr = (normalized_expr or "").upper()
+        if not expr:
+            return
+
+        # Time-intelligence patterns that are typically easier to sync when modeled via flags/columns.
+        if re.search(r"\b(TOTALYTD|DATESYTD|SAMEPERIODLASTYEAR|DATEADD|PARALLELPERIOD|PREVIOUSYEAR)\b", expr):
+            logger.warning(
+                "Metric '%s' uses high-risk time-intelligence DAX not deterministically translated. "
+                "Prefer parser-safe modeling: Calendar flags (e.g., IS_YTD/IS_CURRENT_MONTH) "
+                "or precomputed prior-year columns.",
+                metric.unique_name,
+            )
+            return
+
+        # Measure-on-measure variance expressions are harder for rule parsers than explicit filtered sums.
+        bracket_refs = re.findall(r"\[[^\]]+\]", normalized_expr)
+        if len(bracket_refs) >= 2 and "-" in normalized_expr:
+            logger.warning(
+                "Metric '%s' appears to be a measure dependency variance expression. "
+                "Prefer explicit parser-safe formula: CALCULATE(SUM(...), filter) - CALCULATE(SUM(...), filter).",
+                metric.unique_name,
+            )
+
+    @staticmethod
+    def _resolve_primary_date_column(known_cols: set[str]) -> Optional[str]:
+        """Resolve a canonical primary date column from available physical columns."""
+        if not known_cols:
+            return None
+
+        preferred = [
+            "PRIMARY_DATE",
+            "PRIMARYDATE",
+            "DATE",
+            "CALENDAR_DATE",
+            "FULL_DATE",
+            "DATE_VALUE",
+            "TRANSACTION_DATE",
+        ]
+        for candidate in preferred:
+            if candidate in known_cols:
+                return candidate
+        return None
+
+    @staticmethod
+    def _resolve_year_partition_column(known_cols: set[str]) -> Optional[str]:
+        """Resolve year partition column when present for stable YTD windows."""
+        if not known_cols:
+            return None
+
+        for candidate in ["YEAR", "CALENDAR_YEAR", "FISCAL_YEAR"]:
+            if candidate in known_cols:
+                return candidate
+        return None
+
+    @staticmethod
+    def _resolve_month_dimension_column(known_cols: set[str]) -> Optional[str]:
+        """Resolve month dimension column for SPLY window partitioning.
+        
+        In Snowflake semantic models, PARTITION BY must reference actual dimensions,
+        not scalar functions. This helper detects a dedicated MONTH dimension if available.
+        """
+        if not known_cols:
+            return None
+
+        for candidate in ["MONTH", "CALENDAR_MONTH", "MONTH_NUM", "MONTH_ID"]:
+            if candidate in known_cols:
+                return candidate
+        return None
+
+    @staticmethod
+    def _resolve_year_dimension_column(known_cols: set[str]) -> Optional[str]:
+        """Resolve year dimension column for SPLY window ordering.
+        
+        In Snowflake semantic models, ORDER BY must reference actual dimensions,
+        not scalar functions. This helper detects a dedicated YEAR dimension if available.
+        """
+        if not known_cols:
+            return None
+
+        for candidate in ["YEAR", "CALENDAR_YEAR", "FISCAL_YEAR", "YEAR_NUM", "YEAR_ID"]:
+            if candidate in known_cols:
+                return candidate
+        return None
+
+    @staticmethod
+    def _resolve_sply_offset_key_column(known_cols: set[str]) -> Optional[str]:
+        """Detect common prior-year offset key columns for optional SPLY fast-paths."""
+        if not known_cols:
+            return None
+
+        for candidate in [
+            "SPLY_OFFSET_KEY",
+            "PRIOR_YEAR_DATE_KEY",
+            "PRIORYEARDATEKEY",
+            "PRIOR_YEAR_KEY",
+            "PY_DATE_KEY",
+        ]:
+            if candidate in known_cols:
+                return candidate
+        return None
+
+    @staticmethod
+    def _resolve_ytd_order_column(known_cols: set[str]) -> Optional[str]:
+        """Resolve in-entity ordering column for YTD windows.
+
+        Keep this conservative: only return physical dimension-like columns that
+        can safely appear in semantic metric ORDER BY clauses.
+        """
+        if not known_cols:
+            return None
+
+        for candidate in ["PERIOD", "MONTH", "MONTH_NUM", "YEARPERIOD", "DATE", "PRIMARY_DATE", "PRIMARYDATE"]:
+            if candidate in known_cols:
+                return candidate
+        return None
+
+    @staticmethod
+    def _try_generate_flattened_view_cte(
+        relationship: Optional[SMLRelationship],
+        fact_dataset: str,
+        dimension_dataset: str,
+        dataset_col_lookup: Dict[str, set[str]],
+    ) -> Optional[Tuple[str, str]]:
+        """Generate a CTE that joins FACT to CALENDAR dimension for time-intelligence metrics.
+        
+        When YEAR/MONTH columns don't exist on the FACT table directly, but a relationship
+        exists to a CALENDAR/DATE dimension that has these columns, generate a flattened view
+        CTE that pre-joins them. This allows window functions to reference dimensions without
+        violating Snowflake semantic model constraints.
+        
+        Args:
+            relationship: The relationship from fact to dimension (or None)
+            fact_dataset: The fact table dataset name
+            dimension_dataset: The dimension table dataset name
+            dataset_col_lookup: Mapping of dataset -> available columns
+            
+        Returns:
+            Tuple of (cte_source_sql, joined_table_alias) if successful, None otherwise
+        """
+        if not relationship:
+            return None
+        
+        # Verify relationship connects fact to dimension
+        if relationship.from_dataset != fact_dataset or relationship.to_dataset != dimension_dataset:
+            return None
+        
+        # Check if dimension has the required YEAR and MONTH columns
+        dim_cols = dataset_col_lookup.get(dimension_dataset, set())
+        year_col = SnowflakeEmitter._resolve_year_dimension_column(dim_cols)
+        month_col = SnowflakeEmitter._resolve_month_dimension_column(dim_cols)
+        
+        if not year_col or not month_col:
+            # Dimension doesn't have required time columns
+            return None
+        
+        # Build the CTE
+        fact_alias = f"f"
+        dim_alias = f"d"
+        
+        # Get join columns
+        from_col = relationship.from_column
+        to_col = relationship.to_column
+        
+        if not from_col or not to_col:
+            return None
+        
+        # Generate CTE SQL
+        fact_cols_str = ", ".join([f'f."{col}"' for col in sorted(dataset_col_lookup.get(fact_dataset, []))])
+        dim_cols_str = f', d."{year_col}", d."{month_col}"'
+        
+        cte_sql = (
+            f"WITH flattened_fact AS (\n"
+            f"  SELECT {fact_cols_str}{dim_cols_str}\n"
+            f"  FROM {fact_dataset} {fact_alias}\n"
+            f"  INNER JOIN {dimension_dataset} {dim_alias}\n"
+            f"    ON {fact_alias}.\"{from_col}\" = {dim_alias}.\"{to_col}\"\n"
+            f")"
+        )
+        
+        return (cte_sql, "flattened_fact")
 
     @staticmethod
     def _is_simple_dax_aggregation_expression(expression: Optional[str]) -> bool:
@@ -693,14 +1084,6 @@ class SnowflakeEmitter(BaseEmitter):
                 sanitized_col_name,
             )
             if not resolved_col:
-                owners = [
-                    ds for ds, cols in dataset_col_lookup.items()
-                    if self._resolve_column_name_for_dataset(cols, sanitized_col_name)
-                ]
-                if len(owners) == 1:
-                    # Allow validation to pass when a unique owning dataset exists;
-                    # normalization may remap alias/column accordingly.
-                    continue
                 error = (
                     f"Column '{col_name}' (sanitized: '{sanitized_col_name}') not found in dataset '{dataset_name}'. "
                     f"Available columns: {sorted(known_columns)}"
@@ -946,7 +1329,10 @@ class SnowflakeEmitter(BaseEmitter):
         # Repair malformed chained identifiers occasionally produced by mixed
         # quoting rewrites, e.g. FACT."PRODUCT_KEY".PRODUCT_KEY.
         normalized_sql = self._dedupe_qualified_column_tokens(normalized_sql)
-        normalized_sql = self._rewrite_window_metric_expression(normalized_sql)
+        normalized_sql = self._rewrite_window_metric_expression(
+            normalized_sql,
+            preferred_table_alias=preferred_table_alias,
+        )
         normalized_sql = self._normalize_rolling_monthindex_max_predicates(normalized_sql)
 
         return normalized_sql
@@ -1018,7 +1404,10 @@ class SnowflakeEmitter(BaseEmitter):
         return default_alias
 
     @staticmethod
-    def _rewrite_window_metric_expression(metric_sql: str) -> str:
+    def _rewrite_window_metric_expression(
+        metric_sql: str,
+        preferred_table_alias: Optional[str] = None,
+    ) -> str:
         """Rewrite window-based metric SQL to semantic-safe aggregate SQL.
 
         Snowflake semantic metrics disallow expressions that embed window
@@ -1029,8 +1418,9 @@ class SnowflakeEmitter(BaseEmitter):
           SUM(x)
         so BI/query clients can apply grouping context dynamically.
 
-                For other window patterns (for example LAG/LEAD running metrics),
-                return NULL so deployment can succeed until explicit support exists.
+                Preserve supported time-intelligence windows used by SPLY/YTD
+                synchronization. Unknown/unsafe window shapes still downgrade to
+                ``NULL`` so deployment can succeed conservatively.
         """
         import re
 
@@ -1042,67 +1432,55 @@ class SnowflakeEmitter(BaseEmitter):
             r'SUM\((?P<den>[^\)]+)\)\s+OVER\s*\([^\)]*\)\s*\)\s*$'
         )
         match = ratio_pattern.match(metric_sql.strip())
-        if not match:
-            return "NULL"
+        if match:
+            numerator = match.group("num").strip()
+            denominator = match.group("den").strip()
+            if numerator.upper() != denominator.upper():
+                return "NULL"
+            return f"SUM({numerator})"
 
-        numerator = match.group("num").strip()
-        denominator = match.group("den").strip()
+        # Preserve common period-to-date aggregate windows, e.g.
+        # SUM(x) OVER (PARTITION BY year ORDER BY date ...)
+        ytd_like_pattern = re.compile(
+            r'(?is)^\s*(SUM|AVG|COUNT|MIN|MAX)\s*\([^\)]+\)\s+OVER\s*\('
+            r'\s*PARTITION\s+BY\s+.+?\s+ORDER\s+BY\s+.+?\)\s*$'
+        )
+        if ytd_like_pattern.match(metric_sql.strip()):
+            if preferred_table_alias:
+                window_alias_refs = set(
+                    a.upper()
+                    for a in re.findall(
+                        r'(?i)\b(\w+)\s*\.',
+                        metric_sql.split("OVER", 1)[1] if "OVER" in metric_sql.upper() else "",
+                    )
+                )
+                if window_alias_refs and any(a != preferred_table_alias.upper() for a in window_alias_refs):
+                    return "NULL"
+            return metric_sql
 
-        if numerator.upper() != denominator.upper():
-            return "NULL"
+        # Preserve SPLY-style lag/lead windows.
+        sply_like_pattern = re.compile(
+            r'(?is)^\s*(LAG|LEAD)\s*\(\s*.+?\)\s+OVER\s*\(.*\)\s*$'
+        )
+        if sply_like_pattern.match(metric_sql.strip()):
+            return metric_sql
 
-        return f"SUM({numerator})"
+        return "NULL"
 
-    @staticmethod
     def _build_known_metric_fallback_expression(
+        self,
         metric_name: str,
         fact_alias: str,
         scenario_alias: Optional[str],
+        calendar_alias: Optional[str],
+        dataset_col_lookup: Optional[Dict[str, set[str]]] = None,
     ) -> Optional[str]:
-        """Return deterministic SQL for known business metrics.
+        """Deprecated compatibility hook.
 
-        These formulas are used when translation fallback would otherwise emit
-        NULL for well-known finance metrics.
+        Hardcoded metric formulas have been removed. Metrics should be emitted
+        through the normal auto-translation path or left as NULL placeholders
+        when no translated expression exists.
         """
-        metric_key = (metric_name or "").upper()
-
-        total_cogs_expr = (
-            f"SUM({fact_alias}.MATERIAL_COSTS) + "
-            f"SUM({fact_alias}.LABOR_COSTS_VARIABLE) + "
-            f"SUM({fact_alias}.TAXES) + "
-            f"SUM({fact_alias}.REV_FOR_EXP_TRAVEL) + "
-            f"SUM({fact_alias}.TRAVEL_EXPENSES) + "
-            f"SUM({fact_alias}.COST_THIRD_PARTY)"
-        )
-
-        revenue_actual_expr = None
-        revenue_budget_expr = None
-        if scenario_alias:
-            revenue_actual_expr = (
-                f"SUM(CASE WHEN {scenario_alias}.SCENARIO = 'Actual' "
-                f"THEN {fact_alias}.REVENUE ELSE 0 END)"
-            )
-            revenue_budget_expr = (
-                f"SUM(CASE WHEN {scenario_alias}.SCENARIO = 'Budget' "
-                f"THEN {fact_alias}.REVENUE ELSE 0 END)"
-            )
-
-        if metric_key == "TOTAL_COGS":
-            return f"({total_cogs_expr})"
-        if metric_key == "GROSS_MARGIN":
-            return f"(SUM({fact_alias}.REVENUE) - ({total_cogs_expr}))"
-        if metric_key == "GM":
-            return (
-                f"(CASE WHEN SUM({fact_alias}.REVENUE) = 0 THEN 0 "
-                f"ELSE (SUM({fact_alias}.REVENUE) - ({total_cogs_expr})) / "
-                f"SUM({fact_alias}.REVENUE) END)"
-            )
-        if metric_key == "REVENUETY" and revenue_actual_expr:
-            return revenue_actual_expr
-        if metric_key in {"REVENUE_VAR_TO_BUDGET", "REVENUE_VAR_TO_BUDGET_1", "REVENUE_VAR_TO_BUDGET_2"}:
-            if revenue_actual_expr and revenue_budget_expr:
-                return f"({revenue_actual_expr} - {revenue_budget_expr})"
-
         return None
 
     def _qualify_bare_partition_identifiers(
@@ -3023,7 +3401,7 @@ class SnowflakeEmitter(BaseEmitter):
         }
         return mapping.get(inferred_type, OSIDataType.STRING)
 
-    def _dataset_columns_for_ctas_osi(self, dataset: "OSIDataset") -> list[dict[str, str]]:
+    def _dataset_columns_for_ctas_osi(self, dataset: OSIDataset) -> list[dict[str, str]]:
         columns: list[dict[str, str]] = []
         for col_name, col in self._collect_physical_source_columns_osi(dataset).items():
             columns.append(
@@ -3082,7 +3460,7 @@ class SnowflakeEmitter(BaseEmitter):
             logger.info("Table swapped successfully: %s", safe_table_name)
             self._execute_sql(cursor, f"DROP TABLE IF EXISTS {fixed_table}", context=f"DROP TABLE {safe_table_name}__FIXED")
 
-    def _apply_inferred_types_ctas_osi(self, cursor, osi: "OSIModel") -> None:
+    def _apply_inferred_types_ctas_osi(self, cursor, osi: OSIModel) -> None:
         """Apply inferred datatypes to physical OSI source tables via CTAS + SWAP."""
         for dataset in osi.datasets:
             source_table = dataset.source_table or dataset.unique_name
@@ -3132,7 +3510,7 @@ class SnowflakeEmitter(BaseEmitter):
             logger.info("Table swapped successfully: %s", safe_table_name)
             self._execute_sql(cursor, f"DROP TABLE IF EXISTS {fixed_table}", context=f"DROP TABLE {safe_table_name}__FIXED")
 
-    def _collect_physical_source_columns_osi(self, dataset: "OSIDataset") -> dict[str, Any]:
+    def _collect_physical_source_columns_osi(self, dataset: OSIDataset) -> dict[str, Any]:
         """Return ordered map of physical Snowflake column name -> OSI column.
 
         Uses the same collision policy as SML physical columns: keep all by
@@ -3813,6 +4191,7 @@ class SnowflakeEmitter(BaseEmitter):
         metric_base_seen: dict[str, int] = {}
         metric_signature_seen: dict[str, int] = {}
         metric_namespace = self._duplicate_namespace_key(sml.unique_name or sml.label)
+        metric_by_unique_name = {m.unique_name: m for m in valid_metrics}
 
         for metric in valid_metrics:
             alias = dataset_aliases.get(metric.dataset)
@@ -4215,6 +4594,8 @@ class SnowflakeEmitter(BaseEmitter):
                     metric=metric,
                     table_alias=alias,
                     dataset_col_lookup=dataset_col_lookup,
+                       model=sml,
+                       dataset_by_name=dataset_by_name,
                 )
                 if basic_expr:
                     metrics_lines.append(f'  {alias}."{metric_name}" AS {basic_expr}')
@@ -4281,19 +4662,42 @@ class SnowflakeEmitter(BaseEmitter):
                     scenario_alias = ds_alias
                     break
 
+        calendar_alias = dataset_aliases.get("CALENDAR")
+        if not calendar_alias:
+            for ds_name, ds_alias in dataset_aliases.items():
+                if self._sanitize_alias(ds_name) == "CALENDAR" or self._sanitize_alias(ds_alias) == "CALENDAR":
+                    calendar_alias = ds_alias
+                    break
+
         for metric_alias, metric_name, metric_unique_name in expected_metrics:
             if metric_name in emitted_metric_names:
                 continue
-            known_expr = self._build_known_metric_fallback_expression(
-                metric_name=metric_name,
-                fact_alias=metric_alias,
-                scenario_alias=scenario_alias,
-            )
-            if known_expr:
-                metrics_lines.append(f'  {metric_alias}."{metric_name}" AS {known_expr}')
+            metric = metric_by_unique_name.get(metric_unique_name)
+            translated_expr = None
+            if metric is not None:
+                translated_expr = self._try_llm_metric_fallback_expression(
+                    metric=metric,
+                    metric_name=metric_name,
+                    table_alias=metric_alias,
+                    alias_by_raw=_alias_by_raw,
+                    dataset_col_lookup=dataset_col_lookup,
+                    dataset_aliases=dataset_aliases,
+                    metric_name_set=metric_name_set,
+                    all_physical_col_names=all_physical_col_names,
+                    emittable_metric_name_set=emittable_metric_name_set,
+                    skipped_metric_names=skipped_metric_names,
+                )
+
+            if translated_expr:
+                metric_entity_alias = self._resolve_metric_emission_alias(
+                    metric_alias,
+                    translated_expr,
+                    dataset_aliases,
+                )
+                metrics_lines.append(f'  {metric_entity_alias}."{metric_name}" AS {translated_expr}')
                 emitted_metric_names.add(metric_name)
                 logger.info(
-                    "Metric '%s' used deterministic fallback SQL during emission",
+                    "Metric '%s' used auto-translation during emission",
                     metric_unique_name,
                 )
                 continue
@@ -4623,7 +5027,7 @@ class SnowflakeEmitter(BaseEmitter):
 
     def evolve_schema(
         self,
-        cursor: "snowflake.connector.cursor.SnowflakeCursor",
+        cursor: Any,
         table_name: str,
         new_columns: list[tuple[str, str]],
     ) -> dict[str, str]:
@@ -4710,7 +5114,7 @@ class SnowflakeEmitter(BaseEmitter):
         self,
         model_name: str,
         shadow_table: str,
-        triage_results: "dict[str, TriageResult]",
+        triage_results: Dict[str, Any],
         grain_dimensions: list[str],
     ) -> str:
         """Generate a Snowflake VIEW that reconstructs measures per tier.
@@ -5130,7 +5534,7 @@ class SnowflakeEmitter(BaseEmitter):
 
     def sync_all_measures_from_osi(
         self,
-        osi: "OSIModel",
+        osi: OSIModel,
         fabric_extractor,
         dataset_id: str,
         grain_dimensions: list[str] | None = None,
@@ -5308,7 +5712,7 @@ class SnowflakeEmitter(BaseEmitter):
     # OSI-Native Emission Methods (No SML Dependency)
     # =========================================================================
 
-    def deploy_from_osi(self, osi: "OSIModel", parallel: bool = False, max_workers: int = 4) -> bool:
+    def deploy_from_osi(self, osi: OSIModel, parallel: bool = False, max_workers: int = 4) -> bool:
         """Deploy an OSI model directly to Snowflake.
 
         Same lifecycle as :meth:`deploy` but operates on ``OSIModel`` without
@@ -5554,7 +5958,7 @@ class SnowflakeEmitter(BaseEmitter):
             logger.error(msg)
             raise ConnectorError(msg, connector_name="snowflake") from e
 
-    def _preflight_check_osi(self, cursor, osi: "OSIModel") -> None:
+    def _preflight_check_osi(self, cursor, osi: OSIModel) -> None:
         """Validate that all source tables referenced by the OSI model exist.
 
         Raises ``ConnectorError`` if any referenced source tables are missing
@@ -5593,7 +5997,7 @@ class SnowflakeEmitter(BaseEmitter):
         except Exception as e:
             logger.warning(f"Pre-flight check skipped: {e}")
 
-    def generate_ddls_from_osi(self, osi: "OSIModel") -> List[str]:
+    def generate_ddls_from_osi(self, osi: OSIModel) -> List[str]:
         """Generate all Snowflake DDLs from an OSI model."""
         if not osi.datasets:
             return []
@@ -5601,7 +6005,7 @@ class SnowflakeEmitter(BaseEmitter):
         semantic_ddl = self._generate_semantic_view_from_osi(osi)
         return [semantic_ddl]
 
-    def _generate_semantic_view_from_osi(self, osi: "OSIModel") -> str:
+    def _generate_semantic_view_from_osi(self, osi: OSIModel) -> str:
         """Generate Snowflake Semantic View DDL directly from an OSI model.
 
         Mirrors :meth:`_generate_semantic_view` but reads OSI field names
@@ -5667,6 +6071,7 @@ class SnowflakeEmitter(BaseEmitter):
         # not exist as physical Snowflake columns.
         # =================================================================
         dataset_col_lookup: dict[str, set[str]] = {}
+        dataset_by_name: dict[str, OSIDataset] = {d.unique_name: d for d in osi.datasets}
         for dataset in osi.datasets:
             dataset_col_lookup[dataset.unique_name] = {
                 self._sanitize_col_name(c.unique_name)
@@ -6355,6 +6760,8 @@ class SnowflakeEmitter(BaseEmitter):
                     metric=metric,
                     table_alias=alias,
                     dataset_col_lookup=dataset_col_lookup,
+                       model=osi if 'osi' in locals() else None,
+                       dataset_by_name={ds.unique_name: ds for ds in (osi.datasets if 'osi' in locals() else [])},
                 )
                 if basic_expr:
                     metrics_lines.append(f'  {alias}."{metric_name}" AS {basic_expr}')
@@ -6421,6 +6828,13 @@ class SnowflakeEmitter(BaseEmitter):
                     scenario_alias = ds_alias
                     break
 
+        calendar_alias = dataset_aliases.get("CALENDAR")
+        if not calendar_alias:
+            for ds_name, ds_alias in dataset_aliases.items():
+                if self._sanitize_alias(ds_name) == "CALENDAR" or self._sanitize_alias(ds_alias) == "CALENDAR":
+                    calendar_alias = ds_alias
+                    break
+
         for metric_alias, metric_name, metric_unique_name in expected_metrics:
             if metric_name in emitted_metric_names:
                 continue
@@ -6428,6 +6842,8 @@ class SnowflakeEmitter(BaseEmitter):
                 metric_name=metric_name,
                 fact_alias=metric_alias,
                 scenario_alias=scenario_alias,
+                calendar_alias=calendar_alias,
+                dataset_col_lookup=dataset_col_lookup,
             )
             if known_expr:
                 metrics_lines.append(f'  {metric_alias}."{metric_name}" AS {known_expr}')
@@ -6451,7 +6867,7 @@ class SnowflakeEmitter(BaseEmitter):
 
         return lines[0] + "\n" + "\n".join(definitions) + ";"
 
-    def generate_cortex_yaml_from_osi(self, osi: "OSIModel") -> str:
+    def generate_cortex_yaml_from_osi(self, osi: OSIModel) -> str:
         """Generate Cortex Analyst YAML from an OSI model."""
         output = {
             "semantic_model": {

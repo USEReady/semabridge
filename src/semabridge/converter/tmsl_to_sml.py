@@ -21,13 +21,7 @@ from semabridge.sml.models import (
 from semabridge.converter.dax_translator import DAXTranslator
 from semabridge.core.behavior import ConnectorBehavior
 from semabridge.utils.logger import get_logger
-from semabridge.utils.naming import (
-    to_alias,
-    build_alias_rewrite_map,
-    extract_prefixes_from_expressions,
-    infer_override_alias_map,
-    sanitize_sql_expression,
-)
+from semabridge.utils.naming import to_alias
 from semabridge.utils.relationship_naming import generate_relationship_name
 
 logger = get_logger(__name__)
@@ -95,7 +89,7 @@ class TMSLTransformer:
 
         return None
     
-    def transform(self, tmsl_json: Dict[str, Any], workspace_id: str, dataset_id: str, row_counts: Dict[str, int] = None, metric_overrides: Dict[str, str] = None, behavior: Optional[ConnectorBehavior] = None) -> SMLModel:
+    def transform(self, tmsl_json: Dict[str, Any], workspace_id: str, dataset_id: str, row_counts: Dict[str, int] = None, behavior: Optional[ConnectorBehavior] = None) -> SMLModel:
         """
         Transform TMSL dictionary to SML object.
         
@@ -125,10 +119,7 @@ class TMSLTransformer:
             if "tables" not in model_obj:
                 return sml
 
-            # Pass 1: Collect datasets only so we can build the full alias map
-            # before processing measures.  This is required so that metric_overrides
-            # containing invalid prefixes (e.g. SALESFACT.SCORE) are sanitized
-            # against ALL datasets, not just the ones seen so far in the loop.
+            # Pass 1: Collect datasets first.
             tables_to_process: List[tuple] = []
             for table in model_obj["tables"]:
                 table_name = table.get("name", "")
@@ -171,58 +162,7 @@ class TMSLTransformer:
                 sml.datasets.append(ds)
                 tables_to_process.append((table, ds))
 
-            # Pre-sanitize metric_overrides now that we know every dataset alias.
-            # Mirrors the logic in OSIToSMLConverter.from_osi() so that both code
-            # paths produce identical, Snowflake-safe SQL expressions before any
-            # override value is stored on SMLMetric.sql_expression.
-            dataset_aliases: Dict[str, str] = {
-                ds.unique_name: to_alias(ds.unique_name) for ds in sml.datasets
-            }
-            declared_extra: Dict[str, str] = {}
-            if behavior is not None:
-                for short_prefix, logical_name in behavior.semantic_model.override_alias_map.items():
-                    declared_extra[short_prefix.upper()] = to_alias(logical_name)
-            raw_overrides: Dict[str, str] = metric_overrides or {}
-            unresolved_prefixes: set[str] = set()
-            if raw_overrides:
-                discovered = extract_prefixes_from_expressions(list(raw_overrides.values()))
-                known_map = build_alias_rewrite_map(dataset_aliases)
-                unknown = {
-                    p for p in discovered
-                    if p not in declared_extra and p not in known_map
-                }
-                if unknown:
-                    inferred = infer_override_alias_map(unknown, dataset_aliases)
-                    for prefix, alias_val in inferred.items():
-                        declared_extra.setdefault(prefix, alias_val)
-                    unresolved_prefixes = unknown - set(inferred)
-                    if unresolved_prefixes:
-                        logger.info(
-                            "metric_overrides: unresolved prefixes %s. "
-                            "Overrides that reference these prefixes will be skipped for this run.",
-                            sorted(unresolved_prefixes),
-                        )
-            extra_prefix_map: Optional[Dict[str, str]] = declared_extra if declared_extra else None
-            sanitized_overrides: Dict[str, str] = {}
-            for name, sql in raw_overrides.items():
-                if unresolved_prefixes:
-                    expr_prefixes = extract_prefixes_from_expressions([sql])
-                    bad_prefixes = {p for p in expr_prefixes if p in unresolved_prefixes}
-                    if bad_prefixes:
-                        logger.info(
-                            "metric_overrides: skipping override '%s' due to unresolved prefixes %s",
-                            name,
-                            sorted(bad_prefixes),
-                        )
-                        continue
-                sanitized_overrides[name] = sanitize_sql_expression(
-                    expr=sql,
-                    dataset_aliases=dataset_aliases,
-                    extra_prefix_map=extra_prefix_map,
-                    force_uppercase=True,
-                )
-
-            # Pass 2: Process Measures (Metrics) with fully-sanitized overrides
+            # Pass 2: Process Measures (Metrics)
             # Step 2a: Parse all measures and identify those needing Tier 5 LLM translation
             tier5_candidates = []  # (metric_name, dax, table_alias, dataset_name)
             
@@ -231,7 +171,7 @@ class TMSLTransformer:
                         metric = self._parse_measure(
                             measure,
                             ds.unique_name,
-                            sanitized_overrides,
+                            None,
                             sml.metrics,
                         )
                         sml.metrics.append(metric)
@@ -751,14 +691,14 @@ class TMSLTransformer:
 
         # EDGE CASE 4: Detect unsupported DAX patterns upfront
         unsupported_patterns = {
-            "TOTALMTD": "Complex Time Intelligence (TOTALMTD) requires manual override",
-            "TOTALQTD": "Complex Time Intelligence (TOTALQTD) requires manual override",
-            "SAMEPERIODLASTYEAR": "Complex Time Intelligence (SAMEPERIODLASTYEAR) requires manual override",
-            "PREVIOUSYEAR": "Complex Time Intelligence (PREVIOUSYEAR) requires manual override",
-            "PREVIOUSMONTH": "Complex Time Intelligence (PREVIOUSMONTH) requires manual override",
-            "DATEADD": "Complex Time Intelligence (DATEADD) requires manual override",
+            "TOTALMTD": "Complex Time Intelligence (TOTALMTD) not automatically translatable",
+            "TOTALQTD": "Complex Time Intelligence (TOTALQTD) not automatically translatable",
+            "SAMEPERIODLASTYEAR": "Complex Time Intelligence (SAMEPERIODLASTYEAR) not automatically translatable",
+            "PREVIOUSYEAR": "Complex Time Intelligence (PREVIOUSYEAR) not automatically translatable",
+            "PREVIOUSMONTH": "Complex Time Intelligence (PREVIOUSMONTH) not automatically translatable",
+            "DATEADD": "Complex Time Intelligence (DATEADD) not automatically translatable",
             "EARLIER": "Row context functions (EARLIER) cannot be translated",
-            "USERELATIONSHIP": "Dynamic relationship functions (USERELATIONSHIP) require manual override",
+            "USERELATIONSHIP": "Dynamic relationship functions (USERELATIONSHIP) not automatically translatable",
         }
         
         unsupported_reason = None
@@ -806,7 +746,6 @@ class TMSLTransformer:
             dax, 
             safe_alias, 
             table_name,
-            overrides=overrides,
             metric_name=metric.unique_name,
             metrics_context=metrics_context
         )

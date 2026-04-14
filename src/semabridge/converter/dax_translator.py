@@ -29,11 +29,10 @@ class DAXTranslator:
     """
     Translates DAX expressions to SQL.
     
-    Tier 0: Manual Overrides & Recursion
     Tier 1: Direct Aggregations (SUM, AVG, MIN, MAX, COUNT, DISTINCTCOUNT)
     Tier 2: Arithmetic & Branching (A + B, A / B, DIVIDE)
     Tier 3: Time Intelligence (TOTALYTD, TOTALMTD, TOTALQTD) - Window functions
-    Tier 4: Complex (CALCULATE with filters, iterators) - Requires manual override
+    Tier 4: Complex (CALCULATE with filters, iterators) - AST/rules/LLM fallback
     """
     
     # Regex patterns for Tier 1
@@ -59,6 +58,15 @@ class DAXTranslator:
         r"^\s*DIVIDE\s*\(\s*(\[.+?\])\s*,\s*(\[.+?\])\s*(?:,.+?)?\)\s*$",
         re.IGNORECASE
     )
+
+    _MEASURE_REF_PATTERN = re.compile(r"\[([^\]]+)\]")
+
+    CALENDAR_MAP = {
+        "table": "CALENDAR",
+        "date_col": "DATE",
+        "year_col": "YEAR",
+        "period_col": "PERIOD",
+    }
     
     # Time Intelligence patterns that CAN be translated to Snowflake window functions
     TIME_INTEL_PATTERNS = {
@@ -84,6 +92,22 @@ class DAXTranslator:
         "DATEADD", "DATESYTD", "DATESMTD", "DATESQTD",
         "PARALLELPERIOD", "OPENINGBALANCEYEAR", "CLOSINGBALANCEYEAR"
     ]
+
+    STRICT_BLOCKED_FUNCTIONS = (
+        "SAMEPERIODLASTYEAR",
+        "PREVIOUSYEAR",
+        "PREVIOUSMONTH",
+        "PREVIOUSQUARTER",
+        "DATEADD",
+        "DATESYTD",
+        "DATESMTD",
+        "DATESQTD",
+        "PARALLELPERIOD",
+        "OPENINGBALANCEYEAR",
+        "CLOSINGBALANCEYEAR",
+        "ALL",
+        "ALLEXCEPT",
+    )
     
     # Patterns that CANNOT be safely translated (require DAX engine evaluation)
     UNSUPPORTED_PATTERNS = [
@@ -102,7 +126,6 @@ class DAXTranslator:
                   dax: str, 
                   table_alias: str, 
                   dataset_name: str, 
-                  overrides: Dict[str, str] = None,
                   metric_name: str = None,
                   metrics_context: List[Any] = None) -> DAXTranslationResult:
         """
@@ -112,7 +135,6 @@ class DAXTranslator:
             dax: The DAX formula string
             table_alias: SQL alias for the main table (e.g. 'sales')
             dataset_name: Name of the dataset for context
-            overrides: Dictionary of metric_name -> manual_sql
             metric_name: Name of the current metric being translated
             metrics_context: List of SMLMetric objects to resolve dependencies
         """
@@ -120,7 +142,6 @@ class DAXTranslator:
             return DAXTranslationResult(None, 3, "")
         
         clean_dax = dax.strip()
-        overrides = overrides or {}
         
         # **NEW PRIMARY FLOW: Try deterministic translator first**
         # This enforces pipeline as single source of truth
@@ -141,25 +162,33 @@ class DAXTranslator:
         except Exception as e:
             logger.warning(f"Deterministic translator error, falling back to Tier logic: {e}")
         
-        # Tier 0: Manual Overrides (legacy support)
-        # Priority 1: Check if THIS metric has an override
-        if metric_name and metric_name in overrides:
-            logger.info(f"Using manual SQL override for metric '{metric_name}'")
-            return DAXTranslationResult(overrides[metric_name], 0, clean_dax)
-            
-        # Priority 2: Check if exact DAX string matches an override key (rare but possible)
-        if clean_dax in overrides:
-            return DAXTranslationResult(overrides[clean_dax], 0, clean_dax)
-        
         # Tier 1: Direct Aggregations
         tier1_sql = self._try_tier1(clean_dax, table_alias)
         if tier1_sql:
             return DAXTranslationResult(tier1_sql, 1, clean_dax)
+
+        if any(re.search(rf"\b{pattern}\b", clean_dax, re.IGNORECASE) for pattern in self.STRICT_BLOCKED_FUNCTIONS):
+            logger.debug(f"Strict translator rejected unsupported DAX pattern: {clean_dax[:80]}...")
+            return DAXTranslationResult(None, 4, clean_dax)
+
+        strict_sql = self._try_strict_translation(clean_dax, table_alias, metrics_context)
+        if strict_sql:
+            return DAXTranslationResult(strict_sql, 2, clean_dax)
+
+        if metrics_context:
+            dependency_sql = self._try_dependency_translation(
+                clean_dax,
+                table_alias,
+                dataset_name,
+                metrics_context,
+            )
+            if dependency_sql:
+                return DAXTranslationResult(dependency_sql, 2, clean_dax)
         
         # Tier 2: Branching & Arithmetic
         # e.g. [Net Sales] = [Gross Sales] - [Discounts]
         if metrics_context:
-            tier2_sql = self._try_branching(clean_dax, metrics_context, overrides)
+            tier2_sql = self._try_branching(clean_dax, metrics_context)
             if tier2_sql:
                 return DAXTranslationResult(tier2_sql, 2, clean_dax)
         
@@ -214,6 +243,366 @@ class DAXTranslator:
 
         # No translation possible — return None (all tiers exhausted)
         return DAXTranslationResult(None, 4, clean_dax)
+
+    def _try_dependency_translation(
+        self,
+        dax: str,
+        table_alias: str,
+        dataset_name: str,
+        metrics_context: List[Any],
+        visiting: Optional[set[str]] = None,
+    ) -> Optional[str]:
+        """Resolve pure measure references and arithmetic chains by expanding dependencies first."""
+        if not dax or not metrics_context:
+            return None
+
+        visiting = visiting or set()
+        clean_dax = " ".join((dax or "").split())
+        metric_index = {
+            str(getattr(m, "unique_name", "")).casefold(): m
+            for m in metrics_context
+            if getattr(m, "unique_name", None)
+        }
+
+        def resolve_measure(name: str) -> Optional[str]:
+            key = (name or "").strip().casefold()
+            if not key:
+                return None
+            if key in visiting:
+                logger.warning(f"Circular measure dependency detected for '{name}'")
+                return None
+
+            metric = metric_index.get(key)
+            if not metric:
+                return None
+
+            existing_sql = (getattr(metric, "sql_expression", None) or "").strip()
+            if existing_sql:
+                return self._strip_outer_parens(existing_sql)
+
+            metric_expr = (getattr(metric, "expression", None) or "").strip()
+            if not metric_expr:
+                return None
+
+            visiting.add(key)
+            try:
+                tier1 = self._try_tier1(metric_expr, table_alias)
+                if tier1:
+                    return self._strip_outer_parens(tier1)
+
+                strict = self._try_strict_translation(metric_expr, table_alias, metrics_context)
+                if strict:
+                    return self._strip_outer_parens(strict)
+
+                nested = self._try_dependency_translation(
+                    metric_expr,
+                    table_alias,
+                    dataset_name,
+                    metrics_context,
+                    visiting,
+                )
+                if nested:
+                    return self._strip_outer_parens(nested)
+
+                return None
+            finally:
+                visiting.remove(key)
+
+        def split_args(args_text: str) -> List[str]:
+            args: List[str] = []
+            current: List[str] = []
+            depth = 0
+            for ch in args_text:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")" and depth > 0:
+                    depth -= 1
+                elif ch == "," and depth == 0:
+                    value = "".join(current).strip()
+                    if value:
+                        args.append(value)
+                    current = []
+                    continue
+                current.append(ch)
+            tail = "".join(current).strip()
+            if tail:
+                args.append(tail)
+            return args
+
+        pure_ref = re.fullmatch(r"\[([^\]]+)\]", clean_dax)
+        if pure_ref:
+            return resolve_measure(pure_ref.group(1))
+
+        if clean_dax.upper().startswith("DIVIDE(") and clean_dax.endswith(")"):
+            args = split_args(clean_dax[7:-1])
+            if len(args) >= 2:
+                numerator_sql = self._try_dependency_translation(args[0], table_alias, dataset_name, metrics_context, visiting)
+                denominator_sql = self._try_dependency_translation(args[1], table_alias, dataset_name, metrics_context, visiting)
+                if numerator_sql and denominator_sql:
+                    alt = args[2].strip() if len(args) >= 3 and args[2].strip() else "0"
+                    return f"COALESCE(({numerator_sql}) / NULLIF(({denominator_sql}), 0), {alt})"
+
+        refs = [match.group(1).strip() for match in self._MEASURE_REF_PATTERN.finditer(clean_dax)]
+        refs = [ref for ref in refs if ref]
+        if refs:
+            replaced = clean_dax
+            for ref in refs:
+                dep_sql = resolve_measure(ref)
+                if not dep_sql:
+                    return None
+                replaced = re.sub(rf"\[{re.escape(ref)}\]", f"({dep_sql})", replaced, flags=re.IGNORECASE)
+
+            if replaced != clean_dax:
+                upper_replaced = replaced.upper()
+                if any(keyword in upper_replaced for keyword in ("CALCULATE", "SAMEPERIODLASTYEAR", "DATEADD", "DATESYTD", "TOTALYTD", "IF(", "BLANK(")):
+                    return None
+                if "[" in replaced or "]" in replaced:
+                    return None
+                return replaced
+
+        return None
+
+    def _split_dax_arguments(self, args_text: str) -> List[str]:
+        """Split a comma-separated DAX argument list at top level only."""
+        args: List[str] = []
+        current: List[str] = []
+        depth = 0
+        in_string = False
+        string_quote = ""
+
+        for ch in args_text:
+            if in_string:
+                current.append(ch)
+                if ch == string_quote:
+                    in_string = False
+                continue
+
+            if ch in ('"', "'"):
+                in_string = True
+                string_quote = ch
+                current.append(ch)
+                continue
+
+            if ch == "(":
+                depth += 1
+            elif ch == ")" and depth > 0:
+                depth -= 1
+            elif ch == "," and depth == 0:
+                value = "".join(current).strip()
+                if value:
+                    args.append(value)
+                current = []
+                continue
+
+            current.append(ch)
+
+        tail = "".join(current).strip()
+        if tail:
+            args.append(tail)
+        return args
+
+    def _strip_outer_parens(self, expr: str) -> str:
+        """Remove wrapping parentheses when they fully enclose the expression."""
+        clean = (expr or "").strip()
+        while clean.startswith("(") and clean.endswith(")"):
+            depth = 0
+            wrapped = True
+            for index, ch in enumerate(clean):
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0 and index != len(clean) - 1:
+                        wrapped = False
+                        break
+            if not wrapped or depth != 0:
+                break
+            clean = clean[1:-1].strip()
+        return clean
+
+    def _parse_sql_aggregation(self, sql: str) -> Optional[Tuple[str, str]]:
+        """Return the aggregate function and inner expression for simple SQL."""
+        clean = self._strip_outer_parens(sql)
+        distinct_match = re.match(r"^COUNT\s*\(\s*DISTINCT\s+(.+?)\s*\)$", clean, re.IGNORECASE)
+        if distinct_match:
+            return ("COUNT_DISTINCT", distinct_match.group(1).strip())
+
+        match = re.match(r"^(SUM|AVG|COUNT|MIN|MAX)\s*\(\s*(.+?)\s*\)$", clean, re.IGNORECASE)
+        if match:
+            return (match.group(1).upper(), match.group(2).strip())
+        return None
+
+    def _extract_simple_filter_predicate(self, filter_expr: str) -> Optional[str]:
+        """Extract a direct predicate from FILTER(table, predicate) when safely possible."""
+        clean_filter = self._strip_outer_parens(filter_expr)
+        if not re.match(r"^FILTER\s*\(", clean_filter, re.IGNORECASE):
+            return clean_filter
+
+        args = self._split_dax_arguments(clean_filter[len("FILTER("):-1]) if clean_filter.endswith(")") else []
+        if len(args) != 2:
+            return None
+
+        predicate = self._strip_outer_parens(args[1])
+        # Keep strict mode deterministic: reject nested table expressions/functions.
+        if re.search(r"\b(FILTER|ALL|ALLEXCEPT|SAMEPERIODLASTYEAR|PREVIOUSYEAR|PREVIOUSMONTH|PREVIOUSQUARTER|DATEADD|DATESYTD|DATESMTD|DATESQTD|PARALLELPERIOD|OPENINGBALANCEYEAR|CLOSINGBALANCEYEAR)\b", predicate, re.IGNORECASE):
+            return None
+        return predicate
+
+    def _resolve_measure_sql(self, name: str, metrics_context: Optional[List[Any]], table_alias: str) -> Optional[str]:
+        """Resolve a measure name to SQL using the provided dependency cache."""
+        if not metrics_context:
+            return None
+
+        for metric in metrics_context:
+            if str(getattr(metric, "unique_name", "")).casefold() != str(name or "").casefold():
+                continue
+
+            sql_expression = (getattr(metric, "sql_expression", None) or "").strip()
+            if sql_expression:
+                return self._strip_outer_parens(sql_expression)
+
+            metric_expr = (getattr(metric, "expression", None) or "").strip()
+            if metric_expr:
+                direct_sql = self._try_tier1(metric_expr, table_alias)
+                if direct_sql:
+                    return self._strip_outer_parens(direct_sql)
+
+                strict_sql = self._try_strict_translation(metric_expr, table_alias, metrics_context)
+                if strict_sql:
+                    return self._strip_outer_parens(strict_sql)
+
+                dependency_sql = self._try_dependency_translation(
+                    metric_expr,
+                    table_alias,
+                    "",
+                    metrics_context,
+                    visiting=set(),
+                )
+                if dependency_sql:
+                    return self._strip_outer_parens(dependency_sql)
+
+                translated = self._try_branching(metric_expr, metrics_context)
+                if translated:
+                    return self._strip_outer_parens(translated)
+            return None
+
+        return None
+
+    def _try_strict_translation(
+        self,
+        dax: str,
+        table_alias: str,
+        metrics_context: Optional[List[Any]] = None,
+    ) -> Optional[str]:
+        """Translate only the two strict forms supported by the prompt."""
+        clean_dax = " ".join((dax or "").split())
+        upper_dax = clean_dax.upper()
+
+        if upper_dax.startswith("TOTALYTD(") and clean_dax.endswith(")"):
+            args = self._split_dax_arguments(clean_dax[len("TOTALYTD("):-1])
+            if len(args) != 2:
+                return None
+
+            base_expr = self._strip_outer_parens(args[0])
+            base_sql = self._try_tier1(base_expr, table_alias)
+            if not base_sql and re.fullmatch(r"\[([^\]]+)\]", base_expr):
+                base_sql = self._resolve_measure_sql(base_expr[1:-1], metrics_context, table_alias)
+            if not base_sql and metrics_context:
+                base_sql = self._try_dependency_translation(
+                    base_expr,
+                    table_alias,
+                    "",
+                    metrics_context,
+                    visiting=set(),
+                )
+            if not base_sql and metrics_context:
+                base_sql = self._try_branching(base_expr, metrics_context)
+            if not base_sql:
+                return None
+
+            base_sql = self._strip_outer_parens(base_sql)
+            parsed_agg = self._parse_sql_aggregation(base_sql)
+            if parsed_agg:
+                agg_func, value_expr = parsed_agg
+                sql_agg = "COUNT(DISTINCT" if agg_func == "COUNT_DISTINCT" else agg_func
+                if agg_func == "COUNT_DISTINCT":
+                    return (
+                        f"COUNT(DISTINCT {value_expr}) OVER "
+                        "(PARTITION BY CALENDAR.YEAR ORDER BY CALENDAR.PERIOD)"
+                    )
+                return (
+                    f"{sql_agg}({value_expr}) OVER "
+                    "(PARTITION BY CALENDAR.YEAR ORDER BY CALENDAR.PERIOD)"
+                )
+
+            return f"SUM({base_sql}) OVER (PARTITION BY CALENDAR.YEAR ORDER BY CALENDAR.PERIOD)"
+
+        if upper_dax.startswith("CALCULATE(") and clean_dax.endswith(")"):
+            args = self._split_dax_arguments(clean_dax[len("CALCULATE("):-1])
+            if len(args) != 2:
+                return None
+
+            base_expr = self._strip_outer_parens(args[0])
+            filter_expr = self._strip_outer_parens(args[1])
+            filter_expr = self._extract_simple_filter_predicate(filter_expr)
+            if not filter_expr:
+                return None
+
+            if re.search(
+                r"\b(FILTER|ALL|ALLEXCEPT|SAMEPERIODLASTYEAR|PREVIOUSYEAR|PREVIOUSMONTH|PREVIOUSQUARTER|DATEADD|DATESYTD|DATESMTD|DATESQTD|PARALLELPERIOD|OPENINGBALANCEYEAR|CLOSINGBALANCEYEAR)\b",
+                filter_expr,
+                re.IGNORECASE,
+            ):
+                return None
+
+            filter_match = re.match(
+                r"^(?:'(?P<table_quoted>[^']+)'|(?P<table>[A-Za-z_][A-Za-z0-9_]*))\[(?P<column>[^\]]+)\]\s*=\s*(?P<value>.+)$",
+                filter_expr,
+                re.IGNORECASE,
+            )
+            if not filter_match:
+                return None
+
+            base_sql = self._try_tier1(base_expr, table_alias)
+            if not base_sql and re.fullmatch(r"\[([^\]]+)\]", base_expr):
+                base_sql = self._resolve_measure_sql(base_expr[1:-1], metrics_context, table_alias)
+            if not base_sql:
+                return None
+
+            agg = self._parse_sql_aggregation(base_sql)
+            if not agg:
+                return None
+
+            agg_func, value_expr = agg
+            table_name = filter_match.group("table_quoted") or filter_match.group("table") or ""
+            column_name = filter_match.group("column")
+            value_text = filter_match.group("value").strip()
+
+            if re.fullmatch(r'"(?:[^"\\]|\\.)*"', value_text):
+                literal = "'" + value_text[1:-1].replace("'", "''") + "'"
+            elif re.fullmatch(r"'(?:[^'\\]|\\.)*'", value_text):
+                literal = value_text
+            elif re.fullmatch(r"-?\d+(?:\.\d+)?", value_text):
+                literal = value_text
+            else:
+                return None
+
+            lhs_table = sanitize_column(table_name, force_uppercase=True)
+            lhs_column = sanitize_column(column_name, force_uppercase=True)
+            condition_sql = f"{lhs_table}.{lhs_column} = {literal}"
+
+            if agg_func == "SUM":
+                return f"SUM(CASE WHEN {condition_sql} THEN {value_expr} ELSE 0 END)"
+            if agg_func == "COUNT":
+                return f"COUNT(CASE WHEN {condition_sql} THEN {value_expr} END)"
+            if agg_func == "COUNT_DISTINCT":
+                return f"COUNT(DISTINCT CASE WHEN {condition_sql} THEN {value_expr} END)"
+            if agg_func == "AVG":
+                return f"AVG(CASE WHEN {condition_sql} THEN {value_expr} END)"
+            if agg_func in {"MIN", "MAX"}:
+                return f"{agg_func}(CASE WHEN {condition_sql} THEN {value_expr} END)"
+
+        return None
     
     def _try_llm_fallback(self,
                          dax: str,
@@ -465,7 +854,7 @@ class DAXTranslator:
         else:
             return f"{sql_template}({col_ref})"
     
-    def _try_branching(self, dax: str, metrics: List[Any], overrides: Dict[str, str]) -> Optional[str]:
+    def _try_branching(self, dax: str, metrics: List[Any]) -> Optional[str]:
         """
         Attempt to resolve references to other measures.
         Handles simple cases:
@@ -474,82 +863,182 @@ class DAXTranslator:
         3. DIVIDE: DIVIDE([A], [B])
         """
         
-        # Helper to resolve a single [MeasureName]
-        def resolve_measure(ref_str: str) -> Optional[str]:
-            name = ref_str.strip('[]')
-            
-            # Check override first
-            if name in overrides:
-                return overrides[name]
-                
-            # Find metric in context
-            for m in metrics:
-                if m.unique_name == name:
-                    # If the referenced metric has SQL, use it
-                    # Note: We rely on the fact that simple metrics were processed first 
-                    # or that we can get their simple translation
-                    if m.sql_expression:
-                        return m.sql_expression
-                    elif m.expression:
-                        # Try to translate it on-the-fly (limited depth recursion)
-                        # We don't have table aliases here easily, so this is risky if it's Tier 1
-                        pass
+        if not dax or not metrics:
             return None
 
-        # Case 1: DIVIDE([A], [B])
-        div_match = self._DIVIDE_PATTERN.match(dax)
-        if div_match:
-            num_ref = div_match.group(1)
-            den_ref = div_match.group(2)
-            
-            num_sql = resolve_measure(num_ref)
-            den_sql = resolve_measure(den_ref)
-            
-            if num_sql and den_sql:
-                # Safe division in Snowflake
-                return f"DIV0({num_sql}, {den_sql})"
-        
-        # Case 2: Arithmetic [A] op [B]
-        arith_match = self._ARITHMETIC_PATTERN.match(dax)
-        if arith_match:
-            left_ref = arith_match.group(1)
-            op = arith_match.group(2)
-            right_ref = arith_match.group(3)
-            
-            left_sql = resolve_measure(left_ref)
-            right_sql = resolve_measure(right_ref)
-            
-            if left_sql and right_sql:
-                return f"({left_sql} {op} {right_sql})"
-                
-        # Case 3: Recursion for simple branching [Measure]
-        # Regex to find all [Measure] tokens
-        # This is a general replacement strategy for expressions like [A] - [B] + [C]
-        # But we need to be careful not to replace Table[Col] logic if mixed
-        
-        # Only attempt this if it looks like a purely measure-based expression
-        # i.e., doesn't contain CALCULATE, SUM, etc.
-        if "CALCULATE" not in dax.upper() and "(" not in dax:
-             # Find all [Tags]
-             measure_refs = re.findall(r"\[([^\]]+)\]", dax)
-             if not measure_refs:
-                 return None
-                 
-             current_sql = dax
-             resolved_all = True
-             
-             for ref in measure_refs:
-                 sql = resolve_measure(f"[{ref}]")
-                 if not sql:
-                     resolved_all = False
-                     break
-                 # Replace [Name] with (SQL)
-                 current_sql = current_sql.replace(f"[{ref}]", f"({sql})")
-                 
-             if resolved_all:
-                 return current_sql
-                 
-        return None
+        metric_index = {
+            str(getattr(m, "unique_name", "")).casefold(): m
+            for m in metrics
+            if getattr(m, "unique_name", None)
+        }
+        cache: Dict[str, str] = {}
+
+        def split_args(args_text: str) -> List[str]:
+            args: List[str] = []
+            current: List[str] = []
+            depth = 0
+            for ch in args_text:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")" and depth > 0:
+                    depth -= 1
+                elif ch == "," and depth == 0:
+                    args.append("".join(current).strip())
+                    current = []
+                    continue
+                current.append(ch)
+            tail = "".join(current).strip()
+            if tail:
+                args.append(tail)
+            return args
+
+        def extract_measure_refs(expr: str) -> List[str]:
+            refs: List[str] = []
+            for match in self._MEASURE_REF_PATTERN.finditer(expr or ""):
+                start = match.start()
+                if start > 0 and expr[start - 1] == "'":
+                    # Skip table-qualified column refs like 'Table'[Column]
+                    continue
+                refs.append(match.group(1).strip())
+            return refs
+
+        def replace_measure_refs(expr: str, visiting: set[str]) -> Optional[str]:
+            replaced = expr
+            refs = extract_measure_refs(expr)
+            for ref in refs:
+                dep_sql = resolve_measure_sql(ref, visiting)
+                if not dep_sql:
+                    return None
+                token_pattern = re.compile(rf"\[{re.escape(ref)}\]", re.IGNORECASE)
+                replaced = token_pattern.sub(f"({dep_sql})", replaced)
+            return replaced
+
+        def resolve_measure_sql(name: str, visiting: set[str]) -> Optional[str]:
+            key = (name or "").strip().casefold()
+            if not key:
+                return None
+            if key in cache:
+                return cache[key]
+            if key in visiting:
+                logger.warning(f"Circular measure dependency detected for '{name}'")
+                return None
+
+            metric = metric_index.get(key)
+            if not metric:
+                return None
+
+            existing_sql = (getattr(metric, "sql_expression", None) or "").strip()
+            if existing_sql:
+                cache[key] = existing_sql
+                return existing_sql
+
+            metric_expr = (getattr(metric, "expression", None) or "").strip()
+            if not metric_expr:
+                return None
+
+            visiting.add(key)
+            try:
+                alias = to_alias(getattr(metric, "dataset", "") or "fact")
+
+                tier1 = self._try_tier1(metric_expr, alias)
+                if tier1:
+                    cache[key] = tier1
+                    return tier1
+
+                resolved = resolve_expression(metric_expr, alias, visiting)
+                if resolved:
+                    cache[key] = resolved
+                    return resolved
+
+                return None
+            finally:
+                visiting.remove(key)
+
+        def resolve_expression(expr: str, table_alias: str, visiting: set[str]) -> Optional[str]:
+            clean_expr = (expr or "").strip()
+            if not clean_expr:
+                return None
+
+            # Handle DIVIDE(A, B [, alt]) with safe division semantics.
+            if clean_expr.upper().startswith("DIVIDE(") and clean_expr.endswith(")"):
+                inner = clean_expr[7:-1]
+                args = split_args(inner)
+                if len(args) >= 2:
+                    numerator_sql = replace_measure_refs(args[0], visiting)
+                    denominator_sql = replace_measure_refs(args[1], visiting)
+                    if not numerator_sql or not denominator_sql:
+                        return None
+                    alt = args[2].strip() if len(args) >= 3 and args[2].strip() else "0"
+                    return (
+                        f"COALESCE(({numerator_sql}) / NULLIF(({denominator_sql}), 0), {alt})"
+                    )
+
+            # Handle TOTALYTD(Expression, Date) using metadata injection.
+            if clean_expr.upper().startswith("TOTALYTD(") and clean_expr.endswith(")"):
+                inner = clean_expr[9:-1]
+                args = split_args(inner)
+                if args:
+                    inner_expr = args[0].strip()
+                    inner_sql = (
+                        self._try_tier1(inner_expr, table_alias)
+                        or replace_measure_refs(inner_expr, visiting)
+                        or self._try_dependency_translation(
+                            inner_expr,
+                            table_alias,
+                            "",
+                            metrics,
+                            visiting=set(),
+                        )
+                    )
+                    if inner_sql:
+                        inner_sql = self._strip_outer_parens(inner_sql)
+                        parsed_agg = self._parse_sql_aggregation(inner_sql)
+
+                        # Snowflake semantic metric windows are safest when PARTITION/ORDER
+                        # columns come from the same metric entity alias.
+                        year_ref = f"{table_alias}.YEAR"
+                        period_ref = f"{table_alias}.PERIOD"
+                        if parsed_agg:
+                            agg_func, value_expr = parsed_agg
+                            if agg_func == "COUNT_DISTINCT":
+                                return (
+                                    f"COUNT(DISTINCT {value_expr}) OVER "
+                                    f"(PARTITION BY {year_ref} ORDER BY {period_ref})"
+                                )
+                            return (
+                                f"{agg_func}({value_expr}) OVER "
+                                f"(PARTITION BY {year_ref} ORDER BY {period_ref})"
+                            )
+
+                        return (
+                            f"SUM({inner_sql}) OVER (PARTITION BY {year_ref} "
+                            f"ORDER BY {period_ref})"
+                        )
+
+            # Generic arithmetic replacement for [A] +/-/*// [B].
+            replaced = replace_measure_refs(clean_expr, visiting)
+            if replaced and replaced != clean_expr:
+                # Do not emit partially-rewritten DAX function syntax as SQL.
+                # If DAX-only keywords remain, force fallback handling instead.
+                dax_only_keywords = (
+                    "CALCULATE",
+                    "SAMEPERIODLASTYEAR",
+                    "DATEADD",
+                    "DATESYTD",
+                    "TOTALYTD",
+                    "IF(",
+                    "BLANK(",
+                )
+                upper_replaced = replaced.upper()
+                if any(keyword in upper_replaced for keyword in dax_only_keywords):
+                    return None
+                if "[" in replaced or "]" in replaced:
+                    return None
+                return replaced
+
+            return None
+
+        return resolve_expression(dax, "fact", set())
     
     def _quote(self, identifier: str) -> str:
         """Quote SQL identifier, replacing spaces and illegal chars."""
@@ -624,7 +1113,7 @@ class DAXTranslator:
                 if not can_translate:
                     # Complex Time Intelligence we can't translate
                     result["sync_enabled"] = False
-                    result["failure_reason"] = f"Complex Time Intelligence ({func}) requires manual override"
+                    result["failure_reason"] = f"Complex Time Intelligence ({func}) not automatically translatable"
                 break
         
         # Check for simple CALCULATE without complex filters (still Tier 3)
@@ -636,7 +1125,7 @@ class DAXTranslator:
                 pass
             else:
                 result["sync_enabled"] = False
-                result["failure_reason"] = "CALCULATE with complex filter requires manual override"
+                result["failure_reason"] = "CALCULATE with complex filter not automatically translatable"
         
         # Check for arithmetic/branching (Tier 2)
         if result["tier"] == 1 and result["depends_on_measures"]:

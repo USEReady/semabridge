@@ -46,13 +46,7 @@ from semabridge.converter.dax_translator import DAXTranslator
 from semabridge.connectors.inference_engine import SmlInferenceEngine
 from semabridge.connectors.measure_detector import MeasureDetector
 from semabridge.utils.logger import get_logger
-from semabridge.utils.naming import (
-    to_alias,
-    build_alias_rewrite_map,
-    extract_prefixes_from_expressions,
-    infer_override_alias_map,
-    sanitize_sql_expression,
-)
+from semabridge.utils.naming import to_alias
 
 logger = get_logger(__name__)
 
@@ -85,8 +79,6 @@ class OSIToSMLConverter(BaseConverter):
     def from_osi(
         self,
         osi_model: OSIModel,
-        metric_overrides: Optional[Dict[str, str]] = None,
-        override_alias_map: Optional[Dict[str, str]] = None,
         row_counts: Optional[Dict[str, int]] = None,
     ) -> SMLModel:
         """
@@ -94,78 +86,10 @@ class OSIToSMLConverter(BaseConverter):
 
         Args:
             osi_model: OSIModel object
-            metric_overrides: Optional dict of metric_name -> SQL override string,
-                sourced from behavior.yaml policy. Takes precedence over DAX translation.
-            override_alias_map: Optional dict of ``{SHORT_PREFIX: logical_dataset_name}``
-                used to pre-sanitize metric_overrides before the DAX translator sees
-                them.  Sourced from ``semantic_model.override_alias_map`` in
-                behavior.yaml.
 
         Returns:
             SMLModel object
         """
-        raw_overrides = metric_overrides or {}
-
-        # ── Pre-sanitize metric_overrides ─────────────────────────────────
-        # Derive dataset aliases from the OSI model so we can rewrite any
-        # invalid prefixes in override SQL before they propagate downstream.
-        dataset_aliases: Dict[str, str] = {
-            ds.unique_name: to_alias(ds.unique_name)
-            for ds in osi_model.datasets
-        }
-
-        # Build extra_prefix_map: user-declared + auto-inferred short aliases
-        declared_extra: Dict[str, str] = {}
-        if override_alias_map:
-            for short_prefix, logical_name in override_alias_map.items():
-                declared_extra[short_prefix.upper()] = to_alias(logical_name)
-
-        if raw_overrides:
-            override_exprs = list(raw_overrides.values())
-            discovered = extract_prefixes_from_expressions(override_exprs)
-            known_map = build_alias_rewrite_map(dataset_aliases)
-            unknown = {
-                p for p in discovered
-                if p not in declared_extra and p not in known_map
-            }
-            unresolved_prefixes = set()
-            if unknown:
-                inferred = infer_override_alias_map(unknown, dataset_aliases)
-                for prefix, alias_val in inferred.items():
-                    declared_extra.setdefault(prefix, alias_val)
-                unresolved_prefixes = unknown - set(inferred)
-                if unresolved_prefixes:
-                    logger.info(
-                        "metric_overrides: unresolved prefixes %s. "
-                        "Overrides that reference these prefixes will be skipped for this run.",
-                        sorted(unresolved_prefixes),
-                    )
-        else:
-            unresolved_prefixes = set()
-
-        extra_prefix_map: Optional[Dict[str, str]] = declared_extra if declared_extra else None
-
-        # Sanitize each override expression
-        overrides: Dict[str, str] = {}
-        for name, sql in raw_overrides.items():
-            if unresolved_prefixes:
-                expr_prefixes = extract_prefixes_from_expressions([sql])
-                bad_prefixes = {p for p in expr_prefixes if p in unresolved_prefixes}
-                if bad_prefixes:
-                    logger.info(
-                        "metric_overrides: skipping override '%s' due to unresolved prefixes %s",
-                        name,
-                        sorted(bad_prefixes),
-                    )
-                    continue
-            sanitized = sanitize_sql_expression(
-                expr=sql,
-                dataset_aliases=dataset_aliases,
-                extra_prefix_map=extra_prefix_map,
-                force_uppercase=True,
-            )
-            overrides[name] = sanitized
-
         try:
             sml = SMLModel(
                 unique_name=osi_model.unique_name,
@@ -184,24 +108,31 @@ class OSIToSMLConverter(BaseConverter):
             for osi_dim in osi_model.dimensions:
                 sml.dimensions.append(self._convert_dimension(osi_dim))
 
-            # 3. Convert Metrics (with DAX Translation + behavior overrides)
+            # 3. Convert Metrics with automated translation pipeline
             # Step 3a: Convert all metrics individually for Tier 1-4 translations
-            tier5_candidates = []  # (metric_name, dax, table_alias, dataset_name)
             
             for osi_metric in osi_model.metrics:
-                sml_metric = self._convert_metric(osi_metric, overrides=overrides)
+                sml_metric = self._convert_metric(osi_metric)
                 sml.metrics.append(sml_metric)
-                
-                # If metric still has no SQL, collect for Tier-5 batch.
-                # Do not gate on sync_enabled here; initial complexity heuristics
-                # are conservative and can be recovered by LLM translation.
-                if (not sml_metric.sql_expression and 
-                    sml_metric.expression and sml_metric.expression.strip()):
+
+            # Step 3b: Resolve inter-measure dependencies now that all metrics are loaded.
+            # This helps Category 2/3 formulas like [A]-[B], DIVIDE([A],[B]), TOTALYTD([A], ...)
+            # when dependencies appear later in source order.
+            self._resolve_metric_dependencies(sml)
+
+            # Step 3c: Collect unresolved metrics for Tier-5 batch fallback.
+            tier5_candidates = []  # (metric_name, dax, table_alias, dataset_name)
+            for sml_metric in sml.metrics:
+                if (
+                    not sml_metric.sql_expression
+                    and sml_metric.expression
+                    and sml_metric.expression.strip()
+                ):
                     dax = sml_metric.expression.strip()
                     table_alias = to_alias(sml_metric.dataset)
                     tier5_candidates.append((sml_metric.unique_name, dax, table_alias, sml_metric.dataset))
             
-            # Step 3b: Batch translate all Tier 5 candidates at once (reduces API calls by 90%)
+            # Step 3d: Batch translate all Tier 5 candidates at once (reduces API calls by 90%)
             if tier5_candidates:
                 logger.info(f"📦 Batch translating {len(tier5_candidates)} Tier 5 metrics...")
                 batch_results = self.dax_translator.batch_translate_tier5(tier5_candidates)
@@ -295,10 +226,9 @@ class OSIToSMLConverter(BaseConverter):
             is_hidden=osi_dim.is_hidden
         )
 
-    def _convert_metric(self, osi_metric: OSIMetric, overrides: Optional[Dict[str, str]] = None) -> SMLMetric:
+    def _convert_metric(self, osi_metric: OSIMetric) -> SMLMetric:
         # DAX Translation Logic
         expression = osi_metric.expression or ""
-        metric_overrides = overrides or {}
 
         # Analyze Complexity
         complexity = self.dax_translator.analyze_complexity(expression)
@@ -324,7 +254,7 @@ class OSIToSMLConverter(BaseConverter):
             partition_dimension="'Date'[Year]" if complexity["requires_time_intel"] else None,
         )
         
-        # Attempt Translation (behavior policy overrides take precedence as Tier 0)
+        # Attempt Translation using automated deterministic/AST/rule/LLM tiers
         if expression:
             from semabridge.utils.naming import to_alias
             safe_alias = to_alias(osi_metric.dataset)
@@ -332,7 +262,6 @@ class OSIToSMLConverter(BaseConverter):
                 expression,
                 safe_alias,
                 osi_metric.dataset,
-                overrides=metric_overrides,
                 metric_name=metric.unique_name
             )
             
@@ -348,6 +277,45 @@ class OSIToSMLConverter(BaseConverter):
         metric.synonyms = list(osi_metric.synonyms)
 
         return metric
+
+    def _resolve_metric_dependencies(self, sml: SMLModel, max_passes: int = 3) -> None:
+        """Resolve unresolved metrics using full metric context in deterministic passes.
+
+        This performs lightweight topological convergence: each pass can unlock
+        downstream expressions once upstream measures receive SQL.
+        """
+        if not sml.metrics:
+            return
+
+        for pass_idx in range(max_passes):
+            resolved_this_pass = 0
+            for metric in sml.metrics:
+                if metric.sql_expression or not (metric.expression or "").strip():
+                    continue
+
+                safe_alias = to_alias(metric.dataset)
+                translation = self.dax_translator.translate(
+                    metric.expression,
+                    safe_alias,
+                    metric.dataset,
+                    metric_name=metric.unique_name,
+                    metrics_context=sml.metrics,
+                )
+                if translation.is_success and translation.sql:
+                    metric.sql_expression = translation.sql
+                    metric.complexity_tier = translation.tier
+                    metric.sync_enabled = True
+                    metric.sync_failure_reason = None
+                    resolved_this_pass += 1
+
+            if resolved_this_pass == 0:
+                break
+
+            logger.info(
+                "OSI->SML dependency resolution pass %d resolved %d metrics",
+                pass_idx + 1,
+                resolved_this_pass,
+            )
 
     def _convert_relationship(self, osi_rel: OSIRelationship) -> Optional[SMLRelationship]:
         try:

@@ -167,6 +167,179 @@ class TestMetricColumnValidation:
         assert is_valid is True
         assert error is None
 
+    def test_basic_fallback_totalytd_uses_primarydate_token(self, emitter):
+        """TOTALYTD should treat [PrimaryDate] as semantic token and use physical date column."""
+        from semabridge.formats.sml.models import SMLMetric
+
+        metric = SMLMetric(
+            unique_name="YTD_REVENUE",
+            dataset="salesfact",
+            expression="TOTALYTD(SUM([Revenue]), [PrimaryDate])",
+        )
+
+        translated = emitter._try_basic_dax_metric_fallback_expression(
+            metric=metric,
+            table_alias="sf",
+            dataset_col_lookup={
+                "salesfact": {"REVENUE", "DATE", "YEAR", "PRIOR_YEAR_DATE_KEY"}
+            },
+        )
+
+        assert translated is not None
+        assert 'SUM(sf."REVENUE") OVER (' in translated
+        assert 'PARTITION BY sf."YEAR"' in translated
+        assert 'ORDER BY sf."DATE"' in translated
+
+    def test_basic_fallback_sply_uses_window_when_offset_present(self, emitter, monkeypatch):
+        """SPLY keeps universal window fallback even when offset key exists."""
+        from semabridge.formats.sml.models import SMLMetric
+
+        monkeypatch.setenv("SEMABRIDGE_SNOWFLAKE_ENABLE_SPLY_OFFSET_FASTPATH", "true")
+
+        metric = SMLMetric(
+            unique_name="PY_REVENUE",
+            dataset="salesfact",
+            expression="CALCULATE(SUM([Revenue]), SAMEPERIODLASTYEAR([PrimaryDate]))",
+        )
+
+        translated = emitter._try_basic_dax_metric_fallback_expression(
+            metric=metric,
+            table_alias="sf",
+            dataset_col_lookup={
+                "salesfact": {
+                    "REVENUE",
+                    "DATE",
+                    "YEAR",
+                    "MONTH",
+                    "SPLY_OFFSET_KEY",
+                }
+            },
+        )
+
+        assert translated is not None
+        assert 'LAG(SUM(sf."REVENUE"), 12) OVER (' in translated
+        # Fixed: Now uses actual MONTH and YEAR dimension columns instead of scalar functions
+        # (required for Snowflake semantic model compliance)
+        assert 'PARTITION BY sf."MONTH"' in translated
+        assert 'ORDER BY sf."YEAR", sf."MONTH"' in translated
+
+    def test_warns_for_non_sync_friendly_time_intelligence_dax(self, emitter, caplog):
+        """Unsupported TI functions should emit a warn-only parser guidance message."""
+        from semabridge.formats.sml.models import SMLMetric
+
+        metric = SMLMetric(
+            unique_name="REV_SPLY_DATEADD",
+            dataset="salesfact",
+            expression="CALCULATE(SUM([Revenue]), DATEADD([PrimaryDate], -1, YEAR))",
+        )
+
+        with caplog.at_level("WARNING"):
+            translated = emitter._try_basic_dax_metric_fallback_expression(
+                metric=metric,
+                table_alias="sf",
+                dataset_col_lookup={"salesfact": {"REVENUE", "DATE", "YEAR", "MONTH"}},
+            )
+
+        assert translated is None
+        assert "high-risk time-intelligence dax" in caplog.text.lower()
+        assert "prefer parser-safe modeling" in caplog.text.lower()
+
+    def test_warns_for_measure_dependency_variance_expression(self, emitter, caplog):
+        """Measure dependency variance should emit parser-safe explicit formula guidance."""
+        from semabridge.formats.sml.models import SMLMetric
+
+        metric = SMLMetric(
+            unique_name="Revenue Var To Budget",
+            dataset="salesfact",
+            expression="[RevenueTY] - [Revenue Budget]",
+        )
+
+        with caplog.at_level("WARNING"):
+            translated = emitter._try_basic_dax_metric_fallback_expression(
+                metric=metric,
+                table_alias="sf",
+                dataset_col_lookup={"salesfact": {"REVENUE", "SCENARIO"}},
+            )
+
+        assert translated is None
+        assert "measure dependency variance expression" in caplog.text.lower()
+        assert "prefer explicit parser-safe formula" in caplog.text.lower()
+
+    def test_basic_fallback_resolves_static_filter_and_ytd_chain(self, emitter):
+        """Emitter basic fallback should resolve the exact Budget / TY / YTD chain."""
+        from semabridge.formats.sml.models import SMLMetric
+
+        metrics = [
+            SMLMetric(
+                unique_name="REVENUE_BUDGET",
+                dataset="salesfact",
+                expression='CALCULATE(SUM([Revenue]), \'Scenario\'[Scenario] = "Budget")',
+            ),
+            SMLMetric(
+                unique_name="REVENUETY",
+                dataset="salesfact",
+                expression='CALCULATE(SUM([Revenue]), \'Scenario\'[Scenario] = "Actual")',
+            ),
+            SMLMetric(
+                unique_name="REVENUE_VAR_TO_BUDGET",
+                dataset="salesfact",
+                expression='[REVENUETY] - [REVENUE_BUDGET]',
+            ),
+            SMLMetric(
+                unique_name="YTD_REVENUE",
+                dataset="salesfact",
+                expression="TOTALYTD([REVENUETY], 'Calendar'[Date])",
+            ),
+            SMLMetric(
+                unique_name="YTD_COGS",
+                dataset="salesfact",
+                expression="TOTALYTD([REVENUE_BUDGET], 'Calendar'[Date])",
+            ),
+            SMLMetric(
+                unique_name="YTD_GROSS_MARGIN",
+                dataset="salesfact",
+                expression="TOTALYTD([REVENUE_VAR_TO_BUDGET], 'Calendar'[Date])",
+            ),
+        ]
+
+        model = MagicMock()
+        model.metrics = metrics
+
+        dataset_col_lookup = {
+            "salesfact": {"REVENUE", "YEAR", "PERIOD"},
+            "calendar": {"YEAR", "PERIOD", "DATE"},
+            "scenario": {"SCENARIO"},
+        }
+
+        outputs = {
+            metric.unique_name: emitter._try_basic_dax_metric_fallback_expression(
+                metric=metric,
+                table_alias="FACT",
+                dataset_col_lookup=dataset_col_lookup,
+                model=model,
+                dataset_by_name={"salesfact": MagicMock(unique_name="salesfact")},
+            )
+            for metric in metrics
+        }
+
+        assert outputs["REVENUE_BUDGET"] is not None
+        assert "CASE WHEN SCENARIO.SCENARIO = 'Budget'" in outputs["REVENUE_BUDGET"]
+        assert outputs["REVENUETY"] is not None
+        assert "CASE WHEN SCENARIO.SCENARIO = 'Actual'" in outputs["REVENUETY"]
+        assert outputs["REVENUE_VAR_TO_BUDGET"] is not None
+        assert "-" in outputs["REVENUE_VAR_TO_BUDGET"]
+        assert outputs["YTD_REVENUE"] is not None
+        assert 'SUM(FACT."REVENUETY") OVER' in outputs["YTD_REVENUE"]
+        assert 'PARTITION BY FACT."YEAR"' in outputs["YTD_REVENUE"]
+        assert 'ORDER BY FACT."PERIOD"' in outputs["YTD_REVENUE"]
+        assert "CASE WHEN" not in outputs["YTD_REVENUE"]
+        assert outputs["YTD_COGS"] is not None
+        assert 'SUM(FACT."REVENUE_BUDGET") OVER' in outputs["YTD_COGS"]
+        assert 'PARTITION BY FACT."YEAR"' in outputs["YTD_COGS"]
+        assert outputs["YTD_GROSS_MARGIN"] is not None
+        assert 'SUM(FACT."REVENUE_VAR_TO_BUDGET") OVER' in outputs["YTD_GROSS_MARGIN"]
+        assert 'PARTITION BY FACT."YEAR"' in outputs["YTD_GROSS_MARGIN"]
+
     def test_repair_invalid_bare_table_sum_identifier(self, emitter):
         """Repair SUM("TABLE") into SUM(alias.PREFERRED_NUMERIC_COLUMN)."""
         metric_sql = 'DIV0(SUM("SPEND_FACT"), SUM("SPEND_FACT") OVER ())'
@@ -252,15 +425,85 @@ class TestMetricColumnValidation:
         rewritten = emitter._rewrite_window_metric_expression(raw_expr)
         assert rewritten == 'SUM(SPEND_FACT."TRANSACTION_USD_AMOUNT")'
 
-    def test_lag_window_metric_expression_downgraded_to_null(self, emitter):
-        """Unsupported LAG/OVER metrics should emit NULL to keep deployment valid."""
+    def test_lag_window_metric_expression_preserved_for_sply(self, emitter):
+        """SPLY LAG/OVER metrics should be preserved for Snowflake sync."""
         raw_expr = (
             'LAG(SUM(FACT.REVENUE), 12) OVER '
             '(PARTITION BY FACT."PRODUCT_KEY" ORDER BY CALENDAR.YEARPERIOD)'
         )
 
         rewritten = emitter._rewrite_window_metric_expression(raw_expr)
+        assert rewritten == raw_expr
+
+    def test_ytd_window_metric_expression_preserved(self, emitter):
+        """YTD SUM OVER windows should be preserved for time-intelligence sync."""
+        raw_expr = (
+            'SUM(FACT."REVENUE") OVER '
+            '(PARTITION BY FACT."YEAR" ORDER BY FACT."DATE" '
+            'ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)'
+        )
+
+        rewritten = emitter._rewrite_window_metric_expression(raw_expr, preferred_table_alias="FACT")
+        assert rewritten == raw_expr
+
+    def test_ytd_window_metric_expression_cross_entity_downgrades_to_null(self, emitter):
+        """Cross-entity YTD windows are invalid for semantic metrics and should downgrade to NULL."""
+        raw_expr = (
+            'SUM(FACT."REVENUE") OVER '
+            '(PARTITION BY CALENDAR.YEAR ORDER BY CALENDAR.PERIOD '
+            'ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)'
+        )
+
+        rewritten = emitter._rewrite_window_metric_expression(raw_expr, preferred_table_alias="FACT")
         assert rewritten == "NULL"
+
+    def test_known_fallback_revenue_sply_uses_calendar_window(self, emitter):
+        """Hardcoded Revenue SPLY fallback should no longer be emitted."""
+        dataset_col_lookup = {
+            "FACT": {"REVENUE", "YEAR", "PERIOD"},
+            "CALENDAR": {"YEAR", "PERIOD"},
+        }
+        expr = emitter._build_known_metric_fallback_expression(
+            metric_name="REVENUE_SPLY",
+            fact_alias="FACT",
+            scenario_alias="SCENARIO",
+            calendar_alias="CALENDAR",
+            dataset_col_lookup=dataset_col_lookup,
+        )
+
+        assert expr is None
+
+    def test_known_fallback_yoy_growth_uses_nullif(self, emitter):
+        """Hardcoded YoY growth fallback should no longer be emitted."""
+        dataset_col_lookup = {
+            "FACT": {"REVENUE", "YEAR", "PERIOD"},
+            "CALENDAR": {"YEAR", "PERIOD"},
+        }
+        expr = emitter._build_known_metric_fallback_expression(
+            metric_name="YOY_REV_GROWTH",
+            fact_alias="FACT",
+            scenario_alias="SCENARIO",
+            calendar_alias="CALENDAR",
+            dataset_col_lookup=dataset_col_lookup,
+        )
+
+        assert expr is None
+
+    def test_known_fallback_yoy_var_uses_total_revenue_sum(self, emitter):
+        """Hardcoded YoY variance fallback should no longer be emitted."""
+        dataset_col_lookup = {
+            "FACT": {"REVENUE", "YEAR", "PERIOD"},
+            "CALENDAR": {"YEAR", "PERIOD"},
+        }
+        expr = emitter._build_known_metric_fallback_expression(
+            metric_name="YOY_REV_VAR",
+            fact_alias="FACT",
+            scenario_alias="SCENARIO",
+            calendar_alias="CALENDAR",
+            dataset_col_lookup=dataset_col_lookup,
+        )
+
+        assert expr is None
 
     def test_dedupe_malformed_qualified_partition_reference(self, emitter):
         """Deduplicate malformed alias."COL".COL chains."""
@@ -274,39 +517,41 @@ class TestMetricColumnValidation:
         assert 'FACT."PRODUCT_KEY".PRODUCT_KEY' not in repaired
         assert 'PARTITION BY FACT."PRODUCT_KEY"' in repaired
 
-    def test_known_finance_metric_fallback_expressions(self, emitter):
-        """Known finance metrics should receive deterministic SQL fallback."""
-        total_cogs = emitter._build_known_metric_fallback_expression(
+    def test_known_finance_metric_fallback_expressions_removed(self, emitter):
+        """Hardcoded finance metric fallbacks should no longer be emitted."""
+        dataset_col_lookup = {
+            "FACT": {
+                "REVENUE", "MATERIAL_COSTS", "LABOR_COSTS_VARIABLE", "TAXES",
+                "REV_FOR_EXP_TRAVEL", "TRAVEL_EXPENSES", "COST_THIRD_PARTY", "SCENARIO"
+            },
+            "SCENARIO": {"SCENARIO"},
+        }
+
+        assert emitter._build_known_metric_fallback_expression(
             metric_name="TOTAL_COGS",
             fact_alias="FACT",
             scenario_alias="SCENARIO",
-        )
-        gross_margin = emitter._build_known_metric_fallback_expression(
+            calendar_alias=None,
+            dataset_col_lookup=dataset_col_lookup,
+        ) is None
+        assert emitter._build_known_metric_fallback_expression(
             metric_name="GROSS_MARGIN",
             fact_alias="FACT",
             scenario_alias="SCENARIO",
-        )
-        gm = emitter._build_known_metric_fallback_expression(
-            metric_name="GM",
-            fact_alias="FACT",
-            scenario_alias="SCENARIO",
-        )
-        revenuety = emitter._build_known_metric_fallback_expression(
-            metric_name="REVENUETY",
-            fact_alias="FACT",
-            scenario_alias="SCENARIO",
-        )
-        rev_var = emitter._build_known_metric_fallback_expression(
-            metric_name="REVENUE_VAR_TO_BUDGET_1",
-            fact_alias="FACT",
-            scenario_alias="SCENARIO",
-        )
+            calendar_alias=None,
+            dataset_col_lookup=dataset_col_lookup,
+        ) is None
 
-        assert "SUM(FACT.MATERIAL_COSTS)" in total_cogs
-        assert "SUM(FACT.REVENUE)" in gross_margin
-        assert "CASE WHEN SUM(FACT.REVENUE) = 0" in gm
-        assert "SCENARIO.SCENARIO = 'Actual'" in revenuety
-        assert "SCENARIO.SCENARIO = 'Budget'" in rev_var
+        from semabridge.utils.known_metrics_registry import get_known_metrics_registry
+
+        registry = get_known_metrics_registry()
+        assert registry.resolve(
+            metric_name="TOTAL_COGS",
+            fact_alias="FACT",
+            scenario_alias="SCENARIO",
+            calendar_alias=None,
+            available_columns=dataset_col_lookup,
+        ) is None
 
     def test_metric_emission_alias_rehomed_to_expression_entity(self, emitter):
         """Emit metrics under referenced entity when default alias is unrelated."""

@@ -68,19 +68,6 @@ class SemanticModelBehavior(BaseModel):
         default=1,
         description="Minimum cardinality setting, currently unused but reserved"
     )
-    metric_overrides: Dict[str, str] = Field(
-        default_factory=dict,
-        description="Manual SQL overrides for complex measures (Name -> SQL)"
-    )
-    override_alias_map: Dict[str, str] = Field(
-        default_factory=dict,
-        description=(
-            "Maps short SQL prefixes used in metric_overrides to the logical "
-            "dataset name so the expression sanitizer can rewrite them to the "
-            "correct lowercase alias.  Example: {'FACT': 'Fact_Sales', "
-            "'PRODUCT': 'ProductDim', 'CALENDAR': 'CalendarDim'}"
-        ),
-    )
     sync_all_attributes: bool = Field(
         default=True,
         description="Whether to include all attributes (including measure candidates and hidden columns) in Snowflake Semantic Views"

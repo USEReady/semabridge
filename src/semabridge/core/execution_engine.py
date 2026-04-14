@@ -1926,11 +1926,6 @@ class ExecutionEngine:
         ws_id = workspace_id or sf.workspace_id
         ds_id = dataset_id or sf.dataset_id
 
-        # Load metric overrides and alias map from the behavior policy attached
-        # to this run context (sourced from behavior.yaml / ExecutionConfig).
-        metric_overrides: Dict[str, str] = context.behavior.semantic_model.metric_overrides
-        override_alias_map: Dict[str, str] = context.behavior.semantic_model.override_alias_map
-
         # Phase 1: TMSL → OSI
         source_data = {
             "tmsl": sf.tmsl_definition,
@@ -1944,12 +1939,9 @@ class ExecutionEngine:
             f"{len(osi_model.metrics)} metrics, {len(osi_model.relationships)} relationships"
         )
 
-        # Phase 2: OSI → SML (pass override_alias_map so short prefixes like
-        # FACT / SALESFACT are resolved before expressions reach the emitter)
+        # Phase 2: OSI → SML
         sml_model = OSIToSMLConverter().from_osi(
             osi_model,
-            metric_overrides=metric_overrides,
-            override_alias_map=override_alias_map,
             row_counts=sf.row_counts,
         )
 
@@ -1975,10 +1967,6 @@ class ExecutionEngine:
         ws_id = "local"
         ds_id = context.project_id
 
-        # Load metric overrides and alias map from the behavior policy
-        metric_overrides: Dict[str, str] = context.behavior.semantic_model.metric_overrides
-        override_alias_map: Dict[str, str] = context.behavior.semantic_model.override_alias_map
-
         # Phase 1: TMSL → OSI
         source_data = {
             "tmsl": sf.tmsl_definition,
@@ -2003,8 +1991,6 @@ class ExecutionEngine:
         # Phase 2: OSI → SML
         sml_model = OSIToSMLConverter().from_osi(
             osi_model,
-            metric_overrides=metric_overrides,
-            override_alias_map=override_alias_map,
             row_counts=sf.row_counts,
         )
         logger.info(
