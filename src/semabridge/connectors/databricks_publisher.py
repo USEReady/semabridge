@@ -1617,7 +1617,13 @@ class DatabricksPublisher:
                 lines.append("source: |")
                 lines.append(f"  SELECT {inline_select}")
             else:
-                # Fallback: reference the table directly
+                # Fallback: reference the table directly when no bindings matched
+                # Extract columns from measures for inline source when needed
+                if not bindings:
+                    for rm in resolved_measures:
+                        for col_name in self._extract_inline_source_columns_from_sql_expression(rm.sql_expression):
+                            if col_name not in inline_source_columns:
+                                inline_source_columns.add(col_name)
                 source_for_yaml = source_fq.replace("`", "")
                 lines.append(f"source: {yaml_quote(source_for_yaml)}")
 
@@ -1640,7 +1646,8 @@ class DatabricksPublisher:
             dimensions_added += 1
         
         # Then, emit auto-discovered dimensions from inline source columns when dataset.columns is empty
-        if inline_measure_source_required and inline_source_columns:
+        # or when bindings didn't resolve all columns but measures reference them
+        if inline_source_columns:
             projection_prefix = self._metric_view_projection_prefix(dataset)
             for col_name in sorted(inline_source_columns):
                 projected_name = self._make_unique_projected_name(
