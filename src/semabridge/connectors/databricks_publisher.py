@@ -1570,6 +1570,7 @@ class DatabricksPublisher:
         ]
 
         inline_measure_source_required = not bindings and not dataset.columns and resolved_measures
+        inline_source_columns: set[str] = set()
 
         if inline_measure_source_required:
             inline_cols: list[str] = []
@@ -1579,6 +1580,7 @@ class DatabricksPublisher:
                     if col_name in used_cols:
                         continue
                     used_cols.add(col_name)
+                    inline_source_columns.add(col_name)  # Track these for dimension generation
                     inline_cols.append(f"CAST(NULL AS DOUBLE) AS `{col_name}`")
             if inline_cols:
                 lines.append("source: |")
@@ -1627,6 +1629,8 @@ class DatabricksPublisher:
         lines.append("dimensions:")
         dimensions_added = 0
         used_dimension_names: set[str] = set()
+        
+        # First, emit explicit dimensions from dataset.columns
         for binding in bindings:
             if not binding.include_as_dimension:
                 continue
@@ -1634,6 +1638,21 @@ class DatabricksPublisher:
             lines.append(f"    expr: {yaml_quote(f'`{binding.projected_name}`')}")
             used_dimension_names.add(binding.projected_name.upper())
             dimensions_added += 1
+        
+        # Then, emit auto-discovered dimensions from inline source columns when dataset.columns is empty
+        if inline_measure_source_required and inline_source_columns:
+            projection_prefix = self._metric_view_projection_prefix(dataset)
+            for col_name in sorted(inline_source_columns):
+                projected_name = self._make_unique_projected_name(
+                    f"{projection_prefix}_{self._sanitize_identifier(col_name).lower()}",
+                    used_dimension_names,
+                    suffix="dim",
+                )
+                lines.append(f"  - name: {yaml_quote(projected_name)}")
+                lines.append(f"    expr: {yaml_quote(f'`{projected_name}`')}")
+                used_dimension_names.add(projected_name.upper())
+                dimensions_added += 1
+        
         if dimensions_added == 0:
             lines[-1] = "dimensions: []"
 
