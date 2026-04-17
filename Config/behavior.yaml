@@ -16,15 +16,23 @@ semantic_model:
 databricks:
   create_metadata_table: true # OSI-first deploy: skip Semabridge metadata Delta table
   create_measure_views: true # Generate measure views for deployed measures
+  model_artifact_mode: "per_model" # "per_dataset" (legacy) | "per_model" (single metadata + single model metric view)
+  model_metadata_suffix: "metadata" # Per-model metadata table suffix in per_model mode
+  model_metric_view_suffix: "metric_view" # Per-model metric view suffix in per_model mode
+  model_fact_root: "" # Optional dataset name to anchor model-level view generation in per_model mode
   measure_view_type: "metric_view" # "auto" | "metric_view" | "materialized_view" | "sql_view" | "none"
   measure_view_mode: "combined" # "per_measure" (one view each) or "combined" (single model-level joined view)
   view_prefix: "mv" # Prefix for measure view names
   enable_simple_dax_translation: true # Translate simple DAX (SUM, COUNT, etc.) to SQL
   metric_view_only_sum_translation: true # Restrict simple DAX SUM translation to native metric-view generation only
   enable_cross_table_joins: true # Build explicit joins from model relationships when measures span datasets
+  enable_metric_view_joins: true # Enable metric view 'joins' property for multi-table snowflake schemas (requires enable_cross_table_joins=true)
   enable_cross_table_sql_fallback: false # Auto-route cross-table models to SQL views when metric-view cannot safely resolve them
   enable_low_confidence_drafts: true # Emit draft placeholders for low-confidence measures instead of dropping them
   emit_metric_views_for_all_datasets: true # Create fallback metric views for dimension-only datasets
+  emit_distinct_pk_metric_for_dimension_datasets: true # Also emit COUNT(DISTINCT pk) for dimension-only datasets when key inference is confident
+  strict_graph_coverage_validation: false # When true, fail deploy if relationship endpoint coverage is invalid; false logs warnings
+  enable_auto_join_key_bridge: true # Auto-create/backfill missing physical relationship key columns during Databricks publish preflight
 
   # Source table mapping: Fabric dataset name → actual Databricks table
   # If not mapped, falls back to source_catalog.source_schema.dataset_name
@@ -53,7 +61,7 @@ databricks:
       "QtrID": "qtrid"
       "Qtr": "qtr"
     Customer:
-      "Customer": "name"
+      "Customer": "customer_key"
       "Name": "name"
       "City": "city"
       "Postal Code": "postal_code"

@@ -94,6 +94,28 @@ class DatabricksBehavior(BaseModel):
         default=True,
         description="Generate measure views for deployed measures"
     )
+    model_artifact_mode: str = Field(
+        default="per_dataset",
+        description=(
+            "Databricks artifact granularity: 'per_dataset' (legacy behavior) or "
+            "'per_model' (single metadata table + single model metric view)."
+        ),
+    )
+    model_metadata_suffix: str = Field(
+        default="metadata",
+        description="Suffix for per-model metadata table naming in per_model mode"
+    )
+    model_metric_view_suffix: str = Field(
+        default="metric_view",
+        description="Suffix for per-model metric view naming in per_model mode"
+    )
+    model_fact_root: str = Field(
+        default="",
+        description=(
+            "Optional dataset name to anchor model-level view generation in per_model mode. "
+            "When empty, a deterministic dataset is chosen automatically."
+        ),
+    )
     measure_view_type: str = Field(
         default="metric_view",
         description=(
@@ -131,6 +153,14 @@ class DatabricksBehavior(BaseModel):
         default=False,
         description="Build explicit joins for measures that reference multiple datasets"
     )
+    enable_metric_view_joins: bool = Field(
+        default=False,
+        description=(
+            "Enable native Databricks metric view 'joins' property for multi-table snowflake schemas. "
+            "When enabled, metric views will emit JOIN clauses for related tables. "
+            "Requires enable_cross_table_joins=true. Default false for backward compatibility."
+        ),
+    )
     enable_cross_table_sql_fallback: bool = Field(
         default=False,
         description=(
@@ -144,7 +174,39 @@ class DatabricksBehavior(BaseModel):
     )
     emit_metric_views_for_all_datasets: bool = Field(
         default=False,
-        description="Emit a fallback metric view for datasets without deployable measures"
+        description=(
+            "Emit fallback metric views for datasets without deployable measures. "
+            "Project-level config can enable dimension-first coverage by default."
+        )
+    )
+    emit_distinct_pk_metric_for_dimension_datasets: bool = Field(
+        default=True,
+        description=(
+            "When emitting fallback metrics for measure-less datasets, also emit "
+            "COUNT(DISTINCT primary_key) when a confident key can be inferred."
+        )
+    )
+    strict_graph_coverage_validation: bool = Field(
+        default=False,
+        description=(
+            "Fail publish when relationship graph endpoints are invalid or source "
+            "coverage gaps are detected. Default false logs warnings only."
+        )
+    )
+    enable_destructive_sync_operations: bool = Field(
+        default=False,
+        description=(
+            "Allow destructive Databricks cleanup actions (DROP VIEW/TABLE) when resolving "
+            "object-type conflicts during publish retries."
+        )
+    )
+    enable_auto_join_key_bridge: bool = Field(
+        default=False,
+        description=(
+            "When true, Databricks preflight automatically creates missing physical join-key "
+            "columns required by model relationships and attempts conservative backfill from "
+            "existing candidate columns (for example, customer -> customer_key)."
+        )
     )
     source_table_mapping: Dict[str, str] = Field(
         default_factory=dict,
