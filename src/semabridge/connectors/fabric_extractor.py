@@ -204,33 +204,30 @@ class FabricExtractor:
             f"Available models: {available}"
         )
     
-    def _get_access_token(self) -> str:
+    def _get_access_token(self, target_scope: Optional[str] = None) -> str:
         """
         Get or refresh Azure AD access token.
 
-        Strategy (in order):
-        1. Return previously cached token if still valid (5-min buffer).
-        1.5. Use FABRIC_ACCESS_TOKEN env var if set (CI / pre-issued tokens).
-        2. If *client_secret* is configured, use the service-principal
-           (client-credentials) flow — suitable for headless / CI usage.
-        3. Otherwise fall back to the device-code token stored in the
-           CredentialManager (set by the interactive Fabric login flow in the
-           API).  If that token is expired it will be refreshed silently via
-           the stored refresh_token.
+        Args:
+            target_scope: If provided, dynamically acquire token for this scope via refresh token.
         """
         import os
 
-        # 1. Cached token still valid?
-        if self._access_token and time.time() < self._token_expires_at - 300:
+        effective_scope = target_scope or "https://api.fabric.microsoft.com/.default"
+        is_default_scope = effective_scope == "https://api.fabric.microsoft.com/.default"
+
+        # 1. Cached token still valid? (Only for default scope)
+        if is_default_scope and self._access_token and time.time() < self._token_expires_at - 300:
             return self._access_token
 
         # 1.5. Pre-issued token supplied via environment variable.
         env_token = get_fabric_access_token_from_env()
         if env_token:
-            self._access_token = env_token
-            self._token_expires_at = time.time() + 3600
+            if is_default_scope:
+                self._access_token = env_token
+                self._token_expires_at = time.time() + 3600
             logger.debug("Using FABRIC_ACCESS_TOKEN from environment")
-            return self._access_token
+            return env_token
 
         # 2. Service-principal (client-credentials) flow.
         if self.config.client_secret is not None:
@@ -239,17 +236,18 @@ class FabricExtractor:
                 "grant_type": "client_credentials",
                 "client_id": self.config.client_id,
                 "client_secret": self.config.client_secret.get_secret_value(),
-                "scope": "https://analysis.windows.net/powerbi/api/.default",
+                "scope": effective_scope,
             }
             try:
                 logger.debug("Requesting new Azure AD access token (service principal)...")
                 response = requests.post(url, data=data)
                 response.raise_for_status()
                 result = response.json()
-                self._access_token = result["access_token"]
-                self._token_expires_at = time.time() + result.get("expires_in", 3600)
+                if is_default_scope:
+                    self._access_token = result["access_token"]
+                    self._token_expires_at = time.time() + result.get("expires_in", 3600)
                 logger.debug("Successfully acquired service-principal access token")
-                return self._access_token
+                return result["access_token"]
             except RequestException as e:
                 logger.error(f"Failed to acquire access token (service principal): {e}")
                 if hasattr(e, 'response') and e.response is not None:
@@ -262,7 +260,7 @@ class FabricExtractor:
 
             cm = CredentialManager()
 
-            if cm.has_valid_token():
+            if is_default_scope and cm.has_valid_token():
                 token_data = cm.get_msal_token()
                 self._access_token = token_data["access_token"]
                 # CredentialManager already checks expiry; use a conservative TTL.
@@ -270,7 +268,7 @@ class FabricExtractor:
                 logger.debug("Using stored device-code access token")
                 return self._access_token
 
-            # Attempt silent refresh via stored refresh_token.
+            # Attempt silent refresh via stored refresh_token for the requested scope.
             token_data = cm.get_msal_token()
             if token_data and token_data.get("refresh_token"):
                 import msal
@@ -282,20 +280,21 @@ class FabricExtractor:
                 )
                 result = app.acquire_token_by_refresh_token(
                     token_data["refresh_token"],
-                    scopes=["https://api.fabric.microsoft.com/.default"],
+                    scopes=[effective_scope],
                 )
                 if "access_token" in result:
-                    cm.save_msal_token(
-                        access_token=result["access_token"],
-                        refresh_token=result.get("refresh_token", token_data["refresh_token"]),
-                        account_username=token_data.get("account_username", "unknown"),
-                        tenant_id=tenant_id,
-                        expires_in=result.get("expires_in", 3600),
-                    )
-                    self._access_token = result["access_token"]
-                    self._token_expires_at = time.time() + result.get("expires_in", 3600)
-                    logger.debug("Device-code token refreshed silently")
-                    return self._access_token
+                    if is_default_scope:
+                        cm.save_msal_token(
+                            access_token=result["access_token"],
+                            refresh_token=result.get("refresh_token", token_data["refresh_token"]),
+                            account_username=token_data.get("account_username", "unknown"),
+                            tenant_id=tenant_id,
+                            expires_in=result.get("expires_in", 3600),
+                        )
+                        self._access_token = result["access_token"]
+                        self._token_expires_at = time.time() + result.get("expires_in", 3600)
+                    logger.debug(f"Device-code token acquired silently for scope {effective_scope}")
+                    return result["access_token"]
                 else:
                     logger.warning(
                         "Silent token refresh failed: %s",
@@ -316,10 +315,10 @@ class FabricExtractor:
             "for service-principal auth."
         )
     
-    def _get_headers(self) -> dict[str, str]:
+    def _get_headers(self, target_scope: Optional[str] = None) -> dict[str, str]:
         """Get standard API headers."""
         return {
-            "Authorization": f"Bearer {self._get_access_token()}",
+            "Authorization": f"Bearer {self._get_access_token(target_scope)}",
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
@@ -509,7 +508,11 @@ class FabricExtractor:
         try:
             if not silent:
                 logger.info(f"Executing DAX query on {dataset_id}...")
-            response = requests.post(api_url, headers=self._get_headers(), json=payload)
+            
+            # Use specific scope for Power BI executeQueries endpoint
+            headers = self._get_headers(target_scope="https://analysis.windows.net/powerbi/api/.default")
+
+            response = requests.post(api_url, headers=headers, json=payload)
             response.raise_for_status()
             
             # Parse response

@@ -58,6 +58,7 @@ PUBLIC_PATHS: Set[str] = {
 PUBLIC_PREFIXES = (
     "/ws",       # WebSocket endpoints
     "/static",   # Static files
+    "/health",    # Health and diagnostics
     "/api/connections",  # Connector OAuth flows (device code, callbacks)
 )
 

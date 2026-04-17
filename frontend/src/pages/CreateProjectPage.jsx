@@ -176,31 +176,38 @@ export default function CreateProjectPage() {
   );
 
   const liveFabricWorkspaces = useMemo(() => {
-    const merged = [...allWorkspacesFromApi, ...availableWorkspaces]
+    // If we have accounts at all, and source is Fabric, we should prioritize
+    // the list fetched explicitly for the selected account in Step 2.
+    // Fallback to availableWorkspaces (global default) only if we haven't
+    // fetched the account-specific list yet.
+    const baseList = allWorkspacesFromApi.length > 0 
+      ? allWorkspacesFromApi 
+      : (fabricAccountId ? [] : availableWorkspaces);
+
+    const normalized = (baseList || [])
       .filter(Boolean)
       .map((ws) => ({
         ...ws,
         id: ws?.id || ws?.workspace_id || '',
-        name: ws?.name || ws?.displayName || ws?.workspace_id || ws?.id || '',
+        name: ws?.name || ws?.displayName || ws?.workspace_name || ws?.workspace_id || ws?.id || '',
+        displayName: ws?.displayName || ws?.name || ws?.workspace_name || '',
       }))
       .filter((ws) => ws.id);
 
     const deduped = [];
     const seen = new Set();
-    for (const ws of merged) {
+    for (const ws of normalized) {
       if (seen.has(ws.id)) continue;
       seen.add(ws.id);
       deduped.push(ws);
     }
     return deduped;
-  }, [availableWorkspaces, allWorkspacesFromApi]);
+  }, [availableWorkspaces, allWorkspacesFromApi, fabricAccountId]);
 
-  const selectedWorkspace = liveFabricWorkspaces.find(ws => ws.id === fabricWorkspaceId)
-    ?? availableWorkspaces.find(ws => ws.id === fabricWorkspaceId)
-    ?? allWorkspacesFromApi.find(ws => ws.id === fabricWorkspaceId)
-    ?? availableWorkspaces.find(ws => ws.id === activeWorkspaceId)
-    ?? activeWorkspace
-    ?? null;
+  const selectedWorkspace = useMemo(() => {
+    if (!fabricWorkspaceId) return null;
+    return liveFabricWorkspaces.find(ws => ws.id === fabricWorkspaceId) || null;
+  }, [liveFabricWorkspaces, fabricWorkspaceId]);
 
   const selectedModelNames = [...selectedModels]
     .map(modelKey => selectedModelNameByKey[modelKey])

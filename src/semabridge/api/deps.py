@@ -7,6 +7,7 @@ Responsibilities:
 """
 
 from __future__ import annotations
+from typing import Generator
 from fastapi import Request, HTTPException, Header, Depends
 
 # Dependency to extract Fabric Workspace Context from header
@@ -49,7 +50,7 @@ Available dependencies
 """
 
 
-from typing import TYPE_CHECKING, Generator
+from typing import TYPE_CHECKING
 
 from semabridge.utils.logger import get_logger
 
@@ -115,3 +116,94 @@ def get_model_repository() -> "ModelRepository":
     from semabridge.repository.model_repository import ModelRepository
 
     return ModelRepository()
+
+
+def get_current_user(
+    request: Request,
+    db: "Session" = Depends(get_db),
+) -> "User":
+    """FastAPI dependency: resolve the authenticated User from the JWT.
+
+    The ``AuthMiddleware`` (``middleware.py:97``) has already validated the
+    token and set ``request.state.user_id``.  This dependency fetches the
+    full User row and validates it is active.
+
+    Usage::
+
+        from semabridge.api.deps import get_current_user
+        from semabridge.repository.orm.models import User
+
+        @router.get("/me")
+        def whoami(user: User = Depends(get_current_user)):
+            return {"id": user.id, "username": user.username}
+
+    Args:
+        request: The incoming FastAPI request (injected automatically).
+        db: A scoped SQLAlchemy session (injected via ``get_db``).
+
+    Returns:
+        The authenticated :class:`User` row.
+
+    Raises:
+        HTTPException 401: If ``user_id`` is missing from request state
+            (auth not enabled, or token missing).
+        HTTPException 401: If user row not found or deactivated.
+    """
+    from semabridge.repository.orm.models import User as UserModel
+
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+        )
+    user = db.get(UserModel, int(user_id))
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=401,
+            detail="User not found or inactive",
+        )
+    return user
+
+
+def get_scoped_db(request: Request) -> Generator["Session", None, None]:
+    """FastAPI dependency — yield a tenant-scoped SQLAlchemy session.
+
+    Like :func:`get_db`, but also sets the PostgreSQL session variable
+    ``app.current_user_id`` so that Row Level Security (RLS) policies
+    are enforced at the database level.
+
+    This is **Layer 2** defense in depth — even if a developer forgets
+    ``.where(Account.owner_id == user.id)`` in a query, the database
+    refuses to return another user's rows.
+
+    The ``SET LOCAL`` is scoped to the current transaction and is
+    automatically rolled back when the session closes — no manual
+    cleanup required.
+
+    Usage::
+
+        from semabridge.api.deps import get_scoped_db
+
+        @router.get("/accounts")
+        def list_accounts(db: Session = Depends(get_scoped_db)):
+            return db.execute(select(Account)).scalars().all()
+            # RLS ensures only current user's accounts are returned.
+
+    Args:
+        request: The incoming FastAPI request.
+
+    Yields:
+        A tenant-scoped ``Session``.
+    """
+    from sqlalchemy import text
+    from semabridge.repository.orm.session_factory import db_manager
+
+    user_id = getattr(request.state, "user_id", None)
+    with db_manager.get_session() as session:
+        if user_id:
+            session.execute(
+                text("SET LOCAL app.current_user_id = :uid"),
+                {"uid": int(user_id)},
+            )
+        yield session

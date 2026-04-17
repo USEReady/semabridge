@@ -39,7 +39,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, false, func, text, true
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, false, func, text, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from semabridge.repository.orm.base import Base
@@ -220,10 +220,13 @@ class Account(Base):
     """
 
     __tablename__ = "accounts"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "tag", name="uq_account_owner_tag"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     connector_type: Mapped[str] = mapped_column(String(50), nullable=False)  # FABRIC, SNOWFLAKE, DATABRICKS
-    tag: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    tag: Mapped[str] = mapped_column(String(255), nullable=False)
     identity_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     encrypted_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -317,6 +320,7 @@ class Project(Base):
     adapter: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     source_connection: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     last_updated: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
+    connection_tag: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     # Relationships
     account: Mapped[Optional["Account"]] = relationship(back_populates="projects")

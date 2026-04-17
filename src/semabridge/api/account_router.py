@@ -1,17 +1,34 @@
-from typing import List, Optional
-import uuid
+from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import os
+import uuid
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
-from semabridge.api.deps import get_db
-from semabridge.repository.orm.models import Account, Project
+from semabridge.api.deps import get_current_user, get_db
+from semabridge.repository.orm.models import Account, Project, User
 from semabridge.utils.logger import get_logger
 from semabridge.auth.encryption import encrypt_token
 
 logger = get_logger(__name__)
+
+
+def _try_get_user(request: Request, db: Session) -> Optional[User]:
+    """Resolve the current user when auth is enabled, return None otherwise.
+
+    This allows the account router to work in both authenticated (production)
+    and unauthenticated (development) modes without duplicating every endpoint.
+    """
+    if os.environ.get("AUTH_ENABLED", "").lower() != "true":
+        return None
+    try:
+        return get_current_user(request, db)
+    except HTTPException:
+        raise
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
 
@@ -46,9 +63,10 @@ class AccountTagUpdate(BaseModel):
 
 
 @router.post("", response_model=List[AccountResponse], status_code=status.HTTP_201_CREATED)
-def create_account(body: AccountCreate, db: Session = Depends(get_db)):
+def create_account(request: Request, body: AccountCreate, db: Session = Depends(get_db)):
     """Create a new tagged identity after successful OAuth/auth and return updated list."""
     import traceback
+    user = _try_get_user(request, db)
     try:
         connection_id = str(body.connection_id or "").strip() or str(uuid.uuid4())
 
@@ -58,9 +76,10 @@ def create_account(body: AccountCreate, db: Session = Depends(get_db)):
         if existing_id:
             raise HTTPException(status_code=400, detail=f"Account with id '{connection_id}' already exists.")
 
-        existing = db.execute(
-            select(Account).where(Account.tag == body.tag)
-        ).scalar_one_or_none()
+        stmt = select(Account).where(Account.tag == body.tag)
+        if user:
+            stmt = stmt.where(Account.owner_id == user.id)
+        existing = db.execute(stmt).scalar_one_or_none()
 
         if existing:
             raise HTTPException(status_code=400, detail=f"Account with tag '{body.tag}' already exists.")
@@ -103,6 +122,7 @@ def create_account(body: AccountCreate, db: Session = Depends(get_db)):
             encrypted_token=safe_token,
             status="Active",
             is_default=False,
+            owner_id=user.id if user else None,  # Multi-user ownership
         )
         db.add(new_account)
         db.commit()
@@ -111,7 +131,7 @@ def create_account(body: AccountCreate, db: Session = Depends(get_db)):
         )
 
         # Return updated list so the UI can refresh in one round-trip
-        return get_accounts(connector_type=body.connector_type, db=db)
+        return get_accounts(request=request, connector_type=body.connector_type, db=db)
     except HTTPException:
         raise
     except Exception:
@@ -121,9 +141,19 @@ def create_account(body: AccountCreate, db: Session = Depends(get_db)):
 
 
 @router.get("", response_model=List[AccountResponse])
-def get_accounts(connector_type: Optional[str] = None, db: Session = Depends(get_db)):
-    """Fetch accounts, optionally filtered by connector_type (e.g., FABRIC or SNOWFLAKE)."""
+def get_accounts(
+    request: Request,
+    connector_type: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Fetch accounts, optionally filtered by connector_type.
+
+    When auth is enabled, only accounts owned by the current user are returned.
+    """
+    user = _try_get_user(request, db)
     stmt = select(Account)
+    if user:
+        stmt = stmt.where(Account.owner_id == user.id)
     if connector_type:
         stmt = stmt.where(Account.connector_type == connector_type.upper())
     
@@ -132,8 +162,14 @@ def get_accounts(connector_type: Optional[str] = None, db: Session = Depends(get
 
 
 @router.patch("/project/{project_id}/link-account")
-def link_project_account(project_id: str, body: ProjectAccountLink, db: Session = Depends(get_db)):
+def link_project_account(
+    request: Request,
+    project_id: str,
+    body: ProjectAccountLink,
+    db: Session = Depends(get_db),
+):
     """Link a specific accountId to a Project and store the specific data-level settings."""
+    user = _try_get_user(request, db)
     project = db.execute(
         select(Project).where(Project.project_id == project_id)
     ).scalar_one_or_none()
@@ -147,6 +183,10 @@ def link_project_account(project_id: str, body: ProjectAccountLink, db: Session 
 
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
+
+    # Ownership check — ensure the account belongs to the requesting user
+    if user and account.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="Account not found or access denied")
 
     project.account_id = account.id
     if body.warehouse is not None:
@@ -183,14 +223,19 @@ def link_project_account(project_id: str, body: ProjectAccountLink, db: Session 
 
 
 @router.delete("/{account_id}", response_model=List[AccountResponse])
-def delete_account(account_id: str, db: Session = Depends(get_db)):
+def delete_account(request: Request, account_id: str, db: Session = Depends(get_db)):
     """Delete the credentials for a specific account ID and return updated list."""
+    user = _try_get_user(request, db)
     account = db.execute(
         select(Account).where(Account.id == account_id)
     ).scalar_one_or_none()
 
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
+
+    # Ownership check
+    if user and account.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="Account not found or access denied")
 
     connector_type = account.connector_type
     db.delete(account)
@@ -198,12 +243,13 @@ def delete_account(account_id: str, db: Session = Depends(get_db)):
     logger.info(f"Deleted Account {account_id} ({account.tag})")
     
     # Return updated list
-    return get_accounts(connector_type=connector_type, db=db)
+    return get_accounts(request=request, connector_type=connector_type, db=db)
 
 
 @router.patch("/{account_id}/tag", response_model=List[AccountResponse])
-def update_account_tag(account_id: str, body: AccountTagUpdate, db: Session = Depends(get_db)):
+def update_account_tag(request: Request, account_id: str, body: AccountTagUpdate, db: Session = Depends(get_db)):
     """Rename the Tag of an account and return updated list."""
+    user = _try_get_user(request, db)
     account = db.execute(
         select(Account).where(Account.id == account_id)
     ).scalar_one_or_none()
@@ -211,10 +257,15 @@ def update_account_tag(account_id: str, body: AccountTagUpdate, db: Session = De
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
 
+    # Ownership check
+    if user and account.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="Account not found or access denied")
+
     # Check for tag duplication
-    existing = db.execute(
-        select(Account).where(Account.tag == body.tag)
-    ).scalar_one_or_none()
+    stmt = select(Account).where(Account.tag == body.tag)
+    if user:
+        stmt = stmt.where(Account.owner_id == user.id)
+    existing = db.execute(stmt).scalar_one_or_none()
 
     if existing and existing.id != account_id:
         raise HTTPException(status_code=400, detail=f"Tag '{body.tag}' is already in use.")
@@ -226,7 +277,7 @@ def update_account_tag(account_id: str, body: AccountTagUpdate, db: Session = De
     logger.info(f"Updated Account {account_id} tag to {account.tag}")
     
     # Return updated list
-    return get_accounts(connector_type=connector_type, db=db)
+    return get_accounts(request=request, connector_type=connector_type, db=db)
 
 
 

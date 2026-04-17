@@ -28,8 +28,10 @@ from rich.logging import RichHandler
 # legacy_windows=False ensures unicode symbols work on Windows 10+
 console = Console(force_terminal=True, legacy_windows=False)
 
-# Logger cache
+# Logger cache and state
 _loggers: dict[str, logging.Logger] = {}
+_logging_initialized = False
+_last_rotation_warning_time = 0.0
 
 # Unified structured log format — includes threadName for tracing
 LOG_FORMAT = (
@@ -50,6 +52,34 @@ _THROTTLED_WARNING_PATTERNS: list[tuple[re.Pattern[str], int]] = [
     (re.compile(r"^Skipping metric '\S+", re.IGNORECASE), 6),
     (re.compile(r"^LLM translation low confidence", re.IGNORECASE), 3),
 ]
+
+
+class WindowsRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """
+    Windows-safe rotating file handler.
+    On Windows, RotatingFileHandler periodically fails with PermissionError
+    if another process (like Uvicorn reloader) has the log file open.
+    This handler catches the error and skips the rotation for that cycle.
+    """
+
+    def doRollover(self) -> None:
+        """
+        Perform a rollover, catching OS-level lock errors on Windows.
+        """
+        try:
+            super().doRollover()
+        except (PermissionError, OSError) as e:
+            # If the file is locked, we can't rotate it.
+            # In a dev environment with a reloader, this is common.
+            # Throttle the warning so it doesn't spam the console.
+            global _last_rotation_warning_time
+            now = time.time()
+            if now - _last_rotation_warning_time > 60:  # Only warn once per minute
+                sys.stderr.write(
+                    f"\n[Logging Warning] Unable to rotate log file: {e}\n"
+                    f"Continuing to log to current file until lock is released.\n"
+                )
+                _last_rotation_warning_time = now
 
 
 class CredentialRedactionFilter(logging.Filter):
@@ -190,6 +220,13 @@ def setup_logging(
     effective_level = level or resolve_log_level()
     log_level = getattr(logging, effective_level.upper(), logging.DEBUG)
 
+    global _logging_initialized
+    if _logging_initialized:
+        # Just update the level of the root logger and noisy loggers
+        logging.getLogger().setLevel(log_level)
+        _set_noisy_loggers_level(log_level)
+        return
+
     # Clear existing handlers
     root = logging.getLogger()
     root.handlers.clear()
@@ -227,7 +264,11 @@ def setup_logging(
         file_path = Path(log_file) if log_file else resolve_log_file_path()
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        file_handler = logging.handlers.RotatingFileHandler(
+        handler_class = logging.handlers.RotatingFileHandler
+        if sys.platform == "win32":
+            handler_class = WindowsRotatingFileHandler
+
+        file_handler = handler_class(
             str(file_path),
             maxBytes=10 * 1024 * 1024,  # 10 MB
             backupCount=5,
@@ -243,25 +284,29 @@ def setup_logging(
         pass
 
     root.setLevel(log_level)
+    _set_noisy_loggers_level(log_level)
+    _logging_initialized = True
 
+
+def _set_noisy_loggers_level(log_level: int) -> None:
+    """Helper to configure log levels for verbose third-party/internal modules."""
     # Reduce noise from third-party libraries and verbose modules
     noisy_loggers = [
-        "snowflake.connector",       # Snowflake driver verbose
-        "urllib3",                   # HTTP connection pool spam
-        "httpx",                     # HTTP client verbose
-        "msal",                      # Azure authentication verbose
-        "sqlalchemy",                # SQLAlchemy query logging
-        "sqlalchemy.engine",         # SQLAlchemy engine
-        "sqlalchemy.pool",           # Connection pool noise
-        "asyncio",                   # Async event loop noise
-        "starlette",                 # Starlette framework
-        "uvicorn",                   # Uvicorn server logs
+        "snowflake.connector",
+        "urllib3",
+        "httpx",
+        "msal",
+        "sqlalchemy",
+        "sqlalchemy.engine",
+        "sqlalchemy.pool",
+        "asyncio",
+        "starlette",
+        "uvicorn",
     ]
     for logger_name in noisy_loggers:
         logging.getLogger(logger_name).setLevel(logging.WARNING)
 
-    # Keep converter internals concise in normal runs. Deployment status comes
-    # from CLI/connectors and remains visible at INFO.
+    # Keep converter internals concise in normal runs.
     if log_level > logging.DEBUG:
         semabridge_noisy_modules = [
             "semabridge.converter.dax_rule_translator",

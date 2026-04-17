@@ -1,61 +1,46 @@
-project_name: inv
+# Semabridge project configuration
+# Resolution: kept our active Snowflake→Fabric config (this machine's live values).
+# Team's Databricks test config is preserved separately in their test files.
+project_name: f1
 source:
-  type: fabric
-  identity_id: 33393640-df14-49d8-9460-306461ea4555
-  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
-  workspace: semabridge
-  models:
-  - Inventory Semantic Model
+  type: snowflake
+  database: ""
+  schema: ""
+  model: CONTINENT_SEMANTIC
 targets:
-- type: databricks
+  - type: fabric
+    identity_id: 5e826e99-3f37-4d50-9ba3-3f30037d6485
+    workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
+    workspace: semabridge
 mappings:
-- source: Inventory Semantic Model
-  target: INVENTORY_SEMANTIC_MODEL
-  type: table
-  columns:
-  - source: id
-    target: ID
-    type: integer
-    primary_key: true
-  - source: name
-    target: NAME
-    type: string
-  - source: created_at
-    target: CREATED_AT
-    type: timestamp
-  - source: updated_at
-    target: UPDATED_AT
-    type: timestamp
+  - source: CONTINENT_SEMANTIC
+    target: CONTINENT_SEMANTIC
+    type: table
+    columns:
+      - source: id
+        target: ID
+        type: integer
+        primary_key: true
+      - source: name
+        target: NAME
+        type: string
+      - source: created_at
+        target: CREATED_AT
+        type: timestamp
+      - source: updated_at
+        target: UPDATED_AT
+        type: timestamp
 ui:
   intermediate_format: osi
   editor_mode: form
   output_format: osi
 selection:
   model_ids:
-  - 6c73961a-00c4-4610-b035-232a434e5d50
+    - CONTINENT_SEMANTIC
 options:
   auto_relationships: true
   generate_descriptions: true
 target:
-  type: databricks
-mappings_overrides:
-- source_path: datasets.Inventory Semantic Model
-  target_name: INVENTORY_SEMANTIC_MODEL
-  entity_kind: table
-  source_name: Inventory Semantic Model
-- source_path: datasets.Inventory Semantic Model.columns.id
-  target_name: ID
-  entity_kind: column
-  source_name: id
-- source_path: datasets.Inventory Semantic Model.columns.name
-  target_name: NAME
-  entity_kind: column
-  source_name: name
-- source_path: datasets.Inventory Semantic Model.columns.created_at
-  target_name: CREATED_AT
-  entity_kind: column
-  source_name: created_at
-- source_path: datasets.Inventory Semantic Model.columns.updated_at
-  target_name: UPDATED_AT
-  entity_kind: column
-  source_name: updated_at
+  type: fabric
+  identity_id: 5e826e99-3f37-4d50-9ba3-3f30037d6485
+  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718

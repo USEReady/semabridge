@@ -16,7 +16,7 @@ from semabridge.api.services.connection_session_store import (
     _uuid,
 )
 
-setup_logging(level="INFO")
+# setup_logging(level="INFO")  # Centralized in app_setup.py
 logger = logging.getLogger("semabridge.api")
 _databricks_session_token = None
 _databricks_session_token_expires_at = 0.0

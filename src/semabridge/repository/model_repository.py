@@ -297,6 +297,7 @@ class ModelRepository:
         workspace_id: str,
         adapter: str = "fabric",
         source_connection: Optional[str] = None,
+        connection_tag: Optional[str] = None,
     ) -> None:
         """Ensure the project row exists (upsert)."""
         now = datetime.utcnow()
@@ -307,6 +308,8 @@ class ModelRepository:
                 existing.adapter = adapter
                 existing.source_connection = source_connection
                 existing.last_updated = now
+                if connection_tag:
+                    existing.connection_tag = connection_tag
             else:
                 session.add(
                     Project(
@@ -316,6 +319,7 @@ class ModelRepository:
                         adapter=adapter,
                         source_connection=source_connection,
                         last_updated=now,
+                        connection_tag=connection_tag,
                     )
                 )
             session.commit()

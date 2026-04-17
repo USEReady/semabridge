@@ -90,7 +90,7 @@ except ImportError:
 # Initialize Core Services (module-level, before app creation)
 # -------------------------------------------------------
 
-setup_logging(level="INFO")
+# setup_logging(level="INFO")  # Centralized in app_setup.py
 
 # Install WebSocket alert handler so warnings/errors auto-dispatch to UI
 install_websocket_alert_handler()
@@ -193,7 +193,10 @@ async def list_workspaces(
 
 
 _FABRIC_PUBLIC_CLIENT_ID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
-_FABRIC_SCOPES = ["https://analysis.windows.net/powerbi/api/.default"]
+# We use the native Fabric API scope. This token will be accepted by Fabric endpoints (list, create, update models).
+# To talk to Power BI endpoints (like executeQueries), the system will use the refresh_token to acquire a secondary token.
+_FABRIC_SCOPES = ["https://api.fabric.microsoft.com/.default"]
+
 
 # Background poll state for device-code flow — per-session isolation.
 # Each /login call issues a UUID flow_id. Background threads write results
@@ -218,8 +221,16 @@ def _get_msal_http_client():
         import requests
         from requests.adapters import HTTPAdapter
         from urllib3.util.retry import Retry
+        from semabridge.core.settings import get_settings
 
         session = requests.Session()
+        
+        # Inject explicit proxy settings if configured
+        proxies = get_settings().network.proxies
+        if proxies:
+            session.proxies.update(proxies)
+            logger.info("MSAL session initialized with explicit proxies: %s", list(proxies.keys()))
+
         retry = Retry(
             total=3,
             read=3,
@@ -392,7 +403,24 @@ async def fabric_device_code_login(request: Request, payload: Dict[str, Any] = N
 
     except HTTPException:
         raise
+    except HTTPException:
+        raise
     except Exception as e:
+        # Check for DNS/Network errors specifically
+        error_msg = str(e)
+        if "getaddrinfo failed" in error_msg or "NameResolutionError" in error_msg:
+            friendly_msg = (
+                "Network Error: Cannot resolve Microsoft login services (DNS failure). "
+                "Please verify your internet connection or configure a proxy in .env."
+            )
+            logger.error("Fabric login DNS failure: %s", error_msg)
+            raise HTTPException(status_code=503, detail=friendly_msg)
+        
+        if "ConnectionPool" in error_msg or "timeout" in error_msg.lower():
+            friendly_msg = "Network Error: Connection to Microsoft timed out. Please check your firewall or proxy settings."
+            logger.error("Fabric login connection timeout: %s", error_msg)
+            raise HTTPException(status_code=503, detail=friendly_msg)
+
         logger.exception("Failed to initiate device code flow: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -766,7 +794,13 @@ def _resolve_fabric_access_token(
                 expires_at = int(credential_token_data.get("expires_at", "0"))
                 if _time.time() >= expires_at - 60:
                     logger.warning("Credential-table Fabric token expired. Attempting silent refresh...")
-                    refreshed = _try_silent_refresh()
+                    # Pass account context so refresh writes to the correct Account row,
+                    # not the global CredentialManager (multi-account-safe).
+                    refreshed = _try_silent_refresh(
+                        account_id=matched_account_id,
+                        account_tag=account_tag,
+                        credential_payload=credential_token_data,
+                    )
                     if refreshed:
                         return refreshed
                     raise HTTPException(status_code=401, detail={"error": "reauth_required"})
@@ -846,9 +880,13 @@ def _refresh_account_token(account_id: str, account_tag: str, refresh_token: str
             client_id="04b07795-8ddb-461a-bbee-02f9e1bf7b46",
             authority=f"https://login.microsoftonline.com/{tenant_id}",
         )
+        # IMPORTANT: Must use the Fabric Items API scope, NOT the Power BI scope.
+        # Using analysis.windows.net/powerbi/api/.default produces a token that
+        # the Fabric REST API rejects with 404 EntityNotFound (not 403!) when
+        # trying to create/update semantic model items.
         result = app_msal.acquire_token_by_refresh_token(
             refresh_token,
-            scopes=["https://analysis.windows.net/powerbi/api/.default"],
+            scopes=["https://api.fabric.microsoft.com/.default"],
         )
         if "access_token" in result:
             new_payload = dict(original_payload)
@@ -880,15 +918,39 @@ def _refresh_account_token(account_id: str, account_tag: str, refresh_token: str
         return None
 
 
-def _try_silent_refresh() -> Optional[str]:
-    """Attempt to silently acquire a fresh access token using the
-    stored refresh_token.  Returns the new access_token on success,
-    or None on failure.
+def _try_silent_refresh(
+    account_id: Optional[str] = None,
+    account_tag: Optional[str] = None,
+    credential_payload: Optional[dict] = None,
+) -> Optional[str]:
+    """Attempt to silently acquire a fresh Fabric access token.
+
+    Multi-account-safe behaviour:
+    - When ``account_id`` is supplied (the common case for Path A accounts), the
+      refresh is delegated to ``_refresh_account_token`` which writes the result
+      back to the **specific Account row** — identical to the Path B refresh path.
+      This eliminates cross-account contamination via the global CredentialManager.
+    - When no ``account_id`` is known (legacy / CLI fallback), the function falls
+      back to the global CredentialManager as before.
 
     This function opens its own short-lived DB sessions internally,
     so it must NEVER be called while a caller is holding an open session
-    (QueuePool(1) deadlock).
+    (QueuePool deadlock risk).
     """
+    # ── Account-aware path (preferred) ─────────────────────────────────────
+    if account_id and credential_payload:
+        refresh_token = credential_payload.get("refresh_token", "")
+        tenant_id = credential_payload.get("tenant_id", "organizations")
+        if refresh_token:
+            logger.info(
+                "_try_silent_refresh: using isolated per-account refresh for %s",
+                account_tag or account_id,
+            )
+            return _refresh_account_token(
+                account_id, account_tag or account_id, refresh_token, tenant_id, credential_payload
+            )
+
+    # ── Legacy fallback: global CredentialManager (single-account / CLI) ───
     try:
         from semabridge.repository.credential_manager import CredentialManager
         import msal
@@ -900,9 +962,11 @@ def _try_silent_refresh() -> Optional[str]:
 
         tenant_id = token_data.get("tenant_id", "organizations")
         app_msal = _get_msal_app(f"https://login.microsoftonline.com/{tenant_id}")
+        # IMPORTANT: Use the Fabric Items API scope. Power BI scope tokens
+        # are rejected by the Fabric Items API with 404 (not 403).
         result = app_msal.acquire_token_by_refresh_token(
             token_data["refresh_token"],
-            scopes=["https://analysis.windows.net/powerbi/api/.default"],
+            scopes=["https://api.fabric.microsoft.com/.default"],
         )
         if "access_token" in result:
             cm.save_msal_token(
@@ -912,7 +976,10 @@ def _try_silent_refresh() -> Optional[str]:
                 tenant_id=tenant_id,
                 expires_in=result.get("expires_in", 3600),
             )
-            logger.info("Silently refreshed Fabric access token via MSAL refresh_token")
+            logger.info(
+                "_try_silent_refresh: refreshed via global CredentialManager "
+                "(legacy fallback — single-account mode only)"
+            )
             return result["access_token"]
         else:
             logger.warning(

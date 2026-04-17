@@ -226,14 +226,22 @@ async def validate_live(payload: Dict[str, Any] = None):
                     or str(data.get("unique_name") or "").strip()
                     or model_id
                 )
+                # Pre-calculate datasets that have metrics to avoid false-positive "no columns" warnings on measure tables.
+                datasets_with_metrics = {m.get("dataset") for m in data.get("metrics", []) if m.get("dataset")}
+
                 for ds in data.get("datasets", []):
                     tbl = ds.get("source_table") or ds.get("table", "")
                     cols = ds.get("columns", [])
-                    ds_name = ds.get("name") or ds.get("unique_name") or "?"
+                    ds_name = ds.get("unique_name") or ds.get("name") or "?"
+                    display_ds_name = ds.get("name") or ds.get("unique_name") or "?"
+                    
                     if not tbl:
-                        warnings.append({"model": display_model_name, "severity": "warning", "message": f"Dataset '{ds_name}' has no source_table defined"})
-                    if not cols:
-                        warnings.append({"model": display_model_name, "severity": "warning", "message": f"Dataset '{ds_name}' has no columns defined"})
+                        warnings.append({"model": display_model_name, "severity": "warning", "message": f"Dataset '{display_ds_name}' has no source_table defined"})
+                    
+                    # Only warn about missing columns if there are also no metrics referencing this dataset.
+                    # Measure-only tables are valid architectural constructs in Fabric/TMSL models.
+                    if not cols and ds_name not in datasets_with_metrics:
+                        warnings.append({"model": display_model_name, "severity": "warning", "message": f"Dataset '{display_ds_name}' has no columns defined"})
         finally:
             conn.close()
     except Exception as e:

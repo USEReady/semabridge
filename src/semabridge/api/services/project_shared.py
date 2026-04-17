@@ -78,7 +78,7 @@ except ImportError:
 # Initialize Core Services (module-level, before app creation)
 # -------------------------------------------------------
 
-setup_logging(level="INFO")
+# setup_logging(level="INFO")  # Centralized in app_setup.py
 
 # Install WebSocket alert handler so warnings/errors auto-dispatch to UI
 install_websocket_alert_handler()
@@ -453,6 +453,7 @@ def _compat_project_payload(project_id: str, payload: dict) -> Dict[str, Any]:
         "source": source_obj.get("type") or payload.get("source_type") or "fabric",
         "adapter": source_obj.get("type") or payload.get("source_type") or "fabric",
         "workspace_id": source_obj.get("workspace_id") or "",
+        "connection_tag": str(payload.get("connection_tag") or source_obj.get("connection_tag") or target_obj.get("connection_tag") or "").strip() or None,
         "target_type": target_obj.get("type") or first_target_obj.get("type") or payload.get("target_type") or "snowflake",
         "folder_id": payload.get("folder_id"),
         "status": "draft",

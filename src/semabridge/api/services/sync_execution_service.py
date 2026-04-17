@@ -101,23 +101,23 @@ def _log_model_console_trace(result: Dict[str, Any]) -> None:
         logger.info("  %s", line)
 
 
-def _write_content_if_provided(payload: Dict[str, Any], normalize_yaml_windows_path_fields) -> None:
-    content = payload.get("content")
-    if not content:
-        return
-
-    normalized_content = normalize_yaml_windows_path_fields(content)
-    from semabridge.core.config_loader import get_project_file_path
-
-    config_target = get_project_file_path("semabridge.yaml")
-    config_target.parent.mkdir(parents=True, exist_ok=True)
-    config_target.write_text(normalized_content, encoding="utf-8")
-
-
-def _load_config(normalize_yaml_windows_path_fields) -> tuple[str, Dict[str, Any]]:
+def _load_config(payload: Dict[str, Any], normalize_yaml_windows_path_fields) -> tuple[str, Dict[str, Any]]:
     from semabridge.core.config_loader import get_default_config_path, load_yaml_file
+    import yaml
 
-    config_path = get_default_config_path()
+    config_path = get_default_config_path() or ""
+    content = payload.get("content")
+
+    if content:
+        # In-memory config provided by the API request. 
+        # Parses config without writing to disk to prevent concurrency races.
+        normalized_content = normalize_yaml_windows_path_fields(content)
+        try:
+            config = yaml.safe_load(normalized_content) or {}
+        except Exception as parse_err:
+            raise HTTPException(status_code=400, detail=f"Invalid YAML content: {parse_err}")
+        return str(config_path), config
+
     if not config_path:
         raise HTTPException(status_code=404, detail="semabridge.yaml not found in project")
 
@@ -336,7 +336,8 @@ def _run_single_job(
         summary = engine.execute(
             source=engine_source_type,
             target=target_type,
-            config_path=Path(config_path),
+            config_path=Path(config_path) if config_path else None,
+            config_dict=config,
             dataset_id=job["dataset_id"],
             pbix_path=job["pbix_path"],
             project_name=model_label,
@@ -480,20 +481,44 @@ def _run_parallel_jobs(
 
     executor_cls = ProcessPoolExecutor if executor_kind == "process" else ThreadPoolExecutor
     with executor_cls(max_workers=effective_parallelism) as executor:
-        future_to_job = {
-            executor.submit(
-                _run_single_job,
-                job,
-                engine_source_type=source_type,
-                target_type=target_type,
-                config=config,
-                config_path=config_path,
-                deploy_enabled=deploy_enabled,
-                resolved_workspace_id=resolved_workspace_id,
-                account_id=account_id,
-            ): job
-            for job in sync_jobs
-        }
+        # Use contextvars.copy_context() for thread-based executors so that
+        # observability context (run_id, user_id) propagates to child threads.
+        if executor_kind == "thread":
+            import contextvars
+
+            ctx = contextvars.copy_context()
+            future_to_job = {
+                executor.submit(
+                    ctx.run,
+                    _run_single_job,
+                    job,
+                    engine_source_type=source_type,
+                    target_type=target_type,
+                    config=config,
+                    config_path=config_path,
+                    deploy_enabled=deploy_enabled,
+                    resolved_workspace_id=resolved_workspace_id,
+                    account_id=account_id,
+                ): job
+                for job in sync_jobs
+            }
+        else:
+            # Process workers get their own memory space — context vars
+            # do not propagate. They rely on account_id for isolation.
+            future_to_job = {
+                executor.submit(
+                    _run_single_job,
+                    job,
+                    engine_source_type=source_type,
+                    target_type=target_type,
+                    config=config,
+                    config_path=config_path,
+                    deploy_enabled=deploy_enabled,
+                    resolved_workspace_id=resolved_workspace_id,
+                    account_id=account_id,
+                ): job
+                for job in sync_jobs
+            }
         for future in as_completed(future_to_job):
             job = future_to_job[future]
             try:
@@ -528,11 +553,8 @@ def _run_parallel_jobs(
 
 
 def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fields, account_id: Optional[str] = None) -> Dict[str, Any]:
-    _write_content_if_provided(payload, normalize_yaml_windows_path_fields)
-    reload_settings()
-
-    _config_path, config = _load_config(normalize_yaml_windows_path_fields)
-    config_path = str(Path(_config_path).resolve())
+    _config_path, config = _load_config(payload, normalize_yaml_windows_path_fields)
+    config_path = str(Path(_config_path).resolve()) if _config_path else ""
     sync_jobs, source_type, target_type, source_cfg, target_cfg = _build_sync_jobs(config)
     settings = get_settings()
 

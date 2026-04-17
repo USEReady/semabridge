@@ -86,10 +86,14 @@ class FabricPublisher:
             self._token_expiry = current_time + 3000  # ~50 min (tokens last ~60 min)
             return self._access_token
 
+        from semabridge.core.settings import get_settings
+        network_settings = get_settings().network
+
         app = msal.ConfidentialClientApplication(
             client_id=self.config.client_id,
             client_credential=self.config.client_secret.get_secret_value(),
             authority=f"https://login.microsoftonline.com/{self.config.tenant_id}",
+            proxies=network_settings.proxies,
         )
 
         result = app.acquire_token_for_client(scopes=[self.FABRIC_SCOPE])
@@ -168,9 +172,13 @@ class FabricPublisher:
                 self.FABRIC_SCOPE, tenant_id,
             )
 
+            from semabridge.core.settings import get_settings
+            network_settings = get_settings().network
+
             app = msal.PublicClientApplication(
                 client_id="04b07795-8ddb-461a-bbee-02f9e1bf7b46",
                 authority=f"https://login.microsoftonline.com/{tenant_id}",
+                proxies=network_settings.proxies,
             )
             result = app.acquire_token_by_refresh_token(
                 refresh_token,
@@ -230,8 +238,11 @@ class FabricPublisher:
     def list_workspaces(self) -> list[dict[str, Any]]:
         """List Fabric workspaces visible to the authenticated principal."""
         url = f"{self.FABRIC_API_BASE}/workspaces"
+        from semabridge.core.settings import get_settings
+        proxy = get_settings().network.https_proxy
+        
         try:
-            with httpx.Client(timeout=30) as client:
+            with httpx.Client(timeout=30, proxy=proxy) as client:
                 response = client.get(url, headers=self._get_headers())
                 if response.status_code != 200:
                     logger.warning("Workspace resolution: list failed with %s", response.status_code)
@@ -264,30 +275,41 @@ class FabricPublisher:
     def _workspace_id(self) -> str:
         """Get resolved workspace ID with secure fallback chain.
 
-        Resolution order (most recent user action wins):
-        1. Credential store (DuckDB) — set by the UI's select-workspace action.
-        2. os.environ['FABRIC_WORKSPACE_ID'] — injected at startup or by select-workspace.
-        3. FabricConfig.workspace_id — static .env fallback.
+        Resolution order:
+        1. FabricConfig.workspace_id — static .env or UI-provided target.
+        2. Credential store (DuckDB) — fallback source workspace.
 
         The result is cached for the lifetime of this publisher instance.
         """
         if not self._resolved_workspace_id:
-            stored_ws: str = ""
-            try:
-                from semabridge.repository.credential_manager import CredentialManager
-                cm = CredentialManager()
-                creds = cm.get_credentials("fabric", mask_secrets=False)
-                stored_ws = (creds.get("workspace_id") or "").strip()
-            except Exception as exc:
-                logger.debug("Could not read workspace from credential store: %s", exc)
+            # self.config.workspace_id is set by the execution engine to the TARGET
+            # workspace. It must always take priority. The credential store holds the
+            # SOURCE workspace and must never override an explicitly configured target.
+            config_ws = (self.config.workspace_id or "").strip()
 
-            raw_ws = stored_ws or self.config.workspace_id
-            self._resolved_workspace_id = self.resolve_workspace_id(raw_ws)
-            if stored_ws and stored_ws != self.config.workspace_id:
+            if config_ws:
+                self._resolved_workspace_id = self.resolve_workspace_id(config_ws)
                 logger.info(
-                    "Using UI-selected workspace %s (overrides .env value %s)",
-                    self._resolved_workspace_id, self.config.workspace_id,
+                    "FabricPublisher resolved target workspace from config: %s",
+                    self._resolved_workspace_id,
                 )
+            else:
+                # No workspace in config — fall back to credential store.
+                stored_ws: str = ""
+                try:
+                    from semabridge.repository.credential_manager import CredentialManager
+                    cm = CredentialManager()
+                    creds = cm.get_credentials("fabric", mask_secrets=False)
+                    stored_ws = (creds.get("workspace_id") or "").strip()
+                except Exception as exc:
+                    logger.debug("Could not read workspace from credential store: %s", exc)
+
+                if stored_ws:
+                    logger.info(
+                        "No workspace in FabricConfig — using credential store workspace: %s",
+                        stored_ws,
+                    )
+                self._resolved_workspace_id = self.resolve_workspace_id(stored_ws)
         return self._resolved_workspace_id
     
     def publish(
@@ -404,13 +426,26 @@ class FabricPublisher:
     def _create_model(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Create a new semantic model with 401 auto-retry."""
         workspace_id = self._workspace_id()
-        url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/semanticModels"
+        
+        # Use the unified Fabric Items API rather than the legacy semanticModels path
+        url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/items"
 
-        logger.info(f"Creating semantic model '{payload['displayName']}' in workspace {workspace_id}")
+        # The items API strictly requires the 'type' attribute
+        item_payload = {
+            "displayName": payload["displayName"],
+            "type": "SemanticModel", 
+            "description": payload.get("description", ""),
+            "definition": payload["definition"]
+        }
+
+        logger.info(f"Creating semantic model '{payload['displayName']}' in workspace {workspace_id} via Items API")
+
+        from semabridge.core.settings import get_settings
+        proxy = get_settings().network.https_proxy
 
         for attempt in range(2):  # 1 normal + 1 retry on 401
-            with httpx.Client(timeout=60) as client:
-                response = client.post(url, headers=self._get_headers(), json=payload)
+            with httpx.Client(timeout=60, proxy=proxy) as client:
+                response = client.post(url, headers=self._get_headers(), json=item_payload)
 
                 if response.status_code == 202:
                     return self._poll_operation(response)
@@ -424,6 +459,14 @@ class FabricPublisher:
                     self._token_expiry = 0
                     self._get_access_token(force_refresh=True)
                     continue
+                elif response.status_code == 404:
+                    error_text = response.text
+                    logger.error("Create failed with 404 EntityNotFound: workspace=%s. This usually means the workspace is a Pro workspace and lacks a Fabric Capacity (F-SKU or PPU).", workspace_id)
+                    raise PublishError(
+                        f"Deployment Failed: The workspace '{workspace_id}' does not exist, or you do not have permission, "
+                        f"or it is NOT backed by a Fabric Capacity. Fabric's semantic model creation API strictly requires "
+                        f"a workspace with a Fabric Capacity (F-SKU) or Premium Per User (PPU). Error: {error_text}"
+                    )
                 else:
                     error_text = response.text
                     logger.error(
@@ -441,14 +484,18 @@ class FabricPublisher:
     ) -> dict[str, Any]:
         """Update an existing semantic model with 401 auto-retry."""
         workspace_id = self._workspace_id()
-        url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/semanticModels/{model_id}/updateDefinition"
+        # Use the unified items API path
+        url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/items/{model_id}/updateDefinition"
 
-        logger.info(f"Updating semantic model {model_id} in workspace {workspace_id}")
+        logger.info(f"Updating semantic model {model_id} in workspace {workspace_id} via Items API")
 
         update_payload = {"definition": payload["definition"]}
 
+        from semabridge.core.settings import get_settings
+        proxy = get_settings().network.https_proxy
+
         for attempt in range(2):
-            with httpx.Client(timeout=60) as client:
+            with httpx.Client(timeout=60, proxy=proxy) as client:
                 response = client.post(url, headers=self._get_headers(), json=update_payload)
 
                 if response.status_code == 202:
@@ -558,7 +605,10 @@ class FabricPublisher:
         
         logger.info(f"Triggering refresh for model: {model_id}")
         
-        with httpx.Client(timeout=30) as client:
+        from semabridge.core.settings import get_settings
+        proxy = get_settings().network.https_proxy
+
+        with httpx.Client(timeout=30, proxy=proxy) as client:
             response = client.post(url, headers=self._get_headers())
             
             if response.status_code == 202:
@@ -587,9 +637,12 @@ class FabricPublisher:
         
         logger.debug(f"Polling operation: {operation_id}")
         
+        from semabridge.core.settings import get_settings
+        proxy = get_settings().network.https_proxy
+
         start_time = time.time()
         
-        with httpx.Client(timeout=30) as client:
+        with httpx.Client(timeout=30, proxy=proxy) as client:
             while time.time() - start_time < max_wait:
                 time.sleep(retry_after)
                 
@@ -618,10 +671,14 @@ class FabricPublisher:
     def find_model_by_name(self, name: str) -> Optional[dict[str, Any]]:
         """Find a semantic model by name in the workspace."""
         workspace_id = self._workspace_id()
-        url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/semanticModels"
+        # Use Items API instead of legacy semanticModels path
+        url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/items?type=SemanticModel"
         
+        from semabridge.core.settings import get_settings
+        proxy = get_settings().network.https_proxy
+
         try:
-            with httpx.Client(timeout=30) as client:
+            with httpx.Client(timeout=30, proxy=proxy) as client:
                 response = client.get(url, headers=self._get_headers())
                 
                 if response.status_code != 200:
@@ -642,9 +699,13 @@ class FabricPublisher:
     def list_models(self) -> list[dict[str, Any]]:
         """List all semantic models in the workspace."""
         workspace_id = self._workspace_id()
-        url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/semanticModels"
+        # Use Items API instead of legacy semanticModels path
+        url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/items?type=SemanticModel"
         
-        with httpx.Client(timeout=30) as client:
+        from semabridge.core.settings import get_settings
+        proxy = get_settings().network.https_proxy
+
+        with httpx.Client(timeout=30, proxy=proxy) as client:
             response = client.get(url, headers=self._get_headers())
             
             if response.status_code != 200:
@@ -655,9 +716,13 @@ class FabricPublisher:
     def delete_model(self, model_id: str) -> bool:
         """Delete a semantic model."""
         workspace_id = self._workspace_id()
-        url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/semanticModels/{model_id}"
+        # Use Items API rather than legacy path
+        url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/items/{model_id}"
         
-        with httpx.Client(timeout=30) as client:
+        from semabridge.core.settings import get_settings
+        proxy = get_settings().network.https_proxy
+
+        with httpx.Client(timeout=30, proxy=proxy) as client:
             response = client.delete(url, headers=self._get_headers())
             
             if response.status_code in (200, 204):
