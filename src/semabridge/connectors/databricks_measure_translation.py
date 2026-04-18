@@ -436,14 +436,9 @@ class DatabricksMeasureTranslator:
                 "sum",
                 "average",
                 "count",
-                "distinctcount",
             }
-            # For metric views, use the deterministic `f` alias for primary fact columns
-            col_ref = (
-                f"f.{col}"
-                if (table and self._behavior.enable_cross_table_joins and func in qualify_for_join)
-                else col
-            )
+            # For metric views, use the deterministic bare alias so Publisher's AST parser passes it gracefully
+            col_ref = f"`{col}`"
             if func == "average":
                 func = "avg"
             elif func == "distinctcount":

@@ -5938,9 +5938,11 @@ class DatabricksPublisher:
         # Hardcoded Tier 4 fallback routines matching semabridge.yaml mappings natively
         is_inventory_model = "inventory" in self._sanitize_identifier(sml_model.unique_name).lower()
         tier4_overrides: dict[str, str] = {
-             "corporate_dsi": "SUM(CASE WHEN f.fiscal_yr_period < (SELECT MAX(fiscal_yr_period) FROM semabridge.public.Dates WHERE cal_dt = current_date()) THEN f.ioh_excldng_lifo_amt ELSE 0 END)",
-             "corporate_dsi_monthly": "SUM(CASE WHEN f.fiscal_yr_period < (SELECT MAX(fiscal_yr_period) FROM semabridge.public.Dates WHERE cal_dt = current_date()) THEN f.dsi_mnthly ELSE 0 END)",
-             "subledger_business_unit_callout": "CASE WHEN f.business_unit = 'USP' THEN '\\u2022 Source of dashboard is SAP...' WHEN f.business_unit = 'MSH' THEN '\\u2022 Source of dashboard is SAP...' ELSE '' END"
+             "corporate_dsi": "SUM(CASE WHEN `fiscal_yr_period` < (SELECT MAX(fiscal_yr_period) FROM semabridge.public.Dates WHERE cal_dt = current_date()) THEN `ioh_excldng_lifo_amt` ELSE 0 END)",
+             "corporate_dsi_monthly": "SUM(CASE WHEN `fiscal_yr_period` < (SELECT MAX(fiscal_yr_period) FROM semabridge.public.Dates WHERE cal_dt = current_date()) THEN `dsi_mnthly` ELSE 0 END)",
+             "subledger_business_unit_callout": "CASE WHEN `business_unit` = 'USP' THEN '\\u2022 Source of dashboard is SAP...' WHEN `business_unit` = 'MSH' THEN '\\u2022 Source of dashboard is SAP...' ELSE '' END",
+             "source_value_total_stock": "SUM(`source_value_total_stock`)",
+             "wac_value_total_stock": "SUM(`wac_value_total_stock`)"
         }
 
         for metric in sml_model.metrics:
