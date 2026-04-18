@@ -358,6 +358,7 @@ def _run_single_job(
             "model": model_label,
             "status": "success" if job_ok else "failed",
             "summary": summary_data,
+            "routing_summary": summary_data.get("routing_summary") if isinstance(summary_data, dict) else None,
             "console": _build_console_details(summary_data),
             "run_id": summary_data.get("run_id"),
         }
@@ -377,6 +378,7 @@ def _run_single_job(
             "model": model_label,
             "status": "failed",
             "summary": summary_data,
+            "routing_summary": None,
             "console": _build_console_details(summary_data),
             "run_id": None,
         }
@@ -518,6 +520,7 @@ def _run_parallel_jobs(
                         "model": model_label,
                         "status": "failed",
                         "summary": summary_data,
+                        "routing_summary": None,
                         "console": _build_console_details(summary_data),
                         "run_id": None,
                     }
@@ -640,6 +643,7 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
         "total_models": len(per_model_results),
         "results": per_model_results,
         "summary": last_summary or {},
+        "routing_summary": (last_summary or {}).get("routing_summary") if isinstance(last_summary, dict) else None,
         "batch": {
             "max_batch_models": MAX_BATCH_MODELS,
             "requested_parallelism": max_parallel_models,

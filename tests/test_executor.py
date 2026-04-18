@@ -225,6 +225,7 @@ class TestRunSummary:
         assert summary.status == RunStatus.RUNNING
         assert summary.source_type == "snowflake"
         assert summary.target_type == "fabric"
+        assert summary.routing_summary is None
     
     def test_add_step_success(self):
         """Test adding a successful step."""

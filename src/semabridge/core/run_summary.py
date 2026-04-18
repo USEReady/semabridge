@@ -78,6 +78,7 @@ class RunSummary(BaseModel):
     source_artifact_id: Optional[str] = None
     sml_snapshot_id: Optional[str] = None
     target_artifact_path: Optional[str] = None
+    routing_summary: Optional[Dict[str, Any]] = None
     
     # Error details for FAILED/PARTIAL
     errors: List[ErrorDetail] = Field(default_factory=list)

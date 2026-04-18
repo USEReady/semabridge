@@ -20,6 +20,10 @@ databricks:
   model_metadata_suffix: "metadata" # Per-model metadata table suffix in per_model mode
   model_metric_view_suffix: "metric_view" # Per-model metric view suffix in per_model mode
   model_fact_root: "" # Optional dataset name to anchor model-level view generation in per_model mode
+  multi_fact_split_mode: "off" # "off" (legacy) | "opt_in" | "enforced" (fact constellation split)
+  dummy_measure_anchor_confidence_threshold: 0.8 # Minimum confidence to relocate dummy-table measures to fact anchors
+  review_required_blocks_deployment: false # If true, unresolved review-required measures block deployment
+  strict_cycle_fail_mode: false # If true, relationship cycles fail affected artifact generation
   measure_view_type: "metric_view" # "auto" | "metric_view" | "materialized_view" | "sql_view" | "none"
   measure_view_mode: "combined" # "per_measure" (one view each) or "combined" (single model-level joined view)
   view_prefix: "mv" # Prefix for measure view names
@@ -28,11 +32,18 @@ databricks:
   enable_cross_table_joins: true # Build explicit joins from model relationships when measures span datasets
   enable_metric_view_joins: true # Enable metric view 'joins' property for multi-table snowflake schemas (requires enable_cross_table_joins=true)
   enable_cross_table_sql_fallback: false # Auto-route cross-table models to SQL views when metric-view cannot safely resolve them
+  allow_sql_fallback_on_metric_view_failure: true # Allow SQL downgrade when metric-view deploy fails even if measure_view_type='metric_view'
+  statement_wait_timeout_seconds: 12 # Reduce per-statement wait before polling for faster sync feedback
+  statement_poll_interval_seconds: 1.0 # Poll statement status more frequently to reduce idle wait
   enable_low_confidence_drafts: true # Emit draft placeholders for low-confidence measures instead of dropping them
   emit_metric_views_for_all_datasets: true # Create fallback metric views for dimension-only datasets
   emit_distinct_pk_metric_for_dimension_datasets: true # Also emit COUNT(DISTINCT pk) for dimension-only datasets when key inference is confident
   strict_graph_coverage_validation: false # When true, fail deploy if relationship endpoint coverage is invalid; false logs warnings
   enable_auto_join_key_bridge: true # Auto-create/backfill missing physical relationship key columns during Databricks publish preflight
+
+  # -------- Semantic Router Configuration (Fact-Centric Artifact Generation) --------
+  semantic_router_enabled: false # Force single model-level metric-view generation for all models (disable per-fact semantic-router splitting).
+  semantic_router_override_models: [] # List of model names to exclude from semantic router (useful for gradual rollout). Example: [ 'LegacyDatamart', 'OldModel' ]
 
   # Source table mapping: Fabric dataset name → actual Databricks table
   # If not mapped, falls back to source_catalog.source_schema.dataset_name

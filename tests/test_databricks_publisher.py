@@ -5,12 +5,12 @@ from unittest.mock import patch
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from semabridge.connectors.databricks_publisher import (
     CONFIDENCE_HIGH,
     CONFIDENCE_LOW,
     CONFIDENCE_MEDIUM,
-    CONFIDENCE_NONE,
     DEPLOY_REASON_CROSS_TABLE,
     DEPLOY_REASON_DAX_NOT_SUPPORTED,
     DEPLOY_REASON_VALIDATION_FAILED,
@@ -23,6 +23,10 @@ from semabridge.connectors.databricks_publisher import (
     VIEW_TYPE_MATERIALIZED,
     VIEW_TYPE_METRIC,
     VIEW_TYPE_SQL,
+    ERROR_CLASS_SQL_SEMANTIC,
+    SQL_FALLBACK_FAILED,
+    SQL_FALLBACK_IN_PROGRESS,
+    SQL_FALLBACK_SUCCESS,
     DatabricksPublishError,
     DatabricksPublisher,
     ResolvedMeasure,
@@ -38,6 +42,7 @@ from semabridge.core.behavior import ConnectorBehavior, DatabricksBehavior
 from semabridge.core.settings import DatabricksConfig
 from semabridge.sml.models import (
     AggregationType,
+    Cardinality,
     DataType,
     SMLColumn,
     SMLDataset,
@@ -125,6 +130,436 @@ def test_databricks_behavior_defaults_keep_compatibility_and_new_flags():
     assert behavior.strict_graph_coverage_validation is False
     assert behavior.enable_destructive_sync_operations is False
     assert behavior.enable_auto_join_key_bridge is False
+    assert behavior.multi_fact_split_mode == "off"
+    assert behavior.dummy_measure_anchor_confidence_threshold == pytest.approx(0.8)
+    assert behavior.review_required_blocks_deployment is False
+    assert behavior.strict_cycle_fail_mode is False
+    assert behavior.allow_sql_fallback_on_metric_view_failure is False
+    assert behavior.statement_wait_timeout_seconds == 30
+    assert behavior.statement_poll_interval_seconds == pytest.approx(3.0)
+
+
+def test_databricks_statement_tuning_helpers_use_behavior_values():
+    behavior = ConnectorBehavior(
+        databricks=DatabricksBehavior(
+            statement_wait_timeout_seconds=12,
+            statement_poll_interval_seconds=1.25,
+        )
+    )
+    publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+    assert publisher._statement_wait_timeout() == "12s"
+    assert publisher._statement_poll_interval_seconds() == pytest.approx(1.25)
+
+
+def test_databricks_behavior_rejects_invalid_multi_fact_split_mode():
+    with pytest.raises(ValidationError):
+        DatabricksBehavior(multi_fact_split_mode="invalid")
+
+
+def test_publish_initializes_semantic_router_and_persists_after_graph_output() -> None:
+    model = SMLModel(
+        unique_name="RouterModel",
+        datasets=[
+            SMLDataset(
+                unique_name="Fact",
+                columns=[SMLColumn(unique_name="id", data_type=DataType.INTEGER)],
+            ),
+            SMLDataset(
+                unique_name="Dim",
+                columns=[SMLColumn(unique_name="id", data_type=DataType.INTEGER)],
+            ),
+        ],
+        relationships=[
+            SMLRelationship(
+                unique_name="fact_to_dim",
+                from_dataset="Fact",
+                from_columns=["dim_id"],
+                to_dataset="Dim",
+                to_columns=["id"],
+                cardinality=Cardinality.MANY_TO_ONE,
+            )
+        ],
+    )
+    behavior = ConnectorBehavior(
+        databricks=DatabricksBehavior(
+            semantic_router_enabled=True,
+            measure_view_type="sql_view",
+        )
+    )
+    publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+    with patch.object(publisher, "_determine_view_type", return_value=VIEW_TYPE_SQL), patch.object(
+        publisher,
+        "_select_measure_view_mode_for_quota",
+        return_value="per_measure",
+    ), patch.object(publisher, "_auto_initialize_missing_tables", return_value=None), patch.object(
+        publisher,
+        "_auto_bridge_relationship_join_keys",
+        return_value=None,
+    ), patch.object(publisher, "_validate_source_table_schema", return_value=None), patch.object(
+        publisher,
+        "generate_sql_statements",
+        return_value=[],
+    ), patch.object(publisher, "execute_statements", return_value=[]), patch.object(
+        publisher,
+        "_persist_semantic_router_decisions",
+        return_value=None,
+    ) as persist_mock:
+        uri = publisher.publish(model)
+
+    assert uri.startswith("databricks://")
+    assert publisher._semantic_graph is not None
+    assert publisher._table_categories.get("Fact", {}).get("category") == "FACT"
+    persist_mock.assert_called_once()
+
+
+def test_publish_skips_semantic_router_when_model_is_overridden() -> None:
+    model = SMLModel(
+        unique_name="LegacyModel",
+        datasets=[
+            SMLDataset(
+                unique_name="Fact",
+                columns=[SMLColumn(unique_name="id", data_type=DataType.INTEGER)],
+            ),
+            SMLDataset(
+                unique_name="Dim",
+                columns=[SMLColumn(unique_name="id", data_type=DataType.INTEGER)],
+            ),
+        ],
+        relationships=[
+            SMLRelationship(
+                unique_name="fact_to_dim",
+                from_dataset="Fact",
+                from_columns=["dim_id"],
+                to_dataset="Dim",
+                to_columns=["id"],
+                cardinality=Cardinality.MANY_TO_ONE,
+            )
+        ],
+    )
+    behavior = ConnectorBehavior(
+        databricks=DatabricksBehavior(
+            semantic_router_enabled=True,
+            semantic_router_override_models=["LegacyModel"],
+            measure_view_type="sql_view",
+        )
+    )
+    publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+    with patch.object(publisher, "_determine_view_type", return_value=VIEW_TYPE_SQL), patch.object(
+        publisher,
+        "_select_measure_view_mode_for_quota",
+        return_value="per_measure",
+    ), patch.object(publisher, "_auto_initialize_missing_tables", return_value=None), patch.object(
+        publisher,
+        "_auto_bridge_relationship_join_keys",
+        return_value=None,
+    ), patch.object(publisher, "_validate_source_table_schema", return_value=None), patch.object(
+        publisher,
+        "generate_sql_statements",
+        return_value=[],
+    ), patch.object(publisher, "execute_statements", return_value=[]), patch.object(
+        publisher,
+        "_persist_semantic_router_decisions",
+        return_value=None,
+    ) as persist_mock:
+        publisher.publish(model)
+
+    assert publisher._semantic_graph is None
+    assert publisher._table_categories == {}
+    persist_mock.assert_not_called()
+
+
+def test_generate_measure_view_statements_semantic_router_per_fact_splits_metric_views() -> None:
+    model = SMLModel(
+        unique_name="RouterModel",
+        datasets=[
+            SMLDataset(
+                unique_name="Sales",
+                columns=[
+                    SMLColumn(unique_name="amount", data_type=DataType.DECIMAL),
+                    SMLColumn(unique_name="customer_id", data_type=DataType.INTEGER),
+                ],
+            ),
+            SMLDataset(
+                unique_name="Returns",
+                columns=[
+                    SMLColumn(unique_name="amount", data_type=DataType.DECIMAL),
+                    SMLColumn(unique_name="customer_id", data_type=DataType.INTEGER),
+                ],
+            ),
+            SMLDataset(
+                unique_name="Customer",
+                columns=[
+                    SMLColumn(unique_name="id", data_type=DataType.INTEGER),
+                ],
+            ),
+        ],
+        relationships=[
+            SMLRelationship(
+                unique_name="sales_to_customer",
+                from_dataset="Sales",
+                from_columns=["customer_id"],
+                to_dataset="Customer",
+                to_columns=["id"],
+                cardinality=Cardinality.MANY_TO_ONE,
+            ),
+            SMLRelationship(
+                unique_name="returns_to_customer",
+                from_dataset="Returns",
+                from_columns=["customer_id"],
+                to_dataset="Customer",
+                to_columns=["id"],
+                cardinality=Cardinality.MANY_TO_ONE,
+            ),
+        ],
+        metrics=[
+            SMLMetric(
+                unique_name="Sales Amount",
+                dataset="Sales",
+                source_column="amount",
+                aggregation=AggregationType.SUM,
+            ),
+            SMLMetric(
+                unique_name="Returns Amount",
+                dataset="Returns",
+                source_column="amount",
+                aggregation=AggregationType.SUM,
+            ),
+        ],
+    )
+    behavior = ConnectorBehavior(
+        databricks=DatabricksBehavior(
+            semantic_router_enabled=True,
+            measure_view_type="metric_view",
+        )
+    )
+    publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+    with patch.object(publisher, "_resolve_existing_source_for_dataset", return_value=None):
+        publisher._initialize_semantic_router(model)
+        statements, created, skipped_count, _ = publisher.generate_measure_view_statements(
+            model,
+            view_type_override=VIEW_TYPE_METRIC,
+        )
+
+    assert created == 2
+    assert skipped_count == 0
+    assert len(statements) == 2
+    assert set(publisher._per_fact_metric_views.keys()) == {"Sales", "Returns"}
+
+    sales_yaml = publisher._per_fact_metric_views["Sales"].lower()
+    returns_yaml = publisher._per_fact_metric_views["Returns"].lower()
+    assert 'name: "sales_amount"' in sales_yaml
+    assert 'name: "returns_amount"' not in sales_yaml
+    assert 'name: "returns_amount"' in returns_yaml
+    assert 'name: "sales_amount"' not in returns_yaml
+
+    all_sql = "\n".join(statements).lower()
+    assert "routermodel_fact_sales_metric_view" in all_sql
+    assert "routermodel_fact_returns_metric_view" in all_sql
+
+
+def test_generate_measure_view_statements_semantic_router_per_fact_skips_unanchored_measure() -> None:
+    model = SMLModel(
+        unique_name="AnchorModel",
+        datasets=[
+            SMLDataset(
+                unique_name="Sales",
+                columns=[
+                    SMLColumn(unique_name="amount", data_type=DataType.DECIMAL),
+                    SMLColumn(unique_name="customer_id", data_type=DataType.INTEGER),
+                ],
+            ),
+            SMLDataset(
+                unique_name="Customer",
+                columns=[
+                    SMLColumn(unique_name="id", data_type=DataType.INTEGER),
+                ],
+            ),
+        ],
+        relationships=[
+            SMLRelationship(
+                unique_name="sales_to_customer",
+                from_dataset="Sales",
+                from_columns=["customer_id"],
+                to_dataset="Customer",
+                to_columns=["id"],
+                cardinality=Cardinality.MANY_TO_ONE,
+            ),
+        ],
+        metrics=[
+            SMLMetric(
+                unique_name="Sales Amount",
+                dataset="Sales",
+                source_column="amount",
+                aggregation=AggregationType.SUM,
+            ),
+            SMLMetric(
+                unique_name="Unanchored Metric",
+                dataset="Sales",
+                expression="SUM([UnknownTable].[value])",
+            ),
+        ],
+    )
+    behavior = ConnectorBehavior(
+        databricks=DatabricksBehavior(
+            semantic_router_enabled=True,
+            measure_view_type="metric_view",
+        )
+    )
+    publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+    with patch.object(publisher, "_resolve_existing_source_for_dataset", return_value=None):
+        publisher._initialize_semantic_router(model)
+        _, created, skipped_count, skipped_details = publisher.generate_measure_view_statements(
+            model,
+            view_type_override=VIEW_TYPE_METRIC,
+        )
+
+    assert created == 1
+    assert skipped_count >= 1
+    assert any("unanchored" in str(item.get("name", "")).lower() for item in skipped_details)
+
+    sales_yaml = publisher._per_fact_metric_views["Sales"].lower()
+    assert 'name: "sales_amount"' in sales_yaml
+    assert 'name: "unanchored_metric"' not in sales_yaml
+
+
+def test_get_contextual_metric_ids_for_fact_filters_unreachable_tables() -> None:
+    model = SMLModel(
+        unique_name="RouterModel",
+        datasets=[
+            SMLDataset(
+                unique_name="Sales",
+                columns=[SMLColumn(unique_name="amount", data_type=DataType.DECIMAL)],
+            ),
+            SMLDataset(
+                unique_name="Customer",
+                columns=[SMLColumn(unique_name="name", data_type=DataType.STRING)],
+            ),
+            SMLDataset(
+                unique_name="Inventory",
+                columns=[SMLColumn(unique_name="amount", data_type=DataType.DECIMAL)],
+            ),
+        ],
+        metrics=[
+            SMLMetric(
+                unique_name="Sales Amount",
+                dataset="Sales",
+                source_column="amount",
+                aggregation=AggregationType.SUM,
+            ),
+            SMLMetric(
+                unique_name="Customer Name Count",
+                dataset="Customer",
+                source_column="name",
+                aggregation=AggregationType.COUNT,
+            ),
+            SMLMetric(
+                unique_name="Inventory Amount",
+                dataset="Inventory",
+                source_column="amount",
+                aggregation=AggregationType.SUM,
+            ),
+        ],
+    )
+    publisher = DatabricksPublisher(_cfg())
+    metric_name_index = publisher._build_metric_name_index(model)
+    metric_dataset_by_id, _ = publisher._build_effective_metric_dataset_maps(model)
+
+    contextual_metric_ids, unanchored_metrics = publisher._get_contextual_metric_ids_for_fact(
+        "Sales",
+        {"Customer"},
+        model,
+        {
+            "Sales Amount": {"Sales"},
+            "Customer Name Count": {"Sales"},
+            "Inventory Amount": {"Inventory"},
+        },
+        metric_dataset_by_id,
+        metric_name_index,
+    )
+
+    assert id(model.metrics[0]) in contextual_metric_ids
+    assert id(model.metrics[1]) in contextual_metric_ids
+    assert id(model.metrics[2]) not in contextual_metric_ids
+    assert not unanchored_metrics
+
+
+def test_emit_review_diagnostics_includes_reason_counts_and_skip_lists() -> None:
+    publisher = DatabricksPublisher(_cfg())
+
+    summary = publisher._emit_review_diagnostics(
+        [
+            {"name": "Metric A", "reason": DEPLOY_REASON_DAX_NOT_SUPPORTED},
+            {"name": "Metric B", "reason": DEPLOY_REASON_DAX_NOT_SUPPORTED},
+            {"name": "Join C", "reason": DEPLOY_REASON_VALIDATION_FAILED, "item_type": "join"},
+        ]
+    )
+
+    assert summary["reason_counts"][DEPLOY_REASON_DAX_NOT_SUPPORTED] == 2
+    assert summary["reason_counts"][DEPLOY_REASON_VALIDATION_FAILED] == 1
+    assert summary["skipped_measure_names"] == ["Metric A", "Metric B"]
+    assert summary["skipped_join_names"] == ["Join C"]
+
+
+def test_generate_sql_statements_populates_routing_summary_for_semantic_router() -> None:
+    model = SMLModel(
+        unique_name="RouterSummaryModel",
+        datasets=[
+            SMLDataset(
+                unique_name="Sales",
+                columns=[
+                    SMLColumn(unique_name="amount", data_type=DataType.DECIMAL),
+                    SMLColumn(unique_name="customer_id", data_type=DataType.INTEGER),
+                ],
+            ),
+            SMLDataset(
+                unique_name="Customer",
+                columns=[SMLColumn(unique_name="id", data_type=DataType.INTEGER)],
+            ),
+        ],
+        relationships=[
+            SMLRelationship(
+                unique_name="sales_to_customer",
+                from_dataset="Sales",
+                from_columns=["customer_id"],
+                to_dataset="Customer",
+                to_columns=["id"],
+                cardinality=Cardinality.MANY_TO_ONE,
+            )
+        ],
+        metrics=[
+            SMLMetric(
+                unique_name="Sales Amount",
+                dataset="Sales",
+                source_column="amount",
+                aggregation=AggregationType.SUM,
+            )
+        ],
+    )
+    behavior = ConnectorBehavior(
+        databricks=DatabricksBehavior(
+            semantic_router_enabled=True,
+            measure_view_type="metric_view",
+        )
+    )
+    publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+    with patch.object(publisher, "_resolve_existing_source_for_dataset", return_value=None):
+        _ = publisher.generate_sql_statements(model, view_type_override=VIEW_TYPE_METRIC)
+
+    publish_summary = publisher.get_last_publish_summary()
+    routing_summary = publish_summary["routing_summary"]
+
+    assert routing_summary["source_table_count"] == 2
+    assert routing_summary["fact_table_count"] == 1
+    assert routing_summary["dimension_table_count"] == 1
+    assert routing_summary["bridge_table_count"] == 0
+    assert routing_summary["generated_artifact_count"] == 1
+    assert routing_summary["review_required_count"] == 0
 
 
 def test_auto_bridge_relationship_join_keys_adds_and_backfills_missing_column():
@@ -2008,8 +2443,8 @@ class TestCombinedViewMode:
         assert created == 1
         assert skipped == 0
         assert not details
-        assert "(SELECT SUM(`source_value_total_stock`) FROM `main`.`public`.`Inventory_Fact`)" in stmts[0]
-        assert "(SELECT SUM(`wac_value_total_stock`) FROM `main`.`public`.`Inventory_Fact`)" in stmts[0]
+        assert "first((SELECT SUM(`source_value_total_stock`) FROM `main`.`public`.`Inventory_Fact`))" in stmts[0]
+        assert "first((SELECT SUM(`wac_value_total_stock`) FROM `main`.`public`.`Inventory_Fact`))" in stmts[0]
         assert "CAST(NULL AS TIMESTAMP) AS `gl_refresh_datetime`" in stmts[0]
 
     def test_combined_sql_mode_downgrades_unresolved_quoted_columns_to_draft(self):
@@ -2107,7 +2542,7 @@ class TestCombinedViewMode:
         assert any("COUNT(*) AS `total_rows`" in stmt for stmt in stmts)
         assert any("COUNT(DISTINCT `id`) AS `distinct_id_count`" in stmt for stmt in stmts)
 
-    def test_per_model_metric_view_emits_dimension_only_implicit_metrics(self):
+    def test_per_model_metric_view_includes_all_model_measures_and_dimensions(self):
         behavior = ConnectorBehavior(
             databricks=DatabricksBehavior(
                 model_artifact_mode="per_model",
@@ -2151,7 +2586,13 @@ class TestCombinedViewMode:
                     dataset="Fact",
                     source_column="amount",
                     aggregation=AggregationType.SUM,
-                )
+                ),
+                SMLMetric(
+                    unique_name="Customer Count",
+                    dataset="Customer",
+                    source_column="customer_key",
+                    aggregation=AggregationType.COUNT_DISTINCT,
+                ),
             ],
         )
         publisher = DatabricksPublisher(_cfg(), behavior=behavior)
@@ -2169,8 +2610,65 @@ class TestCombinedViewMode:
         assert created == 1
         assert skipped == 0
         assert not details
-        assert "customer_total_rows" in stmts[0]
-        assert "customer_distinct_customer_key_count" in stmts[0]
+        lowered = stmts[0].lower()
+        assert "total_amount" in lowered
+        assert "customer_count" in lowered
+        assert "customer.region" in lowered
+
+    def test_per_model_metric_view_deploys_unresolved_measure_as_null(self):
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                model_artifact_mode="per_model",
+                measure_view_type="metric_view",
+                enable_metric_view_joins=True,
+                enable_cross_table_joins=True,
+                enable_simple_dax_translation=False,
+            )
+        )
+        model = SMLModel(
+            unique_name="NullDraftModel",
+            datasets=[
+                SMLDataset(
+                    unique_name="Fact",
+                    columns=[
+                        SMLColumn(unique_name="amount", data_type=DataType.DECIMAL),
+                    ],
+                ),
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="Good Measure",
+                    dataset="Fact",
+                    source_column="amount",
+                    aggregation=AggregationType.SUM,
+                ),
+                SMLMetric(
+                    unique_name="Bad Dax Measure",
+                    dataset="Fact",
+                    expression="SUM([unknown_col])",
+                    aggregation=AggregationType.NONE,
+                ),
+            ],
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        with patch.object(
+            publisher,
+            "_resolve_existing_source_for_dataset",
+            side_effect=lambda dataset, expected: expected,
+        ):
+            stmts, created, skipped, details = publisher.generate_measure_view_statements(
+                model,
+                view_type_override=VIEW_TYPE_METRIC,
+            )
+
+        assert created == 1
+        assert skipped == 0
+        assert not details
+        lowered = stmts[0].lower()
+        assert 'name: "good_measure"' in lowered
+        assert 'name: "bad_dax_measure"' in lowered
+        assert "cast(null as double)" in lowered
 
     def test_metric_view_joins_resolve_spaced_dataset_source_names(self):
         """Join source should resolve to Databricks-safe relation names, not raw labels with spaces."""
@@ -2309,6 +2807,29 @@ class TestCombinedViewMode:
         assert 'using:' in stmts[0].lower()
         assert '"business_unit"' in stmts[0].lower()
         assert '"business unit"' not in stmts[0].lower()
+
+
+def test_find_dataset_by_metric_view_alias_matches_compact_alias_form():
+    """Joined-dimension lookup should match aliases that remove underscores/spaces."""
+    model = SMLModel(
+        unique_name="AliasModel",
+        datasets=[
+            SMLDataset(
+                unique_name="Plant_BU_Mapping",
+                columns=[
+                    SMLColumn(unique_name="plant_bu_mapping_curr_skey", data_type=DataType.INTEGER),
+                ],
+            ),
+        ],
+        metrics=[],
+    )
+    publisher = DatabricksPublisher(_cfg())
+
+    # JoinTreeBuilder aliases can compact names (e.g., Plant_BU_Mapping -> plantbumapping).
+    dataset = publisher._find_dataset_by_metric_view_alias(model, "plantbumapping")
+
+    assert dataset is not None
+    assert dataset.unique_name == "Plant_BU_Mapping"
 
     def test_salesforce_style_source_alias_view_is_generated(self):
         """Databricks shim views should expose Salesforce field names over snake_case tables."""
@@ -3889,6 +4410,167 @@ class TestMetricViewGeneration:
             for sql in executed_sql
         )
 
+    def test_publish_falls_back_to_sql_when_metric_view_explicit_and_override_enabled(self):
+        """Explicit metric_view may downgrade to SQL views when opt-in override is enabled."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                measure_view_type="metric_view",
+                measure_view_mode="combined",
+                create_metadata_table=False,
+                allow_sql_fallback_on_metric_view_failure=True,
+            )
+        )
+        model = _sales_model(with_source_column=True)
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+        executed_sql: list[str] = []
+
+        def _mock_execute(statements: list[str], concurrent: bool = False):
+            _ = concurrent
+            sql = statements[0]
+            executed_sql.append(sql)
+            if "WITH METRICS LANGUAGE YAML" in sql:
+                raise DatabricksPublishError("metric views not supported on this warehouse")
+            return [{"status": {"state": "SUCCEEDED"}}]
+
+        with patch.object(publisher, "_determine_view_type", return_value="metric_view"), patch.object(
+            publisher,
+            "_resolve_existing_source_for_dataset",
+            return_value="`main`.`public`.`Sales`",
+        ), patch.object(
+            publisher,
+            "execute_statements",
+            side_effect=_mock_execute,
+        ):
+            publisher.publish(model)
+
+        assert any("WITH METRICS LANGUAGE YAML" in sql for sql in executed_sql)
+        assert any(
+            "CREATE OR REPLACE VIEW" in sql and "WITH METRICS LANGUAGE YAML" not in sql
+            for sql in executed_sql
+        )
+
+    def test_publish_classifies_scalar_subquery_grouping_failure(self, caplog):
+        """Metric-view semantic grouping failures should be classified as SQL semantic errors."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                measure_view_type="metric_view",
+                measure_view_mode="combined",
+                create_metadata_table=False,
+            )
+        )
+        model = _sales_model(with_source_column=True)
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        def _mock_execute(statements: list[str], concurrent: bool = False):
+            _ = concurrent
+            sql = statements[0]
+            if "WITH METRICS LANGUAGE YAML" in sql:
+                raise DatabricksPublishError(
+                    "Databricks statement state=FAILED: [SCALAR_SUBQUERY_IS_IN_GROUP_BY_OR_AGGREGATE_FUNCTION]"
+                )
+            return [{"status": {"state": "SUCCEEDED"}}]
+
+        with caplog.at_level("WARNING"), patch.object(
+            publisher,
+            "_determine_view_type",
+            return_value="metric_view",
+        ), patch.object(
+            publisher,
+            "_resolve_existing_source_for_dataset",
+            return_value="`main`.`public`.`Sales`",
+        ), patch.object(
+            publisher,
+            "execute_statements",
+            side_effect=_mock_execute,
+        ):
+            publisher.publish(model)
+
+        assert any("class=SQL_SEMANTIC" in rec.getMessage() for rec in caplog.records)
+
+        error_class, reason = publisher._classify_metric_view_deploy_error(
+            "[SCALAR_SUBQUERY_IS_IN_GROUP_BY_OR_AGGREGATE_FUNCTION]"
+        )
+        assert error_class == ERROR_CLASS_SQL_SEMANTIC
+        assert reason == "SCALAR_SUBQUERY_GROUPING"
+
+    def test_publish_logs_sql_fallback_state_success(self, caplog):
+        """Fallback should emit explicit IN_PROGRESS and SUCCESS terminal state logs."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                measure_view_type="auto",
+                measure_view_mode="combined",
+                create_metadata_table=False,
+            )
+        )
+        model = _sales_model(with_source_column=True)
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        def _mock_execute(statements: list[str], concurrent: bool = False):
+            _ = concurrent
+            sql = statements[0]
+            if "WITH METRICS LANGUAGE YAML" in sql:
+                raise DatabricksPublishError("metric deploy failed")
+            return [{"status": {"state": "SUCCEEDED"}}]
+
+        with caplog.at_level("INFO"), patch.object(
+            publisher,
+            "_determine_view_type",
+            return_value="metric_view",
+        ), patch.object(
+            publisher,
+            "_resolve_existing_source_for_dataset",
+            return_value="`main`.`public`.`Sales`",
+        ), patch.object(
+            publisher,
+            "execute_statements",
+            side_effect=_mock_execute,
+        ):
+            publisher.publish(model)
+
+        messages = [rec.getMessage() for rec in caplog.records]
+        assert any(f"state={SQL_FALLBACK_IN_PROGRESS}" in msg for msg in messages)
+        assert any(f"state={SQL_FALLBACK_SUCCESS}" in msg for msg in messages)
+
+    def test_publish_logs_sql_fallback_state_failed(self, caplog):
+        """Fallback should emit FAILED terminal state when SQL fallback deployment still fails."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                measure_view_type="auto",
+                measure_view_mode="combined",
+                create_metadata_table=False,
+            )
+        )
+        model = _sales_model(with_source_column=True)
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        def _mock_execute(statements: list[str], concurrent: bool = False):
+            _ = concurrent
+            sql = statements[0]
+            if "WITH METRICS LANGUAGE YAML" in sql:
+                raise DatabricksPublishError("metric deploy failed")
+            if sql.strip().startswith("CREATE OR REPLACE VIEW"):
+                raise DatabricksPublishError("sql fallback failed")
+            return [{"status": {"state": "SUCCEEDED"}}]
+
+        with caplog.at_level("INFO"), patch.object(
+            publisher,
+            "_determine_view_type",
+            return_value="metric_view",
+        ), patch.object(
+            publisher,
+            "_resolve_existing_source_for_dataset",
+            return_value="`main`.`public`.`Sales`",
+        ), patch.object(
+            publisher,
+            "execute_statements",
+            side_effect=_mock_execute,
+        ):
+            publisher.publish(model)
+
+        messages = [rec.getMessage() for rec in caplog.records]
+        assert any(f"state={SQL_FALLBACK_IN_PROGRESS}" in msg for msg in messages)
+        assert any(f"state={SQL_FALLBACK_FAILED}" in msg for msg in messages)
+
     def test_publish_conflict_cleanup_disabled_by_default(self):
         """Object-type conflicts should not auto-drop when destructive ops are disabled."""
         behavior = ConnectorBehavior(
@@ -4745,7 +5427,56 @@ class TestPerModelArtifactMode:
         assert "source: |" in stmts[0]
         assert "FROM main.public.Fact" in stmts[0]
         assert "cust_region" in stmts[0]
-        assert "(select current_date() from main.public.project_measures)" in stmts[0]
+        assert "expr: \"current_date()\"" in stmts[0]
+        assert "(select current_date() from main.public.project_measures)" not in stmts[0]
+
+    def test_per_model_metric_view_non_root_scalar_measure_emits_direct_expression(self):
+        """Non-root scalar measures should not be wrapped in SELECT subqueries in metric-view YAML."""
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                model_artifact_mode="per_model",
+                measure_view_type="metric_view",
+                enable_metric_view_joins=True,
+                enable_cross_table_joins=True,
+            )
+        )
+        model = SMLModel(
+            unique_name="ScalarModel",
+            datasets=[
+                SMLDataset(unique_name="Project Measures", columns=[]),
+                SMLDataset(
+                    unique_name="Fact",
+                    columns=[
+                        SMLColumn(unique_name="amount", data_type=DataType.DECIMAL),
+                    ],
+                ),
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="Today",
+                    dataset="Project Measures",
+                    sql_expression="current_date()",
+                    aggregation=AggregationType.NONE,
+                )
+            ],
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        with patch.object(
+            publisher,
+            "_resolve_existing_source_for_dataset",
+            side_effect=lambda dataset, expected: expected,
+        ):
+            stmts, created, skipped, details = publisher.generate_measure_view_statements(
+                model,
+                view_type_override=VIEW_TYPE_METRIC,
+            )
+
+        assert created == 1
+        assert skipped == 0
+        assert not details
+        assert "expr: \"current_date()\"" in stmts[0]
+        assert "(select current_date()" not in stmts[0].lower()
 
     def test_per_model_sql_view_schemaless_root_inlines_measure_columns(self):
         behavior = ConnectorBehavior(
@@ -4785,3 +5516,218 @@ class TestPerModelArtifactMode:
         assert skipped == 0
         assert not details
         assert "CAST(NULL AS TIMESTAMP) AS `gl_refresh_datetime`" in stmts[0]
+
+    def test_per_model_sql_view_non_root_placeholder_table_inlines_missing_measure_columns(self):
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                model_artifact_mode="per_model",
+                model_fact_root="Fact",
+                measure_view_type="sql_view",
+            )
+        )
+        model = SMLModel(
+            unique_name="Inventory Semantic Model",
+            datasets=[
+                SMLDataset(
+                    unique_name="Fact",
+                    columns=[
+                        SMLColumn(unique_name="amount", data_type=DataType.DECIMAL),
+                    ],
+                ),
+                SMLDataset(
+                    unique_name="Project Measures",
+                    columns=[
+                        SMLColumn(unique_name="_semabridge_placeholder", data_type=DataType.STRING),
+                    ],
+                ),
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="Source Value Total Stock",
+                    dataset="Project Measures",
+                    sql_expression="SUM(`source_value_total_stock`)",
+                    aggregation=AggregationType.NONE,
+                )
+            ],
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        with patch.object(
+            publisher,
+            "_resolve_existing_source_for_dataset",
+            side_effect=lambda dataset, expected: expected,
+        ), patch.object(
+            publisher,
+            "_get_source_table_columns",
+            side_effect=lambda source: {"_semabridge_placeholder"}
+            if str(source).strip().startswith("`")
+            else set(),
+        ):
+            stmts, created, skipped, details = publisher.generate_measure_view_statements(
+                model,
+                view_type_override=VIEW_TYPE_SQL,
+            )
+
+        assert created == 1
+        assert skipped == 0
+        assert not details
+        lowered = stmts[0].lower()
+        assert "cast(null as double) as `source_value_total_stock`" in lowered
+        assert "sum(`source_value_total_stock`)" in lowered
+
+    def test_per_model_metric_view_relocates_dummy_dataset_sum_to_fact_anchor(self):
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                model_artifact_mode="per_model",
+                measure_view_type="metric_view",
+            )
+        )
+        model = SMLModel(
+            unique_name="Inventory Semantic Model",
+            datasets=[
+                SMLDataset(unique_name="Project Measures", columns=[]),
+                SMLDataset(
+                    unique_name="Inventory Fact",
+                    columns=[
+                        SMLColumn(unique_name="Revenue", data_type=DataType.DECIMAL),
+                    ],
+                ),
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="Revenue",
+                    dataset="Project Measures",
+                    expression="SUM('Inventory Fact'[Revenue])",
+                    aggregation=AggregationType.SUM,
+                )
+            ],
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        with patch.object(
+            publisher,
+            "_resolve_existing_source_for_dataset",
+            side_effect=lambda dataset, expected: expected,
+        ), patch.object(
+            publisher,
+            "_get_source_table_columns",
+            return_value={"revenue"},
+        ):
+            stmts, created, skipped, details = publisher.generate_measure_view_statements(
+                model,
+                view_type_override=VIEW_TYPE_METRIC,
+            )
+
+        assert created == 1
+        assert skipped == 0
+        assert not details
+        assert "FROM main.public.Inventory_Fact" in stmts[0]
+        assert "project_measures" not in stmts[0].lower()
+
+    def test_identify_fact_datasets_prefers_many_side_and_aggregation_presence(self):
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                model_artifact_mode="per_model",
+                measure_view_type="metric_view",
+            )
+        )
+        model = SMLModel(
+            unique_name="FactDetectionModel",
+            datasets=[
+                SMLDataset(
+                    unique_name="Sales",
+                    columns=[SMLColumn(unique_name="amount", data_type=DataType.DECIMAL)],
+                ),
+                SMLDataset(
+                    unique_name="Customer",
+                    columns=[SMLColumn(unique_name="customer_key", data_type=DataType.INTEGER)],
+                ),
+            ],
+            relationships=[
+                SMLRelationship(
+                    unique_name="sales_to_customer",
+                    from_dataset="Sales",
+                    from_columns=["customer_key"],
+                    to_dataset="Customer",
+                    to_columns=["customer_key"],
+                    cardinality=Cardinality.MANY_TO_ONE,
+                )
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="Total Sales",
+                    dataset="Sales",
+                    source_column="amount",
+                    aggregation=AggregationType.SUM,
+                )
+            ],
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        facts = publisher._identify_fact_datasets(model)
+
+        assert [dataset.unique_name for dataset in facts] == ["Sales"]
+
+    def test_identify_fact_datasets_is_deterministic_for_multi_fact_models(self):
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                model_artifact_mode="per_model",
+                measure_view_type="metric_view",
+            )
+        )
+        model = SMLModel(
+            unique_name="MultiFactModel",
+            datasets=[
+                SMLDataset(
+                    unique_name="FactA",
+                    columns=[SMLColumn(unique_name="a_amount", data_type=DataType.DECIMAL)],
+                ),
+                SMLDataset(
+                    unique_name="FactB",
+                    columns=[SMLColumn(unique_name="b_amount", data_type=DataType.DECIMAL)],
+                ),
+                SMLDataset(
+                    unique_name="DimDate",
+                    columns=[SMLColumn(unique_name="date_key", data_type=DataType.INTEGER)],
+                ),
+            ],
+            relationships=[
+                SMLRelationship(
+                    unique_name="fact_a_to_date",
+                    from_dataset="FactA",
+                    from_columns=["date_key"],
+                    to_dataset="DimDate",
+                    to_columns=["date_key"],
+                    cardinality=Cardinality.MANY_TO_ONE,
+                ),
+                SMLRelationship(
+                    unique_name="fact_b_to_date",
+                    from_dataset="FactB",
+                    from_columns=["date_key"],
+                    to_dataset="DimDate",
+                    to_columns=["date_key"],
+                    cardinality=Cardinality.MANY_TO_ONE,
+                ),
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="A Revenue",
+                    dataset="FactA",
+                    source_column="a_amount",
+                    aggregation=AggregationType.SUM,
+                ),
+                SMLMetric(
+                    unique_name="B Revenue",
+                    dataset="FactB",
+                    source_column="b_amount",
+                    aggregation=AggregationType.SUM,
+                ),
+            ],
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        facts_first_run = [dataset.unique_name for dataset in publisher._identify_fact_datasets(model)]
+        facts_second_run = [dataset.unique_name for dataset in publisher._identify_fact_datasets(model)]
+
+        assert facts_first_run == facts_second_run
+        assert facts_first_run == ["FactA", "FactB"]
