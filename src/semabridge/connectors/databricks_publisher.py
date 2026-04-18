@@ -2292,21 +2292,7 @@ class DatabricksPublisher:
                 output_yaml = output_yaml[:measures_idx] + "\n".join(dims_to_inject) + "\n\n" + output_yaml[measures_idx:]
 
         # 2. Fix NESTED_AGGREGATE_FUNCTION (Error 1)
-        # Scan for any nested subquery MAX(fiscal_yr_period) and safely inject the join + rewrite
-        import re
-        has_subquery = bool(re.search(r"\(\s*SELECT\s+MAX\(`?fiscal_yr_period`?\)", output_yaml, flags=re.IGNORECASE))
-        if has_subquery:
-            cf_join = f"  - name: current_fiscal\n    source: |-\n      (SELECT MAX(fiscal_yr_period) AS current_fiscal_period\n       FROM `{self.config.catalog}`.`{self.config.schema_name}`.Dates\n       WHERE cal_dt = CURRENT_DATE())\n    on: '1 = 1'\n"
-            if "joins:" in output_yaml:
-                output_yaml = output_yaml.replace("joins:", "joins:\n" + cf_join)
-            
-            # Use a robust non-greedy match that consumes everything up to CURRENT_DATE())
-            output_yaml = re.sub(
-                r"WHEN\s+(`?fiscal_yr_period`?)\s*<\s*\(\s*SELECT\s+MAX\(`?fiscal_yr_period`?\).*?CURRENT_DATE(?:\(\))?\s*\)",
-                r"WHEN \1 < current_fiscal.`current_fiscal_period`",
-                output_yaml,
-                flags=re.IGNORECASE | re.DOTALL,
-            )
+        # We now rely on the measure_sql_overrides in semabridge.yml instead of regex hacks.
 
         return output_yaml
 
@@ -2354,13 +2340,30 @@ class DatabricksPublisher:
             )
             return []
         
-        if not joins:
+        if not joins and not hasattr(self, "_config_pre_joins"):
             return []
-        
+            
         # Emit joins YAML
         lines: list[str] = [""]
         lines.append("joins:")
-        self._emit_join_yaml(sml_model, joins, lines, indent=1)
+        
+        # Inject custom pre_joins
+        if hasattr(self, "_config_pre_joins") and self._config_pre_joins:
+            for j in self._config_pre_joins:
+                lines.append(f"  - name: {j.get('alias')}")
+                if 'sql' in j:
+                    if j['sql'].strip().upper().startswith('SELECT'):
+                        lines.append(f"    source: |-\n      ({j['sql']})")
+                    else:
+                        lines.append(f"    source: {j['sql']}")
+                if 'on' in j:
+                    lines.append(f"    on: '{j['on']}'")
+                elif j.get('type') == 'cross':
+                    lines.append(f"    on: '1 = 1'")
+                lines.append("")
+        
+        if joins:
+            self._emit_join_yaml(sml_model, joins, lines, indent=1)
         
         return lines
     
@@ -3954,6 +3957,12 @@ class DatabricksPublisher:
 
             score_desc = f"{ds_name}:score={score}(has_rel={score[0]},has_cols={score[1]},degree={score[2]},metrics={score[3]})"
             scoring_details.append(score_desc)
+
+            if hasattr(self, "_config_preferred_root") and self._config_preferred_root:
+                pref_norm = self._sanitize_identifier(self._config_preferred_root).lower()
+                if ds_name.lower() == pref_norm:
+                    score = (9999, 9999, 9999, 9999)
+                    scoring_details.append(f"{ds_name}:override=PREFERRED")
 
             if best_score is None or score > best_score:
                 best = dataset
@@ -5870,6 +5879,56 @@ class DatabricksPublisher:
             logger.info("✅ Extracted Category 3 UI measures and generated %s and %s", sql_path.name, report_path.name)
 
 
+    def _apply_model_config_overrides(self, sml_model: SMLModel) -> None:
+        """Apply config-driven SML graph mutations from semabridge.yaml hook."""
+        from semabridge.core.config_loader import get_project_file_path
+        import yaml as yaml_lib
+        
+        cfg_path = get_project_file_path("semabridge.yaml")
+        if not cfg_path.exists():
+            cfg_path = get_project_file_path("semabridge.yml")
+            if not cfg_path.exists():
+                return
+                
+        try:
+            cfg = yaml_lib.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        except Exception as e:
+            logger.warning("Failed to parse semabridge.yaml: %s", str(e))
+            return
+            
+        models_cfg = cfg.get("models", {})
+        model_cfg = models_cfg.get(sml_model.unique_name, {})
+        if not model_cfg:
+            return
+            
+        logger.info("Applying transform hook overrides from semabridge.yaml for '%s'", sml_model.unique_name)
+        
+        ignore_tables = model_cfg.get("ignore_tables", [])
+        if ignore_tables:
+            ignore_set = {self._sanitize_identifier(t).lower() for t in ignore_tables}
+            original_count = len(sml_model.datasets)
+            sml_model.datasets = [ds for ds in sml_model.datasets if self._sanitize_identifier(ds.unique_name).lower() not in ignore_set]
+            if original_count > len(sml_model.datasets):
+                logger.info("  - Removed %d virtual datasets matching ignore_tables", original_count - len(sml_model.datasets))
+            
+        pref_root = model_cfg.get("preferred_root_table")
+        if pref_root:
+            logger.info("  - Set preferred_root_table to '%s'", pref_root)
+            self._config_preferred_root = pref_root
+
+        pre_joins = model_cfg.get("pre_joins", [])
+        if pre_joins:
+            logger.info("  - Loaded %d pre_joins definitions", len(pre_joins))
+            self._config_pre_joins = pre_joins
+            
+        overrides = model_cfg.get("measure_sql_overrides", {})
+        if overrides:
+            logger.info("  - Loaded %d measure_sql_overrides", len(overrides))
+            for metric in sml_model.metrics:
+                if metric.unique_name in overrides:
+                    metric.sql_expression = overrides[metric.unique_name].strip()
+                    metric.expression = ""
+
     def publish(self, sml_model: SMLModel) -> str:
         """Generate and execute Databricks statements.
 
@@ -5881,6 +5940,8 @@ class DatabricksPublisher:
         Returns:
             A URI identifying the deployed artifact.
         """
+        self._apply_model_config_overrides(sml_model)
+        
         original_view_mode = self._dbx_behavior.measure_view_mode
         try:
             # Phase 0: Resolve view type (probe runtime if "auto")
