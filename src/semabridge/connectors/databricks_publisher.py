@@ -1806,7 +1806,7 @@ class DatabricksPublisher:
 
         for binding in bindings:
             source_expr = (
-                f"`{binding.source_column}`"
+                f"f.`{binding.source_column}`"
                 if not physical_cols or binding.source_column.lower() in physical_cols
                 else "NULL"
             )
@@ -1829,7 +1829,7 @@ class DatabricksPublisher:
             "|\n"
             "  SELECT\n"
             f"{select_list}\n"
-            f"  FROM {source_fq.replace('`', '')}"
+            f"  FROM {source_fq.replace('`', '')} f"
         )
 
     def _requires_source_alias_query(
@@ -2263,10 +2263,51 @@ class DatabricksPublisher:
             lines.append(f"  - name: {yaml_quote(prefixed_measure_name)}")
             lines.append(f"    expr: {yaml_quote(dbx_expr)}")
             measures_added += 1
+            
         if measures_added == 0:
             lines[-1] = "measures: []"
 
-        return "\n".join(lines)
+        output_yaml = "\n".join(lines)
+
+        # ── Databricks Semantic Overrides ──
+        
+        # 1. Inject UI lookups (Error 3)
+        if hasattr(self, "_ui_lookups") and self._ui_lookups:
+            joins_to_inject = []
+            dims_to_inject = []
+            for lookup in self._ui_lookups:
+                join_alias = self._sanitize_identifier(lookup['metric_name']).lower() + "_lookup"
+                joins_to_inject.append(f"  - name: {join_alias}")
+                joins_to_inject.append(f"    source: {lookup['table_name']}")
+                joins_to_inject.append(f"    on: '`{lookup['column'].lower()}` = {join_alias}.`{lookup['column'].lower()}`'")
+                dims_to_inject.append(f"  - name: {self._sanitize_identifier(lookup['metric_name']).lower()}_text")
+                dims_to_inject.append(f"    expr: {join_alias}.`{self._sanitize_identifier(lookup['metric_name']).lower()}_text`")
+            
+            if "joins:" in output_yaml:
+                output_yaml = output_yaml.replace("joins:", "joins:\n" + "\n".join(joins_to_inject))
+            
+            # Dimensions block exists, just append before measures
+            measures_idx = output_yaml.rfind("measures:")
+            if measures_idx != -1:
+                output_yaml = output_yaml[:measures_idx] + "\n".join(dims_to_inject) + "\n\n" + output_yaml[measures_idx:]
+
+        # 2. Fix NESTED_AGGREGATE_FUNCTION (Error 1)
+        # If any subquery MAX() is present, replace with current_fiscal join
+        if "SELECT MAX(fiscal_yr_period)" in output_yaml or "SELECT MAX(`fiscal_yr_period`)" in output_yaml:
+            cf_join = f"  - name: current_fiscal\n    source: |-\n      (SELECT MAX(fiscal_yr_period) AS current_fiscal_period\n       FROM `{self.config.catalog}`.`{self.config.schema_name}`.Dates\n       WHERE cal_dt = CURRENT_DATE())\n    on: '1 = 1'\n"
+            if "joins:" in output_yaml:
+                output_yaml = output_yaml.replace("joins:", "joins:\n" + cf_join)
+            
+            # Strip out nested subqueries in CASE statements
+            import re
+            output_yaml = re.sub(
+                r"WHEN\s+(`?fiscal_yr_period`?)\s*<\s*\(\s*SELECT\s+MAX\(`?fiscal_yr_period`?\).*?\)",
+                r"WHEN \1 < current_fiscal.`current_fiscal_period`",
+                output_yaml,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+
+        return output_yaml
 
     def _generate_metric_view_joins_yaml(
         self,
@@ -5780,6 +5821,7 @@ class DatabricksPublisher:
         model_name = self._sanitize_identifier(sml_model.unique_name)
 
         has_lookups = False
+        self._ui_lookups = []
 
         for metric in sml_model.metrics:
             if not metric.expression:
@@ -5790,6 +5832,16 @@ class DatabricksPublisher:
                 continue
                 
             has_lookups = True
+            
+            table_name = f"{schema_prefix}{parsed['dataset'].lower()}_{self._sanitize_identifier(metric.unique_name).lower()}_callouts"
+            
+            self._ui_lookups.append({
+                "metric_name": metric.unique_name,
+                "dataset": parsed["dataset"],
+                "column": parsed["column"],
+                "table_name": table_name,
+            })
+            
             ddl = self._measure_translator.generate_lookup_ddl(metric.unique_name, parsed, schema_prefix=schema_prefix)
             lookup_stmts.append(f"-- Lookup Table for {metric.unique_name}")
             lookup_stmts.append(ddl)
