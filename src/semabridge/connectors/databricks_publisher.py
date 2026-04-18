@@ -5942,6 +5942,22 @@ class DatabricksPublisher:
                         logger.info("  - [Auto] Re-parented virtual metric '%s' to '%s'", metric.unique_name, target_ds)
                         metric.dataset = target_ds
 
+                        # Immediately pre-translate simple DAX to SQL so the downstream
+                        # pipeline never wraps it in a subquery against the now-pruned
+                        # virtual table (e.g., project_measures).
+                        if not metric.sql_expression and metric.expression:
+                            pre_translated = self._measure_translator.try_simple_dax_to_sql(
+                                metric.expression.strip()
+                            )
+                            if pre_translated:
+                                metric.sql_expression = pre_translated
+                                metric.expression = ""
+                                logger.info(
+                                    "  - [Auto] Pre-translated DAX for re-parented metric '%s': %s",
+                                    metric.unique_name,
+                                    pre_translated,
+                                )
+
         # Auto-detect correlated fiscal subqueries that fail in Databricks Metric YAML
         import re
         has_fiscal_nested = False
