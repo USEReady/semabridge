@@ -1805,11 +1805,16 @@ class DatabricksPublisher:
         used_aliases: set[str] = set()
 
         for binding in bindings:
-            source_expr = (
-                f"f.`{binding.source_column}`"
-                if not physical_cols or binding.source_column.lower() in physical_cols
-                else "NULL"
-            )
+            # When an alias table is used, binding.source_column could exist natively
+            source_expr = f"f.`{binding.source_column}`"
+            
+            # If physical cols are known and the column doesn't exist, we must still project it
+            # But we fallback to NULL to avoid UNRESOLVED_COLUMN errors inside the source block.
+            if physical_cols and binding.source_column.lower() not in physical_cols:
+                # If we have measure overrides, they might be relying on 'Inventory_Fact.source_value_total_stock'
+                # but if that column is purely in Project_Measures, it won't exist.
+                # However, this mapping guarantees metric view yaml syntax validity.
+                source_expr = "CAST(NULL AS DOUBLE)"
 
             projected_alias = str(binding.projected_name or "").strip()
             if projected_alias and projected_alias.lower() not in used_aliases:
@@ -1820,6 +1825,11 @@ class DatabricksPublisher:
             if semantic_alias and semantic_alias.lower() not in used_aliases:
                 select_parts.append(f"  {source_expr} AS `{semantic_alias}`")
                 used_aliases.add(semantic_alias.lower())
+
+
+        if hasattr(self, "_config_source_sql") and self._config_source_sql:
+            for source_inj in self._config_source_sql:
+                select_parts.append(f"  {source_inj.strip()}")
 
         if not select_parts:
             return source_fq.replace("`", "")
@@ -2291,26 +2301,11 @@ class DatabricksPublisher:
             if measures_idx != -1:
                 output_yaml = output_yaml[:measures_idx] + "\n".join(dims_to_inject) + "\n\n" + output_yaml[measures_idx:]
 
-        # 2. Fix NESTED_AGGREGATE_FUNCTION (Error 1)
-        # Scan for any nested subquery MAX(fiscal_yr_period) and safely inject the join + rewrite
-        import re
-        has_subquery = bool(re.search(r"\(\s*SELECT\s+MAX\(`?fiscal_yr_period`?\)", output_yaml, flags=re.IGNORECASE))
-        if has_subquery:
-            cf_join = f"  - name: current_fiscal\n    source: |-\n      (SELECT MAX(fiscal_yr_period) AS current_fiscal_period\n       FROM `{self.config.catalog}`.`{self.config.schema_name}`.Dates\n       WHERE cal_dt = CURRENT_DATE())\n    on: '1 = 1'\n"
-            if "joins:" in output_yaml:
-                output_yaml = output_yaml.replace("joins:", "joins:\n" + cf_join)
-            elif "dimensions:" in output_yaml:
-                output_yaml = output_yaml.replace("dimensions:", f"joins:\n{cf_join}\ndimensions:")
-            else:
-                output_yaml = output_yaml + f"\njoins:\n{cf_join}"
-            
-            # Use a robust non-greedy match that consumes everything up to CURRENT_DATE())
-            output_yaml = re.sub(
-                r"WHEN\s+(`?fiscal_yr_period`?)\s*<\s*\(\s*SELECT\s+MAX\(`?fiscal_yr_period`?\).*?CURRENT_DATE(?:\(\))?\s*\)",
-                r"WHEN \1 < current_fiscal.`current_fiscal_period`",
-                output_yaml,
-                flags=re.IGNORECASE | re.DOTALL,
-            )
+        # We completely removed the `current_fiscal` regex join injection here
+        # because Unity Catalog natively forbids aggregate subqueries inside the joins block.
+        # Instead, users fully use `semabridge.yaml` -> `source_columns_sql` (Option 2)
+        # to inject `(SELECT MAX(...) ...) AS _current_fiscal_period` into the root SELECT
+        # and override measures via `measure_sql_overrides`.
 
         return output_yaml
 
@@ -5933,6 +5928,11 @@ class DatabricksPublisher:
         if pref_root:
             logger.info("  - Set preferred_root_table to '%s'", pref_root)
             self._config_preferred_root = pref_root
+
+        source_injs = model_cfg.get("source_columns_sql", [])
+        if source_injs:
+            logger.info("  - Loaded %d source_columns_sql injections", len(source_injs))
+            self._config_source_sql = source_injs
 
         # Re-parent orphaned metrics
         if ignore_tables and len(sml_model.datasets) > 0:
