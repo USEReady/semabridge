@@ -5767,6 +5767,55 @@ class DatabricksPublisher:
                 results.append(_fire_request(sql))
         return results
 
+    def _generate_ui_lookups(self, sml_model: SMLModel) -> None:
+        """Scan metrics for UI logic and generate lookups.sql & migration_report.md."""
+        lookup_stmts = []
+        migration_lines = [
+            "# Migration Report: UI Measures",
+            "The following DAX measures contained UI/formatting strings and were translated into dedicated text lookup tables.",
+            ""
+        ]
+
+        schema_prefix = f"`{self.config.catalog}`.`{self.config.schema_name}`."
+        model_name = self._sanitize_identifier(sml_model.unique_name)
+
+        has_lookups = False
+
+        for metric in sml_model.metrics:
+            if not metric.expression:
+                continue
+            
+            parsed = self._measure_translator.parse_switch_ui_logic(metric.expression)
+            if not parsed:
+                continue
+                
+            has_lookups = True
+            ddl = self._measure_translator.generate_lookup_ddl(metric.unique_name, parsed, schema_prefix=schema_prefix)
+            lookup_stmts.append(f"-- Lookup Table for {metric.unique_name}")
+            lookup_stmts.append(ddl)
+            lookup_stmts.append("")
+
+            # Add to report
+            migration_lines.append(f"### {metric.unique_name}")
+            migration_lines.append(f"- **Lookup Table Created:** `{schema_prefix}{parsed['dataset'].lower()}_{self._sanitize_identifier(metric.unique_name).lower()}_callouts`")
+            migration_lines.append(f"- **Join Column:** `{parsed['column']}`")
+            migration_lines.append(f"- **Action Required for BI Tool:** Instead of a DAX measure, join the above table into your Databricks semantic model using `{parsed['column']}` and use the `{self._sanitize_identifier(metric.unique_name).lower()}_text` column directly in your visuals.")
+            migration_lines.append("")
+
+        if has_lookups:
+            # Persist to disk
+            from pathlib import Path
+            artifact_dir = Path("output") / "semantic_bridge" / model_name
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            
+            sql_path = artifact_dir / "lookup_tables_ddl.sql"
+            sql_path.write_text("\n".join(lookup_stmts), encoding="utf-8")
+            
+            report_path = artifact_dir / "migration_report.md"
+            report_path.write_text("\n".join(migration_lines), encoding="utf-8")
+            
+            logger.info("✅ Extracted Category 3 UI measures and generated %s and %s", sql_path.name, report_path.name)
+
 
     def publish(self, sml_model: SMLModel) -> str:
         """Generate and execute Databricks statements.
@@ -5815,6 +5864,9 @@ class DatabricksPublisher:
                 self._initialize_semantic_router(sml_model)
             except ValueError as exc:
                 raise DatabricksPublishError(str(exc)) from exc
+
+            # Extract Category 3 UI metrics into standalone lookup tables
+            self._generate_ui_lookups(sml_model)
 
             # Generate all statements with the resolved view type
             statements = self.generate_sql_statements(
