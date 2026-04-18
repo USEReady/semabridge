@@ -2243,6 +2243,9 @@ class ExecutionEngine:
         from semabridge.connectors.databricks_publisher import DatabricksPublisher
 
         publisher = DatabricksPublisher(context.config.databricks, behavior=context.behavior)
+        # Apply the same heuristic transforms that publish() applies so the
+        # debug YAML artifact faithfully reflects what will be deployed.
+        publisher._apply_model_config_overrides(context.sml_model)
         statements, created, skipped, skipped_details = publisher.generate_measure_view_statements(
             context.sml_model,
             view_type_override="metric_view",
