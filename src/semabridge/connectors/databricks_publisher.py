@@ -1973,6 +1973,18 @@ class DatabricksPublisher:
             column_name = match.group(1) or match.group(2) or ""
             projected = _resolve_projected_name(column_name)
             if not projected:
+                normalized_col = self._sanitize_identifier(column_name).lower()
+                # 1. If the column exists in the live-introspected physical table, pass it through.
+                if normalized_col in physical_cols:
+                    return f"`{self._sanitize_identifier(column_name)}`"
+                # 2. If no physical columns were introspected (DB unreachable or table not
+                #    yet created), give the benefit of the doubt and pass the column through.
+                #    This prevents translated DAX from silently becoming cast(null as double)
+                #    simply because SHOW COLUMNS couldn't run before the table was deployed.
+                if not physical_cols:
+                    return f"`{self._sanitize_identifier(column_name)}`"
+                # 3. No semantic binding AND not in physical schema AND schema IS known.
+                #    Only at this point do we treat it as unresolvable.
                 if not dataset.columns:
                     return f"`{self._sanitize_identifier(column_name)}`"
                 unresolved = True
