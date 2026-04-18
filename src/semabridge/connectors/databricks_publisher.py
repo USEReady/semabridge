@@ -5911,6 +5911,49 @@ class DatabricksPublisher:
             
         models_cfg = cfg.get("models", {})
         model_cfg = models_cfg.get(sml_model.unique_name, {})
+        # -------------------------------------------------------------
+        # 1. APPLY AUTOMATED SYSTEM HEURISTICS (Zero-Config Fixes)
+        # -------------------------------------------------------------
+        # Auto-prune universally virtual tables (0 physical columns)
+        virtual_tables = {ds.unique_name for ds in sml_model.datasets if not ds.columns}
+        if virtual_tables:
+            logger.info("  - [Auto] Pruning %d completely virtual measure tables: %s", len(virtual_tables), virtual_tables)
+            sml_model.datasets = [ds for ds in sml_model.datasets if ds.unique_name not in virtual_tables]
+            
+            # Since we just pruned tables, re-parent their metrics to a robust dataset
+            target_ds = sml_model.datasets[0].unique_name if sml_model.datasets else None
+            # If the user's config specifies a preferred root, use that
+            if model_cfg.get("preferred_root_table"):
+                target_ds = model_cfg["preferred_root_table"]
+                
+            if target_ds:
+                for metric in sml_model.metrics:
+                    if metric.dataset_name and metric.dataset_name in virtual_tables:
+                        logger.info("  - [Auto] Re-parented virtual metric '%s' to '%s'", metric.unique_name, target_ds)
+                        metric.dataset_name = target_ds
+
+        # Auto-detect correlated fiscal subqueries that fail in Databricks Metric YAML
+        import re
+        has_fiscal_nested = False
+        target_subquery_regex = re.compile(r"\(\s*SELECT\s+MAX\(`?fiscal_yr_period`?\).*?CURRENT_DATE(?:\(\))?\s*\)", re.IGNORECASE | re.DOTALL)
+        
+        for metric in sml_model.metrics:
+            if metric.sql_expression and target_subquery_regex.search(metric.sql_expression):
+                has_fiscal_nested = True
+                metric.sql_expression = target_subquery_regex.sub(
+                    r"`_current_fiscal_period`",
+                    metric.sql_expression,
+                )
+                logger.debug("  - [Auto] Subquery rewritten for metric '%s'", metric.unique_name)
+                
+        if has_fiscal_nested:
+            logger.info("  - [Auto] Nested fiscal subqueries detected! Bootstrapping standard threshold inside root SOURCE loop.")
+            auto_inj = f"(SELECT MAX(fiscal_yr_period) FROM `{self.config.catalog}`.`{self.config.schema_name}`.Dates WHERE cal_dt = CURRENT_DATE()) AS `_current_fiscal_period`"
+            if not hasattr(self, "_config_source_sql"):
+                self._config_source_sql = []
+            if auto_inj not in self._config_source_sql:
+                self._config_source_sql.append(auto_inj)
+
         if not model_cfg:
             return
             
