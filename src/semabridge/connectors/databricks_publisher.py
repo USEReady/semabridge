@@ -5928,9 +5928,9 @@ class DatabricksPublisher:
                 
             if target_ds:
                 for metric in sml_model.metrics:
-                    if metric.dataset_name and metric.dataset_name in virtual_tables:
+                    if metric.dataset and metric.dataset in virtual_tables:
                         logger.info("  - [Auto] Re-parented virtual metric '%s' to '%s'", metric.unique_name, target_ds)
-                        metric.dataset_name = target_ds
+                        metric.dataset = target_ds
 
         # Auto-detect correlated fiscal subqueries that fail in Databricks Metric YAML
         import re
@@ -5981,9 +5981,9 @@ class DatabricksPublisher:
         if ignore_tables and len(sml_model.datasets) > 0:
             target_ds = pref_root or sml_model.datasets[0].unique_name
             for metric in sml_model.metrics:
-                if metric.dataset_name and self._sanitize_identifier(metric.dataset_name).lower() in ignore_set:
+                if metric.dataset and self._sanitize_identifier(metric.dataset).lower() in ignore_set:
                     logger.info("  - Re-parented orphaned metric '%s' to '%s'", metric.unique_name, target_ds)
-                    metric.dataset_name = target_ds
+                    metric.dataset = target_ds
 
         pre_joins = model_cfg.get("pre_joins", [])
         if pre_joins:
