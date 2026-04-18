@@ -2656,12 +2656,17 @@ class DatabricksPublisher:
                         })
                     continue
 
-                metric_view_expr = self._rewrite_metric_view_measure_expression(
-                    sql_expr,
-                    dataset,
-                    source_fq,
-                    bindings,
-                )
+                # Pre-translated SQL (SQL_NATIVE) already has validated bare column refs.
+                # Skip projection rewriting to prevent spurious unresolved-binding failures.
+                if translation_type == TRANSLATION_TYPE_SQL_NATIVE:
+                    metric_view_expr = sql_expr
+                else:
+                    metric_view_expr = self._rewrite_metric_view_measure_expression(
+                        sql_expr,
+                        dataset,
+                        source_fq,
+                        bindings,
+                    )
                 if not metric_view_expr:
                     metric_view_expr = self._build_scalar_subquery_aggregate_expression(
                         sql_expr,
@@ -4856,7 +4861,12 @@ class DatabricksPublisher:
                 continue
 
             metric_expr: str | None = None
-            if self._sanitize_identifier(metric_dataset.unique_name) == root_dataset_name:
+            # Pre-translated SQL (SQL_NATIVE) already uses bare column names validated by
+            # the DAX translator — skip the projection rewriter to prevent it from
+            # marking unrecognised binding names as unresolved and returning None.
+            if translation_type == TRANSLATION_TYPE_SQL_NATIVE:
+                metric_expr = sql_expr
+            elif self._sanitize_identifier(metric_dataset.unique_name) == root_dataset_name:
                 metric_expr = self._rewrite_metric_view_measure_expression(
                     sql_expr,
                     metric_dataset,
