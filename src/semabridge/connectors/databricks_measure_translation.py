@@ -438,8 +438,9 @@ class DatabricksMeasureTranslator:
                 "count",
                 "distinctcount",
             }
+            # For metric views, use the deterministic `f` alias for primary fact columns
             col_ref = (
-                f"{table}.{col}"
+                f"f.{col}"
                 if (table and self._behavior.enable_cross_table_joins and func in qualify_for_join)
                 else col
             )
