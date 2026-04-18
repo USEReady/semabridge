@@ -2292,16 +2292,17 @@ class DatabricksPublisher:
                 output_yaml = output_yaml[:measures_idx] + "\n".join(dims_to_inject) + "\n\n" + output_yaml[measures_idx:]
 
         # 2. Fix NESTED_AGGREGATE_FUNCTION (Error 1)
-        # If any subquery MAX() is present, replace with current_fiscal join
-        if "SELECT MAX(fiscal_yr_period)" in output_yaml or "SELECT MAX(`fiscal_yr_period`)" in output_yaml:
+        # Scan for any nested subquery MAX(fiscal_yr_period) and safely inject the join + rewrite
+        import re
+        has_subquery = bool(re.search(r"\(\s*SELECT\s+MAX\(`?fiscal_yr_period`?\)", output_yaml, flags=re.IGNORECASE))
+        if has_subquery:
             cf_join = f"  - name: current_fiscal\n    source: |-\n      (SELECT MAX(fiscal_yr_period) AS current_fiscal_period\n       FROM `{self.config.catalog}`.`{self.config.schema_name}`.Dates\n       WHERE cal_dt = CURRENT_DATE())\n    on: '1 = 1'\n"
             if "joins:" in output_yaml:
                 output_yaml = output_yaml.replace("joins:", "joins:\n" + cf_join)
             
-            # Strip out nested subqueries in CASE statements
-            import re
+            # Use a robust non-greedy match that consumes everything up to CURRENT_DATE())
             output_yaml = re.sub(
-                r"WHEN\s+(`?fiscal_yr_period`?)\s*<\s*\(\s*SELECT\s+MAX\(`?fiscal_yr_period`?\).*?\)",
+                r"WHEN\s+(`?fiscal_yr_period`?)\s*<\s*\(\s*SELECT\s+MAX\(`?fiscal_yr_period`?\).*?CURRENT_DATE(?:\(\))?\s*\)",
                 r"WHEN \1 < current_fiscal.`current_fiscal_period`",
                 output_yaml,
                 flags=re.IGNORECASE | re.DOTALL,
