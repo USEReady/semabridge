@@ -1,0 +1,22 @@
+# Agent Instructions
+
+Please refer to the following files for agent rules and workflows:
+- `.github/copilot-instructions.md`
+- `.github/AGENTS.md`
+
+All AI coding assistants and agents should follow the workflow skills defined in `.github/skills/` and strictly adhere to the guidelines provided in these documents.
+
+## Available Slash Commands
+
+When a user invokes a slash command, follow the corresponding workflow in `.github/skills/`:
+
+- `/ideate` -> `idea-refine`
+- `/spec` -> `spec-driven-development`
+- `/plan` -> `planning-and-task-breakdown`
+- `/implement` -> `incremental-implementation`
+- `/tdd` -> `test-driven-development`
+- `/debug` -> `debugging-and-error-recovery`
+- `/review` -> `code-review-and-quality`
+- `/launch` -> `shipping-and-launch`
+- `/ci-cd` -> `ci-cd-and-automation`
+
