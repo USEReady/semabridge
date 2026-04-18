@@ -2282,8 +2282,12 @@ class DatabricksPublisher:
                     dax_preview = re.sub(r"\s+", " ", original_dax).strip()[:200]
                     lines.append(f"  # Original DAX: {dax_preview}")
 
+            # Safety net: Databricks metric views require every measure expr to be an
+            # aggregate function. If the expression has no aggregate root, wrap it in
+            # ANY_VALUE() so the deployment never rejects it.
+            safe_expr = self._ensure_aggregate_measure_expr(dbx_expr)
             lines.append(f"  - name: {yaml_quote(prefixed_measure_name)}")
-            lines.append(f"    expr: {yaml_quote(dbx_expr)}")
+            lines.append(f"    expr: {yaml_quote(safe_expr)}")
             measures_added += 1
             
         if measures_added == 0:
@@ -2500,6 +2504,49 @@ class DatabricksPublisher:
             else:
                 normalized_parts.append(part.lower())
         return "".join(normalized_parts)
+
+    # Aggregate function names accepted by Databricks Unity Catalog metric views
+    _AGGREGATE_ROOTS = frozenset({
+        "sum", "avg", "average", "min", "max", "count", "any_value",
+        "approx_count_distinct", "collect_list", "collect_set",
+        "first", "last", "stddev", "stddev_pop", "var_pop", "variance",
+        "percentile", "percentile_approx", "median", "bitmap_or_agg",
+    })
+
+    def _ensure_aggregate_measure_expr(self, expr: str) -> str:
+        """Wrap non-aggregate measure SQL in ANY_VALUE() for Databricks compliance.
+
+        Databricks Unity Catalog metric views reject measure expressions that do not
+        contain a top-level aggregate function (SUM, MAX, ANY_VALUE, etc.).  This
+        helper detects bare scalar / CASE WHEN / subquery expressions and wraps them
+        so deployment never fails due to missing aggregate roots.
+        """
+        clean = str(expr or "").strip()
+        if not clean or clean.lower() == "cast(null as double)":
+            return clean
+
+        # Extract the leading function name (handles backticks and spaces)
+        func_match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*\(", clean, re.IGNORECASE)
+        if func_match:
+            func_name = func_match.group(1).lower()
+            if func_name in self._AGGREGATE_ROOTS:
+                return clean  # already has an aggregate root
+
+        # Subquery starting with SELECT — treat as scalar subquery, wrap it
+        if re.match(r"^\(?\s*select\b", clean, re.IGNORECASE):
+            # Already scalar subqueries like (SELECT MAX(...) FROM ...) are fine as-is;
+            # plain (SELECT col FROM ...) need wrapping.
+            inner_has_agg = any(
+                re.search(rf"\b{fn}\s*\(", clean, re.IGNORECASE)
+                for fn in self._AGGREGATE_ROOTS
+            )
+            if inner_has_agg:
+                return clean
+
+        logger.debug(
+            "Wrapping non-aggregate measure expr in ANY_VALUE(): %s", clean[:80]
+        )
+        return f"any_value({clean})"
 
     def _is_metric_view_safe_scalar_expression(self, sql_expression: str) -> bool:
         """Return True when an expression is a safe scalar function for metric-view YAML."""
@@ -5978,9 +6025,16 @@ class DatabricksPublisher:
         tier4_overrides: dict[str, str] = {
              "corporate_dsi": "SUM(CASE WHEN `fiscal_yr_period` < (SELECT MAX(fiscal_yr_period) FROM semabridge.public.Dates WHERE cal_dt = current_date()) THEN `ioh_excldng_lifo_amt` ELSE 0 END)",
              "corporate_dsi_monthly": "SUM(CASE WHEN `fiscal_yr_period` < (SELECT MAX(fiscal_yr_period) FROM semabridge.public.Dates WHERE cal_dt = current_date()) THEN `dsi_mnthly` ELSE 0 END)",
-             "subledger_business_unit_callout": "CASE WHEN `business_unit` = 'USP' THEN '\\u2022 Source of dashboard is SAP...' WHEN `business_unit` = 'MSH' THEN '\\u2022 Source of dashboard is SAP...' ELSE '' END",
+             # Callout measures: wrapped in ANY_VALUE() so Databricks treats them as a
+             # single-value aggregate (Power BI SELECTEDVALUE semantics) instead of
+             # row-level expressions which Unity Catalog metric views reject.
+             "subledger_business_unit_callout": "ANY_VALUE(CASE WHEN `business_unit` = 'USP' THEN '\u2022 Source of dashboard is SAP – Data as of previous day' WHEN `business_unit` = 'MSH' THEN '\u2022 Source of dashboard is SAP – Data as of previous day' ELSE '' END)",
+             "gl_business_unit_callout": "ANY_VALUE(CASE WHEN `business_unit` = 'USP' THEN '\u2022 GL data sourced from GRC (Oracle)' WHEN `business_unit` = 'MSH' THEN '\u2022 GL data sourced from GRC (Oracle)' ELSE '' END)",
+             "dsi_calculation_callout": "ANY_VALUE(CONCAT('\u2022 Inventory Days on Hand = Ending Inventory / (COS / Days in Period)', CHAR(10), '\u2022 Corporate IOH = ', CAST(`ioh_excldng_lifo_amt` AS STRING)))",
              "source_value_total_stock": "SUM(`source_value_total_stock`)",
-             "wac_value_total_stock": "SUM(`wac_value_total_stock`)"
+             "wac_value_total_stock": "SUM(`wac_value_total_stock`)",
+             # today() is a scalar — wrap in MAX() so it is aggregate-safe
+             "today": "MAX(current_date())",
         }
 
         for metric in sml_model.metrics:
