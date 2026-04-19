@@ -32,7 +32,7 @@ databricks:
   enable_cross_table_joins: true # Build explicit joins from model relationships when measures span datasets
   enable_metric_view_joins: true # Enable metric view 'joins' property for multi-table snowflake schemas (requires enable_cross_table_joins=true)
   enable_cross_table_sql_fallback: false # Auto-route cross-table models to SQL views when metric-view cannot safely resolve them
-  allow_sql_fallback_on_metric_view_failure: true # Allow SQL downgrade when metric-view deploy fails even if measure_view_type='metric_view'
+  allow_sql_fallback_on_metric_view_failure: false # Allow SQL downgrade when metric-view deploy fails even if measure_view_type='metric_view'
   statement_wait_timeout_seconds: 12 # Reduce per-statement wait before polling for faster sync feedback
   statement_poll_interval_seconds: 1.0 # Poll statement status more frequently to reduce idle wait
   enable_low_confidence_drafts: true # Emit draft placeholders for low-confidence measures instead of dropping them
@@ -40,6 +40,8 @@ databricks:
   emit_distinct_pk_metric_for_dimension_datasets: true # Also emit COUNT(DISTINCT pk) for dimension-only datasets when key inference is confident
   strict_graph_coverage_validation: false # When true, fail deploy if relationship endpoint coverage is invalid; false logs warnings
   enable_auto_join_key_bridge: true # Auto-create/backfill missing physical relationship key columns during Databricks publish preflight
+  enable_destructive_sync_operations: true # Allow DROP VIEW/TABLE before re-creating when an object-type conflict is detected at the target name
+
 
   # -------- Semantic Router Configuration (Fact-Centric Artifact Generation) --------
   semantic_router_enabled: false # Force single model-level metric-view generation for all models (disable per-fact semantic-router splitting).

@@ -2489,10 +2489,54 @@ class DatabricksPublisher:
         return json.dumps(str(value or ""))
 
     def _normalize_metric_view_sql_expression(self, sql_expression: str) -> str:
-        """Normalize SQL expressions for metric-view YAML readability."""
+        """Normalize SQL expressions for metric-view YAML readability.
+
+        Strips Cortex Analyst-style ``measures."column"`` / ``MEASURES."COLUMN"``
+        table prefixes that are injected by the cortex_analyst.yaml generator.
+        Those prefixes are valid Snowflake Cortex Analyst syntax but cause a
+        ``PARSE_SYNTAX_ERROR`` in Databricks ``WITH METRICS LANGUAGE YAML``
+        because no table alias named ``measures`` exists in the source block.
+
+        The rewrite converts:
+            ``sum(measures."transaction_usd_amount")``   → ``sum(transaction_usd_amount)``
+            ``SUM(MEASURES."TRANSACTION_USD_AMOUNT")``   → ``sum(transaction_usd_amount)``
+            ``sum(measures.transaction_usd_amount)``     → ``sum(transaction_usd_amount)``
+
+        After stripping the prefix the expression only references bare projected
+        column aliases that are already emitted by the ``source:`` SELECT block.
+        """
         expr = str(sql_expression or "").strip().replace("`", "")
         if not expr:
             return expr
+
+        # Strip Cortex Analyst ``measures."col"`` / ``measures.col`` prefixes.
+        # Pattern matches:
+        #   MEASURES."COLUMN_NAME"   (double-quoted identifier)
+        #   measures.column_name     (unquoted identifier)
+        # Both quoted and unquoted forms are replaced with the bare column name.
+        expr = re.sub(
+            r'(?i)\bmeasures\."([^"]+)"',
+            lambda m: m.group(1).lower(),
+            expr,
+        )
+        expr = re.sub(
+            r"(?i)\bmeasures\.([A-Za-z_][A-Za-z0-9_]*)",
+            lambda m: m.group(1).lower(),
+            expr,
+        )
+
+        # Also strip any remaining join-table prefixes that used the dummy
+        # Power BI '_Measures' or 'Project_Measures' table names.
+        expr = re.sub(
+            r'(?i)\b(?:project_measures|_measures)\."([^"]+)"',
+            lambda m: m.group(1).lower(),
+            expr,
+        )
+        expr = re.sub(
+            r"(?i)\b(?:project_measures|_measures)\.([A-Za-z_][A-Za-z0-9_]*)",
+            lambda m: m.group(1).lower(),
+            expr,
+        )
 
         parts = re.split(r"('(?:''|[^'])*')", expr)
         normalized_parts: list[str] = []
@@ -3288,6 +3332,129 @@ class DatabricksPublisher:
             or "sqlstate: 42809" in lowered
         )
 
+    def _preflight_resolve_object_conflict(
+        self,
+        view_fqn: str,
+        *,
+        is_metric: bool = False,
+    ) -> None:
+        """Detect and drop any conflicting object at ``view_fqn`` before deployment.
+
+        Option 3 — Pre-flight object-type conflict cleanup:
+            Runs ``DESCRIBE EXTENDED`` on the target name.  If a TABLE (MANAGED
+            or EXTERNAL) is found it is dropped unconditionally so ``CREATE OR
+            REPLACE VIEW`` can succeed.  If a plain VIEW is found and we are
+            deploying a native metric-view (``is_metric=True``), Databricks
+            rejects the REPLACE because the object types differ — so the plain
+            VIEW is also dropped first.
+
+            Unlike the post-failure retry path (``_is_object_type_conflict_error``
+            + DROP inside the except block), this runs **before** the first
+            deploy attempt, eliminating the wasted failed round-trip and making
+            the conflict visible in the log at the right moment.
+
+        Args:
+            view_fqn:   Fully-qualified backtick name, e.g.
+                        e.g. '`catalog`.`schema`.`view_name`'.
+
+            is_metric:  True when deploying ``WITH METRICS LANGUAGE YAML`` —
+                        a plain VIEW at the same name is a type mismatch.
+        """
+        # Parse the FQN (strip backticks first)
+        bare = view_fqn.replace("`", "")
+        parts = bare.split(".")
+        if len(parts) != 3:
+            return  # Unexpected format — skip silently
+
+        catalog, schema_name, table_name = parts
+
+        # ── Step 1: Check whether anything exists ───────────────────────────
+        # Use SHOW TABLES with a LIKE filter — the schema-level cache is not
+        # guaranteed to be populated for the *target* schema (which is the
+        # publish catalog/schema, not necessarily a source schema).
+        try:
+            show_stmt = f"SHOW TABLES IN `{catalog}`.`{schema_name}` LIKE '{table_name}'"
+            rows = self.execute_statements([show_stmt])
+        except Exception as exc:
+            logger.debug(
+                "Pre-flight conflict check: SHOW TABLES failed for %s — skipping. %s",
+                view_fqn,
+                str(exc)[:200],
+            )
+            return
+
+        found = False
+        if rows:
+            payload = rows[0] if isinstance(rows[0], dict) else {}
+            result_block = payload.get("result") if isinstance(payload, dict) else {}
+            data_array = result_block.get("data_array") if isinstance(result_block, dict) else None
+            if data_array:
+                found = bool(data_array)
+
+        if not found:
+            return  # Nothing there — safe to deploy
+
+        # ── Step 2: Inspect the existing object's type ───────────────────────
+        existing_type = "UNKNOWN"
+        try:
+            desc_stmt = f"DESCRIBE EXTENDED {view_fqn}"
+            desc_rows = self.execute_statements([desc_stmt])
+            if desc_rows:
+                desc_payload = desc_rows[0] if isinstance(desc_rows[0], dict) else {}
+                desc_block = desc_payload.get("result") if isinstance(desc_payload, dict) else {}
+                desc_data = desc_block.get("data_array") if isinstance(desc_block, dict) else []
+                # data_array rows are [col_name, data_type, comment]
+                for row in (desc_data or []):
+                    if isinstance(row, list) and len(row) >= 2:
+                        if str(row[0]).strip().lower() == "type":
+                            existing_type = str(row[1]).strip().upper()
+                            break
+        except Exception as exc:
+            logger.debug(
+                "Pre-flight conflict check: DESCRIBE EXTENDED failed for %s — assuming safe. %s",
+                view_fqn,
+                str(exc)[:200],
+            )
+            return
+
+        # ── Step 3: Drop if necessary ────────────────────────────────────────
+        needs_drop = False
+        drop_reason = ""
+
+        if existing_type in ("MANAGED", "EXTERNAL"):
+            needs_drop = True
+            drop_reason = f"existing object is a {existing_type} TABLE; need VIEW"
+        elif existing_type == "VIEW" and is_metric:
+            # Plain VIEW → Metric View upgrade: Databricks rejects CREATE OR REPLACE
+            # because the underlying object types differ at the catalog level.
+            needs_drop = True
+            drop_reason = "existing object is a plain VIEW; need METRIC_VIEW (WITH METRICS)"
+
+        if not needs_drop:
+            # VIEW → VIEW or METRIC_VIEW → METRIC_VIEW: handled by CREATE OR REPLACE natively.
+            return
+
+        logger.warning(
+            "⚠️  Pre-flight conflict at %s: %s — dropping before deploy.",
+            view_fqn,
+            drop_reason,
+        )
+
+        for drop_stmt in (
+            f"DROP VIEW IF EXISTS {view_fqn}",
+            f"DROP TABLE IF EXISTS {view_fqn}",
+        ):
+            try:
+                self.execute_statements([drop_stmt])
+            except Exception as drop_exc:
+                logger.debug(
+                    "Pre-flight DROP attempt failed for %s: %s",
+                    view_fqn,
+                    str(drop_exc)[:200],
+                )
+
+        logger.info("✅ Pre-flight conflict resolved for %s — proceeding with deploy.", view_fqn)
+
     def _classify_metric_view_deploy_error(self, error_text: str) -> tuple[str, str]:
         """Classify metric-view deploy failures into actionable categories."""
         lowered = str(error_text or "").lower()
@@ -3452,7 +3619,104 @@ class DatabricksPublisher:
 
         return f"{prefix}\n{repaired_yaml}\n$$"
 
+    def _preflight_strip_bad_dimensions(self, view_sql: str) -> str:
+        """Strip dimension entries that reference non-existent physical columns.
+
+        Fix 1 — Pre-flight schema validation:
+            Parses the ``WITH METRICS LANGUAGE YAML`` body, resolves column lists
+            for every declared join source via ``_get_source_table_columns``
+            (already cached from pre-flight), and removes ``dimensions:`` entries
+            whose ``join_alias.column`` does not exist in the physical table.
+
+        Returns the (potentially patched) SQL.  Falls back to the original SQL
+        if YAML parsing fails or the schema cannot be introspected.
+        """
+        metric_sql_match = re.search(
+            r"(?is)^(CREATE\s+OR\s+REPLACE\s+VIEW\s+`[^`]+`\.`[^`]+`\.`[^`]+`"
+            r"\s+WITH\s+METRICS\s+LANGUAGE\s+YAML\s+AS\s+\$\$)\s*(.*?)\s*\$\$\s*$",
+            str(view_sql or ""),
+        )
+        if not metric_sql_match:
+            return view_sql
+
+        prefix = metric_sql_match.group(1)
+        yaml_body = metric_sql_match.group(2)
+
+        try:
+            payload = yaml.safe_load(yaml_body) or {}
+        except yaml.YAMLError:
+            return view_sql
+
+        joins = payload.get("joins")
+        dimensions = payload.get("dimensions")
+        if not isinstance(joins, list) or not joins or not isinstance(dimensions, list):
+            return view_sql
+
+        # Build a map: join_alias → set of physical column names (lowercased)
+        join_col_map: dict[str, set[str]] = {}
+        for join_entry in joins:
+            if not isinstance(join_entry, dict):
+                continue
+            alias = str(join_entry.get("name") or "").strip().lower()
+            source = str(join_entry.get("source") or "").strip()
+            if not alias or not source:
+                continue
+            physical_cols = self._get_source_table_columns(source)
+            if physical_cols:
+                join_col_map[alias] = physical_cols
+
+        if not join_col_map:
+            return view_sql  # No introspectable joins — skip
+
+        # Strip dimensions referencing non-existent physical columns
+        retained: list[dict] = []
+        removed_names: list[str] = []
+        for dim in dimensions:
+            if not isinstance(dim, dict):
+                retained.append(dim)
+                continue
+            expr = str(dim.get("expr") or "").strip().strip('"').strip("'")
+            # Match   join_alias.col_name   (with optional backtick quoting)
+            join_col_match = re.match(
+                r"^([A-Za-z_][A-Za-z0-9_]*)\.`?([A-Za-z_][A-Za-z0-9_]*)`?$",
+                expr,
+            )
+            if not join_col_match:
+                retained.append(dim)
+                continue
+
+            alias = join_col_match.group(1).lower()
+            col = join_col_match.group(2).lower()
+
+            if alias not in join_col_map:
+                # No introspection data for this alias → keep the dimension
+                retained.append(dim)
+                continue
+
+            if col not in join_col_map[alias]:
+                removed_names.append(str(dim.get("name") or expr))
+            else:
+                retained.append(dim)
+
+        if not removed_names:
+            return view_sql  # Nothing to strip
+
+        logger.warning(
+            "Pre-flight schema validation stripped %d dimension(s) with missing physical columns: %s",
+            len(removed_names),
+            ", ".join(removed_names[:20]) + (" ..." if len(removed_names) > 20 else ""),
+        )
+
+        payload["dimensions"] = retained
+        try:
+            repaired_yaml = yaml.safe_dump(payload, sort_keys=False).strip()
+        except yaml.YAMLError:
+            return view_sql
+
+        return f"{prefix}\n{repaired_yaml}\n$$"
+
     def _persist_sql_debug_artifact(self, model_name: str, view_sql: str) -> str | None:
+
         """Persist generated SQL to disk for post-failure debugging."""
         try:
             artifact_dir = self._debug_sql_artifact_dir(model_name)
@@ -5146,8 +5410,23 @@ class DatabricksPublisher:
         lines: list[str],
         path_prefix: str = "",
     ) -> int:
-        """Append dimensions for joined datasets into a single model-level metric view."""
+        """Append dimensions for joined datasets into a single model-level metric view.
+
+        Fix 2 — Schema introspection at transpile time:
+            For each join, call ``_get_source_table_columns`` to retrieve the
+            physical column list from Databricks.  Only bindings whose
+            ``source_column`` actually exists in that table are written into the
+            ``dimensions:`` block, preventing ``FIELD_NOT_FOUND`` errors at
+            deploy time without needing a post-deploy degradation loop.
+
+        Fix 3 — Declarative join_column_overrides:
+            When ``behavior.databricks.join_column_overrides`` contains an entry
+            for a join alias, its ``include_columns`` (allowlist) or
+            ``exclude_columns`` (denylist) takes precedence over schema
+            introspection for that join.
+        """
         dimensions_added = 0
+        join_overrides: dict[str, Any] = getattr(self._dbx_behavior, "join_column_overrides", {}) or {}
 
         for join in joins:
             dataset = self._find_dataset_by_metric_view_alias(sml_model, join.name)
@@ -5156,8 +5435,73 @@ class DatabricksPublisher:
 
             join_path = f"{path_prefix}.{join.name}" if path_prefix else join.name
             bindings = self._build_metric_view_column_bindings(dataset, join.source, sml_model)
+
+            # ── Fix 3: declarative override resolution ─────────────────────────
+            # Normalize alias key: try exact match then normalized (lowercase/stripped).
+            override_key = join.name
+            if override_key not in join_overrides:
+                override_key = self._sanitize_identifier(join.name).lower()
+            override_cfg: dict[str, Any] = join_overrides.get(override_key, {})
+            include_cols: set[str] | None = None
+            exclude_cols: set[str] = set()
+
+            if "include_columns" in override_cfg:
+                include_cols = {str(c).strip().lower() for c in (override_cfg["include_columns"] or [])}
+                logger.info(
+                    "join_column_overrides: join '%s' allowlist %d column(s)",
+                    join.name,
+                    len(include_cols),
+                )
+            elif "exclude_columns" in override_cfg:
+                exclude_cols = {str(c).strip().lower() for c in (override_cfg["exclude_columns"] or [])}
+                logger.info(
+                    "join_column_overrides: join '%s' denylist %d column(s)",
+                    join.name,
+                    len(exclude_cols),
+                )
+
+            # ── Fix 2: schema introspection (only when no declarative allowlist) ──
+            physical_cols: set[str] | None = None
+            if include_cols is None:
+                # Use the already-cached _get_source_table_columns.  The method
+                # hits SHOW COLUMNS IN — result is cached per table via the
+                # existing schema-cache so no extra RTTs are incurred.
+                fetched = self._get_source_table_columns(join.source)
+                if fetched:
+                    physical_cols = fetched
+                    logger.debug(
+                        "Schema introspection for join '%s' (%s): %d physical column(s) found",
+                        join.name,
+                        join.source,
+                        len(physical_cols),
+                    )
+
+            pruned_count = 0
             for binding in bindings:
                 if not binding.include_as_dimension:
+                    continue
+
+                col_lower = binding.source_column.strip().lower()
+
+                # Fix 3 — allowlist check (takes priority)
+                if include_cols is not None and col_lower not in include_cols:
+                    pruned_count += 1
+                    continue
+
+                # Fix 3 — denylist check
+                if col_lower in exclude_cols:
+                    pruned_count += 1
+                    continue
+
+                # Fix 2 — physical schema check (only when introspection succeeded)
+                if physical_cols is not None and col_lower not in physical_cols:
+                    pruned_count += 1
+                    logger.debug(
+                        "Pruned dimension '%s' from join '%s': column '%s' not in physical schema",
+                        binding.projected_name,
+                        join.name,
+                        binding.source_column,
+                    )
                     continue
 
                 unique_name = self._make_unique_projected_name(
@@ -5171,6 +5515,13 @@ class DatabricksPublisher:
                 used_dimension_names.add(unique_name.upper())
                 dimensions_added += 1
 
+            if pruned_count:
+                logger.info(
+                    "Pruned %d dimension(s) from join '%s' (schema filter / override)",
+                    pruned_count,
+                    join.name,
+                )
+
             if join.joins:
                 dimensions_added += self._append_joined_metric_view_dimensions(
                     sml_model,
@@ -5181,6 +5532,7 @@ class DatabricksPublisher:
                 )
 
         return dimensions_added
+
 
     def _find_dataset_by_metric_view_alias(
         self,
@@ -6227,7 +6579,26 @@ class DatabricksPublisher:
                 if match:
                     view_name = match.group(1)
 
+                # Fix 1 — Pre-flight dimension schema validation.
+                # Strip any dimension entries that reference columns that do not
+                # exist in the physical join table, preventing FIELD_NOT_FOUND
+                # before the statement reaches Databricks.
+                if (
+                    "WITH METRICS LANGUAGE YAML" in view_sql
+                    and getattr(self._dbx_behavior, "preflight_validate_join_dimensions", True)
+                ):
+                    view_sql = self._preflight_strip_bad_dimensions(view_sql)
+
+                # Pre-flight object-type conflict resolution.
+                # Detects a TABLE/wrong-type VIEW already sitting at the target
+                # name and drops it *before* the first deploy attempt, avoiding
+                # a wasted round-trip and a confusing error log.
+                if view_name != "unknown" and self._dbx_behavior.enable_destructive_sync_operations:
+                    is_metric = "WITH METRICS LANGUAGE YAML" in view_sql
+                    self._preflight_resolve_object_conflict(view_name, is_metric=is_metric)
+
                 try:
+
                     retry_mgr.execute_with_retry(
                         operation=lambda: self.execute_statements([view_sql]),
                         operation_name=f"deploy_view:{view_name}",

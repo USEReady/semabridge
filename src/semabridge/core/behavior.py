@@ -261,6 +261,22 @@ class DatabricksBehavior(BaseModel):
             "existing candidate columns (for example, customer -> customer_key)."
         )
     )
+    preflight_validate_join_dimensions: bool = Field(
+        default=True,
+        description=(
+            "When true, strip dimension entries that reference non-existent join-table columns "
+            "from the metric-view YAML before deployment. Prevents FIELD_NOT_FOUND failures "
+            "when the semantic model references columns that do not yet exist in Databricks."
+        ),
+    )
+    join_column_overrides: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Per-join dimension overrides. Each key is a join alias; value is a dict with "
+            "optional 'include_columns' (allowlist) or 'exclude_columns' (denylist) lists. "
+            "Example: {product: {include_columns: [product_name, product_dim_ck]}}"
+        ),
+    )
     source_table_mapping: dict[str, str] = Field(
         default_factory=dict,
         description=(
