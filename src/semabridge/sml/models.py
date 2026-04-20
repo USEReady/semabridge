@@ -356,6 +356,27 @@ class SMLRelationship(BaseModel):
         return self.to_columns[0] if self.to_columns else ""
 
 
+class SMLJoin(BaseModel):
+    """
+    Join definition for metric view YAML generation.
+    
+    Represents a single join in a Databricks metric view 'joins' property.
+    Supports nested joins for snowflake schemas (e.g., orders -> customer -> nation).
+    """
+    
+    name: str = Field(..., description="Join alias (used in expressions)")
+    source: str = Field(..., description="Fully-qualified source table for the joined dataset")
+    on: str = Field(default="", description="Join condition (e.g., 'o_custkey = c_custkey')")
+    using: list[str] = Field(default_factory=list, description="USING columns for same-named join keys")
+    joins: list['SMLJoin'] = Field(default_factory=list, description="Nested joins for snowflake schema patterns")
+    
+    def model_post_init(self, __context: Any) -> None:
+        """Set defaults after initialization."""
+        # Validate that the join has either an explicit ON clause or USING keys.
+        if (not self.on or not self.on.strip()) and not self.using:
+            raise ValueError(f"Join condition cannot be empty for join '{self.name}'")
+
+
 class SourcePlatform(str, Enum):
     """Source platform for the semantic model."""
     SNOWFLAKE = "snowflake"

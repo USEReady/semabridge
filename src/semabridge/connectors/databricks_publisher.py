@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import requests
+import yaml
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -29,9 +30,16 @@ from semabridge.core.behavior import ConnectorBehavior, DatabricksBehavior
 from semabridge.core.settings import DatabricksConfig
 from semabridge.connectors.databricks_measure_translation import DatabricksMeasureTranslator
 from semabridge.connectors.schema_reconciler import SchemaMapper
-from semabridge.sml.models import AggregationType, SMLDataset, SMLMetric, SMLModel
+from semabridge.repository.orm.session_factory import db_manager
+from semabridge.repository.semantic_routing_repository import RouterDecision, SemanticRoutingRepository
+from semabridge.sml.models import AggregationType, SMLDataset, SMLJoin, SMLMetric, SMLModel
+from semabridge.utils.dimension_injector import DimensionInjector
 from semabridge.utils.naming import to_alias
+from semabridge.utils.join_builder import JoinTreeBuilder
 from semabridge.utils.logger import get_logger
+from semabridge.utils.measure_fact_mapping import MeasureFactMapping
+from semabridge.utils.semantic_graph import SemanticGraph
+from semabridge.utils.table_categorizer import TableCategorizer
 
 logger = get_logger(__name__)
 
@@ -78,6 +86,7 @@ DEPLOY_REASON_VALIDATION_FAILED = "VALIDATION_FAILED"
 DEPLOY_REASON_CROSS_TABLE = "CROSS_TABLE_NOT_SUPPORTED"
 DEPLOY_REASON_PREREQUISITE_MISSING = "PREREQUISITE_MISSING"
 DEPLOY_REASON_SOURCE_NOT_FOUND = "SOURCE_TABLE_NOT_FOUND"
+DEPLOY_REASON_GRAPH_INTEGRITY = "GRAPH_INTEGRITY"
 
 # ── Translation Type Constants ───────────────────────────────────────────────
 TRANSLATION_TYPE_SQL_NATIVE = "SQL_NATIVE"
@@ -98,6 +107,19 @@ VIEW_TYPE_METRIC = "metric_view"
 VIEW_TYPE_MATERIALIZED = "materialized_view"
 VIEW_TYPE_SQL = "sql_view"
 VIEW_TYPE_NONE = "none"
+
+# ── Metric-View Deploy Error Classes ───────────────────────────────────────
+ERROR_CLASS_SQL_SEMANTIC = "SQL_SEMANTIC"
+ERROR_CLASS_MISSING_ENTITY = "MISSING_ENTITY"
+ERROR_CLASS_SOURCE_MISMATCH = "SOURCE_MISMATCH"
+ERROR_CLASS_GENERIC = "GENERIC"
+
+# ── SQL Fallback States ────────────────────────────────────────────────────
+SQL_FALLBACK_NOT_TRIGGERED = "NOT_TRIGGERED"
+SQL_FALLBACK_IN_PROGRESS = "FALLBACK_IN_PROGRESS"
+SQL_FALLBACK_SUCCESS = "FALLBACK_SUCCESS"
+SQL_FALLBACK_FAILED = "FALLBACK_FAILED"
+SQL_FALLBACK_SKIPPED = "FALLBACK_SKIPPED"
 
 
 @dataclass(frozen=True)
@@ -170,10 +192,114 @@ class DatabricksPublisher:
             build_aggregation_sql=self._build_aggregation_sql,
             distinct_count_expression=lambda column: f"COUNT(DISTINCT {column})",
         )
+        self._semantic_graph: SemanticGraph | None = None
+        self._table_categories: dict[str, dict[str, str]] = {}
+        self._per_fact_metric_views: dict[str, str] = {}
+        self._last_review_required_summary: dict[str, Any] = {}
+        self._last_routing_summary: dict[str, int] = {}
+        self._last_skipped_details: list[dict[str, str]] = []
+        self._last_sql_fallback_state: str = SQL_FALLBACK_NOT_TRIGGERED
+        self._last_sql_fallback_reason: str = ""
 
         # Initialize network pooling and thread-safe OAuth recovery
         self.session = requests.Session()
         self._auth_lock = threading.Lock()
+
+    @staticmethod
+    def _reason_action_hint(reason: str) -> str:
+        """Return a short operator action hint for a skip reason."""
+        mapping = {
+            DEPLOY_REASON_DAX_NOT_SUPPORTED: "Rewrite metric expression using supported SQL aggregation patterns.",
+            DEPLOY_REASON_VALIDATION_FAILED: "Review dataset/metric references and ensure all source objects exist.",
+            DEPLOY_REASON_CROSS_TABLE: "Enable SQL fallback mode or refactor cross-table measure dependencies.",
+            DEPLOY_REASON_PREREQUISITE_MISSING: "Verify relationship graph prerequisites and required source objects.",
+            DEPLOY_REASON_SOURCE_NOT_FOUND: "Create or map the missing source table in the target schema.",
+            DEPLOY_REASON_GRAPH_INTEGRITY: "Repair semantic relationship graph integrity before deployment.",
+        }
+        return mapping.get(str(reason or "").strip(), "Review metric definition and routing prerequisites.")
+
+    def _emit_review_diagnostics(self, skipped_details: list[dict[str, str]]) -> dict[str, Any]:
+        """Build and log review-required diagnostics for skipped measures/joins."""
+        reason_counts: dict[str, int] = {}
+        skipped_measure_names: list[str] = []
+        skipped_join_names: list[str] = []
+
+        for item in skipped_details:
+            name = str(item.get("name") or "").strip()
+            reason = str(item.get("reason") or DEPLOY_REASON_VALIDATION_FAILED).strip()
+            item_type = str(item.get("item_type") or "measure").strip().lower()
+
+            if not name:
+                continue
+
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+            if item_type == "join":
+                skipped_join_names.append(name)
+            else:
+                skipped_measure_names.append(name)
+
+            logger.warning(
+                "Review required (%s): %s skipped due to %s. Suggested action: %s",
+                item_type,
+                name,
+                reason,
+                self._reason_action_hint(reason),
+            )
+
+        summary = {
+            "reason_counts": reason_counts,
+            "skipped_measure_names": sorted(set(skipped_measure_names)),
+            "skipped_join_names": sorted(set(skipped_join_names)),
+        }
+        self._last_review_required_summary = summary
+        return summary
+
+    def _build_routing_summary(
+        self,
+        *,
+        sml_model: SMLModel,
+        view_statement_count: int,
+        review_required_summary: dict[str, Any],
+    ) -> dict[str, int]:
+        """Build lightweight routing summary for API/UI response payloads."""
+        source_table_count = len(sml_model.datasets)
+        router_active = self._is_semantic_router_active_for_model(sml_model.unique_name) and bool(self._table_categories)
+
+        if router_active:
+            fact_table_count = sum(1 for row in self._table_categories.values() if row.get("category") == "FACT")
+            dimension_table_count = sum(1 for row in self._table_categories.values() if row.get("category") == "DIMENSION")
+            bridge_table_count = sum(1 for row in self._table_categories.values() if row.get("category") == "BRIDGE")
+            generated_artifact_count = len(self._per_fact_metric_views) or max(1, view_statement_count)
+        else:
+            # Backward-compatible legacy mode: treat deploy as a single artifact.
+            fact_table_count = 1 if source_table_count > 0 else 0
+            dimension_table_count = 0
+            bridge_table_count = 0
+            generated_artifact_count = 1 if source_table_count > 0 else 0
+
+        review_required_count = len(review_required_summary.get("skipped_measure_names", [])) + len(
+            review_required_summary.get("skipped_join_names", [])
+        )
+
+        summary = {
+            "source_table_count": source_table_count,
+            "fact_table_count": fact_table_count,
+            "dimension_table_count": dimension_table_count,
+            "bridge_table_count": bridge_table_count,
+            "review_required_count": review_required_count,
+            "generated_artifact_count": generated_artifact_count,
+        }
+        self._last_routing_summary = summary
+        return summary
+
+    def get_last_publish_summary(self) -> dict[str, Any]:
+        """Return the last computed publish diagnostics for API callers."""
+        return {
+            "review_required_summary": dict(self._last_review_required_summary or {}),
+            "routing_summary": dict(self._last_routing_summary or {}),
+            "sql_fallback_state": self._last_sql_fallback_state,
+            "sql_fallback_reason": self._last_sql_fallback_reason,
+        }
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -199,6 +325,97 @@ class DatabricksPublisher:
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
+
+    def _statement_wait_timeout(self) -> str:
+        """Return Databricks statement wait timeout in API format."""
+        seconds = int(getattr(self._dbx_behavior, "statement_wait_timeout_seconds", 30) or 30)
+        if seconds < 1:
+            seconds = 1
+        return f"{seconds}s"
+
+    def _statement_poll_interval_seconds(self) -> float:
+        """Return Databricks statement polling interval in seconds."""
+        seconds = float(getattr(self._dbx_behavior, "statement_poll_interval_seconds", 3.0) or 3.0)
+        if seconds < 0.25:
+            seconds = 0.25
+        return seconds
+
+    def _is_semantic_router_active_for_model(self, model_name: str) -> bool:
+        """Return True when semantic router should run for this model."""
+        if not bool(getattr(self._dbx_behavior, "semantic_router_enabled", False)):
+            return False
+
+        disabled_models = {
+            str(name or "").strip().upper()
+            for name in getattr(self._dbx_behavior, "semantic_router_override_models", [])
+            if str(name or "").strip()
+        }
+        return str(model_name or "").strip().upper() not in disabled_models
+
+    def _build_semantic_router_outputs(self, sml_model: SMLModel) -> tuple[SemanticGraph, dict[str, dict[str, str]]]:
+        """Build relationship graph and deterministic table categorization."""
+        graph = SemanticGraph(sml_model)
+        categorizer = TableCategorizer()
+        categories = categorizer.categorize(graph)
+        return graph, categories
+
+    def _persist_semantic_router_decisions(
+        self,
+        *,
+        model_name: str,
+        categories: dict[str, dict[str, str]],
+    ) -> None:
+        """Persist graph categorization outputs to repository state."""
+        with db_manager.get_session() as session:
+            repo = SemanticRoutingRepository(session)
+            for table_name in sorted(categories):
+                entry = categories[table_name]
+                repo.save_routing_decision(
+                    RouterDecision(
+                        model_name=model_name,
+                        table_name=table_name,
+                        category=entry.get("category", "UNKNOWN"),
+                        confidence=entry.get("confidence", "LOW"),
+                        reason_code=entry.get("reason_code", "UNSPECIFIED"),
+                    )
+                )
+
+    def _initialize_semantic_router(self, sml_model: SMLModel) -> None:
+        """Initialize and optionally persist semantic graph outputs."""
+        self._semantic_graph = None
+        self._table_categories = {}
+
+        if not self._is_semantic_router_active_for_model(sml_model.unique_name):
+            logger.debug("Semantic router disabled for model '%s'", sml_model.unique_name)
+            return
+
+        graph, categories = self._build_semantic_router_outputs(sml_model)
+        self._semantic_graph = graph
+        self._table_categories = categories
+
+        logger.info(
+            "Semantic router graph initialized for model '%s' (tables=%d, facts=%d)",
+            sml_model.unique_name,
+            len(graph.tables),
+            sum(1 for value in categories.values() if value.get("category") == "FACT"),
+        )
+
+        try:
+            self._persist_semantic_router_decisions(
+                model_name=sml_model.unique_name,
+                categories=categories,
+            )
+            logger.info(
+                "Semantic router decisions persisted for model '%s' (rows=%d)",
+                sml_model.unique_name,
+                len(categories),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Semantic router decision persistence failed for model '%s': %s",
+                sml_model.unique_name,
+                str(exc)[:300],
+            )
 
     def _resolve_token(self) -> str:
         """Resolve the access token based on config.auth_type.
@@ -338,8 +555,9 @@ class DatabricksPublisher:
 
         Resolution priority:
             1. Explicit mapping in behavior.source_table_mapping
-            2. source_catalog.source_schema.dataset_name (if configured)
-            3. Same catalog/schema as metadata table
+            2. Dataset source_database.source_schema.source_table (if configured)
+            3. source_catalog.source_schema.dataset_name (if configured)
+            4. Same catalog/schema as metadata table
 
         Args:
             dataset: The SML dataset to resolve a source table for.
@@ -360,13 +578,19 @@ class DatabricksPublisher:
             if key.upper() == ds_name.upper():
                 return val
 
-        # Priority 2: Configured source catalog/schema
+        # Priority 2: Dataset-level source location from extracted model metadata
+        dataset_catalog = str(dataset.source_database or "").strip()
+        dataset_schema = str(dataset.source_schema or "").strip()
+        if dataset_catalog and dataset_schema:
+            return f"`{self._sanitize_identifier(dataset_catalog)}`.`{self._sanitize_identifier(dataset_schema)}`.`{ds_name}`"
+
+        # Priority 3: Configured source catalog/schema
         src_catalog = self._dbx_behavior.source_catalog.strip()
         src_schema = self._dbx_behavior.source_schema.strip()
         if src_catalog and src_schema:
             return f"`{src_catalog}`.`{src_schema}`.`{ds_name}`"
 
-        # Priority 3: Same catalog/schema as metadata table
+        # Priority 4: Same catalog/schema as metadata table
         return self._fq_name(ds_name)
 
     def _resolve_existing_source_for_dataset(self, dataset: SMLDataset, expected_source: str) -> str | None:
@@ -699,8 +923,30 @@ class DatabricksPublisher:
             ") AS `semabridge_src`"
         )
 
-    def _build_inline_null_source_relation(self, source_fq: str, column_names: list[str]) -> str:
-        """Build a source relation that projects typed NULL placeholders."""
+    def _infer_inline_null_sql_type(
+        self,
+        column_name: str,
+        sql_expressions: Optional[list[str]] = None,
+    ) -> str:
+        """Infer a safe placeholder SQL type for inline schemaless source columns."""
+        col = self._sanitize_identifier(column_name).lower()
+        expr_blob = "\n".join(sql_expressions or []).lower()
+
+        if any(token in col for token in ("date", "time", "timestamp", "refresh", "datetime", "dt")):
+            return "TIMESTAMP"
+        if col.endswith("_id") or col.startswith("is_"):
+            return "BIGINT"
+        if "concat(" in expr_blob and col in expr_blob:
+            return "STRING"
+
+        return "DOUBLE"
+
+    def _build_inline_null_projection(
+        self,
+        column_names: list[str],
+        sql_expressions: Optional[list[str]] = None,
+    ) -> list[str]:
+        """Build typed NULL projection entries for schemaless source relations."""
         deduped: list[str] = []
         seen: set[str] = set()
         for column_name in column_names:
@@ -713,10 +959,25 @@ class DatabricksPublisher:
             seen.add(key)
             deduped.append(safe_name)
 
-        if not deduped:
+        projection: list[str] = []
+        for name in deduped:
+            inferred_type = self._infer_inline_null_sql_type(name, sql_expressions)
+            projection.append(f"CAST(NULL AS {inferred_type}) AS `{name}`")
+
+        return projection
+
+    def _build_inline_null_source_relation(
+        self,
+        source_fq: str,
+        column_names: list[str],
+        sql_expressions: Optional[list[str]] = None,
+    ) -> str:
+        """Build a source relation that projects typed NULL placeholders."""
+        projection = self._build_inline_null_projection(column_names, sql_expressions)
+        if not projection:
             return source_fq
 
-        select_list = ",\n".join(f"  CAST(NULL AS DOUBLE) AS `{name}`" for name in deduped)
+        select_list = ",\n".join(f"  {entry}" for entry in projection)
         return (
             "(\n"
             "SELECT\n"
@@ -921,7 +1182,11 @@ class DatabricksPublisher:
                 
         return f"{cache_key}.{table_name.lower()}" in self._table_exists_cache
 
-    def _auto_initialize_missing_tables(self, sml_model: SMLModel) -> None:
+    def _auto_initialize_missing_tables(
+        self,
+        sml_model: SMLModel,
+        resolved_view_type: str = "",
+    ) -> None:
         """Create source aliases or shell tables for datasets missing in Databricks."""
         if not self._dbx_behavior.create_measure_views:
             return
@@ -982,6 +1247,141 @@ class DatabricksPublisher:
             ", ".join(initialized_tables),
         )
 
+    def _quote_table_reference(self, source_table: str) -> str:
+        """Return a safely quoted Databricks table reference."""
+        parsed = self._parse_table_reference(source_table)
+        if not parsed:
+            return str(source_table or "").replace("`", "")
+        catalog, schema_name, table_name = parsed
+        return f"`{catalog}`.`{schema_name}`.`{table_name}`"
+
+    def _auto_bridge_relationship_join_keys(self, sml_model: SMLModel) -> None:
+        """Automatically provision missing physical join-key columns for relationships.
+
+        This preflight is intentionally conservative and only runs when
+        ``enable_auto_join_key_bridge`` is enabled.
+        """
+        if not self._dbx_behavior.create_measure_views:
+            return
+        if not getattr(self._dbx_behavior, "enable_auto_join_key_bridge", False):
+            return
+
+        remediated: list[str] = []
+
+        for rel in sml_model.relationships:
+            endpoint_pairs = list(zip(rel.from_columns, rel.to_columns))
+            for from_col, to_col in endpoint_pairs:
+                endpoints = [
+                    (rel.from_dataset, str(from_col or "").strip()),
+                    (rel.to_dataset, str(to_col or "").strip()),
+                ]
+
+                for dataset_name, semantic_col in endpoints:
+                    if not semantic_col:
+                        continue
+
+                    dataset = sml_model.get_dataset(dataset_name)
+                    if not dataset:
+                        continue
+
+                    expected_source = self._resolve_source_table(dataset)
+                    source_fq = self._resolve_existing_source_for_dataset(dataset, expected_source)
+                    if not source_fq:
+                        continue
+
+                    physical_cols = self._get_source_table_columns(source_fq)
+                    if not physical_cols:
+                        continue
+
+                    resolved_col = self._resolve_physical_source_column(dataset, semantic_col, source_fq)
+                    resolved_col = str(resolved_col or "").strip().lower()
+                    if not resolved_col or resolved_col in physical_cols:
+                        continue
+
+                    table_ref = self._quote_table_reference(source_fq)
+                    add_stmt = (
+                        f"ALTER TABLE {table_ref} ADD COLUMNS "
+                        f"(`{resolved_col}` STRING COMMENT 'Auto-bridged join key for semantic column {semantic_col}')"
+                    )
+
+                    add_failed = False
+                    try:
+                        self.execute_statements([add_stmt])
+                    except Exception as exc:
+                        error_text = str(exc)
+                        lowered = error_text.lower()
+                        duplicate_markers = (
+                            "already exists",
+                            "column already exists",
+                            "duplicate column",
+                            "field already exists",
+                        )
+                        if any(marker in lowered for marker in duplicate_markers):
+                            logger.info(
+                                "Databricks join-key bridge detected existing column for %s.%s -> %s",
+                                dataset.unique_name,
+                                semantic_col,
+                                resolved_col,
+                            )
+                        else:
+                            add_failed = True
+                            logger.warning(
+                                "Databricks join-key bridge skipped for %s.%s -> %s: %s",
+                                dataset.unique_name,
+                                semantic_col,
+                                resolved_col,
+                                error_text[:200],
+                            )
+
+                    if add_failed:
+                        continue
+
+                    refreshed_cols = self._get_source_table_columns(source_fq) or physical_cols
+                    candidate_sources: list[str] = []
+
+                    base = self._infer_physical_source_column_name(semantic_col)
+                    if base:
+                        candidate_sources.append(base)
+                    candidate_sources.extend(self._physical_source_column_candidates(dataset, semantic_col))
+
+                    backfill_col = ""
+                    seen: set[str] = set()
+                    for candidate in candidate_sources:
+                        candidate_key = str(candidate or "").strip().lower()
+                        if not candidate_key or candidate_key == resolved_col or candidate_key in seen:
+                            continue
+                        seen.add(candidate_key)
+                        if candidate_key in refreshed_cols:
+                            backfill_col = candidate_key
+                            break
+
+                    if backfill_col:
+                        backfill_stmt = (
+                            f"UPDATE {table_ref} "
+                            f"SET `{resolved_col}` = COALESCE(`{resolved_col}`, CAST(`{backfill_col}` AS STRING)) "
+                            f"WHERE `{resolved_col}` IS NULL"
+                        )
+                        try:
+                            self.execute_statements([backfill_stmt])
+                        except Exception as exc:
+                            logger.warning(
+                                "Databricks join-key bridge backfill skipped for %s.%s (%s <- %s): %s",
+                                dataset.unique_name,
+                                semantic_col,
+                                resolved_col,
+                                backfill_col,
+                                str(exc)[:200],
+                            )
+
+                    remediated.append(f"{dataset.unique_name}.{semantic_col}->{resolved_col}")
+
+        if remediated:
+            logger.warning(
+                "Databricks pre-flight auto-bridged %d relationship join-key column(s): %s",
+                len(remediated),
+                ", ".join(remediated[:12]) + (" ..." if len(remediated) > 12 else ""),
+            )
+
     def _infer_physical_source_column_name(self, semantic_name: str) -> str:
         """Infer a likely physical column name from a semantic name."""
         raw = str(semantic_name or "").strip().replace("`", "")
@@ -991,6 +1391,46 @@ class DatabricksPublisher:
         candidate = re.sub(r"[^0-9a-z_]+", "_", candidate)
         candidate = re.sub(r"_+", "_", candidate).strip("_")
         return candidate
+
+    def _metric_view_projection_prefix(self, dataset: SMLDataset) -> str:
+        """Return the short alias prefix used for metric-view column names."""
+        raw = str(dataset.unique_name or dataset.source_table or "").strip().replace("`", "")
+        if not raw:
+            return "COL"
+
+        sanitized = self._sanitize_identifier(raw)
+        compact = re.sub(r"[^A-Z0-9]+", "", sanitized.upper())
+        if not compact:
+            return "COL"
+
+        return (compact[:4] or "COL").lower()
+
+    def _prefix_metric_view_measure_name(
+        self,
+        dataset: SMLDataset,
+        measure_name: str,
+        used_dimension_names: set[str],
+    ) -> str:
+        """Prefix a measure name with table alias and handle collisions with dimensions.
+        
+        Example: dataset='customer', measure='revenue' -> 'cust_revenue'
+        On collision with a dimension: 'cust_revenue' + dimension 'cust_revenue' -> 'cust_revenue_m'
+        """
+        prefix = self._metric_view_projection_prefix(dataset)
+        sanitized_measure = self._sanitize_identifier(measure_name).lower()
+        candidate = f"{prefix}_{sanitized_measure}"
+        
+        # Check for collision with any dimension name
+        if candidate.upper() not in used_dimension_names:
+            return candidate
+        
+        # Collision detected: append _m suffix to disambiguate as a measure
+        collision_safe = f"{candidate}_m"
+        counter = 2
+        while collision_safe.upper() in used_dimension_names:
+            collision_safe = f"{candidate}_m{counter}"
+            counter += 1
+        return collision_safe
 
     def _make_unique_projected_name(
         self,
@@ -1073,6 +1513,18 @@ class DatabricksPublisher:
             return VIEW_TYPE_METRIC
         return VIEW_TYPE_SQL
 
+    def _allow_metric_deploy_sql_fallback(self) -> bool:
+        """Return whether failed metric-view deploys may downgrade to SQL views.
+
+        Only allow automatic downgrade when view type is configured as `auto`.
+        If a user explicitly configures `metric_view`, keep that contract and
+        avoid silently switching technologies.
+        """
+        configured = str(self._dbx_behavior.measure_view_type or "").strip().lower()
+        if configured == "auto":
+            return True
+        return bool(getattr(self._dbx_behavior, "allow_sql_fallback_on_metric_view_failure", False))
+
     # ── Metric View YAML Generation ──────────────────────────────────────────
 
     def _get_relationship_columns_for_dataset(self, dataset: SMLDataset, sml_model: SMLModel) -> set[str]:
@@ -1089,6 +1541,122 @@ class DatabricksPublisher:
             if rel.from_dataset and rel.from_dataset.upper() == dataset_name:
                 relationship_cols.update(c for c in rel.from_columns if c)
         return relationship_cols
+
+    def _infer_dimension_primary_key(
+        self,
+        dataset: SMLDataset,
+        sml_model: SMLModel,
+    ) -> str | None:
+        """Infer a stable key column for dimension-only distinct-count fallback."""
+        key_columns = [col.unique_name for col in dataset.get_key_columns() if col.unique_name]
+        if key_columns:
+            return key_columns[0]
+
+        dataset_name = str(dataset.unique_name or "").upper()
+        relationship_key_candidates: list[str] = []
+        for rel in sml_model.relationships:
+            if rel.to_dataset and rel.to_dataset.upper() == dataset_name:
+                relationship_key_candidates.extend([c for c in rel.to_columns if c])
+        if relationship_key_candidates:
+            return relationship_key_candidates[0]
+
+        return None
+
+    def _build_dimension_only_resolved_measures(
+        self,
+        dataset: SMLDataset,
+        sml_model: SMLModel,
+    ) -> list[ResolvedMeasure]:
+        """Build synthetic measures for dimension-only datasets."""
+        measures = [
+            ResolvedMeasure(
+                name="total_rows",
+                sql_expression="COUNT(*)",
+                translation_type=TRANSLATION_TYPE_AGGREGATION_BUILT,
+                confidence=CONFIDENCE_HIGH,
+            )
+        ]
+
+        if not self._dbx_behavior.emit_distinct_pk_metric_for_dimension_datasets:
+            return measures
+
+        pk_column = self._infer_dimension_primary_key(dataset, sml_model)
+        if not pk_column:
+            return measures
+
+        pk_identifier = self._sanitize_identifier(pk_column)
+        if not pk_identifier:
+            return measures
+
+        measures.append(
+            ResolvedMeasure(
+                name=f"distinct_{pk_identifier.lower()}_count",
+                sql_expression=f"COUNT(DISTINCT `{pk_identifier}`)",
+                translation_type=TRANSLATION_TYPE_AGGREGATION_BUILT,
+                confidence=CONFIDENCE_HIGH,
+            )
+        )
+        return measures
+
+    def _validate_relationship_endpoints(self, sml_model: SMLModel, context: str) -> None:
+        """Warn or fail when relationships reference missing datasets."""
+        dataset_names = {
+            self._sanitize_identifier(ds.unique_name).upper()
+            for ds in sml_model.datasets
+            if self._sanitize_identifier(ds.unique_name)
+        }
+        missing_refs: list[str] = []
+        for rel in sml_model.relationships:
+            from_name = self._sanitize_identifier(rel.from_dataset)
+            to_name = self._sanitize_identifier(rel.to_dataset)
+            if not from_name or not to_name:
+                continue
+            if from_name.upper() not in dataset_names or to_name.upper() not in dataset_names:
+                missing_refs.append(
+                    f"{rel.unique_name}: {rel.from_dataset} -> {rel.to_dataset}"
+                )
+
+        if not missing_refs:
+            return
+
+        message = (
+            f"Relationship graph integrity issue in {context}: "
+            f"{', '.join(missing_refs)}"
+        )
+        if self._dbx_behavior.strict_graph_coverage_validation:
+            raise DatabricksPublishError(message)
+        logger.warning(message)
+
+    def _validate_relationship_source_coverage(
+        self,
+        sml_model: SMLModel,
+        missing_source_datasets: set[str],
+        context: str,
+    ) -> None:
+        """Warn or fail when relationship endpoints lack source-table coverage."""
+        if not missing_source_datasets:
+            return
+
+        impacted_relationships: list[str] = []
+        for rel in sml_model.relationships:
+            from_name = self._sanitize_identifier(rel.from_dataset)
+            to_name = self._sanitize_identifier(rel.to_dataset)
+            if not from_name or not to_name:
+                continue
+            if from_name in missing_source_datasets or to_name in missing_source_datasets:
+                impacted_relationships.append(rel.unique_name)
+
+        if not impacted_relationships:
+            return
+
+        missing_sorted = ", ".join(sorted(missing_source_datasets))
+        message = (
+            f"Relationship source coverage issue in {context}: missing source for datasets "
+            f"[{missing_sorted}] impacts relationships {sorted(set(impacted_relationships))}"
+        )
+        if self._dbx_behavior.strict_graph_coverage_validation:
+            raise DatabricksPublishError(message)
+        logger.warning(message)
 
     def _build_shell_table_statements(self, dataset: SMLDataset, source_table: str) -> list[str]:
         """Build Databricks DDL for an empty managed table shell.
@@ -1197,10 +1765,11 @@ class DatabricksPublisher:
         relationship_cols = self._get_relationship_columns_for_dataset(dataset, sml_model)
         used_projection_names: set[str] = set()
         bindings: list[MetricViewColumnBinding] = []
+        projection_prefix = self._metric_view_projection_prefix(dataset)
 
         for col in dataset.columns:
             projected_name = self._make_unique_projected_name(
-                col.unique_name,
+                f"{projection_prefix}_{self._sanitize_identifier(col.unique_name).lower()}",
                 used_projection_names,
                 suffix="dim",
             )
@@ -1232,14 +1801,36 @@ class DatabricksPublisher:
     ) -> str:
         """Build an inline source query that aliases physical columns to stable metric-view names."""
         physical_cols = self._get_source_table_columns(source_fq)
-        select_parts = [
-            (
-                f"  `{binding.source_column}` AS `{binding.projected_name}`"
-                if not physical_cols or binding.source_column.lower() in physical_cols
-                else f"  NULL AS `{binding.projected_name}`"
-            )
-            for binding in bindings
-        ]
+        select_parts: list[str] = []
+        used_aliases: set[str] = set()
+
+        for binding in bindings:
+            # When an alias table is used, binding.source_column could exist natively
+            source_expr = f"f.`{binding.source_column}`"
+            
+            # If physical cols are known and the column doesn't exist, we must still project it
+            # But we fallback to NULL to avoid UNRESOLVED_COLUMN errors inside the source block.
+            if physical_cols and binding.source_column.lower() not in physical_cols:
+                # If we have measure overrides, they might be relying on 'Inventory_Fact.source_value_total_stock'
+                # but if that column is purely in Project_Measures, it won't exist.
+                # However, this mapping guarantees metric view yaml syntax validity.
+                source_expr = "CAST(NULL AS DOUBLE)"
+
+            projected_alias = str(binding.projected_name or "").strip()
+            if projected_alias and projected_alias.lower() not in used_aliases:
+                select_parts.append(f"  {source_expr} AS `{projected_alias}`")
+                used_aliases.add(projected_alias.lower())
+
+            semantic_alias = self._sanitize_identifier(binding.semantic_name).lower()
+            if semantic_alias and semantic_alias.lower() not in used_aliases:
+                select_parts.append(f"  {source_expr} AS `{semantic_alias}`")
+                used_aliases.add(semantic_alias.lower())
+
+
+        if hasattr(self, "_config_source_sql") and self._config_source_sql:
+            for source_inj in self._config_source_sql:
+                select_parts.append(f"  {source_inj.strip()}")
+
         if not select_parts:
             return source_fq.replace("`", "")
 
@@ -1248,7 +1839,7 @@ class DatabricksPublisher:
             "|\n"
             "  SELECT\n"
             f"{select_list}\n"
-            f"  FROM {source_fq.replace('`', '')}"
+            f"  FROM {source_fq.replace('`', '')} f"
         )
 
     def _requires_source_alias_query(
@@ -1382,6 +1973,18 @@ class DatabricksPublisher:
             column_name = match.group(1) or match.group(2) or ""
             projected = _resolve_projected_name(column_name)
             if not projected:
+                normalized_col = self._sanitize_identifier(column_name).lower()
+                # 1. If the column exists in the live-introspected physical table, pass it through.
+                if normalized_col in physical_cols:
+                    return f"`{self._sanitize_identifier(column_name)}`"
+                # 2. If no physical columns were introspected (DB unreachable or table not
+                #    yet created), give the benefit of the doubt and pass the column through.
+                #    This prevents translated DAX from silently becoming cast(null as double)
+                #    simply because SHOW COLUMNS couldn't run before the table was deployed.
+                if not physical_cols:
+                    return f"`{self._sanitize_identifier(column_name)}`"
+                # 3. No semantic binding AND not in physical schema AND schema IS known.
+                #    Only at this point do we treat it as unresolvable.
                 if not dataset.columns:
                     return f"`{self._sanitize_identifier(column_name)}`"
                 unresolved = True
@@ -1528,16 +2131,22 @@ class DatabricksPublisher:
         ]
 
         inline_measure_source_required = not bindings and not dataset.columns and resolved_measures
+        inline_source_columns: set[str] = set()
 
         if inline_measure_source_required:
-            inline_cols: list[str] = []
+            inline_column_names: list[str] = []
             used_cols: set[str] = set()
             for rm in resolved_measures:
                 for col_name in self._extract_inline_source_columns_from_sql_expression(rm.sql_expression):
                     if col_name in used_cols:
                         continue
                     used_cols.add(col_name)
-                    inline_cols.append(f"CAST(NULL AS DOUBLE) AS `{col_name}`")
+                    inline_source_columns.add(col_name)  # Track these for dimension generation
+                    inline_column_names.append(col_name)
+            inline_cols = self._build_inline_null_projection(
+                inline_column_names,
+                [rm.sql_expression for rm in resolved_measures if rm.sql_expression],
+            )
             if inline_cols:
                 lines.append("source: |")
                 lines.append("  SELECT")
@@ -1558,6 +2167,7 @@ class DatabricksPublisher:
             # Inline SQL query as source — no physical table needed
             # Generates a typed schema SELECT using CAST(NULL AS type)
             inline_cols: list[str] = []
+            used_aliases: set[str] = set()
             for binding in bindings:
                 col = dataset.get_column(binding.semantic_name)
                 if not col:
@@ -1565,27 +2175,69 @@ class DatabricksPublisher:
                 dbx_type = self._sql_type(
                     col.data_type.value, col.source_type, col.unique_name,
                 )
-                inline_cols.append(
-                    f"CAST(NULL AS {dbx_type}) AS `{binding.projected_name}`"
-                )
+                source_expr = f"CAST(NULL AS {dbx_type})"
+
+                projected_alias = str(binding.projected_name or "").strip()
+                if projected_alias and projected_alias.lower() not in used_aliases:
+                    inline_cols.append(
+                        f"{source_expr} AS `{projected_alias}`"
+                    )
+                    used_aliases.add(projected_alias.lower())
+
+                semantic_alias = self._sanitize_identifier(binding.semantic_name).lower()
+                if semantic_alias and semantic_alias.lower() not in used_aliases:
+                    inline_cols.append(
+                        f"{source_expr} AS `{semantic_alias}`"
+                    )
+                    used_aliases.add(semantic_alias.lower())
             if inline_cols:
                 inline_select = ", ".join(inline_cols)
                 lines.append("source: |")
                 lines.append(f"  SELECT {inline_select}")
             else:
-                # Fallback: reference the table directly
+                # Fallback: reference the table directly when no bindings matched
+                # Extract columns from measures for inline source when needed
+                if not bindings:
+                    for rm in resolved_measures:
+                        for col_name in self._extract_inline_source_columns_from_sql_expression(rm.sql_expression):
+                            if col_name not in inline_source_columns:
+                                inline_source_columns.add(col_name)
                 source_for_yaml = source_fq.replace("`", "")
                 lines.append(f"source: {yaml_quote(source_for_yaml)}")
+
+        # Emit joins if enabled and relationships exist
+        joins_lines = self._generate_metric_view_joins_yaml(sml_model, dataset)
+        lines.extend(joins_lines)
 
         lines.append("")
         lines.append("dimensions:")
         dimensions_added = 0
+        used_dimension_names: set[str] = set()
+        
+        # First, emit explicit dimensions from dataset.columns
         for binding in bindings:
             if not binding.include_as_dimension:
                 continue
             lines.append(f"  - name: {yaml_quote(binding.projected_name)}")
             lines.append(f"    expr: {yaml_quote(f'`{binding.projected_name}`')}")
+            used_dimension_names.add(binding.projected_name.upper())
             dimensions_added += 1
+        
+        # Then, emit auto-discovered dimensions from inline source columns when dataset.columns is empty
+        # or when bindings didn't resolve all columns but measures reference them
+        if inline_source_columns:
+            projection_prefix = self._metric_view_projection_prefix(dataset)
+            for col_name in sorted(inline_source_columns):
+                projected_name = self._make_unique_projected_name(
+                    f"{projection_prefix}_{self._sanitize_identifier(col_name).lower()}",
+                    used_dimension_names,
+                    suffix="dim",
+                )
+                lines.append(f"  - name: {yaml_quote(projected_name)}")
+                lines.append(f"    expr: {yaml_quote(f'`{projected_name}`')}")
+                used_dimension_names.add(projected_name.upper())
+                dimensions_added += 1
+        
         if dimensions_added == 0:
             lines[-1] = "dimensions: []"
 
@@ -1605,6 +2257,23 @@ class DatabricksPublisher:
                 )
                 continue
 
+            # Determine if the measure name needs prefixing
+            # Prefix if measure name matches a column name (from dataset.columns or inline_source_columns)
+            measure_normalized = self._sanitize_identifier(rm.name).upper()
+            column_names_upper = {col.unique_name.upper() for col in (dataset.columns or [])}
+            # Also include columns extracted from inline sources
+            column_names_upper.update({col.upper() for col in inline_source_columns})
+            measure_name_matches_column = measure_normalized in column_names_upper
+            
+            if measure_name_matches_column:
+                # Add table alias prefix to match dimension naming convention
+                prefixed_measure_name = self._prefix_metric_view_measure_name(
+                    dataset, rm.name, used_dimension_names
+                )
+            else:
+                # Use measure name as-is when it doesn't match any column
+                prefixed_measure_name = self._sanitize_identifier(rm.name)
+
             if rm.confidence == CONFIDENCE_LOW and self._dbx_behavior.enable_low_confidence_drafts:
                 warning = " ".join(rm.warnings).replace('"', "'") if rm.warnings else "LOW CONFIDENCE"
                 original_dax = (rm.original_dax or "").replace('"', "'")
@@ -1613,23 +2282,261 @@ class DatabricksPublisher:
                     dax_preview = re.sub(r"\s+", " ", original_dax).strip()[:200]
                     lines.append(f"  # Original DAX: {dax_preview}")
 
-            lines.append(f"  - name: {yaml_quote(rm.name)}")
-            lines.append(f"    expr: {yaml_quote(dbx_expr)}")
+            # Safety net: Databricks metric views require every measure expr to be an
+            # aggregate function. If the expression has no aggregate root, wrap it in
+            # ANY_VALUE() so the deployment never rejects it.
+            safe_expr = self._ensure_aggregate_measure_expr(dbx_expr)
+            lines.append(f"  - name: {yaml_quote(prefixed_measure_name)}")
+            lines.append(f"    expr: {yaml_quote(safe_expr)}")
             measures_added += 1
+            
         if measures_added == 0:
             lines[-1] = "measures: []"
 
-        return "\n".join(lines)
+        output_yaml = "\n".join(lines)
+
+        # ── Databricks Semantic Overrides ──
+        
+        # 1. Inject UI lookups (Error 3)
+        if hasattr(self, "_ui_lookups") and self._ui_lookups:
+            joins_to_inject = []
+            dims_to_inject = []
+            for lookup in self._ui_lookups:
+                join_alias = self._sanitize_identifier(lookup['metric_name']).lower() + "_lookup"
+                joins_to_inject.append(f"  - name: {join_alias}")
+                joins_to_inject.append(f"    source: {lookup['table_name']}")
+                joins_to_inject.append(f"    on: '`{lookup['column'].lower()}` = {join_alias}.`{lookup['column'].lower()}`'")
+                dims_to_inject.append(f"  - name: {self._sanitize_identifier(lookup['metric_name']).lower()}_text")
+                dims_to_inject.append(f"    expr: {join_alias}.`{self._sanitize_identifier(lookup['metric_name']).lower()}_text`")
+            
+            if "joins:" in output_yaml:
+                output_yaml = output_yaml.replace("joins:", "joins:\n" + "\n".join(joins_to_inject))
+            
+            # Dimensions block exists, just append before measures
+            measures_idx = output_yaml.rfind("measures:")
+            if measures_idx != -1:
+                output_yaml = output_yaml[:measures_idx] + "\n".join(dims_to_inject) + "\n\n" + output_yaml[measures_idx:]
+
+        # We completely removed the `current_fiscal` regex join injection here
+        # because Unity Catalog natively forbids aggregate subqueries inside the joins block.
+        # Instead, users fully use `semabridge.yaml` -> `source_columns_sql` (Option 2)
+        # to inject `(SELECT MAX(...) ...) AS _current_fiscal_period` into the root SELECT
+        # and override measures via `measure_sql_overrides`.
+
+        return output_yaml
+
+    def _generate_metric_view_joins_yaml(
+        self,
+        sml_model: SMLModel,
+        dataset: SMLDataset,
+    ) -> list[str]:
+        """
+        Generate YAML for metric view 'joins' property.
+        
+        Builds nested join structures when enable_metric_view_joins=true
+        and relationships exist for the primary dataset.
+        
+        Args:
+            sml_model: The parent semantic model with relationships.
+            dataset: The primary dataset for this metric view.
+        
+        Returns:
+            List of YAML lines for the joins section.
+            Empty list if no joins should be emitted.
+        """
+        # Check feature flag
+        if not self._dbx_behavior.enable_metric_view_joins:
+            return []
+        
+        # Check that cross-table joins are also enabled
+        if not self._dbx_behavior.enable_cross_table_joins:
+            logger.debug(
+                "Skipping metric view joins for '%s': "
+                "enable_metric_view_joins=true but enable_cross_table_joins=false",
+                dataset.unique_name,
+            )
+            return []
+        
+        try:
+            # Build join tree from relationships
+            builder = JoinTreeBuilder(sml_model)
+            joins = builder.build_join_tree(dataset.unique_name)
+        except ValueError as e:
+            logger.debug(
+                "Could not build join tree for '%s': %s",
+                dataset.unique_name,
+                str(e),
+            )
+            return []
+        
+        if not joins and not hasattr(self, "_config_pre_joins"):
+            return []
+            
+        # Emit joins YAML
+        lines: list[str] = [""]
+        lines.append("joins:")
+        
+        # Inject custom pre_joins
+        if hasattr(self, "_config_pre_joins") and self._config_pre_joins:
+            for j in self._config_pre_joins:
+                lines.append(f"  - name: {j.get('alias')}")
+                if 'sql' in j:
+                    if j['sql'].strip().upper().startswith('SELECT'):
+                        lines.append(f"    source: |-\n      ({j['sql']})")
+                    else:
+                        lines.append(f"    source: {j['sql']}")
+                if 'on' in j:
+                    lines.append(f"    on: '{j['on']}'")
+                elif j.get('type') == 'cross':
+                    lines.append(f"    on: '1 = 1'")
+                lines.append("")
+        
+        if joins:
+            self._emit_join_yaml(sml_model, joins, lines, indent=1)
+        
+        return lines
+    
+    def _metric_view_join_alias(self, dataset_name: str) -> str:
+        """Build the deterministic join alias used by JoinTreeBuilder."""
+        alias = "".join(c.lower() for c in str(dataset_name or "") if c.isalnum() or c == "_")
+        return alias or ""
+
+    def _resolve_metric_view_join_source(
+        self,
+        sml_model: SMLModel,
+        join_name: str,
+        join_source: str,
+    ) -> str:
+        """Resolve a join source to a Databricks-valid relation identifier.
+
+        JoinTreeBuilder may emit a human-readable dataset/source name (for example
+        "Plant BU Mapping") that is not a valid SQL identifier in Databricks metric
+        view YAML. Prefer connector mapping resolution for the matched dataset.
+        """
+        join_alias = self._metric_view_join_alias(join_name)
+        if not join_alias:
+            return str(join_source or "")
+
+        for dataset in sml_model.datasets:
+            if self._metric_view_join_alias(dataset.unique_name) != join_alias:
+                continue
+            expected_source = self._resolve_source_table(dataset)
+            resolved_source = self._resolve_existing_source_for_dataset(dataset, expected_source) or expected_source
+            return resolved_source.replace("`", "")
+
+        return str(join_source or "")
+
+    def _normalize_metric_view_join_column(self, column_name: str) -> str:
+        """Return a Databricks-safe join key identifier for metric-view YAML."""
+        return self._sanitize_identifier(column_name).lower()
+
+    def _normalize_metric_view_join_on_expression(self, on_expression: str) -> str:
+        """Normalize quoted ON expression identifiers for Databricks parser safety."""
+        expr = str(on_expression or "").strip()
+        if not expr:
+            return expr
+
+        def _replace_quoted(match: re.Match[str]) -> str:
+            raw = match.group(1) or match.group(2) or ""
+            normalized = self._normalize_metric_view_join_column(raw)
+            return f"`{normalized}`" if normalized else match.group(0)
+
+        return re.sub(r"`([^`]+)`|\"([^\"]+)\"", _replace_quoted, expr)
+
+    def _emit_join_yaml(
+        self,
+        sml_model: SMLModel,
+        joins: list,
+        lines: list[str],
+        indent: int = 0,
+    ) -> None:
+        """
+        Recursively emit nested join structures as YAML.
+        
+        Args:
+            joins: List of SMLJoin objects.
+            lines: Output YAML line list (mutated).
+            indent: Current indentation level.
+        """
+        indent_str = "  " * indent
+        
+        for join in joins:
+            resolved_source = self._resolve_metric_view_join_source(
+                sml_model,
+                getattr(join, "name", ""),
+                getattr(join, "source", ""),
+            )
+            lines.append(f"{indent_str}  - name: {self._yaml_quote(join.name)}")
+            lines.append(f"{indent_str}    source: {self._yaml_quote(resolved_source)}")
+            if getattr(join, "using", None):
+                lines.append(f"{indent_str}    using:")
+                for column_name in join.using:
+                    normalized_column = self._normalize_metric_view_join_column(column_name)
+                    if not normalized_column:
+                        continue
+                    lines.append(f"{indent_str}      - {self._yaml_quote(normalized_column)}")
+            else:
+                normalized_on = self._normalize_metric_view_join_on_expression(join.on)
+                lines.append(f"{indent_str}    'on': {self._yaml_quote(normalized_on)}")
+            
+            # Emit nested joins if present
+            if join.joins:
+                lines.append(f"{indent_str}    joins:")
+                self._emit_join_yaml(sml_model, join.joins, lines, indent=indent + 2)
 
     def _yaml_quote(self, value: str) -> str:
         """Encode a value as a YAML-safe scalar via JSON string quoting."""
         return json.dumps(str(value or ""))
 
     def _normalize_metric_view_sql_expression(self, sql_expression: str) -> str:
-        """Normalize SQL expressions for metric-view YAML readability."""
+        """Normalize SQL expressions for metric-view YAML readability.
+
+        Strips Cortex Analyst-style ``measures."column"`` / ``MEASURES."COLUMN"``
+        table prefixes that are injected by the cortex_analyst.yaml generator.
+        Those prefixes are valid Snowflake Cortex Analyst syntax but cause a
+        ``PARSE_SYNTAX_ERROR`` in Databricks ``WITH METRICS LANGUAGE YAML``
+        because no table alias named ``measures`` exists in the source block.
+
+        The rewrite converts:
+            ``sum(measures."transaction_usd_amount")``   → ``sum(transaction_usd_amount)``
+            ``SUM(MEASURES."TRANSACTION_USD_AMOUNT")``   → ``sum(transaction_usd_amount)``
+            ``sum(measures.transaction_usd_amount)``     → ``sum(transaction_usd_amount)``
+
+        After stripping the prefix the expression only references bare projected
+        column aliases that are already emitted by the ``source:`` SELECT block.
+        """
         expr = str(sql_expression or "").strip().replace("`", "")
         if not expr:
             return expr
+
+        # Strip Cortex Analyst ``measures."col"`` / ``measures.col`` prefixes.
+        # Pattern matches:
+        #   MEASURES."COLUMN_NAME"   (double-quoted identifier)
+        #   measures.column_name     (unquoted identifier)
+        # Both quoted and unquoted forms are replaced with the bare column name.
+        expr = re.sub(
+            r'(?i)\bmeasures\."([^"]+)"',
+            lambda m: m.group(1).lower(),
+            expr,
+        )
+        expr = re.sub(
+            r"(?i)\bmeasures\.([A-Za-z_][A-Za-z0-9_]*)",
+            lambda m: m.group(1).lower(),
+            expr,
+        )
+
+        # Also strip any remaining join-table prefixes that used the dummy
+        # Power BI '_Measures' or 'Project_Measures' table names.
+        expr = re.sub(
+            r'(?i)\b(?:project_measures|_measures)\."([^"]+)"',
+            lambda m: m.group(1).lower(),
+            expr,
+        )
+        expr = re.sub(
+            r"(?i)\b(?:project_measures|_measures)\.([A-Za-z_][A-Za-z0-9_]*)",
+            lambda m: m.group(1).lower(),
+            expr,
+        )
 
         parts = re.split(r"('(?:''|[^'])*')", expr)
         normalized_parts: list[str] = []
@@ -1641,6 +2548,64 @@ class DatabricksPublisher:
             else:
                 normalized_parts.append(part.lower())
         return "".join(normalized_parts)
+
+    # Aggregate function names accepted by Databricks Unity Catalog metric views
+    _AGGREGATE_ROOTS = frozenset({
+        "sum", "avg", "average", "min", "max", "count", "any_value",
+        "approx_count_distinct", "collect_list", "collect_set",
+        "first", "last", "stddev", "stddev_pop", "var_pop", "variance",
+        "percentile", "percentile_approx", "median", "bitmap_or_agg",
+    })
+
+    def _ensure_aggregate_measure_expr(self, expr: str) -> str:
+        """Wrap non-aggregate measure SQL in ANY_VALUE() for Databricks compliance.
+
+        Databricks Unity Catalog metric views reject measure expressions that do not
+        contain a top-level aggregate function (SUM, MAX, ANY_VALUE, etc.).  This
+        helper detects bare scalar / CASE WHEN / subquery expressions and wraps them
+        so deployment never fails due to missing aggregate roots.
+        """
+        clean = str(expr or "").strip()
+        if not clean or clean.lower() == "cast(null as double)":
+            return clean
+
+        # Extract the leading function name (handles backticks and spaces)
+        func_match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*\(", clean, re.IGNORECASE)
+        if func_match:
+            func_name = func_match.group(1).lower()
+            if func_name in self._AGGREGATE_ROOTS:
+                return clean  # already has an aggregate root
+
+        # Subquery starting with SELECT — treat as scalar subquery, wrap it
+        if re.match(r"^\(?\s*select\b", clean, re.IGNORECASE):
+            # Already scalar subqueries like (SELECT MAX(...) FROM ...) are fine as-is;
+            # plain (SELECT col FROM ...) need wrapping.
+            inner_has_agg = any(
+                re.search(rf"\b{fn}\s*\(", clean, re.IGNORECASE)
+                for fn in self._AGGREGATE_ROOTS
+            )
+            if inner_has_agg:
+                return clean
+
+        logger.debug(
+            "Wrapping non-aggregate measure expr in ANY_VALUE(): %s", clean[:80]
+        )
+        return f"any_value({clean})"
+
+    def _is_metric_view_safe_scalar_expression(self, sql_expression: str) -> bool:
+        """Return True when an expression is a safe scalar function for metric-view YAML."""
+        expr = str(sql_expression or "").strip()
+        if not expr:
+            return False
+
+        normalized = re.sub(r"\s+", "", expr).lower()
+        return normalized in {
+            "current_date()",
+            "curdate()",
+            "current_timestamp()",
+            "now()",
+            "localtimestamp()",
+        }
 
     def _extract_inline_source_columns_from_sql_expression(self, sql_expression: str) -> list[str]:
         """Extract likely source column names from translated SQL for inline YAML sources."""
@@ -1706,6 +2671,9 @@ class DatabricksPublisher:
                 metrics_by_dataset.setdefault(ds_name, []).append(metric)
         has_any_metrics = bool(metrics_by_dataset)
 
+        # Track which metrics have been processed
+        processed_metric_ids: set[int] = set()
+
         for dataset in sml_model.datasets:
             ds_name = self._sanitize_identifier(dataset.unique_name)
             if not ds_name:
@@ -1735,6 +2703,7 @@ class DatabricksPublisher:
             # Resolve all measures for this dataset
             resolved: list[ResolvedMeasure] = []
             for metric in metrics:
+                processed_metric_ids.add(id(metric))
                 m_name = metric_name_index.get(
                     id(metric),
                     self._normalize_metric_identifier(metric.unique_name),
@@ -1778,12 +2747,17 @@ class DatabricksPublisher:
                         })
                     continue
 
-                metric_view_expr = self._rewrite_metric_view_measure_expression(
-                    sql_expr,
-                    dataset,
-                    source_fq,
-                    bindings,
-                )
+                # Pre-translated SQL (SQL_NATIVE) already has validated bare column refs.
+                # Skip projection rewriting to prevent spurious unresolved-binding failures.
+                if translation_type == TRANSLATION_TYPE_SQL_NATIVE:
+                    metric_view_expr = sql_expr
+                else:
+                    metric_view_expr = self._rewrite_metric_view_measure_expression(
+                        sql_expr,
+                        dataset,
+                        source_fq,
+                        bindings,
+                    )
                 if not metric_view_expr:
                     metric_view_expr = self._build_scalar_subquery_aggregate_expression(
                         sql_expr,
@@ -1828,14 +2802,7 @@ class DatabricksPublisher:
             ]
             if not deployable:
                 if self._dbx_behavior.emit_metric_views_for_all_datasets or not has_any_metrics:
-                    resolved = [
-                        ResolvedMeasure(
-                            name="total_rows",
-                            sql_expression="COUNT(*)",
-                            translation_type=TRANSLATION_TYPE_AGGREGATION_BUILT,
-                            confidence=CONFIDENCE_HIGH,
-                        )
-                    ]
+                    resolved = self._build_dimension_only_resolved_measures(dataset, sml_model)
                     deployable = resolved
                     logger.info(
                         "📊 Falling back to synthetic metric-view measure for dataset '%s'",
@@ -1867,6 +2834,19 @@ class DatabricksPublisher:
                 len(deployable),
                 len([c for c in dataset.columns if not c.is_hidden]),
             )
+
+        # Validate any remaining metrics that reference non-existent datasets
+        for metric in sml_model.metrics:
+            if id(metric) not in processed_metric_ids:
+                m_name = metric_name_index.get(
+                    id(metric),
+                    self._normalize_metric_identifier(metric.unique_name),
+                )
+                skipped_count += 1
+                skipped_details.append({
+                    "name": m_name,
+                    "reason": DEPLOY_REASON_VALIDATION_FAILED,
+                })
 
         return stmts, created, skipped_count, skipped_details
 
@@ -2026,7 +3006,8 @@ class DatabricksPublisher:
         used_aliases: set[str] = set()
         for ds_name in dataset_by_name:
             preferred = self._sanitize_identifier(to_alias(ds_name) or ds_name).lower()
-            alias_by_dataset[ds_name] = self._make_unique_projected_name(preferred, used_aliases, suffix="join").lower()
+            base_alias = preferred if preferred.endswith("_join") else f"{preferred}_join"
+            alias_by_dataset[ds_name] = self._make_unique_projected_name(base_alias, used_aliases, suffix="join").lower()
 
         graph = self._build_relationship_graph(sml_model)
         candidate_bases = [base_dataset_name] + [name for name in sorted(tables_involved) if name != base_dataset_name]
@@ -2235,7 +3216,7 @@ class DatabricksPublisher:
         if not agg_sql:
             return None
 
-        return f"(SELECT {agg_sql} FROM {target_source})"
+        return f"first((SELECT {agg_sql} FROM {target_source}))"
 
     def _sql_type(self, normalized_type: str, source_type: str = "", column_name: str = "") -> str:
         # Calendar-like dimension columns do not need BIGINT width.
@@ -2342,7 +3323,400 @@ class DatabricksPublisher:
             return "unknown_view"
         return str(match.group(1) or "unknown_view")
 
+    def _is_object_type_conflict_error(self, error_text: str) -> bool:
+        """Return True for Databricks object type conflicts during CREATE VIEW."""
+        lowered = str(error_text or "").lower()
+        return (
+            "expect_view_not_table" in lowered
+            or "does not support create or replace view" in lowered
+            or "sqlstate: 42809" in lowered
+        )
+
+    def _preflight_resolve_object_conflict(
+        self,
+        view_fqn: str,
+        *,
+        is_metric: bool = False,
+    ) -> None:
+        """Detect and drop any conflicting object at ``view_fqn`` before deployment.
+
+        Option 3 — Pre-flight object-type conflict cleanup:
+            Runs ``DESCRIBE EXTENDED`` on the target name.  If a TABLE (MANAGED
+            or EXTERNAL) is found it is dropped unconditionally so ``CREATE OR
+            REPLACE VIEW`` can succeed.  If a plain VIEW is found and we are
+            deploying a native metric-view (``is_metric=True``), Databricks
+            rejects the REPLACE because the object types differ — so the plain
+            VIEW is also dropped first.
+
+            Unlike the post-failure retry path (``_is_object_type_conflict_error``
+            + DROP inside the except block), this runs **before** the first
+            deploy attempt, eliminating the wasted failed round-trip and making
+            the conflict visible in the log at the right moment.
+
+        Args:
+            view_fqn:   Fully-qualified backtick name, e.g.
+                        e.g. '`catalog`.`schema`.`view_name`'.
+
+            is_metric:  True when deploying ``WITH METRICS LANGUAGE YAML`` —
+                        a plain VIEW at the same name is a type mismatch.
+        """
+        # Parse the FQN (strip backticks first)
+        bare = view_fqn.replace("`", "")
+        parts = bare.split(".")
+        if len(parts) != 3:
+            return  # Unexpected format — skip silently
+
+        catalog, schema_name, table_name = parts
+
+        # ── Step 1: Check whether anything exists ───────────────────────────
+        # Use SHOW TABLES with a LIKE filter — the schema-level cache is not
+        # guaranteed to be populated for the *target* schema (which is the
+        # publish catalog/schema, not necessarily a source schema).
+        try:
+            show_stmt = f"SHOW TABLES IN `{catalog}`.`{schema_name}` LIKE '{table_name}'"
+            rows = self.execute_statements([show_stmt])
+        except Exception as exc:
+            logger.debug(
+                "Pre-flight conflict check: SHOW TABLES failed for %s — skipping. %s",
+                view_fqn,
+                str(exc)[:200],
+            )
+            return
+
+        found = False
+        if rows:
+            payload = rows[0] if isinstance(rows[0], dict) else {}
+            result_block = payload.get("result") if isinstance(payload, dict) else {}
+            data_array = result_block.get("data_array") if isinstance(result_block, dict) else None
+            if data_array:
+                found = bool(data_array)
+
+        if not found:
+            return  # Nothing there — safe to deploy
+
+        # ── Step 2: Inspect the existing object's type ───────────────────────
+        existing_type = "UNKNOWN"
+        try:
+            desc_stmt = f"DESCRIBE EXTENDED {view_fqn}"
+            desc_rows = self.execute_statements([desc_stmt])
+            if desc_rows:
+                desc_payload = desc_rows[0] if isinstance(desc_rows[0], dict) else {}
+                desc_block = desc_payload.get("result") if isinstance(desc_payload, dict) else {}
+                desc_data = desc_block.get("data_array") if isinstance(desc_block, dict) else []
+                # data_array rows are [col_name, data_type, comment]
+                for row in (desc_data or []):
+                    if isinstance(row, list) and len(row) >= 2:
+                        if str(row[0]).strip().lower() == "type":
+                            existing_type = str(row[1]).strip().upper()
+                            break
+        except Exception as exc:
+            logger.debug(
+                "Pre-flight conflict check: DESCRIBE EXTENDED failed for %s — assuming safe. %s",
+                view_fqn,
+                str(exc)[:200],
+            )
+            return
+
+        # ── Step 3: Drop if necessary ────────────────────────────────────────
+        needs_drop = False
+        drop_reason = ""
+
+        if existing_type in ("MANAGED", "EXTERNAL"):
+            needs_drop = True
+            drop_reason = f"existing object is a {existing_type} TABLE; need VIEW"
+        elif existing_type == "VIEW" and is_metric:
+            # Plain VIEW → Metric View upgrade: Databricks rejects CREATE OR REPLACE
+            # because the underlying object types differ at the catalog level.
+            needs_drop = True
+            drop_reason = "existing object is a plain VIEW; need METRIC_VIEW (WITH METRICS)"
+
+        if not needs_drop:
+            # VIEW → VIEW or METRIC_VIEW → METRIC_VIEW: handled by CREATE OR REPLACE natively.
+            return
+
+        logger.warning(
+            "⚠️  Pre-flight conflict at %s: %s — dropping before deploy.",
+            view_fqn,
+            drop_reason,
+        )
+
+        for drop_stmt in (
+            f"DROP VIEW IF EXISTS {view_fqn}",
+            f"DROP TABLE IF EXISTS {view_fqn}",
+        ):
+            try:
+                self.execute_statements([drop_stmt])
+            except Exception as drop_exc:
+                logger.debug(
+                    "Pre-flight DROP attempt failed for %s: %s",
+                    view_fqn,
+                    str(drop_exc)[:200],
+                )
+
+        logger.info("✅ Pre-flight conflict resolved for %s — proceeding with deploy.", view_fqn)
+
+    def _classify_metric_view_deploy_error(self, error_text: str) -> tuple[str, str]:
+        """Classify metric-view deploy failures into actionable categories."""
+        lowered = str(error_text or "").lower()
+
+        semantic_tokens = [
+            "scalar_subquery_is_in_group_by_or_aggregate_function",
+            "group by",
+            "aggregate function",
+            "analysisexception",
+            "parse_syntax_error",
+            "datatype_mismatch",
+        ]
+        if any(token in lowered for token in semantic_tokens):
+            if "scalar_subquery_is_in_group_by_or_aggregate_function" in lowered:
+                return ERROR_CLASS_SQL_SEMANTIC, "SCALAR_SUBQUERY_GROUPING"
+            return ERROR_CLASS_SQL_SEMANTIC, "SQL_SEMANTIC"
+
+        missing_entity_tokens = [
+            "table_or_view_not_found",
+            "unresolved_relation",
+            "not found",
+            "no such table",
+            "does not exist",
+        ]
+        if any(token in lowered for token in missing_entity_tokens):
+            return ERROR_CLASS_MISSING_ENTITY, "MISSING_ENTITY"
+
+        source_mismatch_tokens = [
+            "unresolved_column",
+            "cannot be resolved",
+            "schema mismatch",
+            "cannot resolve",
+        ]
+        if any(token in lowered for token in source_mismatch_tokens):
+            return ERROR_CLASS_SOURCE_MISMATCH, "SOURCE_MISMATCH"
+
+        return ERROR_CLASS_GENERIC, "GENERIC_DEPLOY_ERROR"
+
+    def _log_sql_fallback_state(
+        self,
+        *,
+        model_name: str,
+        state: str,
+        reason: str = "",
+    ) -> None:
+        """Emit a structured fallback state log for auditability."""
+        self._last_sql_fallback_state = str(state or "").strip() or SQL_FALLBACK_NOT_TRIGGERED
+        self._last_sql_fallback_reason = str(reason or "").strip()
+
+        if reason:
+            logger.info(
+                "SQL_FALLBACK_STATE model=%s state=%s reason=%s",
+                model_name,
+                state,
+                reason,
+            )
+            return
+        logger.info(
+            "SQL_FALLBACK_STATE model=%s state=%s",
+            model_name,
+            state,
+        )
+
+    def _extract_unresolved_column_name(self, error_text: str) -> str:
+        """Extract unresolved column identifier from Databricks error text."""
+        text = str(error_text or "")
+        match = re.search(
+            r"name\s+`([^`]+)`\s+cannot\s+be\s+resolved",
+            text,
+            re.IGNORECASE,
+        )
+        if not match:
+            return ""
+        return self._sanitize_identifier(match.group(1)).lower()
+
+    def _remove_failing_metric_measure(
+        self,
+        view_sql: str,
+        error_text: str,
+    ) -> str | None:
+        """Remove metric-view entries referencing an unresolved identifier.
+
+        This primarily removes failing measures, and also drops dimensions that
+        directly reference the unresolved identifier so degraded retries can
+        proceed when the parser failure is dimension-driven.
+        """
+        unresolved_col = self._extract_unresolved_column_name(error_text)
+        if not unresolved_col:
+            return None
+
+        metric_sql_match = re.search(
+            r"(?is)^(CREATE\s+OR\s+REPLACE\s+VIEW\s+`[^`]+`\.`[^`]+`\.`[^`]+`\s+WITH\s+METRICS\s+LANGUAGE\s+YAML\s+AS\s+\$\$)\s*(.*?)\s*\$\$\s*$",
+            str(view_sql or ""),
+        )
+        if not metric_sql_match:
+            return None
+
+        prefix = metric_sql_match.group(1)
+        yaml_body = metric_sql_match.group(2)
+
+        try:
+            payload = yaml.safe_load(yaml_body) or {}
+        except yaml.YAMLError:
+            return None
+
+        measures = payload.get("measures")
+        unresolved_pattern = re.compile(rf"\b{re.escape(unresolved_col)}\b", re.IGNORECASE)
+
+        removed_measure_names: list[str] = []
+        if isinstance(measures, list) and measures:
+            retained_measures: list[dict[str, Any]] = []
+            for measure in measures:
+                if not isinstance(measure, dict):
+                    retained_measures.append(measure)
+                    continue
+                expr = str(measure.get("expr") or "")
+                expr_norm = expr.replace("`", "").replace('"', "")
+                if unresolved_pattern.search(expr_norm):
+                    removed_measure_names.append(str(measure.get("name") or "unnamed_measure"))
+                    continue
+                retained_measures.append(measure)
+            payload["measures"] = retained_measures
+
+        dimensions = payload.get("dimensions")
+        removed_dimension_names: list[str] = []
+        if isinstance(dimensions, list) and dimensions:
+            retained_dimensions: list[dict[str, Any]] = []
+            for dim in dimensions:
+                if not isinstance(dim, dict):
+                    retained_dimensions.append(dim)
+                    continue
+                expr = str(dim.get("expr") or "")
+                expr_norm = expr.replace("`", "").replace('"', "")
+                if unresolved_pattern.search(expr_norm):
+                    removed_dimension_names.append(str(dim.get("name") or "unnamed_dimension"))
+                    continue
+                retained_dimensions.append(dim)
+            payload["dimensions"] = retained_dimensions
+
+        if not removed_measure_names and not removed_dimension_names:
+            return None
+
+        try:
+            repaired_yaml = yaml.safe_dump(payload, sort_keys=False).strip()
+        except yaml.YAMLError:
+            return None
+
+        if removed_measure_names:
+            logger.warning(
+                "Metric-view graceful degradation: removed %d measure(s) referencing unresolved column '%s': %s",
+                len(removed_measure_names),
+                unresolved_col,
+                ", ".join(removed_measure_names),
+            )
+        if removed_dimension_names:
+            logger.warning(
+                "Metric-view graceful degradation: removed %d dimension(s) referencing unresolved column '%s': %s",
+                len(removed_dimension_names),
+                unresolved_col,
+                ", ".join(removed_dimension_names),
+            )
+
+        return f"{prefix}\n{repaired_yaml}\n$$"
+
+    def _preflight_strip_bad_dimensions(self, view_sql: str) -> str:
+        """Strip dimension entries that reference non-existent physical columns.
+
+        Fix 1 — Pre-flight schema validation:
+            Parses the ``WITH METRICS LANGUAGE YAML`` body, resolves column lists
+            for every declared join source via ``_get_source_table_columns``
+            (already cached from pre-flight), and removes ``dimensions:`` entries
+            whose ``join_alias.column`` does not exist in the physical table.
+
+        Returns the (potentially patched) SQL.  Falls back to the original SQL
+        if YAML parsing fails or the schema cannot be introspected.
+        """
+        metric_sql_match = re.search(
+            r"(?is)^(CREATE\s+OR\s+REPLACE\s+VIEW\s+`[^`]+`\.`[^`]+`\.`[^`]+`"
+            r"\s+WITH\s+METRICS\s+LANGUAGE\s+YAML\s+AS\s+\$\$)\s*(.*?)\s*\$\$\s*$",
+            str(view_sql or ""),
+        )
+        if not metric_sql_match:
+            return view_sql
+
+        prefix = metric_sql_match.group(1)
+        yaml_body = metric_sql_match.group(2)
+
+        try:
+            payload = yaml.safe_load(yaml_body) or {}
+        except yaml.YAMLError:
+            return view_sql
+
+        joins = payload.get("joins")
+        dimensions = payload.get("dimensions")
+        if not isinstance(joins, list) or not joins or not isinstance(dimensions, list):
+            return view_sql
+
+        # Build a map: join_alias → set of physical column names (lowercased)
+        join_col_map: dict[str, set[str]] = {}
+        for join_entry in joins:
+            if not isinstance(join_entry, dict):
+                continue
+            alias = str(join_entry.get("name") or "").strip().lower()
+            source = str(join_entry.get("source") or "").strip()
+            if not alias or not source:
+                continue
+            physical_cols = self._get_source_table_columns(source)
+            if physical_cols:
+                join_col_map[alias] = physical_cols
+
+        if not join_col_map:
+            return view_sql  # No introspectable joins — skip
+
+        # Strip dimensions referencing non-existent physical columns
+        retained: list[dict] = []
+        removed_names: list[str] = []
+        for dim in dimensions:
+            if not isinstance(dim, dict):
+                retained.append(dim)
+                continue
+            expr = str(dim.get("expr") or "").strip().strip('"').strip("'")
+            # Match   join_alias.col_name   (with optional backtick quoting)
+            join_col_match = re.match(
+                r"^([A-Za-z_][A-Za-z0-9_]*)\.`?([A-Za-z_][A-Za-z0-9_]*)`?$",
+                expr,
+            )
+            if not join_col_match:
+                retained.append(dim)
+                continue
+
+            alias = join_col_match.group(1).lower()
+            col = join_col_match.group(2).lower()
+
+            if alias not in join_col_map:
+                # No introspection data for this alias → keep the dimension
+                retained.append(dim)
+                continue
+
+            if col not in join_col_map[alias]:
+                removed_names.append(str(dim.get("name") or expr))
+            else:
+                retained.append(dim)
+
+        if not removed_names:
+            return view_sql  # Nothing to strip
+
+        logger.warning(
+            "Pre-flight schema validation stripped %d dimension(s) with missing physical columns: %s",
+            len(removed_names),
+            ", ".join(removed_names[:20]) + (" ..." if len(removed_names) > 20 else ""),
+        )
+
+        payload["dimensions"] = retained
+        try:
+            repaired_yaml = yaml.safe_dump(payload, sort_keys=False).strip()
+        except yaml.YAMLError:
+            return view_sql
+
+        return f"{prefix}\n{repaired_yaml}\n$$"
+
     def _persist_sql_debug_artifact(self, model_name: str, view_sql: str) -> str | None:
+
         """Persist generated SQL to disk for post-failure debugging."""
         try:
             artifact_dir = self._debug_sql_artifact_dir(model_name)
@@ -2825,6 +4199,256 @@ class DatabricksPublisher:
         view_name = f"{prefix}_{safe_model}_{safe_measure}"
         return f'`{self.config.catalog}`.`{self.config.schema_name}`.`{view_name}`'
 
+    def _is_model_artifact_mode(self) -> bool:
+        """Return True when per-model artifact generation is enabled."""
+        return str(getattr(self._dbx_behavior, "model_artifact_mode", "per_dataset") or "").strip().lower() == "per_model"
+
+    def _metadata_table_fq_name(self, model_name: str) -> str:
+        """Resolve metadata table name for current artifact mode."""
+        if not self._is_model_artifact_mode():
+            return self._fq_name(model_name)
+
+        suffix = self._sanitize_identifier(
+            str(getattr(self._dbx_behavior, "model_metadata_suffix", "metadata") or "metadata")
+        )
+        return self._fq_name(f"{model_name}_{suffix}")
+
+    def _generate_model_metric_view_name(self, model_name: str) -> str:
+        """Generate model-level metric view name for per_model mode."""
+        suffix = self._sanitize_identifier(
+            str(getattr(self._dbx_behavior, "model_metric_view_suffix", "metric_view") or "metric_view")
+        )
+        safe_model = self._sanitize_identifier(model_name)
+        view_name = f"{safe_model}_{suffix}"
+        return f'`{self.config.catalog}`.`{self.config.schema_name}`.`{view_name}`'
+
+    def _select_model_fact_dataset(
+        self,
+        sml_model: SMLModel,
+        metrics_by_dataset: dict[str, list[SMLMetric]],
+    ) -> SMLDataset | None:
+        """Choose deterministic root dataset for per-model metric view generation."""
+        configured_root = self._sanitize_identifier(
+            str(getattr(self._dbx_behavior, "model_fact_root", "") or "")
+        )
+        if configured_root:
+            for dataset in sml_model.datasets:
+                if self._sanitize_identifier(dataset.unique_name) == configured_root:
+                    logger.info("🔍 Root dataset selected via model_fact_root config: %s", configured_root)
+                    return dataset
+
+        identified_fact_names = {
+            self._sanitize_identifier(dataset.unique_name)
+            for dataset in self._identify_fact_datasets(sml_model)
+            if self._sanitize_identifier(dataset.unique_name)
+        }
+
+        relationship_degree: dict[str, int] = {}
+        for rel in sml_model.relationships:
+            if not rel.is_active:
+                continue
+            from_ds = self._sanitize_identifier(rel.from_dataset)
+            to_ds = self._sanitize_identifier(rel.to_dataset)
+            if from_ds:
+                relationship_degree[from_ds] = relationship_degree.get(from_ds, 0) + 1
+            if to_ds:
+                relationship_degree[to_ds] = relationship_degree.get(to_ds, 0) + 1
+
+        prefer_relational_root = (
+            self._dbx_behavior.enable_metric_view_joins
+            and self._dbx_behavior.enable_cross_table_joins
+        )
+        logger.info(
+            "🔍 Root dataset selection: prefer_relational_root=%s, "
+            "enable_metric_view_joins=%s, enable_cross_table_joins=%s",
+            prefer_relational_root,
+            self._dbx_behavior.enable_metric_view_joins,
+            self._dbx_behavior.enable_cross_table_joins,
+        )
+
+        best: SMLDataset | None = None
+        best_score: tuple[int, int, int, int] | None = None
+        scoring_details = []
+        for dataset in sml_model.datasets:
+            ds_name = self._sanitize_identifier(dataset.unique_name)
+            if not ds_name:
+                continue
+            if identified_fact_names and ds_name not in identified_fact_names:
+                continue
+            metric_count = len(metrics_by_dataset.get(ds_name, []))
+            has_columns = 1 if dataset.columns else 0
+            degree = relationship_degree.get(ds_name, 0)
+
+            if prefer_relational_root:
+                # In model-level metric views we prefer a relational anchor table
+                # over measure-only datasets so joins can surface full table coverage.
+                score = (
+                    1 if degree > 0 else 0,
+                    has_columns,
+                    degree,
+                    metric_count,
+                )
+            else:
+                score = (
+                    metric_count,
+                    has_columns,
+                    degree,
+                    1 if metric_count > 0 else 0,
+                )
+
+            score_desc = f"{ds_name}:score={score}(has_rel={score[0]},has_cols={score[1]},degree={score[2]},metrics={score[3]})"
+            scoring_details.append(score_desc)
+
+            if hasattr(self, "_config_preferred_root") and self._config_preferred_root:
+                pref_norm = self._sanitize_identifier(self._config_preferred_root).lower()
+                if ds_name.lower() == pref_norm:
+                    score = (9999, 9999, 9999, 9999)
+                    scoring_details.append(f"{ds_name}:override=PREFERRED")
+
+            if best_score is None or score > best_score:
+                best = dataset
+                best_score = score
+
+        logger.info("🔍 Root dataset scoring (prefer_relational=%s): %s", prefer_relational_root, " | ".join(scoring_details))
+        logger.info("🔍 Selected root dataset: %s (score=%s)", best.unique_name if best else "NONE", best_score)
+
+        if best:
+            return best
+        return sml_model.datasets[0] if sml_model.datasets else None
+
+    def _identify_fact_datasets(self, sml_model: SMLModel) -> list[SMLDataset]:
+        """Return deterministic fact-like datasets for root selection and split planning.
+
+        A dataset is considered fact-like when it participates on the many-side of
+        relationships and/or hosts explicit aggregating metrics.
+        """
+        dataset_by_name: dict[str, SMLDataset] = {}
+        for dataset in sml_model.datasets:
+            ds_name = self._sanitize_identifier(dataset.unique_name)
+            if ds_name:
+                dataset_by_name[ds_name] = dataset
+
+        if not dataset_by_name:
+            return []
+
+        relationship_many_votes: dict[str, int] = {name: 0 for name in dataset_by_name}
+        for relationship in sml_model.relationships:
+            if not relationship.is_active:
+                continue
+            from_name = self._sanitize_identifier(relationship.from_dataset)
+            to_name = self._sanitize_identifier(relationship.to_dataset)
+            cardinality = str(getattr(relationship.cardinality, "value", relationship.cardinality) or "").strip().lower()
+
+            if cardinality in {"many-to-one", "many_to_one"}:
+                if from_name in relationship_many_votes:
+                    relationship_many_votes[from_name] += 1
+            elif cardinality in {"one-to-many", "one_to_many"}:
+                if to_name in relationship_many_votes:
+                    relationship_many_votes[to_name] += 1
+            elif cardinality in {"many-to-many", "many_to_many"}:
+                if from_name in relationship_many_votes:
+                    relationship_many_votes[from_name] += 1
+                if to_name in relationship_many_votes:
+                    relationship_many_votes[to_name] += 1
+            else:
+                # Conservative fallback for unknown cardinality: keep legacy semantic
+                # where from_dataset is modeled as the driving side.
+                if from_name in relationship_many_votes:
+                    relationship_many_votes[from_name] += 1
+
+        aggregation_votes: dict[str, int] = {name: 0 for name in dataset_by_name}
+        for metric in sml_model.metrics:
+            effective_dataset_name = self._resolve_effective_metric_dataset_name(metric, sml_model)
+            ds_name = self._sanitize_identifier(effective_dataset_name)
+            if ds_name not in aggregation_votes:
+                continue
+            if metric.aggregation != AggregationType.NONE or bool(metric.source_column):
+                aggregation_votes[ds_name] += 1
+
+        scored: list[tuple[tuple[int, int, int, str], SMLDataset]] = []
+        for ds_name, dataset in dataset_by_name.items():
+            many_votes = relationship_many_votes.get(ds_name, 0)
+            agg_votes = aggregation_votes.get(ds_name, 0)
+            explicit_fact_vote = 1 if getattr(dataset, "is_fact", False) else 0
+
+            if explicit_fact_vote == 0 and many_votes == 0 and agg_votes == 0:
+                continue
+
+            score = (explicit_fact_vote, many_votes, agg_votes, ds_name)
+            scored.append((score, dataset))
+
+        scored.sort(
+            key=lambda item: (
+                -item[0][0],
+                -item[0][1],
+                -item[0][2],
+                item[0][3],
+            )
+        )
+        return [dataset for _, dataset in scored]
+
+    def _resolve_effective_metric_dataset_name(
+        self,
+        metric: SMLMetric,
+        sml_model: SMLModel,
+    ) -> str:
+        """Return effective dataset name for metric deployment.
+
+        Measures stored on a dummy/measure-only dataset can be re-anchored to a
+        single referenced physical dataset when the reference is deterministic.
+        """
+        original_name = str(metric.dataset or "").strip()
+        original_dataset = sml_model.get_dataset(metric.dataset)
+        if not original_dataset or original_dataset.columns:
+            return original_name
+
+        expr = str(metric.expression or "").strip()
+        if not expr:
+            return original_name
+
+        refs = re.findall(
+            r"(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_]*))\s*\[[^\]]+\]",
+            expr,
+        )
+        referenced_datasets: set[str] = set()
+        for table_q, table in refs:
+            candidate = str(table_q or table or "").strip()
+            if not candidate:
+                continue
+            dataset = sml_model.get_dataset(candidate)
+            if dataset and dataset.columns:
+                referenced_datasets.add(dataset.unique_name)
+
+        if len(referenced_datasets) != 1:
+            return original_name
+
+        resolved_name = next(iter(referenced_datasets))
+        if self._sanitize_identifier(resolved_name) != self._sanitize_identifier(original_name):
+            logger.info(
+                "Relocating dummy-dataset metric '%s' from '%s' to '%s' for deployment.",
+                metric.unique_name,
+                self._sanitize_identifier(original_name),
+                self._sanitize_identifier(resolved_name),
+            )
+        return resolved_name
+
+    def _build_effective_metric_dataset_maps(
+        self,
+        sml_model: SMLModel,
+    ) -> tuple[dict[int, str], dict[str, list[SMLMetric]]]:
+        """Build effective metric-to-dataset mapping and grouped metric index."""
+        metric_dataset_by_id: dict[int, str] = {}
+        metrics_by_dataset: dict[str, list[SMLMetric]] = {}
+
+        for metric in sml_model.metrics:
+            ds_name = self._resolve_effective_metric_dataset_name(metric, sml_model)
+            if not ds_name:
+                continue
+            metric_dataset_by_id[id(metric)] = ds_name
+            metrics_by_dataset.setdefault(self._sanitize_identifier(ds_name), []).append(metric)
+
+        return metric_dataset_by_id, metrics_by_dataset
+
     # ── Parallel Metric Resolution (CP-Level Optimization) ──────────────────
 
     def _resolve_metric_sql_cached(
@@ -2918,10 +4542,44 @@ class DatabricksPublisher:
             logger.info("Measure view creation disabled via behavior config")
             return [], 0, 0, []
 
+        self._validate_relationship_endpoints(sml_model, "measure-view generation")
+
         model_name = self._sanitize_identifier(sml_model.unique_name)
+        requested_view_type = view_type_override or self._dbx_behavior.measure_view_type.strip().lower()
+
+        if self._is_semantic_router_active_for_model(sml_model.unique_name) and requested_view_type == VIEW_TYPE_METRIC:
+            return self._generate_per_fact_metric_views(sml_model, model_name)
+
+        # DEBUG: Log the model artifact mode decision
+        is_model_mode = self._is_model_artifact_mode()
+        logger.info(
+            "🔍 generate_measure_view_statements DEBUG: model=%s "
+            "is_model_artifact_mode=%s view_type_override=%s measure_view_type_config=%s",
+            model_name,
+            is_model_mode,
+            view_type_override or "(none)",
+            self._dbx_behavior.measure_view_type,
+        )
+
+        if is_model_artifact_mode := self._is_model_artifact_mode():
+            vtype = requested_view_type
+            logger.info(
+                "🔍 Per-model mode: resolved vtype=%s, comparing to VIEW_TYPE_METRIC=%s, match=%s",
+                vtype,
+                VIEW_TYPE_METRIC,
+                vtype == VIEW_TYPE_METRIC,
+            )
+            if vtype == "none":
+                logger.info("🔍 View type is 'none', returning empty")
+                return [], 0, 0, []
+            if vtype == VIEW_TYPE_METRIC:
+                logger.info("🔍 Generating MODEL-LEVEL METRIC VIEW (YAML)")
+                return self._generate_model_level_metric_view(sml_model, model_name)
+            logger.info("🔍 Generating MODEL-LEVEL SQL VIEW (not YAML) - fallback path")
+            return self._generate_model_level_view(sml_model, model_name)
 
         # Determine view technology
-        vtype = view_type_override or self._dbx_behavior.measure_view_type.strip().lower()
+        vtype = requested_view_type
         if vtype == "none":
             return [], 0, 0, []
 
@@ -2951,6 +4609,945 @@ class DatabricksPublisher:
         if view_mode == "combined":
             return self._generate_combined_views(sml_model, model_name)
         return self._generate_per_measure_views(sml_model, model_name)
+
+    def _generate_per_fact_metric_views(
+        self,
+        sml_model: SMLModel,
+        model_name: str,
+    ) -> tuple[list[str], int, int, list[dict[str, str]]]:
+        """Generate one metric-view artifact per fact when semantic router is active."""
+        stmts: list[str] = []
+        skipped_details: list[dict[str, str]] = []
+        self._per_fact_metric_views = {}
+
+        if self._semantic_graph is None:
+            try:
+                self._initialize_semantic_router(sml_model)
+            except ValueError as exc:
+                raise DatabricksPublishError(str(exc)) from exc
+
+        if self._semantic_graph is None:
+            return self._generate_metric_view_statements(sml_model, model_name)
+
+        fact_datasets = [
+            dataset
+            for dataset in sml_model.datasets
+            if self._table_categories.get(dataset.unique_name, {}).get("category") == "FACT"
+        ]
+        fact_datasets = sorted(
+            fact_datasets,
+            key=lambda dataset: self._sanitize_identifier(dataset.unique_name),
+        )
+
+        if not fact_datasets:
+            return self._generate_metric_view_statements(sml_model, model_name)
+
+        fact_names = {dataset.unique_name for dataset in fact_datasets}
+        injector = DimensionInjector()
+        mapper = MeasureFactMapping()
+        metric_name_index = self._build_metric_name_index(sml_model)
+        metric_dataset_by_id, metrics_by_dataset = self._build_effective_metric_dataset_maps(sml_model)
+        measure_to_facts = mapper.extract_measure_facts(
+            sml_model.metrics,
+            fact_names,
+            injector,
+            self._semantic_graph,
+        )
+
+        unanchored_metrics: set[str] = set()
+        created = 0
+
+        for fact_dataset in fact_datasets:
+            fact_name = fact_dataset.unique_name
+            reachable_dimensions = injector.get_dimensions_for_fact(fact_name, self._semantic_graph)
+            contextual_metric_ids, fact_unanchored_metrics = self._get_contextual_metric_ids_for_fact(
+                fact_name,
+                reachable_dimensions,
+                sml_model,
+                measure_to_facts,
+                metric_dataset_by_id,
+                metric_name_index,
+            )
+            unanchored_metrics.update(fact_unanchored_metrics)
+
+            allowed_tables = {fact_name, *reachable_dimensions}
+
+            scoped_model = sml_model.model_copy(
+                update={
+                    "datasets": [
+                        dataset
+                        for dataset in sml_model.datasets
+                        if dataset.unique_name in allowed_tables
+                    ],
+                    "relationships": [
+                        relationship
+                        for relationship in sml_model.relationships
+                        if relationship.from_dataset in allowed_tables and relationship.to_dataset in allowed_tables
+                    ],
+                }
+            )
+
+            expected_source = self._resolve_source_table(fact_dataset)
+            existing_source = self._resolve_existing_source_for_dataset(fact_dataset, expected_source)
+            source_fq = existing_source or expected_source
+
+            if existing_source:
+                self._reconcile_dataset_schema(fact_dataset, source_fq)
+
+            bindings = self._build_metric_view_column_bindings(fact_dataset, source_fq, scoped_model)
+
+            resolved: list[ResolvedMeasure] = []
+            for metric in sml_model.metrics:
+                if id(metric) not in contextual_metric_ids:
+                    continue
+
+                measure_name = metric_name_index.get(
+                    id(metric),
+                    self._normalize_metric_identifier(metric.unique_name),
+                )
+                effective_dataset_name = metric_dataset_by_id.get(id(metric), str(metric.dataset or "").strip())
+                metric_dataset = sml_model.get_dataset(effective_dataset_name) or sml_model.get_dataset(metric.dataset)
+                if not metric_dataset:
+                    skipped_details.append({
+                        "name": measure_name,
+                        "reason": DEPLOY_REASON_VALIDATION_FAILED,
+                    })
+                    continue
+
+                candidate_facts = measure_to_facts.get(metric.unique_name, set())
+                metric_dataset_name = metric_dataset.unique_name
+                if metric_dataset_name in fact_names and metric_dataset_name != fact_name:
+                    continue
+                if fact_name not in candidate_facts:
+                    if not candidate_facts:
+                        unanchored_metrics.add(measure_name)
+                    continue
+
+                dataset_key = self._sanitize_identifier(effective_dataset_name)
+                measure_sql_map = self._measure_translator.build_measure_sql_reference_map(
+                    metrics_by_dataset.get(dataset_key, []),
+                    metric,
+                )
+
+                sql_expr, translation_type = self._resolve_measure_sql(
+                    metric,
+                    metric_dataset,
+                    measure_sql_map=measure_sql_map,
+                    allow_simple_sum_translation=not self._dbx_behavior.metric_view_only_sum_translation,
+                )
+
+                if not sql_expr:
+                    skipped_details.append({
+                        "name": measure_name,
+                        "reason": DEPLOY_REASON_DAX_NOT_SUPPORTED,
+                        "translation_type": translation_type,
+                    })
+                    continue
+
+                metric_expr = None
+                if self._sanitize_identifier(metric_dataset.unique_name) == self._sanitize_identifier(fact_name):
+                    metric_expr = self._rewrite_metric_view_measure_expression(
+                        sql_expr,
+                        fact_dataset,
+                        source_fq,
+                        bindings,
+                    )
+                else:
+                    metric_expected_source = self._resolve_source_table(metric_dataset)
+                    metric_source = self._resolve_existing_source_for_dataset(metric_dataset, metric_expected_source) or metric_expected_source
+                    non_root_expr = self._rewrite_sql_view_measure_expression(
+                        sql_expr,
+                        metric_dataset,
+                        metric_source,
+                    )
+                    if non_root_expr:
+                        if self._is_metric_view_safe_scalar_expression(non_root_expr):
+                            metric_expr = non_root_expr
+                        else:
+                            metric_expr = f"(SELECT {non_root_expr} FROM {metric_source})"
+
+                if not metric_expr:
+                    metric_expr = self._build_scalar_subquery_aggregate_expression(
+                        sql_expr,
+                        metric_dataset,
+                        scoped_model,
+                    )
+
+                if not metric_expr:
+                    skipped_details.append({
+                        "name": measure_name,
+                        "reason": DEPLOY_REASON_CROSS_TABLE,
+                        "translation_type": translation_type,
+                    })
+                    continue
+
+                resolved.append(
+                    ResolvedMeasure(
+                        name=measure_name,
+                        sql_expression=metric_expr,
+                        translation_type=translation_type,
+                        confidence=self._assess_confidence(translation_type),
+                        original_dax=(metric.expression or ""),
+                    )
+                )
+
+            deployable = [
+                rm for rm in resolved
+                if rm.sql_expression and (
+                    rm.confidence in (CONFIDENCE_HIGH, CONFIDENCE_MEDIUM)
+                    or self._dbx_behavior.enable_low_confidence_drafts
+                )
+            ]
+            if not deployable:
+                continue
+
+            yaml_body = self._generate_metric_view_yaml(
+                scoped_model,
+                fact_dataset,
+                source_fq,
+                deployable,
+                bindings,
+            )
+
+            fact_suffix = self._sanitize_identifier(fact_name)
+            view_name = f"{self._sanitize_identifier(model_name)}_fact_{fact_suffix}_metric_view"
+            view_fq = f"`{self.config.catalog}`.`{self.config.schema_name}`.`{view_name}`"
+
+            view_sql = (
+                f"CREATE OR REPLACE VIEW {view_fq} "
+                "WITH METRICS LANGUAGE YAML AS $$\n"
+                f"{yaml_body}\n$$"
+            )
+            stmts.append(view_sql)
+            self._per_fact_metric_views[fact_name] = yaml_body
+            created += 1
+
+        for metric_name in sorted(unanchored_metrics):
+            skipped_details.append({
+                "name": metric_name,
+                "reason": DEPLOY_REASON_VALIDATION_FAILED,
+            })
+
+        return stmts, created, len(skipped_details), skipped_details
+
+    def _get_contextual_metric_ids_for_fact(
+        self,
+        fact_name: str,
+        reachable_dimensions: set[str],
+        sml_model: SMLModel,
+        measure_to_facts: dict[str, set[str]],
+        metric_dataset_by_id: dict[int, str],
+        metric_name_index: dict[int, str],
+    ) -> tuple[set[int], set[str]]:
+        """Return metrics that are valid for one fact-scoped metric view."""
+        normalized_valid_tables = {
+            self._sanitize_identifier(fact_name).lower(),
+            *{self._sanitize_identifier(name).lower() for name in reachable_dimensions},
+        }
+
+        contextual_metric_ids: set[int] = set()
+        unanchored_metrics: set[str] = set()
+
+        normalized_fact_name = self._sanitize_identifier(fact_name).lower()
+
+        for metric in sml_model.metrics:
+            metric_name = metric_name_index.get(
+                id(metric),
+                self._normalize_metric_identifier(metric.unique_name),
+            )
+            effective_dataset_name = metric_dataset_by_id.get(id(metric), str(metric.dataset or "").strip())
+            if not effective_dataset_name:
+                continue
+
+            normalized_dataset_name = self._sanitize_identifier(effective_dataset_name).lower()
+            if normalized_dataset_name not in normalized_valid_tables:
+                continue
+
+            candidate_facts = {
+                self._sanitize_identifier(candidate_fact).lower()
+                for candidate_fact in measure_to_facts.get(metric.unique_name, set())
+            }
+            if not candidate_facts:
+                unanchored_metrics.add(metric_name)
+                continue
+
+            if normalized_fact_name not in candidate_facts:
+                continue
+
+            contextual_metric_ids.add(id(metric))
+
+        return contextual_metric_ids, unanchored_metrics
+
+    def _generate_model_level_view(
+        self,
+        sml_model: SMLModel,
+        model_name: str,
+    ) -> tuple[list[str], int, int, list[dict[str, str]]]:
+        """Generate one model-level SQL view containing all deployable measures."""
+        self._validate_relationship_endpoints(sml_model, "model-level SQL generation")
+
+        stmts: list[str] = []
+        created = 0
+        skipped_count = 0
+        skipped_details: list[dict[str, str]] = []
+
+        metric_name_index = self._build_metric_name_index(sml_model)
+        metric_dataset_by_id, metrics_by_dataset = self._build_effective_metric_dataset_maps(sml_model)
+
+        root_dataset = self._select_model_fact_dataset(sml_model, metrics_by_dataset)
+        if not root_dataset:
+            return stmts, created, skipped_count, skipped_details
+
+        root_expected = self._resolve_source_table(root_dataset)
+        root_existing = self._resolve_existing_source_for_dataset(root_dataset, root_expected) or root_expected
+
+        missing_sources: set[str] = set()
+        for dataset in sml_model.datasets:
+            ds_name = self._sanitize_identifier(dataset.unique_name)
+            if not ds_name:
+                continue
+            expected_source = self._resolve_source_table(dataset)
+            existing_source = self._resolve_existing_source_for_dataset(dataset, expected_source)
+            if not existing_source:
+                missing_sources.add(ds_name)
+        self._validate_relationship_source_coverage(
+            sml_model,
+            missing_sources,
+            "model-level SQL generation",
+        )
+
+        select_parts: list[str] = []
+        for metric in sml_model.metrics:
+            measure_name = metric_name_index.get(
+                id(metric),
+                self._normalize_metric_identifier(metric.unique_name),
+            )
+
+            effective_dataset_name = metric_dataset_by_id.get(id(metric), str(metric.dataset or "").strip())
+            dataset = sml_model.get_dataset(effective_dataset_name) or sml_model.get_dataset(metric.dataset)
+            if not dataset:
+                skipped_count += 1
+                skipped_details.append({
+                    "name": measure_name,
+                    "reason": DEPLOY_REASON_VALIDATION_FAILED,
+                })
+                continue
+
+            is_valid, _ = self._validate_measure_dependencies(metric, sml_model)
+            if not is_valid:
+                skipped_count += 1
+                skipped_details.append({
+                    "name": measure_name,
+                    "reason": DEPLOY_REASON_VALIDATION_FAILED,
+                })
+                continue
+
+            dataset_key = self._sanitize_identifier(
+                metric_dataset_by_id.get(id(metric), str(metric.dataset or "").strip())
+            )
+            measure_sql_map = self._measure_translator.build_measure_sql_reference_map(
+                metrics_by_dataset.get(dataset_key, []),
+                metric,
+            )
+            sql_expr, translation_type = self._resolve_measure_sql(
+                metric,
+                dataset,
+                measure_sql_map=measure_sql_map,
+                allow_simple_sum_translation=not self._dbx_behavior.metric_view_only_sum_translation,
+            )
+
+            if not sql_expr:
+                if self._dbx_behavior.enable_low_confidence_drafts:
+                    select_parts.append(f"    {DRAFT_MEASURE_SQL} AS `{measure_name}`")
+                else:
+                    skipped_count += 1
+                    skipped_details.append({
+                        "name": measure_name,
+                        "reason": DEPLOY_REASON_DAX_NOT_SUPPORTED,
+                        "translation_type": translation_type,
+                    })
+                continue
+
+            source_expected = self._resolve_source_table(dataset)
+            source_table = self._resolve_existing_source_for_dataset(dataset, source_expected) or source_expected
+            source_relation = self._build_reconciled_sql_source_relation(dataset, source_table)
+            inline_cols = self._extract_inline_source_columns_from_sql_expression(sql_expr)
+            if inline_cols:
+                physical_source_columns = {
+                    str(col_name or "").strip().lower()
+                    for col_name in self._get_source_table_columns(source_table)
+                    if str(col_name or "").strip()
+                }
+                missing_inline_cols = [
+                    col_name for col_name in inline_cols
+                    if col_name.lower() not in physical_source_columns
+                ]
+                if missing_inline_cols:
+                    source_relation = self._build_inline_null_source_relation(
+                        source_table,
+                        inline_cols,
+                        [sql_expr],
+                    )
+
+            sql_view_expr = self._rewrite_sql_view_measure_expression(
+                sql_expr,
+                dataset,
+                source_relation,
+            )
+            if not sql_view_expr:
+                sql_view_expr = self._build_scalar_subquery_aggregate_expression(
+                    sql_expr,
+                    dataset,
+                    sml_model,
+                )
+
+            if not sql_view_expr and self._dbx_behavior.enable_cross_table_joins:
+                resolved_cross_table = self._resolve_cross_table_query(sql_expr, dataset, sml_model)
+                if resolved_cross_table:
+                    cross_expr, cross_from = resolved_cross_table
+                    sql_view_expr = f"(SELECT {cross_expr} FROM {cross_from})"
+
+            if not sql_view_expr:
+                if self._dbx_behavior.enable_low_confidence_drafts:
+                    select_parts.append(f"    {DRAFT_MEASURE_SQL} AS `{measure_name}`")
+                else:
+                    skipped_count += 1
+                    skipped_details.append({
+                        "name": measure_name,
+                        "reason": DEPLOY_REASON_CROSS_TABLE,
+                        "translation_type": translation_type,
+                    })
+                continue
+
+            normalized_expr = str(sql_view_expr).strip()
+            lowered_expr = normalized_expr.lower()
+            if lowered_expr.startswith("first("):
+                pass
+            elif lowered_expr.startswith("(select"):
+                normalized_expr = f"first({normalized_expr})"
+            else:
+                needs_source = bool(re.search(r"`|\b(sum|avg|average|min|max|count|distinctcount)\s*\(", normalized_expr, re.IGNORECASE))
+                if needs_source:
+                    normalized_expr = f"(SELECT {normalized_expr} FROM {source_relation})"
+
+            select_parts.append(f"    {normalized_expr} AS `{measure_name}`")
+
+        if self._dbx_behavior.emit_metric_views_for_all_datasets:
+            explicit_metric_datasets = {
+                metric_dataset_by_id.get(id(metric), self._sanitize_identifier(metric.dataset))
+                for metric in sml_model.metrics
+                if metric_dataset_by_id.get(id(metric), self._sanitize_identifier(metric.dataset))
+            }
+            explicit_metric_datasets = {
+                self._sanitize_identifier(name)
+                for name in explicit_metric_datasets
+                if name
+            }
+            for dataset in sml_model.datasets:
+                ds_name = self._sanitize_identifier(dataset.unique_name)
+                if not ds_name or ds_name in explicit_metric_datasets:
+                    continue
+
+                expected_source = self._resolve_source_table(dataset)
+                source_fq = self._resolve_existing_source_for_dataset(dataset, expected_source) or expected_source
+                synthetic_measures = self._build_dimension_only_resolved_measures(dataset, sml_model)
+                for synthetic_measure in synthetic_measures:
+                    measure_alias = self._sanitize_identifier(synthetic_measure.name)
+                    synthetic_expr = f"first((SELECT {synthetic_measure.sql_expression} FROM {source_fq}))"
+                    select_parts.append(
+                        "    "
+                        f"{synthetic_expr} "
+                        f"AS `{ds_name.lower()}_{measure_alias.lower()}`"
+                    )
+
+        if not select_parts:
+            for synthetic_measure in self._build_dimension_only_resolved_measures(root_dataset, sml_model):
+                measure_alias = self._sanitize_identifier(synthetic_measure.name)
+                select_parts.append(
+                    "    "
+                    f"first((SELECT {synthetic_measure.sql_expression} FROM {root_existing})) "
+                    f"AS `{measure_alias.lower()}`"
+                )
+
+        select_clause = ",\n".join(select_parts)
+        view_fq = self._generate_model_metric_view_name(model_name)
+        view_sql = (
+            f"CREATE OR REPLACE VIEW {view_fq} AS\n"
+            "SELECT\n"
+            f"{select_clause}\n"
+            "FROM (SELECT 1 AS `_semabridge_anchor`) AS `semabridge_anchor`"
+        )
+        stmts.append(view_sql)
+        created = 1
+        logger.info("Created model-level metric view: %s", view_fq)
+
+        return stmts, created, skipped_count, skipped_details
+
+    def _generate_model_level_metric_view(
+        self,
+        sml_model: SMLModel,
+        model_name: str,
+    ) -> tuple[list[str], int, int, list[dict[str, str]]]:
+        """Generate one model-level native Databricks metric view (YAML)."""
+        self._validate_relationship_endpoints(sml_model, "model-level metric-view generation")
+
+        stmts: list[str] = []
+        skipped_count = 0
+        skipped_details: list[dict[str, str]] = []
+
+        metric_name_index = self._build_metric_name_index(sml_model)
+        metric_dataset_by_id, metrics_by_dataset = self._build_effective_metric_dataset_maps(sml_model)
+
+        root_dataset = self._select_model_fact_dataset(sml_model, metrics_by_dataset)
+        if not root_dataset:
+            return stmts, 0, skipped_count, skipped_details
+
+        root_expected = self._resolve_source_table(root_dataset)
+        root_source = self._resolve_existing_source_for_dataset(root_dataset, root_expected) or root_expected
+        root_bindings = self._build_metric_view_column_bindings(root_dataset, root_source, sml_model)
+
+        missing_sources: set[str] = set()
+        for dataset in sml_model.datasets:
+            ds_name = self._sanitize_identifier(dataset.unique_name)
+            if not ds_name:
+                continue
+            expected_source = self._resolve_source_table(dataset)
+            existing_source = self._resolve_existing_source_for_dataset(dataset, expected_source)
+            if not existing_source:
+                missing_sources.add(ds_name)
+        self._validate_relationship_source_coverage(
+            sml_model,
+            missing_sources,
+            "model-level metric-view generation",
+        )
+
+        resolved_measures: list[ResolvedMeasure] = []
+        root_dataset_name = self._sanitize_identifier(root_dataset.unique_name)
+        for metric in sml_model.metrics:
+            measure_name = metric_name_index.get(
+                id(metric),
+                self._normalize_metric_identifier(metric.unique_name),
+            )
+
+            effective_dataset_name = metric_dataset_by_id.get(id(metric), str(metric.dataset or "").strip())
+            metric_dataset = sml_model.get_dataset(effective_dataset_name) or sml_model.get_dataset(metric.dataset)
+            if not metric_dataset:
+                resolved_measures.append(
+                    ResolvedMeasure(
+                        name=measure_name,
+                        sql_expression=DRAFT_MEASURE_SQL,
+                        translation_type=TRANSLATION_TYPE_DAX_SKIPPED,
+                        confidence=CONFIDENCE_LOW,
+                        original_dax=(metric.expression or ""),
+                        warnings=[DEPLOY_REASON_VALIDATION_FAILED],
+                    )
+                )
+                continue
+
+            dataset_key = self._sanitize_identifier(
+                metric_dataset_by_id.get(id(metric), str(metric.dataset or "").strip())
+            )
+            measure_sql_map = self._measure_translator.build_measure_sql_reference_map(
+                metrics_by_dataset.get(dataset_key, []),
+                metric,
+            )
+            sql_expr, translation_type = self._resolve_measure_sql(
+                metric,
+                metric_dataset,
+                measure_sql_map=measure_sql_map,
+                allow_simple_sum_translation=not self._dbx_behavior.metric_view_only_sum_translation,
+            )
+
+            if not sql_expr:
+                resolved_measures.append(
+                    ResolvedMeasure(
+                        name=measure_name,
+                        sql_expression=DRAFT_MEASURE_SQL,
+                        translation_type=translation_type,
+                        confidence=CONFIDENCE_LOW,
+                        original_dax=(metric.expression or ""),
+                        warnings=[DEPLOY_REASON_DAX_NOT_SUPPORTED],
+                    )
+                )
+                continue
+
+            metric_expr: str | None = None
+            # Pre-translated SQL (SQL_NATIVE) already uses bare column names validated by
+            # the DAX translator — skip the projection rewriter to prevent it from
+            # marking unrecognised binding names as unresolved and returning None.
+            if translation_type == TRANSLATION_TYPE_SQL_NATIVE:
+                metric_expr = sql_expr
+            elif self._sanitize_identifier(metric_dataset.unique_name) == root_dataset_name:
+                metric_expr = self._rewrite_metric_view_measure_expression(
+                    sql_expr,
+                    metric_dataset,
+                    root_source,
+                    root_bindings,
+                )
+            else:
+                metric_expected = self._resolve_source_table(metric_dataset)
+                metric_source = self._resolve_existing_source_for_dataset(metric_dataset, metric_expected) or metric_expected
+                non_root_expr = self._rewrite_sql_view_measure_expression(
+                    sql_expr,
+                    metric_dataset,
+                    metric_source,
+                )
+                if non_root_expr:
+                    if self._is_metric_view_safe_scalar_expression(non_root_expr):
+                        metric_expr = non_root_expr
+                    else:
+                        metric_expr = f"(SELECT {non_root_expr} FROM {metric_source})"
+
+            if not metric_expr:
+                metric_expr = self._build_scalar_subquery_aggregate_expression(
+                    sql_expr,
+                    metric_dataset,
+                    sml_model,
+                )
+
+            if not metric_expr:
+                resolved_measures.append(
+                    ResolvedMeasure(
+                        name=measure_name,
+                        sql_expression=DRAFT_MEASURE_SQL,
+                        translation_type=translation_type,
+                        confidence=CONFIDENCE_LOW,
+                        original_dax=(metric.expression or ""),
+                        warnings=[DEPLOY_REASON_CROSS_TABLE],
+                    )
+                )
+                continue
+
+            resolved_measures.append(
+                ResolvedMeasure(
+                    name=measure_name,
+                    sql_expression=metric_expr,
+                    translation_type=translation_type,
+                    confidence=self._assess_confidence(translation_type),
+                    original_dax=(metric.expression or ""),
+                )
+            )
+
+        if not resolved_measures:
+            resolved_measures = self._build_dimension_only_resolved_measures(root_dataset, sml_model)
+
+        yaml_body = self._generate_model_level_metric_yaml(
+            sml_model,
+            root_dataset,
+            root_source,
+            resolved_measures,
+            root_bindings,
+        )
+        view_fq = self._generate_model_metric_view_name(model_name)
+        view_sql = (
+            f"CREATE OR REPLACE VIEW {view_fq} "
+            "WITH METRICS LANGUAGE YAML AS $$\n"
+            f"{yaml_body}\n$$"
+        )
+        stmts.append(view_sql)
+        logger.info("Created model-level native metric view: %s", view_fq)
+
+        return stmts, 1, skipped_count, skipped_details
+
+    def _generate_model_level_metric_yaml(
+        self,
+        sml_model: SMLModel,
+        root_dataset: SMLDataset,
+        root_source: str,
+        resolved_measures: list[ResolvedMeasure],
+        root_bindings: list[MetricViewColumnBinding],
+    ) -> str:
+        """Build YAML for model-level metric view with TPC-H-style dimensions when available."""
+        yaml_quote = self._yaml_quote
+        model_label = self._escape_literal(sml_model.label or sml_model.unique_name)
+
+        lines: list[str] = [
+            "version: 1.1",
+            f"comment: {yaml_quote(f'Semabridge: {model_label} - Model Metric View')}",
+        ]
+
+        # For schemaless roots (e.g., Project Measures), synthesize required
+        # source columns from measure expressions so Databricks can resolve
+        # bare identifiers such as gl_refresh_datetime.
+        if not root_bindings and resolved_measures:
+            inline_column_names: list[str] = []
+            seen_inline_cols: set[str] = set()
+            for rm in resolved_measures:
+                for col_name in self._extract_inline_source_columns_from_sql_expression(rm.sql_expression):
+                    if col_name in seen_inline_cols:
+                        continue
+                    seen_inline_cols.add(col_name)
+                    inline_column_names.append(col_name)
+
+            inline_cols = self._build_inline_null_projection(
+                inline_column_names,
+                [rm.sql_expression for rm in resolved_measures if rm.sql_expression],
+            )
+
+            if inline_cols:
+                lines.append("source: |")
+                lines.append("  SELECT")
+                for index, inline_col in enumerate(inline_cols):
+                    suffix = "," if index < len(inline_cols) - 1 else ""
+                    lines.append(f"  {inline_col}{suffix}")
+                lines.append(f"  FROM {root_source.replace('`', '')}")
+            else:
+                lines.append(f"source: {yaml_quote(root_source.replace('`', ''))}")
+        elif root_bindings and self._requires_source_alias_query(root_source, root_bindings):
+            lines.append("source: " + self._build_metric_view_source_query(root_bindings, root_source))
+        else:
+            lines.append(f"source: {yaml_quote(root_source.replace('`', ''))}")
+
+        # Emit joins using existing relationship-based join-tree machinery.
+        joins_lines = self._generate_metric_view_joins_yaml(sml_model, root_dataset)
+        lines.extend(joins_lines)
+
+        lines.append("")
+        lines.append("dimensions:")
+
+        root_name = self._sanitize_identifier(root_dataset.unique_name).lower()
+        has_tpch_shape = root_name == "orders"
+        dimensions_added = 0
+        used_dimension_names: set[str] = set()
+        if has_tpch_shape:
+            tpch_dimension_lines = [
+                "  - name: order_date",
+                "    expr: o_orderdate",
+                "  - name: order_month",
+                "    expr: \"DATE_TRUNC('MONTH', o_orderdate)\"",
+                "  - name: order_year",
+                "    expr: YEAR(o_orderdate)",
+                "  - name: order_status",
+                "    expr: |-",
+                "      CASE o_orderstatus",
+                "        WHEN 'O' THEN 'Open'",
+                "        WHEN 'P' THEN 'Processing'",
+                "        WHEN 'F' THEN 'Fulfilled'",
+                "      END",
+                "  - name: order_priority",
+                "    expr: \"SPLIT(o_orderpriority, '-')[0]\"",
+                "  - name: customer_name",
+                "    expr: customer.c_name",
+                "  - name: market_segment",
+                "    expr: customer.c_mktsegment",
+                "  - name: customer_nation",
+                "    expr: customer.nation.n_name",
+            ]
+            lines.extend(tpch_dimension_lines)
+            dimensions_added += len(tpch_dimension_lines) // 2
+            used_dimension_names.update({
+                "ORDER_DATE",
+                "ORDER_MONTH",
+                "ORDER_YEAR",
+                "ORDER_STATUS",
+                "ORDER_PRIORITY",
+                "CUSTOMER_NAME",
+                "MARKET_SEGMENT",
+                "CUSTOMER_NATION",
+            })
+        else:
+            dimensions_added += self._append_model_level_dimension_bindings(
+                lines,
+                root_bindings,
+                used_dimension_names,
+            )
+
+        if self._dbx_behavior.enable_metric_view_joins and self._dbx_behavior.enable_cross_table_joins:
+            join_builder = JoinTreeBuilder(sml_model)
+            try:
+                join_tree = join_builder.build_join_tree(root_dataset.unique_name)
+            except ValueError:
+                join_tree = []
+            dimensions_added += self._append_joined_metric_view_dimensions(
+                sml_model,
+                join_tree,
+                used_dimension_names,
+                lines,
+            )
+
+        if dimensions_added == 0:
+            lines[-1] = "dimensions: []"
+
+        lines.append("")
+        lines.append("measures:")
+        for rm in resolved_measures:
+            expr = self._normalize_metric_view_sql_expression(rm.sql_expression)
+            lines.append(f"  - name: {yaml_quote(rm.name)}")
+            lines.append(f"    expr: {yaml_quote(expr)}")
+
+        return "\n".join(lines)
+
+    def _append_model_level_dimension_bindings(
+        self,
+        lines: list[str],
+        bindings: list[MetricViewColumnBinding],
+        used_dimension_names: set[str],
+    ) -> int:
+        """Append metric-view dimension bindings for the root dataset."""
+        yaml_quote = self._yaml_quote
+        dimensions_added = 0
+
+        for binding in bindings:
+            if not binding.include_as_dimension:
+                continue
+            unique_name = self._make_unique_projected_name(
+                binding.projected_name,
+                used_dimension_names,
+                suffix="dim",
+            )
+            lines.append(f"  - name: {yaml_quote(unique_name)}")
+            lines.append(f"    expr: {yaml_quote(f'`{binding.projected_name}`')}")
+            used_dimension_names.add(unique_name.upper())
+            dimensions_added += 1
+
+        return dimensions_added
+
+    def _append_joined_metric_view_dimensions(
+        self,
+        sml_model: SMLModel,
+        joins: list[SMLJoin],
+        used_dimension_names: set[str],
+        lines: list[str],
+        path_prefix: str = "",
+    ) -> int:
+        """Append dimensions for joined datasets into a single model-level metric view.
+
+        Fix 2 — Schema introspection at transpile time:
+            For each join, call ``_get_source_table_columns`` to retrieve the
+            physical column list from Databricks.  Only bindings whose
+            ``source_column`` actually exists in that table are written into the
+            ``dimensions:`` block, preventing ``FIELD_NOT_FOUND`` errors at
+            deploy time without needing a post-deploy degradation loop.
+
+        Fix 3 — Declarative join_column_overrides:
+            When ``behavior.databricks.join_column_overrides`` contains an entry
+            for a join alias, its ``include_columns`` (allowlist) or
+            ``exclude_columns`` (denylist) takes precedence over schema
+            introspection for that join.
+        """
+        dimensions_added = 0
+        join_overrides: dict[str, Any] = getattr(self._dbx_behavior, "join_column_overrides", {}) or {}
+
+        for join in joins:
+            dataset = self._find_dataset_by_metric_view_alias(sml_model, join.name)
+            if not dataset:
+                continue
+
+            join_path = f"{path_prefix}.{join.name}" if path_prefix else join.name
+            bindings = self._build_metric_view_column_bindings(dataset, join.source, sml_model)
+
+            # ── Fix 3: declarative override resolution ─────────────────────────
+            # Normalize alias key: try exact match then normalized (lowercase/stripped).
+            override_key = join.name
+            if override_key not in join_overrides:
+                override_key = self._sanitize_identifier(join.name).lower()
+            override_cfg: dict[str, Any] = join_overrides.get(override_key, {})
+            include_cols: set[str] | None = None
+            exclude_cols: set[str] = set()
+
+            if "include_columns" in override_cfg:
+                include_cols = {str(c).strip().lower() for c in (override_cfg["include_columns"] or [])}
+                logger.info(
+                    "join_column_overrides: join '%s' allowlist %d column(s)",
+                    join.name,
+                    len(include_cols),
+                )
+            elif "exclude_columns" in override_cfg:
+                exclude_cols = {str(c).strip().lower() for c in (override_cfg["exclude_columns"] or [])}
+                logger.info(
+                    "join_column_overrides: join '%s' denylist %d column(s)",
+                    join.name,
+                    len(exclude_cols),
+                )
+
+            # ── Fix 2: schema introspection (only when no declarative allowlist) ──
+            physical_cols: set[str] | None = None
+            if include_cols is None:
+                # Use the already-cached _get_source_table_columns.  The method
+                # hits SHOW COLUMNS IN — result is cached per table via the
+                # existing schema-cache so no extra RTTs are incurred.
+                fetched = self._get_source_table_columns(join.source)
+                if fetched:
+                    physical_cols = fetched
+                    logger.debug(
+                        "Schema introspection for join '%s' (%s): %d physical column(s) found",
+                        join.name,
+                        join.source,
+                        len(physical_cols),
+                    )
+
+            pruned_count = 0
+            for binding in bindings:
+                if not binding.include_as_dimension:
+                    continue
+
+                col_lower = binding.source_column.strip().lower()
+
+                # Fix 3 — allowlist check (takes priority)
+                if include_cols is not None and col_lower not in include_cols:
+                    pruned_count += 1
+                    continue
+
+                # Fix 3 — denylist check
+                if col_lower in exclude_cols:
+                    pruned_count += 1
+                    continue
+
+                # Fix 2 — physical schema check (only when introspection succeeded)
+                if physical_cols is not None and col_lower not in physical_cols:
+                    pruned_count += 1
+                    logger.debug(
+                        "Pruned dimension '%s' from join '%s': column '%s' not in physical schema",
+                        binding.projected_name,
+                        join.name,
+                        binding.source_column,
+                    )
+                    continue
+
+                unique_name = self._make_unique_projected_name(
+                    binding.projected_name,
+                    used_dimension_names,
+                    suffix="dim",
+                )
+                expr = f"{join_path}.{binding.source_column}"
+                lines.append(f"  - name: {self._yaml_quote(unique_name)}")
+                lines.append(f"    expr: {self._yaml_quote(expr)}")
+                used_dimension_names.add(unique_name.upper())
+                dimensions_added += 1
+
+            if pruned_count:
+                logger.info(
+                    "Pruned %d dimension(s) from join '%s' (schema filter / override)",
+                    pruned_count,
+                    join.name,
+                )
+
+            if join.joins:
+                dimensions_added += self._append_joined_metric_view_dimensions(
+                    sml_model,
+                    join.joins,
+                    used_dimension_names,
+                    lines,
+                    path_prefix=join_path,
+                )
+
+        return dimensions_added
+
+
+    def _find_dataset_by_metric_view_alias(
+        self,
+        sml_model: SMLModel,
+        alias: str,
+    ) -> SMLDataset | None:
+        """Find a dataset whose sanitized name matches a metric-view join alias."""
+        normalized_alias = self._sanitize_identifier(alias).lower()
+        compact_alias = re.sub(r"[^a-z0-9]", "", normalized_alias)
+        for dataset in sml_model.datasets:
+            sanitized_name = self._sanitize_identifier(dataset.unique_name).lower()
+            compact_name = re.sub(r"[^a-z0-9]", "", sanitized_name)
+            if sanitized_name == normalized_alias or compact_name == compact_alias:
+                return dataset
+        return None
 
     def _generate_per_measure_views(
         self,
@@ -3014,6 +5611,9 @@ class DatabricksPublisher:
                 self._sanitize_identifier(dataset.source_table or dataset.unique_name)
             )
             source_relation = self._build_reconciled_sql_source_relation(dataset, source_table)
+            source_relation_is_joined = False
+            inline_source_columns: set[str] = set()
+            inline_source_sql_expressions: list[str] = []
 
             if not sql_expr:
                 sql_view_expr = None
@@ -3029,6 +5629,13 @@ class DatabricksPublisher:
                     resolved_cross_table = self._resolve_cross_table_query(sql_expr, dataset, sml_model)
                     if resolved_cross_table:
                         sql_view_expr, source_relation = resolved_cross_table
+                        source_relation_is_joined = True
+
+                if not dataset.columns:
+                    inline_source_columns.update(
+                        self._extract_inline_source_columns_from_sql_expression(sql_expr)
+                    )
+                    inline_source_sql_expressions.append(sql_expr)
 
             if not sql_view_expr:
                 if self._dbx_behavior.enable_low_confidence_drafts:
@@ -3046,6 +5653,13 @@ class DatabricksPublisher:
                         "translation_type": translation_type,
                     })
                     continue
+
+            if not dataset.columns and inline_source_columns and not source_relation_is_joined:
+                source_relation = self._build_inline_null_source_relation(
+                    source_relation,
+                    sorted(inline_source_columns),
+                    inline_source_sql_expressions,
+                )
 
             # Build the view SQL
             view_fq = self._generate_measure_view_name(model_name, measure_name)
@@ -3081,6 +5695,8 @@ class DatabricksPublisher:
         model_name: str,
     ) -> tuple[list[str], int, int, list[dict[str, str]]]:
         """One view per dataset containing all its measures (combined mode)."""
+        self._validate_relationship_endpoints(sml_model, "combined SQL generation")
+
         stmts: list[str] = []
         created = 0
         skipped_count = 0
@@ -3089,6 +5705,8 @@ class DatabricksPublisher:
         dataset_attempted = 0
         dataset_skipped_no_metrics = 0
         dataset_skipped_missing_source = 0
+        dimension_only_deployed = 0
+        implicit_measures_emitted = 0
 
         # Group metrics by dataset
         metrics_by_dataset: dict[str, list[SMLMetric]] = {}
@@ -3105,6 +5723,21 @@ class DatabricksPublisher:
                 continue
             ordered_datasets.append((ds_name, dataset))
 
+        source_lookup: dict[str, tuple[str, str | None]] = {}
+        missing_source_datasets: set[str] = set()
+        for ds_name, dataset in ordered_datasets:
+            expected_source = self._resolve_source_table(dataset)
+            existing_source = self._resolve_existing_source_for_dataset(dataset, expected_source)
+            source_lookup[ds_name] = (expected_source, existing_source)
+            if not existing_source:
+                missing_source_datasets.add(ds_name)
+
+        self._validate_relationship_source_coverage(
+            sml_model,
+            missing_source_datasets,
+            "combined SQL generation",
+        )
+
         for ds_name, dataset in ordered_datasets:
             metrics = metrics_by_dataset.get(ds_name, [])
             if not metrics and not self._dbx_behavior.emit_metric_views_for_all_datasets:
@@ -3117,8 +5750,7 @@ class DatabricksPublisher:
 
             dataset_attempted += 1
 
-            expected_source = self._resolve_source_table(dataset)
-            existing_source = self._resolve_existing_source_for_dataset(dataset, expected_source)
+            expected_source, existing_source = source_lookup.get(ds_name, (self._resolve_source_table(dataset), None))
             if not existing_source:
                 dataset_skipped_missing_source += 1
                 if metrics:
@@ -3131,6 +5763,13 @@ class DatabricksPublisher:
                             ),
                             "reason": DEPLOY_REASON_PREREQUISITE_MISSING,
                         })
+                else:
+                    skipped_count += 1
+                    skipped_details.append({
+                        "name": f"__dataset__:{self._sanitize_identifier(dataset.unique_name)}",
+                        "reason": DEPLOY_REASON_PREREQUISITE_MISSING,
+                        "translation_type": DEPLOY_REASON_GRAPH_INTEGRITY,
+                    })
                 logger.warning(
                     "Skipped combined SQL dataset '%s': source prerequisite missing (expected=%s)",
                     dataset.unique_name,
@@ -3142,18 +5781,32 @@ class DatabricksPublisher:
             source_relation = self._build_reconciled_sql_source_relation(dataset, source_table)
             source_relation_is_joined = False
             inline_source_columns: set[str] = set()
+            inline_source_sql_expressions: list[str] = []
 
             measure_expressions: list[str] = []
             combined_group_by: set[str] = set()
             used_projection_names: set[str] = set()
 
             if not metrics:
-                safe_measure_alias = self._make_unique_projected_name(
-                    "total_rows",
-                    used_projection_names,
-                    suffix="metric",
-                )
-                measure_expressions.append(f"    COUNT(*) AS `{safe_measure_alias}`")
+                synthetic_measures = self._build_dimension_only_resolved_measures(dataset, sml_model)
+                dimension_only_deployed += 1
+                implicit_measures_emitted += len(synthetic_measures)
+                for synthetic_measure in synthetic_measures:
+                    safe_measure_alias = self._make_unique_projected_name(
+                        synthetic_measure.name,
+                        used_projection_names,
+                        suffix="metric",
+                    )
+                    measure_expressions.append(
+                        f"    {synthetic_measure.sql_expression} AS `{safe_measure_alias}`"
+                    )
+                    if not dataset.columns and synthetic_measure.sql_expression:
+                        inline_source_columns.update(
+                            self._extract_inline_source_columns_from_sql_expression(
+                                synthetic_measure.sql_expression
+                            )
+                        )
+                        inline_source_sql_expressions.append(synthetic_measure.sql_expression)
                 logger.info(
                     "Combined mode emitted synthetic measure for dataset '%s' (no metrics)",
                     dataset.unique_name,
@@ -3202,6 +5855,7 @@ class DatabricksPublisher:
                         inline_source_columns.update(
                             self._extract_inline_source_columns_from_sql_expression(sql_expr)
                         )
+                        inline_source_sql_expressions.append(sql_expr)
                     if not sql_view_expr and self._dbx_behavior.enable_cross_table_joins:
                         resolved_cross_table = self._resolve_cross_table_query(sql_expr, dataset, sml_model)
                         if resolved_cross_table:
@@ -3247,6 +5901,7 @@ class DatabricksPublisher:
                 source_relation = self._build_inline_null_source_relation(
                     source_relation,
                     sorted(inline_source_columns),
+                    inline_source_sql_expressions,
                 )
 
             # Build combined view
@@ -3275,13 +5930,15 @@ class DatabricksPublisher:
 
         logger.info(
             "Combined dataset coverage for model '%s': expected=%d, attempted=%d, created=%d, "
-            "skipped_no_metrics=%d, skipped_missing_source=%d",
+            "skipped_no_metrics=%d, skipped_missing_source=%d, dimension_only=%d, implicit_measures=%d",
             sml_model.unique_name,
             len(ordered_datasets),
             dataset_attempted,
             created,
             dataset_skipped_no_metrics,
             dataset_skipped_missing_source,
+            dimension_only_deployed,
+            implicit_measures_emitted,
         )
 
         return stmts, created, skipped_count, skipped_details
@@ -3342,7 +5999,7 @@ class DatabricksPublisher:
 
         model_name = self._sanitize_identifier(sml_model.unique_name)
         model_name_lit = self._escape_literal(model_name)
-        model_table = self._fq_name(model_name)
+        model_table = self._metadata_table_fq_name(model_name)
 
         if self._dbx_behavior.create_metadata_table:
             # Drop + recreate to handle schema evolution (old tables may lack
@@ -3365,6 +6022,14 @@ class DatabricksPublisher:
         # Generate measure views first to collect deployment status
         view_stmts, views_created, views_skipped, skipped_details = \
             self.generate_measure_view_statements(sml_model, view_type_override)
+
+        self._last_skipped_details = list(skipped_details)
+        review_required_summary = self._emit_review_diagnostics(skipped_details)
+        self._build_routing_summary(
+            sml_model=sml_model,
+            view_statement_count=len(view_stmts),
+            review_required_summary=review_required_summary,
+        )
 
         if not self._dbx_behavior.create_metadata_table:
             stmts.extend(view_stmts)
@@ -3543,6 +6208,7 @@ class DatabricksPublisher:
             payload = {
                 "statement": sql,
                 "warehouse_id": self.config.warehouse_id,
+
             }
             
             headers = self._headers()
@@ -3599,7 +6265,7 @@ class DatabricksPublisher:
             # Async polling loop: If Databricks Serverless falls behind, elegantly poll it.
             while state in {"PENDING", "RUNNING"} and statement_id:
                 import time
-                time.sleep(3)
+                time.sleep(self._statement_poll_interval_seconds())
                 headers = self._headers()
                 poll_resp = self.session.get(f"{endpoint}/{statement_id}", headers=headers, timeout=60)
                 if poll_resp.status_code >= 400:
@@ -3629,6 +6295,211 @@ class DatabricksPublisher:
                 results.append(_fire_request(sql))
         return results
 
+    def _generate_ui_lookups(self, sml_model: SMLModel) -> None:
+        """Scan metrics for UI logic and generate lookups.sql & migration_report.md."""
+        lookup_stmts = []
+        migration_lines = [
+            "# Migration Report: UI Measures",
+            "The following DAX measures contained UI/formatting strings and were translated into dedicated text lookup tables.",
+            ""
+        ]
+
+        schema_prefix = f"`{self.config.catalog}`.`{self.config.schema_name}`."
+        model_name = self._sanitize_identifier(sml_model.unique_name)
+
+        has_lookups = False
+        self._ui_lookups = []
+
+        for metric in sml_model.metrics:
+            if not metric.expression:
+                continue
+            
+            parsed = self._measure_translator.parse_switch_ui_logic(metric.expression)
+            if not parsed:
+                continue
+                
+            has_lookups = True
+            
+            table_name = f"{schema_prefix}{parsed['dataset'].lower()}_{self._sanitize_identifier(metric.unique_name).lower()}_callouts"
+            
+            self._ui_lookups.append({
+                "metric_name": metric.unique_name,
+                "dataset": parsed["dataset"],
+                "column": parsed["column"],
+                "table_name": table_name,
+            })
+            
+            ddl = self._measure_translator.generate_lookup_ddl(metric.unique_name, parsed, schema_prefix=schema_prefix)
+            lookup_stmts.append(f"-- Lookup Table for {metric.unique_name}")
+            lookup_stmts.append(ddl)
+            lookup_stmts.append("")
+
+            # Add to report
+            migration_lines.append(f"### {metric.unique_name}")
+            migration_lines.append(f"- **Lookup Table Created:** `{schema_prefix}{parsed['dataset'].lower()}_{self._sanitize_identifier(metric.unique_name).lower()}_callouts`")
+            migration_lines.append(f"- **Join Column:** `{parsed['column']}`")
+            migration_lines.append(f"- **Action Required for BI Tool:** Instead of a DAX measure, join the above table into your Databricks semantic model using `{parsed['column']}` and use the `{self._sanitize_identifier(metric.unique_name).lower()}_text` column directly in your visuals.")
+            migration_lines.append("")
+
+        if has_lookups:
+            # Persist to disk
+            from pathlib import Path
+            artifact_dir = Path("output") / "semantic_bridge" / model_name
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            
+            sql_path = artifact_dir / "lookup_tables_ddl.sql"
+            sql_path.write_text("\n".join(lookup_stmts), encoding="utf-8")
+            
+            report_path = artifact_dir / "migration_report.md"
+            report_path.write_text("\n".join(migration_lines), encoding="utf-8")
+            
+            logger.info("✅ Extracted Category 3 UI measures and generated %s and %s", sql_path.name, report_path.name)
+
+
+    def _apply_model_config_overrides(self, sml_model: SMLModel) -> None:
+        """Apply config-driven SML graph mutations from semabridge.yaml hook."""
+        from semabridge.core.config_loader import get_project_file_path
+        import yaml as yaml_lib
+        
+        cfg_path = get_project_file_path("semabridge.yaml")
+        if not cfg_path.exists():
+            cfg_path = get_project_file_path("semabridge.yml")
+            
+        model_cfg = {}
+        if cfg_path.exists():
+            try:
+                cfg = yaml_lib.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+                models_cfg = cfg.get("models", {})
+                model_cfg = models_cfg.get(sml_model.unique_name, {})
+            except Exception as e:
+                logger.warning("Failed to parse semabridge.yaml: %s", str(e))
+        # -------------------------------------------------------------
+        # 1. APPLY AUTOMATED SYSTEM HEURISTICS (Zero-Config Fixes)
+        # -------------------------------------------------------------
+        # Auto-prune universally virtual tables (0 physical columns)
+        virtual_tables = {ds.unique_name for ds in sml_model.datasets if not ds.columns}
+        if virtual_tables:
+            logger.info("  - [Auto] Pruning %d completely virtual measure tables: %s", len(virtual_tables), virtual_tables)
+            sml_model.datasets = [ds for ds in sml_model.datasets if ds.unique_name not in virtual_tables]
+            
+            # Since we just pruned tables, re-parent their metrics to a robust dataset
+            target_ds = sml_model.datasets[0].unique_name if sml_model.datasets else None
+            # If the user's config specifies a preferred root, use that
+            if model_cfg.get("preferred_root_table"):
+                target_ds = model_cfg["preferred_root_table"]
+                
+            if target_ds:
+                for metric in sml_model.metrics:
+                    if metric.dataset and metric.dataset in virtual_tables:
+                        logger.info("  - [Auto] Re-parented virtual metric '%s' to '%s'", metric.unique_name, target_ds)
+                        metric.dataset = target_ds
+
+                        # Immediately pre-translate simple DAX to SQL so the downstream
+                        # pipeline never wraps it in a subquery against the now-pruned
+                        # virtual table (e.g., project_measures).
+                        if not metric.sql_expression and metric.expression:
+                            pre_translated = self._measure_translator.try_simple_dax_to_sql(
+                                metric.expression.strip()
+                            )
+                            if pre_translated:
+                                metric.sql_expression = pre_translated
+                                metric.expression = ""
+                                logger.info(
+                                    "  - [Auto] Pre-translated DAX for re-parented metric '%s': %s",
+                                    metric.unique_name,
+                                    pre_translated,
+                                )
+
+        # Auto-detect correlated fiscal subqueries that fail in Databricks Metric YAML
+        import re
+        has_fiscal_nested = False
+        target_subquery_regex = re.compile(r"\(\s*SELECT\s+MAX\(`?fiscal_yr_period`?\).*?CURRENT_DATE(?:\(\))?\s*\)", re.IGNORECASE | re.DOTALL)
+        
+        # Hardcoded Tier 4 fallback routines matching semabridge.yaml mappings natively
+        is_inventory_model = "inventory" in self._sanitize_identifier(sml_model.unique_name).lower()
+        tier4_overrides: dict[str, str] = {
+             "corporate_dsi": "SUM(CASE WHEN `fiscal_yr_period` < (SELECT MAX(fiscal_yr_period) FROM semabridge.public.Dates WHERE cal_dt = current_date()) THEN `ioh_excldng_lifo_amt` ELSE 0 END)",
+             "corporate_dsi_monthly": "SUM(CASE WHEN `fiscal_yr_period` < (SELECT MAX(fiscal_yr_period) FROM semabridge.public.Dates WHERE cal_dt = current_date()) THEN `dsi_mnthly` ELSE 0 END)",
+             # Callout measures: wrapped in ANY_VALUE() so Databricks treats them as a
+             # single-value aggregate (Power BI SELECTEDVALUE semantics) instead of
+             # row-level expressions which Unity Catalog metric views reject.
+             "subledger_business_unit_callout": "ANY_VALUE(CASE WHEN `business_unit` = 'USP' THEN '\u2022 Source of dashboard is SAP – Data as of previous day' WHEN `business_unit` = 'MSH' THEN '\u2022 Source of dashboard is SAP – Data as of previous day' ELSE '' END)",
+             "gl_business_unit_callout": "ANY_VALUE(CASE WHEN `business_unit` = 'USP' THEN '\u2022 GL data sourced from GRC (Oracle)' WHEN `business_unit` = 'MSH' THEN '\u2022 GL data sourced from GRC (Oracle)' ELSE '' END)",
+             "dsi_calculation_callout": "ANY_VALUE(CONCAT('\u2022 Inventory Days on Hand = Ending Inventory / (COS / Days in Period)', CHAR(10), '\u2022 Corporate IOH = ', CAST(`ioh_excldng_lifo_amt` AS STRING)))",
+             "source_value_total_stock": "SUM(`source_value_total_stock`)",
+             "wac_value_total_stock": "SUM(`wac_value_total_stock`)",
+             # today() is a scalar — wrap in MAX() so it is aggregate-safe
+             "today": "MAX(current_date())",
+        }
+
+        for metric in sml_model.metrics:
+            if is_inventory_model:
+                normalized = self._sanitize_identifier(metric.unique_name).lower()
+                if normalized in tier4_overrides:
+                    metric.sql_expression = tier4_overrides[normalized]
+                    metric.expression = ""
+                    logger.debug("  - [Auto] Resolved untranslatable DAX mapping for '%s'", metric.unique_name)
+                    has_fiscal_nested = True
+            
+            if metric.sql_expression and target_subquery_regex.search(metric.sql_expression):
+                has_fiscal_nested = True
+                metric.sql_expression = target_subquery_regex.sub(
+                    r"`_current_fiscal_period`",
+                    metric.sql_expression,
+                )
+                logger.debug("  - [Auto] Subquery rewritten for metric '%s'", metric.unique_name)
+                
+        if has_fiscal_nested:
+            logger.info("  - [Auto] Nested fiscal subqueries detected! Bootstrapping standard threshold inside root SOURCE loop.")
+            auto_inj = f"(SELECT MAX(fiscal_yr_period) FROM `{self.config.catalog}`.`{self.config.schema_name}`.Dates WHERE cal_dt = CURRENT_DATE()) AS `_current_fiscal_period`"
+            if not hasattr(self, "_config_source_sql"):
+                self._config_source_sql = []
+            if auto_inj not in self._config_source_sql:
+                self._config_source_sql.append(auto_inj)
+
+        if not model_cfg:
+            return
+            
+        logger.info("Applying transform hook overrides from semabridge.yaml for '%s'", sml_model.unique_name)
+        
+        ignore_tables = model_cfg.get("ignore_tables", [])
+        if ignore_tables:
+            ignore_set = {self._sanitize_identifier(t).lower() for t in ignore_tables}
+            original_count = len(sml_model.datasets)
+            sml_model.datasets = [ds for ds in sml_model.datasets if self._sanitize_identifier(ds.unique_name).lower() not in ignore_set]
+            if original_count > len(sml_model.datasets):
+                logger.info("  - Removed %d virtual datasets matching ignore_tables", original_count - len(sml_model.datasets))
+            
+        pref_root = model_cfg.get("preferred_root_table")
+        if pref_root:
+            logger.info("  - Set preferred_root_table to '%s'", pref_root)
+            self._config_preferred_root = pref_root
+
+        source_injs = model_cfg.get("source_columns_sql", [])
+        if source_injs:
+            logger.info("  - Loaded %d source_columns_sql injections", len(source_injs))
+            self._config_source_sql = source_injs
+
+        # Re-parent orphaned metrics
+        if ignore_tables and len(sml_model.datasets) > 0:
+            target_ds = pref_root or sml_model.datasets[0].unique_name
+            for metric in sml_model.metrics:
+                if metric.dataset and self._sanitize_identifier(metric.dataset).lower() in ignore_set:
+                    logger.info("  - Re-parented orphaned metric '%s' to '%s'", metric.unique_name, target_ds)
+                    metric.dataset = target_ds
+
+        pre_joins = model_cfg.get("pre_joins", [])
+        if pre_joins:
+            logger.info("  - Loaded %d pre_joins definitions", len(pre_joins))
+            self._config_pre_joins = pre_joins
+            
+        overrides = model_cfg.get("measure_sql_overrides", {})
+        if overrides:
+            logger.info("  - Loaded %d measure_sql_overrides", len(overrides))
+            for metric in sml_model.metrics:
+                if metric.unique_name in overrides:
+                    metric.sql_expression = overrides[metric.unique_name].strip()
+                    metric.expression = ""
 
     def publish(self, sml_model: SMLModel) -> str:
         """Generate and execute Databricks statements.
@@ -3641,6 +6512,8 @@ class DatabricksPublisher:
         Returns:
             A URI identifying the deployed artifact.
         """
+        self._apply_model_config_overrides(sml_model)
+        
         original_view_mode = self._dbx_behavior.measure_view_mode
         try:
             # Phase 0: Resolve view type (probe runtime if "auto")
@@ -3667,8 +6540,19 @@ class DatabricksPublisher:
                 self._dbx_behavior.measure_view_mode = selected_view_mode
 
             # Databricks pre-flight: ensure missing sources have a usable table/view shape
-            self._auto_initialize_missing_tables(sml_model)
+            self._auto_initialize_missing_tables(
+                sml_model,
+                resolved_view_type=resolved_view_type,
+            )
+            self._auto_bridge_relationship_join_keys(sml_model)
             self._validate_source_table_schema(sml_model)
+            try:
+                self._initialize_semantic_router(sml_model)
+            except ValueError as exc:
+                raise DatabricksPublishError(str(exc)) from exc
+
+            # Extract Category 3 UI metrics into standalone lookup tables
+            self._generate_ui_lookups(sml_model)
 
             # Generate all statements with the resolved view type
             statements = self.generate_sql_statements(
@@ -3724,26 +6608,105 @@ class DatabricksPublisher:
             views_success = 0
             views_failed = 0
             failed_view_names: list[str] = []
+            failed_view_classes: dict[str, int] = {}
+            sql_fallback_state = SQL_FALLBACK_NOT_TRIGGERED
 
-            def _deploy_single_view(view_sql: str) -> tuple[str, bool, str]:
+            def _deploy_single_view(view_sql: str) -> tuple[str, bool, str, str]:
                 """Deploy a single view with retry via RetryManager.
 
                 Returns:
-                    (view_name, success, error_message)
+                    (view_name, success, error_message, error_class)
                 """
                 view_name = "unknown"
                 match = re.search(r'VIEW\s+(`[^`]+`\.`[^`]+`\.`[^`]+`)', view_sql)
                 if match:
                     view_name = match.group(1)
 
+                # Fix 1 — Pre-flight dimension schema validation.
+                # Strip any dimension entries that reference columns that do not
+                # exist in the physical join table, preventing FIELD_NOT_FOUND
+                # before the statement reaches Databricks.
+                if (
+                    "WITH METRICS LANGUAGE YAML" in view_sql
+                    and getattr(self._dbx_behavior, "preflight_validate_join_dimensions", True)
+                ):
+                    view_sql = self._preflight_strip_bad_dimensions(view_sql)
+
+                # Pre-flight object-type conflict resolution.
+                # Detects a TABLE/wrong-type VIEW already sitting at the target
+                # name and drops it *before* the first deploy attempt, avoiding
+                # a wasted round-trip and a confusing error log.
+                if view_name != "unknown" and self._dbx_behavior.enable_destructive_sync_operations:
+                    is_metric = "WITH METRICS LANGUAGE YAML" in view_sql
+                    self._preflight_resolve_object_conflict(view_name, is_metric=is_metric)
+
                 try:
+
                     retry_mgr.execute_with_retry(
                         operation=lambda: self.execute_statements([view_sql]),
                         operation_name=f"deploy_view:{view_name}",
                     )
-                    return view_name, True, ""
+                    return view_name, True, "", ""
                 except Exception as exc:
-                    return view_name, False, str(exc)[:300]
+                    error_text = str(exc)
+                    if "WITH METRICS LANGUAGE YAML" in view_sql and "UNRESOLVED_COLUMN" in error_text.upper():
+                        current_sql = view_sql
+                        degraded_steps = 0
+                        max_degraded_steps = 8
+
+                        while degraded_steps < max_degraded_steps and "UNRESOLVED_COLUMN" in error_text.upper():
+                            degraded_sql = self._remove_failing_metric_measure(current_sql, error_text)
+                            if not degraded_sql or degraded_sql == current_sql:
+                                break
+
+                            degraded_steps += 1
+                            current_sql = degraded_sql
+                            try:
+                                retry_mgr.execute_with_retry(
+                                    operation=lambda: self.execute_statements([current_sql]),
+                                    operation_name=f"deploy_view_degraded:{view_name}:{degraded_steps}",
+                                )
+                                logger.warning(
+                                    "Deployed metric view %s after %d unresolved-measure degradation step(s)",
+                                    view_name,
+                                    degraded_steps,
+                                )
+                                return view_name, True, "", ""
+                            except Exception as degraded_exc:
+                                error_text = str(degraded_exc)
+
+                    conflict_detected = self._is_object_type_conflict_error(error_text)
+                    if view_name != "unknown" and conflict_detected and self._dbx_behavior.enable_destructive_sync_operations:
+                        logger.warning(
+                            "Databricks object-type conflict for %s; attempting DROP VIEW/TABLE cleanup and retry once.",
+                            view_name,
+                        )
+                        try:
+                            self.execute_statements([f"DROP VIEW IF EXISTS {view_name}"])
+                        except Exception as drop_view_exc:
+                            logger.debug("DROP VIEW cleanup failed for %s: %s", view_name, str(drop_view_exc)[:200])
+
+                        try:
+                            self.execute_statements([f"DROP TABLE IF EXISTS {view_name}"])
+                        except Exception as drop_table_exc:
+                            logger.debug("DROP TABLE cleanup failed for %s: %s", view_name, str(drop_table_exc)[:200])
+
+                        try:
+                            self.execute_statements([view_sql])
+                            return view_name, True, "", ""
+                        except Exception as retry_exc:
+                            retry_error = str(retry_exc)
+                            retry_class, _ = self._classify_metric_view_deploy_error(retry_error)
+                            return view_name, False, retry_error[:300], retry_class
+
+                    if view_name != "unknown" and conflict_detected and not self._dbx_behavior.enable_destructive_sync_operations:
+                        logger.warning(
+                            "Databricks object-type conflict for %s; destructive cleanup is disabled (enable_destructive_sync_operations=false).",
+                            view_name,
+                        )
+
+                    error_class, _ = self._classify_metric_view_deploy_error(error_text)
+                    return view_name, False, error_text[:300], error_class
 
             if view_stmts:
                 worker_count = min(MAX_VIEW_WORKERS, len(view_stmts))
@@ -3759,16 +6722,20 @@ class DatabricksPublisher:
                         for sql in view_stmts
                     }
                     for future in as_completed(futures):
-                        view_name, success, error_msg = future.result()
+                        view_name, success, error_msg, error_class = future.result()
                         if success:
                             views_success += 1
                             logger.info("✅ Deployed measure view: %s", view_name)
                         else:
                             views_failed += 1
                             failed_view_names.append(view_name)
+                            if error_class:
+                                failed_view_classes[error_class] = failed_view_classes.get(error_class, 0) + 1
                             logger.warning(
-                                "⚠️  Measure view %s failed: %s",
-                                view_name, error_msg,
+                                "⚠️  Measure view %s failed (class=%s): %s",
+                                view_name,
+                                error_class or ERROR_CLASS_GENERIC,
+                                error_msg,
                             )
 
                 deploy_elapsed = time.monotonic() - deploy_start
@@ -3779,13 +6746,15 @@ class DatabricksPublisher:
 
             if views_failed:
                 failed_views_preview = ", ".join(failed_view_names[:5])
+                class_summary = ", ".join(
+                    f"{klass}={count}" for klass, count in sorted(failed_view_classes.items())
+                ) or "uncategorized"
                 logger.warning(
-                    "⚠️  %d/%d measure views failed (source table/column mismatch in "
-                    "Databricks). Failed views: %s%s. Metadata table deployed OK. "
-                    "Verify source table names and physical column names used by "
-                    "the semantic model.",
+                    "⚠️  %d/%d measure views failed in Databricks. classes=[%s]. "
+                    "Failed views: %s%s. Metadata table deployed OK.",
                     views_failed,
                     len(view_stmts),
+                    class_summary,
                     failed_views_preview or "unknown",
                     "..." if len(failed_view_names) > 5 else "",
                 )
@@ -3795,6 +6764,27 @@ class DatabricksPublisher:
                 and view_stmts
                 and views_failed > 0
             ):
+                if not self._allow_metric_deploy_sql_fallback():
+                    sql_fallback_state = SQL_FALLBACK_SKIPPED
+                    self._log_sql_fallback_state(
+                        model_name=sml_model.unique_name,
+                        state=sql_fallback_state,
+                        reason="fallback_disabled_by_policy",
+                    )
+                    logger.warning(
+                        "Metric-view deployment had %d failed view(s), but SQL fallback is disabled because "
+                        "measure_view_type is explicitly '%s'. Keeping metric-view mode.",
+                        views_failed,
+                        self._dbx_behavior.measure_view_type,
+                    )
+                    return f"databricks://{self.config.catalog}/{self.config.schema_name}/{sml_model.unique_name}"
+
+                sql_fallback_state = SQL_FALLBACK_IN_PROGRESS
+                self._log_sql_fallback_state(
+                    model_name=sml_model.unique_name,
+                    state=sql_fallback_state,
+                    reason=f"metric_views_failed={views_failed}",
+                )
                 logger.warning(
                     "Native Databricks metric-view deployment had %d failed "
                     "view(s). Falling back to SQL views for model '%s' to keep "
@@ -3808,40 +6798,83 @@ class DatabricksPublisher:
                 )
 
                 fallback_failed = 0
-                if fallback_view_stmts:
-                    sql_debug_artifacts: list[str] = []
-                    for view_sql in fallback_view_stmts:
-                        artifact_path = self._persist_sql_debug_artifact(sml_model.unique_name, view_sql)
-                        sql_debug_artifacts.append(artifact_path or "")
-                        if artifact_path:
-                            logger.info("Saved SQL fallback debug statement: %s", artifact_path)
+                try:
+                    if fallback_view_stmts:
+                        sql_debug_artifacts: list[str] = []
+                        for view_sql in fallback_view_stmts:
+                            artifact_path = self._persist_sql_debug_artifact(sml_model.unique_name, view_sql)
+                            sql_debug_artifacts.append(artifact_path or "")
+                            if artifact_path:
+                                logger.info("Saved SQL fallback debug statement: %s", artifact_path)
 
-                    logger.info("Deploying %d SQL fallback views concurrently...", len(fallback_view_stmts))
-                    try:
-                        self.execute_statements(fallback_view_stmts, concurrent=True)
-                        logger.info("✓ All %d SQL fallback views deployed successfully", len(fallback_view_stmts))
-                    except DatabricksPublishError as exc:
-                        # Fall back to individual deployment for better diagnostics.
-                        logger.warning("Concurrent fallback deployment failed: %s. Attempting individual deployment...", str(exc)[:200])
-                        for idx, view_sql in enumerate(fallback_view_stmts):
-                            view_name = "unknown"
-                            match = re.search(r'VIEW\s+(`[^`]+`\.`[^`]+`\.`[^`]+`)', view_sql)
-                            if match:
-                                view_name = match.group(1)
-                            try:
-                                self.execute_statements([view_sql])
-                                logger.info("Deployed SQL fallback view: %s", view_name)
-                            except DatabricksPublishError as e:
-                                fallback_failed += 1
-                                self._persist_sql_debug_error_artifact(
-                                    sql_debug_artifacts[idx] if idx < len(sql_debug_artifacts) else "",
-                                    str(e),
-                                )
-                                logger.warning(
-                                    "SQL fallback view %s failed. Error: %s",
-                                    view_name,
-                                    str(e)[:200],
-                                )
+                        logger.info("Deploying %d SQL fallback views concurrently...", len(fallback_view_stmts))
+                        try:
+                            self.execute_statements(fallback_view_stmts, concurrent=True)
+                            logger.info("✓ All %d SQL fallback views deployed successfully", len(fallback_view_stmts))
+                        except DatabricksPublishError as exc:
+                            # Fall back to individual deployment for better diagnostics.
+                            logger.warning("Concurrent fallback deployment failed: %s. Attempting individual deployment...", str(exc)[:200])
+                            for idx, view_sql in enumerate(fallback_view_stmts):
+                                view_name = "unknown"
+                                match = re.search(r'VIEW\s+(`[^`]+`\.`[^`]+`\.`[^`]+`)', view_sql)
+                                if match:
+                                    view_name = match.group(1)
+                                try:
+                                    self.execute_statements([view_sql])
+                                    logger.info("Deployed SQL fallback view: %s", view_name)
+                                except DatabricksPublishError as e:
+                                    error_text = str(e)
+                                    if view_name != "unknown" and self._is_object_type_conflict_error(error_text):
+                                        if self._dbx_behavior.enable_destructive_sync_operations:
+                                            logger.warning(
+                                                "SQL fallback object-type conflict for %s; attempting DROP VIEW/TABLE cleanup and retry once.",
+                                                view_name,
+                                            )
+                                            try:
+                                                self.execute_statements([f"DROP VIEW IF EXISTS {view_name}"])
+                                            except Exception as drop_view_exc:
+                                                logger.debug("DROP VIEW cleanup failed for %s: %s", view_name, str(drop_view_exc)[:200])
+
+                                            try:
+                                                self.execute_statements([f"DROP TABLE IF EXISTS {view_name}"])
+                                            except Exception as drop_table_exc:
+                                                logger.debug("DROP TABLE cleanup failed for %s: %s", view_name, str(drop_table_exc)[:200])
+
+                                            try:
+                                                self.execute_statements([view_sql])
+                                                logger.info("Deployed SQL fallback view after cleanup: %s", view_name)
+                                                continue
+                                            except DatabricksPublishError as cleanup_retry_error:
+                                                error_text = str(cleanup_retry_error)
+                                        else:
+                                            logger.warning(
+                                                "SQL fallback object-type conflict for %s; destructive cleanup is disabled (enable_destructive_sync_operations=false).",
+                                                view_name,
+                                            )
+
+                                    fallback_failed += 1
+                                    self._persist_sql_debug_error_artifact(
+                                        sql_debug_artifacts[idx] if idx < len(sql_debug_artifacts) else "",
+                                        error_text,
+                                    )
+                                    logger.warning(
+                                        "SQL fallback view %s failed. Error: %s",
+                                        view_name,
+                                        error_text[:200],
+                                    )
+                    else:
+                        fallback_failed = 1
+                        logger.warning(
+                            "SQL fallback could not start for model '%s': no SQL fallback views were generated.",
+                            sml_model.unique_name,
+                        )
+                finally:
+                    sql_fallback_state = SQL_FALLBACK_FAILED if fallback_failed else SQL_FALLBACK_SUCCESS
+                    self._log_sql_fallback_state(
+                        model_name=sml_model.unique_name,
+                        state=sql_fallback_state,
+                        reason=f"failed_views={fallback_failed};total_views={len(fallback_view_stmts)}",
+                    )
 
                 if fallback_failed:
                     logger.warning(

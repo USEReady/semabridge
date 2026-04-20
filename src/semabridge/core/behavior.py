@@ -7,11 +7,12 @@ This separates "what to run" (ExecutionConfig) from "how to run it" (ConnectorBe
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
 from pathlib import Path
-import yaml
+from typing import Any, Literal
 
+import yaml
 from pydantic import BaseModel, Field, model_validator
+
 
 class SnowflakeBehavior(BaseModel):
     """Snowflake-specific behavior controls."""
@@ -94,6 +95,59 @@ class DatabricksBehavior(BaseModel):
         default=True,
         description="Generate measure views for deployed measures"
     )
+    model_artifact_mode: str = Field(
+        default="per_dataset",
+        description=(
+            "Databricks artifact granularity: 'per_dataset' (legacy behavior) or "
+            "'per_model' (single metadata table + single model metric view)."
+        ),
+    )
+    model_metadata_suffix: str = Field(
+        default="metadata",
+        description="Suffix for per-model metadata table naming in per_model mode"
+    )
+    model_metric_view_suffix: str = Field(
+        default="metric_view",
+        description="Suffix for per-model metric view naming in per_model mode"
+    )
+    model_fact_root: str = Field(
+        default="",
+        description=(
+            "Optional dataset name to anchor model-level view generation in per_model mode. "
+            "When empty, a deterministic dataset is chosen automatically."
+        ),
+    )
+    multi_fact_split_mode: Literal["off", "opt_in", "enforced"] = Field(
+        default="off",
+        description=(
+            "Multi-fact constellation split mode: 'off' (legacy single artifact path), "
+            "'opt_in' (enable only when explicitly configured), or 'enforced' "
+            "(always split by detected fact anchors)."
+        ),
+    )
+    dummy_measure_anchor_confidence_threshold: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum confidence (0.0-1.0) required to auto-relocate a measure from "
+            "a dummy measure-only dataset to a target fact dataset."
+        ),
+    )
+    review_required_blocks_deployment: bool = Field(
+        default=False,
+        description=(
+            "When true, measures queued as review-required block deployment instead of "
+            "skipping only affected fact artifacts."
+        ),
+    )
+    strict_cycle_fail_mode: bool = Field(
+        default=False,
+        description=(
+            "When true, relationship cycles fail deployment for the affected artifact "
+            "instead of using best-effort deterministic cycle breaking."
+        ),
+    )
     measure_view_type: str = Field(
         default="metric_view",
         description=(
@@ -131,11 +185,40 @@ class DatabricksBehavior(BaseModel):
         default=False,
         description="Build explicit joins for measures that reference multiple datasets"
     )
+    enable_metric_view_joins: bool = Field(
+        default=False,
+        description=(
+            "Enable native Databricks metric view 'joins' property for multi-table snowflake schemas. "
+            "When enabled, metric views will emit JOIN clauses for related tables. "
+            "Requires enable_cross_table_joins=true. Default false for backward compatibility."
+        ),
+    )
     enable_cross_table_sql_fallback: bool = Field(
         default=False,
         description=(
             "When measure_view_type is metric_view, allow auto-routing cross-table "
             "models to SQL view generation. Keep disabled to enforce metric-view-first deployment."
+        ),
+    )
+    allow_sql_fallback_on_metric_view_failure: bool = Field(
+        default=False,
+        description=(
+            "When true, allow publish-time downgrade to SQL views if native metric-view "
+            "deployment fails, even when measure_view_type is explicitly 'metric_view'."
+        ),
+    )
+    statement_wait_timeout_seconds: int = Field(
+        default=30,
+        ge=1,
+        description=(
+            "Databricks SQL statement API wait timeout in seconds before polling."
+        ),
+    )
+    statement_poll_interval_seconds: float = Field(
+        default=3.0,
+        ge=0.25,
+        description=(
+            "Databricks SQL statement polling interval in seconds while statements are running."
         ),
     )
     enable_low_confidence_drafts: bool = Field(
@@ -144,16 +227,64 @@ class DatabricksBehavior(BaseModel):
     )
     emit_metric_views_for_all_datasets: bool = Field(
         default=False,
-        description="Emit a fallback metric view for datasets without deployable measures"
+        description=(
+            "Emit fallback metric views for datasets without deployable measures. "
+            "Project-level config can enable dimension-first coverage by default."
+        )
     )
-    source_table_mapping: Dict[str, str] = Field(
+    emit_distinct_pk_metric_for_dimension_datasets: bool = Field(
+        default=True,
+        description=(
+            "When emitting fallback metrics for measure-less datasets, also emit "
+            "COUNT(DISTINCT primary_key) when a confident key can be inferred."
+        )
+    )
+    strict_graph_coverage_validation: bool = Field(
+        default=False,
+        description=(
+            "Fail publish when relationship graph endpoints are invalid or source "
+            "coverage gaps are detected. Default false logs warnings only."
+        )
+    )
+    enable_destructive_sync_operations: bool = Field(
+        default=False,
+        description=(
+            "Allow destructive Databricks cleanup actions (DROP VIEW/TABLE) when resolving "
+            "object-type conflicts during publish retries."
+        )
+    )
+    enable_auto_join_key_bridge: bool = Field(
+        default=False,
+        description=(
+            "When true, Databricks preflight automatically creates missing physical join-key "
+            "columns required by model relationships and attempts conservative backfill from "
+            "existing candidate columns (for example, customer -> customer_key)."
+        )
+    )
+    preflight_validate_join_dimensions: bool = Field(
+        default=True,
+        description=(
+            "When true, strip dimension entries that reference non-existent join-table columns "
+            "from the metric-view YAML before deployment. Prevents FIELD_NOT_FOUND failures "
+            "when the semantic model references columns that do not yet exist in Databricks."
+        ),
+    )
+    join_column_overrides: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Per-join dimension overrides. Each key is a join alias; value is a dict with "
+            "optional 'include_columns' (allowlist) or 'exclude_columns' (denylist) lists. "
+            "Example: {product: {include_columns: [product_name, product_dim_ck]}}"
+        ),
+    )
+    source_table_mapping: dict[str, str] = Field(
         default_factory=dict,
         description=(
             "Explicit mapping of Fabric dataset names to Databricks tables. "
             "Example: {'CONTINENT_1': 'analytics.raw.continent_data'}"
         ),
     )
-    source_column_mapping: Dict[str, Any] = Field(
+    source_column_mapping: dict[str, Any] = Field(
         default_factory=dict,
         description=(
             "Optional mapping of semantic columns to physical Databricks columns. "
@@ -178,13 +309,28 @@ class DatabricksBehavior(BaseModel):
             "'fail' (raise error, halt deployment)"
         ),
     )
-    grant_select_to_groups: List[str] = Field(
+    grant_select_to_groups: list[str] = Field(
         default_factory=list,
         description="Groups to GRANT SELECT on deployed metric views"
     )
     transfer_ownership_to: str = Field(
         default="",
         description="Group to transfer metric view ownership to (enables collaborative editing)"
+    )
+    semantic_router_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable semantic router for fact-centric artifact generation. "
+            "When true, per-fact metric-view artifacts are generated with isolated dimension scopes. "
+            "When false, legacy single model-level view generation is used (backward compatible)."
+        ),
+    )
+    semantic_router_override_models: list[str] = Field(
+        default_factory=list,
+        description=(
+            "List of model names to exclude from semantic router processing, even when "
+            "semantic_router_enabled is true. Useful for testing transitions. Example: ['OldModel', 'LegacyDatamart']"
+        ),
     )
 
 class FeatureFlags(BaseModel):
@@ -259,13 +405,13 @@ class ConnectorBehavior(BaseModel):
         return data
 
     @classmethod
-    def from_yaml(cls, path: Path) -> "ConnectorBehavior":
+    def from_yaml(cls, path: Path) -> ConnectorBehavior:
         """Load behavior policy from YAML file."""
         if not path or not path.exists():
              # Return defaults if no file provided
             return cls()
-        
-        with open(path, "r", encoding="utf-8") as f:
+
+        with open(path, encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
-            
+
         return cls(**raw)

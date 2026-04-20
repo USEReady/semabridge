@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from semabridge.core.behavior import DatabricksBehavior
 from semabridge.sml.models import SMLMetric
@@ -436,13 +436,9 @@ class DatabricksMeasureTranslator:
                 "sum",
                 "average",
                 "count",
-                "distinctcount",
             }
-            col_ref = (
-                f"{table}.{col}"
-                if (table and self._behavior.enable_cross_table_joins and func in qualify_for_join)
-                else col
-            )
+            # For metric views, use the deterministic bare alias so Publisher's AST parser passes it gracefully
+            col_ref = f"`{col}`"
             if func == "average":
                 func = "avg"
             elif func == "distinctcount":
@@ -682,3 +678,108 @@ class DatabricksMeasureTranslator:
             inlined = re.sub(rf"(?i)\b{re.escape(var_name)}\b", f"({translated})", inlined)
 
         return self.try_simple_dax_to_sql(inlined)
+
+    def parse_switch_ui_logic(self, dax_expression: str) -> Optional[dict[str, Any]]:
+        """Parse UI text elements out of a SWITCH(SELECTEDVALUE(...)) DAX block.
+
+        Returns a dictionary describing the lookup table components:
+        {
+           'column': 'Business_Unit',
+           'dataset': 'Plant_BU_Mapping',
+           'cases': [('USP', '...'), ('MSH', '...')],
+           'default': '...',
+        }
+        Returns None if the expression does not match the expected pattern.
+        """
+        expr = str(dax_expression or "").strip()
+
+        # Relaxed Regex to capture SWITCH(SELECTEDVALUE('Table'[Column]), ...)
+        # Handles optional quotes around the table name and arbitrary arguments.
+        pattern = r"(?is)^SWITCH\s*\(\s*SELECTEDVALUE\s*\(\s*(?:'(?P<table_q>[^']+)'|(?P<table>[A-Za-z_][A-Za-z0-9_]*))\s*\[(?P<col>[^\]]+)\]\s*(?:,\s*.*?)?\)\s*,(.+)\)$"
+        m_switch = re.match(pattern, expr)
+        if not m_switch:
+            return None
+
+        dataset = str(m_switch.group("table_q") or m_switch.group("table") or "").strip()
+        column = str(m_switch.group("col")).strip()
+        args_str = m_switch.group(4).strip()
+
+        args = self.split_top_level_csv(args_str)
+        cases = []
+        default = None
+
+        for i in range(0, len(args), 2):
+            if i + 1 < len(args):
+                key = args[i].strip()
+                val = args[i+1].strip()
+                # Remove surrounding quotes if present
+                if key.startswith('"') and key.endswith('"'): key = key[1:-1]
+                if key.startswith("'") and key.endswith("'"): key = key[1:-1]
+                if val.startswith('"') and val.endswith('"'): val = val[1:-1]
+                if val.startswith("'") and val.endswith("'"): val = val[1:-1]
+                cases.append((key, val))
+            else:
+                default = args[i].strip()
+                if default.startswith('"') and default.endswith('"'): default = default[1:-1]
+                if default.startswith("'") and default.endswith("'"): default = default[1:-1]
+
+        return {
+            "dataset": dataset,
+            "column": column,
+            "cases": cases,
+            "default": default
+        }
+
+    def generate_lookup_ddl(self, measure_name: str, lookup_dict: dict[str, Any], schema_prefix: str = "") -> str:
+        """Generate a CREATE TABLE and INSERT script for a look up table.
+
+        Args:
+            measure_name: The name of the measure, used to postfix the table name.
+            lookup_dict: The parsed output from `parse_switch_ui_logic`.
+            schema_prefix: Optional prefix for the table name (e.g., 'workspace_xyz.public.').
+
+        Returns:
+            A string containing the SQL DDL commands to create and populate the lookup table.
+        """
+        base_dataset = self._sanitize_identifier(lookup_dict["dataset"]).lower()
+        if not base_dataset:
+            base_dataset = "generic"
+        
+        column_name = self._sanitize_identifier(lookup_dict["column"]).lower()
+        if not column_name:
+            column_name = "key"
+
+        metric_name_clean = self._sanitize_identifier(measure_name).lower()
+        table_name = f"{schema_prefix}{base_dataset}_{metric_name_clean}_callouts"
+
+        output = [
+            f"CREATE TABLE IF NOT EXISTS {table_name} (",
+            f"  `{column_name}` STRING,",
+            f"  `{metric_name_clean}_text` STRING",
+            ");",
+            ""
+        ]
+
+        # In Databricks, we often use INSERT INTO VALUES, or MERGE, but for simple lookup generations we can clear and insert.
+        output.append(f"TRUNCATE TABLE {table_name};")
+        
+        if lookup_dict["cases"] or lookup_dict["default"] is not None:
+            output.append(f"INSERT INTO {table_name} VALUES")
+            
+            values = []
+            for key, val in lookup_dict["cases"]:
+                safe_key = key.replace("'", "''")
+                safe_val = val.replace("'", "''")
+                values.append(f"  ('{safe_key}', '{safe_val}')")
+                
+            if lookup_dict["default"] is not None:
+                safe_default = lookup_dict["default"].replace("'", "''")
+                # Using a special key like '__DEFAULT__' or NULL depending on usage.
+                # For Databricks Metric View logic, we need to bind strictly to keys. If a default applies to everything else,
+                # the semantic layer will need to handle it via a COALESCE. We will store it for completeness.
+                values.append(f"  ('__DEFAULT__', '{safe_default}')")
+
+            output.append(",\n".join(values) + ";")
+            
+        return "\n".join(output)
+

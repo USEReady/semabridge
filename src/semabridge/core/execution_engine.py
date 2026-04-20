@@ -140,6 +140,7 @@ class RunContext:
     source_artifact_id: Optional[str] = None
     sml_snapshot_id: Optional[str] = None
     target_artifact_path: Optional[str] = None
+    routing_summary: Optional[dict[str, Any]] = None
 
 
 class ExecutionEngine:
@@ -2472,6 +2473,9 @@ class ExecutionEngine:
         from semabridge.connectors.databricks_publisher import DatabricksPublisher
 
         publisher = DatabricksPublisher(context.config.databricks, behavior=context.behavior)
+        # Apply the same heuristic transforms that publish() applies so the
+        # debug YAML artifact faithfully reflects what will be deployed.
+        publisher._apply_model_config_overrides(context.sml_model)
         statements, created, skipped, skipped_details = publisher.generate_measure_view_statements(
             context.sml_model,
             view_type_override="metric_view",
@@ -2684,7 +2688,30 @@ class ExecutionEngine:
         db_config = context.scoped_databricks_config or config.databricks
 
         publisher = DatabricksPublisher(db_config, behavior=context.behavior)
-        publisher.publish(context.sml_model)
+        context.target_artifact_path = publisher.publish(context.sml_model)
+        publish_summary = publisher.get_last_publish_summary()
+        context.routing_summary = publish_summary.get("routing_summary") if isinstance(publish_summary, dict) else None
+        self._raise_if_databricks_fallback_failed(context, publish_summary)
+
+    def _raise_if_databricks_fallback_failed(
+        self,
+        context: RunContext,
+        publish_summary: Any,
+    ) -> None:
+        """Fail deployment when Databricks SQL fallback enters terminal FAILED state."""
+        if not isinstance(publish_summary, dict):
+            return
+
+        fallback_state = str(publish_summary.get("sql_fallback_state") or "").strip().upper()
+        if fallback_state != "FALLBACK_FAILED":
+            return
+
+        fallback_reason = str(publish_summary.get("sql_fallback_reason") or "").strip()
+        if fallback_reason:
+            raise DeploymentError(
+                f"Databricks SQL fallback failed for model '{context.project_id}': {fallback_reason}"
+            )
+        raise DeploymentError(f"Databricks SQL fallback failed for model '{context.project_id}'")
 
     def _export_inferred_osi_artifacts(self, context: RunContext) -> None:
         """Write OSI JSON/YAML with the latest inferred column datatypes."""
@@ -2759,6 +2786,7 @@ class ExecutionEngine:
         self._summary.source_artifact_id = context.source_artifact_id
         self._summary.sml_snapshot_id = context.sml_snapshot_id
         self._summary.target_artifact_path = context.target_artifact_path
+        self._summary.routing_summary = context.routing_summary
         
         self._record_step(10, StepStatus.SUCCESS, f"Status: {status.value}")
 

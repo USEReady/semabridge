@@ -10,12 +10,13 @@ USE SCHEMA public;
 -- ---------------------------------------------------------------------------
 SHOW TABLES IN semabridge.public LIKE 'fact';
 SHOW TABLES IN semabridge.public LIKE 'bu';
+SHOW TABLES IN semabridge.public LIKE 'customer';
 
 -- Optional broader existence checks
 SELECT table_catalog, table_schema, table_name, table_type
 FROM semabridge.information_schema.tables
 WHERE table_schema = 'public'
-  AND table_name IN ('fact', 'bu')
+  AND table_name IN ('fact', 'bu', 'customer')
 ORDER BY table_name;
 
 -- ---------------------------------------------------------------------------
@@ -23,12 +24,13 @@ ORDER BY table_name;
 -- ---------------------------------------------------------------------------
 DESCRIBE TABLE semabridge.public.fact;
 DESCRIBE TABLE semabridge.public.bu;
+DESCRIBE TABLE semabridge.public.customer;
 
 -- Compact schema-only check
 SELECT table_name, column_name, data_type, is_nullable, ordinal_position
 FROM semabridge.information_schema.columns
 WHERE table_schema = 'public'
-  AND table_name IN ('fact', 'bu')
+  AND table_name IN ('fact', 'bu', 'customer')
 ORDER BY table_name, ordinal_position;
 
 -- ---------------------------------------------------------------------------
@@ -41,7 +43,7 @@ SELECT
 FROM semabridge.information_schema.columns
 WHERE table_schema = 'public'
   AND table_name = 'fact'
-  AND column_name IN ('YearPeriod', 'Customer_Key', 'Scenario_Key', 'Product_Key')
+  AND column_name IN ('yearperiod', 'Customer_Key', 'Product_Key', 'BU_Key', 'Scenario_Key', 'customer_key', 'product_key', 'bu_key', 'scenario_key')
 ORDER BY column_name;
 
 SELECT
@@ -51,7 +53,17 @@ SELECT
 FROM semabridge.information_schema.columns
 WHERE table_schema = 'public'
   AND table_name = 'bu'
-  AND column_name IN ('BU', 'Division', 'BU_Key')
+  AND column_name IN ('BU', 'Division', 'BU_Key', 'bu_key')
+ORDER BY column_name;
+
+SELECT
+  table_name,
+  column_name,
+  data_type
+FROM semabridge.information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name = 'customer'
+  AND column_name IN ('customer_key', 'customer', 'id', 'name')
 ORDER BY column_name;
 
 -- ---------------------------------------------------------------------------
