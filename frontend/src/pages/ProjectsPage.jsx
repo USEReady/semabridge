@@ -574,7 +574,7 @@ export default function ProjectsPage() {
                   <Download size={13} /> Export All
                 </button>
               )}
-              <button onClick={() => navigate('/projects/new')} style={btnStyle('primary')}>
+              <button onClick={() => navigate('/projects/new', { state: { fresh: true } })} style={btnStyle('primary')}>
                 <Plus size={13} /> New Project
               </button>
             </div>
@@ -744,7 +744,7 @@ export default function ProjectsPage() {
               title="No projects yet"
               description="Create your first project to start connecting sources and building semantic models."
               actionLabel="Create Project"
-              onAction={() => navigate('/projects/new')}
+              onAction={() => navigate('/projects/new', { state: { fresh: true } })}
             />
           ) : filtered.length === 0 ? (
             <div style={{ padding: '80px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
