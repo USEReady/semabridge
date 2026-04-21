@@ -18,6 +18,7 @@ const DEFAULT_UI_STATE = {
   projectListScrollTop: 0,
   createProjectDraft: null,
   projectConfigDrafts: {},
+  isAdvancedMode: false,
 };
 
 function sanitizeFilterOptions(raw) {
@@ -97,6 +98,9 @@ export const useUIStore = create(
     )),
     setProjectListScrollTop: (projectListScrollTop) => set((state) => (
       state.projectListScrollTop === projectListScrollTop ? state : { projectListScrollTop }
+    )),
+    setIsAdvancedMode: (isAdvancedMode) => set((state) => (
+      state.isAdvancedMode === isAdvancedMode ? state : { isAdvancedMode }
     )),
 
     setCreateProjectDraft: (createProjectDraft) =>

@@ -20,6 +20,7 @@ import ProjectJobsPage  from './pages/ProjectJobsPage';
 import ModelMappingPage from './pages/ModelMappingPage';
 import SettingsPage    from './pages/SettingsPage';
 import ProjectDetailPage from './pages/ProjectDetailPage';
+import ComparatorPage    from './pages/ComparatorPage';
 
 /**
  * Auth gate — shows loading spinner while auth bootstrap resolves.
@@ -123,6 +124,7 @@ export default function App() {
           <Route path="/jobs"          element={<ProjectJobsPage />} />
           <Route path="/model-mapping" element={<ModelMappingPage />} />
           <Route path="/settings"      element={<SettingsPage />} />
+          <Route path="/comparator"    element={<ComparatorPage />} />
         </Route>
 
         {/* Fallback */}

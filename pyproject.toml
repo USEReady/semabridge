@@ -67,6 +67,7 @@ dependencies = [
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "prometheus-client>=0.20.0",
+    "aisuite[google]>=0.1.14",
 ]
 
 [project.optional-dependencies]
