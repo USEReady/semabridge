@@ -12,7 +12,7 @@ const WS_URL = (() => {
     }
 
     if (import.meta.env.DEV) {
-        return 'ws://127.0.0.1:8001/ws/alerts';
+        return 'ws://127.0.0.1:8000/ws/alerts';
     }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   Map, FolderOpen, PlayCircle, Settings, GitBranch,
-  Hexagon, LogOut, ChevronLeft, ChevronRight, Bell, Split,
+  Hexagon, LogOut, ChevronLeft, ChevronRight, Bell,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import ThemeToggle from '../components/ThemeToggle';
@@ -17,7 +17,14 @@ import { useLogs } from '../context/LogsContext';
 import { useNavigate } from 'react-router-dom';
 import { useUIStore } from '../store/uiStore';
 
-// Nav items are now generated dynamically based on state
+const NAV_ITEMS = [
+
+  { to: '/projects',      label: 'Projects',        icon: FolderOpen },
+  { to: '/jobs',          label: 'Runs',            icon: PlayCircle },
+    { to: '/explore',       label: 'Explore',         icon: Map },
+  { to: '/model-mapping', label: 'Model Mapping',   icon: GitBranch },
+  { to: '/settings',      label: 'Settings',        icon: Settings },
+];
 
 function SidebarNavIcon({ icon: Icon, active }) {
   return (
@@ -48,22 +55,8 @@ export default function DashboardLayout() {
   const navigate = useNavigate();
   const collapsed = useUIStore(state => state.sidebarCollapsed);
   const setSidebarCollapsed = useUIStore(state => state.setSidebarCollapsed);
-  const isAdvancedMode = useUIStore(state => state.isAdvancedMode);
   const [search, setSearch] = useState('');
   const [searchUseRegex, setSearchUseRegex] = useState(false);
-
-  const NAV_ITEMS = [
-    { to: '/projects',      label: 'Projects',        icon: FolderOpen },
-    { to: '/jobs',          label: 'Runs',            icon: PlayCircle },
-    { to: '/explore',       label: 'Explore',         icon: Map },
-    { to: '/model-mapping', label: 'Model Mapping',   icon: GitBranch },
-  ];
-  
-  if (isAdvancedMode) {
-     NAV_ITEMS.push({ to: '/comparator', label: 'Comparator', icon: Split });
-  }
-
-  NAV_ITEMS.push({ to: '/settings', label: 'Settings', icon: Settings });
 
   // Overlay panel toggles
   const [showLogs, setShowLogs] = useState(false);
