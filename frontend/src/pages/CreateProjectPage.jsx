@@ -8,7 +8,7 @@
  * Step 5: Finish and configure
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, ArrowRight, Check, X, Loader2,
   ChevronDown, ChevronRight, CheckSquare, Square, RefreshCw,
@@ -23,6 +23,8 @@ import { useWorkspace } from '../context/WorkspaceContext';
 import Modal from '../components/common/Modal';
 import { useLogs } from '../context/LogsContext';
 import { useUIStore } from '../store/uiStore';
+import useSessionDraft from '../hooks/useSessionDraft';
+import DraftBanner from '../components/common/DraftBanner';
 
 const STEPS = [
   { id: 1, label: 'Basic Info' },
@@ -66,6 +68,7 @@ const LABEL = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--t
 
 export default function CreateProjectPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { addLog } = useLogs();
   const setCreateProjectDraft = useUIStore(state => state.setCreateProjectDraft);
   const clearCreateProjectDraft = useUIStore(state => state.clearCreateProjectDraft);
@@ -75,6 +78,12 @@ export default function CreateProjectPage() {
     activeWorkspace,
     isLoading: workspacesLoading,
   } = useWorkspace();
+
+  // --- Intent-aware draft hook ---
+  const {
+    hasDraft, draft: resumedDraft, saveDraft,
+    resumeDraft, discardDraft, clearDraft,
+  } = useSessionDraft('createProjectDraft');
 
   const [step, setStep] = useState(1);
   const [showStep1Validation, setShowStep1Validation] = useState(false);
@@ -167,6 +176,69 @@ export default function CreateProjectPage() {
   const [createReverseProject, setCreateReverseProject] = useState(false);
   const [createdProject, setCreatedProject] = useState(null);
 
+  // --- Hydrate form when user clicks "Resume" on the draft banner ---
+  useEffect(() => {
+    if (!resumedDraft) return;
+    const d = resumedDraft;
+    if (d.step != null) setStep(d.step);
+    if (d.name != null) setName(d.name);
+    if (d.description != null) setDescription(d.description);
+    if (d.sourceConnector != null) setSourceConnector(d.sourceConnector);
+    if (d.targetConnectors) setTargetConnectors(new Set(d.targetConnectors));
+    if (d.intermediateFormat != null) setIntermediateFormat(d.intermediateFormat);
+    if (d.tags) setTags(new Set(d.tags));
+    if (d.tagInput != null) setTagInput(d.tagInput);
+    if (d.fabricAccountId != null) setFabricAccountId(d.fabricAccountId);
+    if (d.selectedConnectionId != null) setSelectedConnectionId(d.selectedConnectionId);
+    if (d.snowflakeAccountId != null) setSnowflakeAccountId(d.snowflakeAccountId);
+    if (d.databricksAccountId != null) setDatabricksAccountId(d.databricksAccountId);
+    if (d.fabricWorkspaceId != null) setFabricWorkspaceId(d.fabricWorkspaceId);
+    if (d.snowflakeDatabase != null) setSnowflakeDatabase(d.snowflakeDatabase);
+    if (d.snowflakeSchema != null) setSnowflakeSchema(d.snowflakeSchema);
+    if (d.targetDatabase != null) setTargetDatabase(d.targetDatabase);
+    if (d.targetSchema != null) setTargetSchema(d.targetSchema);
+    if (d.targetAccount != null) setTargetAccount(d.targetAccount);
+    if (d.targetWarehouse != null) setTargetWarehouse(d.targetWarehouse);
+    if (d.pbixSourceMode != null) setPbixSourceMode(d.pbixSourceMode);
+    if (d.selectedLocalFolderId != null) setSelectedLocalFolderId(d.selectedLocalFolderId);
+    if (d.selectedPbixFilePath != null) setSelectedPbixFilePath(d.selectedPbixFilePath);
+    if (d.expandedWs != null) setExpandedWs(d.expandedWs);
+    if (d.selectedModels) setSelectedModels(new Set(d.selectedModels));
+    if (d.selectedModelNameByKey != null) setSelectedModelNameByKey(d.selectedModelNameByKey);
+    if (d.selectedDatabricksTables) setSelectedDatabricksTables(new Set(d.selectedDatabricksTables));
+    if (d.databricksQuery != null) setDatabricksQuery(d.databricksQuery);
+    if (d.autoRelationships != null) setAutoRelationships(d.autoRelationships);
+    if (d.generateDescriptions != null) setGenerateDescriptions(d.generateDescriptions);
+  }, [resumedDraft]);
+
+  // --- Save draft (debounced) on every form field change ---
+  useEffect(() => {
+    // Don't save a draft when the form is still in its pristine state
+    // (no name, no source selected) to avoid creating empty drafts.
+    if (!name && !sourceConnector) return;
+    saveDraft({
+      step, name, description, sourceConnector, targetConnectors: Array.from(targetConnectors),
+      intermediateFormat, tags: Array.from(tags), tagInput,
+      fabricAccountId, selectedConnectionId, snowflakeAccountId, databricksAccountId,
+      fabricWorkspaceId, snowflakeDatabase, snowflakeSchema,
+      targetDatabase, targetSchema, targetAccount, targetWarehouse,
+      pbixSourceMode, selectedLocalFolderId, selectedPbixFilePath,
+      expandedWs, selectedModels: Array.from(selectedModels), selectedModelNameByKey,
+      selectedDatabricksTables: Array.from(selectedDatabricksTables), databricksQuery,
+      autoRelationships, generateDescriptions,
+    });
+  }, [
+    step, name, description, sourceConnector, targetConnectors,
+    intermediateFormat, tags, tagInput,
+    fabricAccountId, selectedConnectionId, snowflakeAccountId, databricksAccountId,
+    fabricWorkspaceId, snowflakeDatabase, snowflakeSchema,
+    targetDatabase, targetSchema, targetAccount, targetWarehouse,
+    pbixSourceMode, selectedLocalFolderId, selectedPbixFilePath,
+    expandedWs, selectedModels, selectedModelNameByKey,
+    selectedDatabricksTables, databricksQuery,
+    autoRelationships, generateDescriptions, saveDraft,
+  ]);
+
   /* ─── HP search for model browser ─── */
   const allModels = Object.entries(wsModels).flatMap(([wsid, models]) =>
     models.map(m => ({ ...m, wsid, _id: `${wsid}::${m.id}` }))
@@ -176,31 +248,38 @@ export default function CreateProjectPage() {
   );
 
   const liveFabricWorkspaces = useMemo(() => {
-    const merged = [...allWorkspacesFromApi, ...availableWorkspaces]
+    // If we have accounts at all, and source is Fabric, we should prioritize
+    // the list fetched explicitly for the selected account in Step 2.
+    // Fallback to availableWorkspaces (global default) only if we haven't
+    // fetched the account-specific list yet.
+    const baseList = allWorkspacesFromApi.length > 0 
+      ? allWorkspacesFromApi 
+      : (fabricAccountId ? [] : availableWorkspaces);
+
+    const normalized = (baseList || [])
       .filter(Boolean)
       .map((ws) => ({
         ...ws,
         id: ws?.id || ws?.workspace_id || '',
-        name: ws?.name || ws?.displayName || ws?.workspace_id || ws?.id || '',
+        name: ws?.name || ws?.displayName || ws?.workspace_name || ws?.workspace_id || ws?.id || '',
+        displayName: ws?.displayName || ws?.name || ws?.workspace_name || '',
       }))
       .filter((ws) => ws.id);
 
     const deduped = [];
     const seen = new Set();
-    for (const ws of merged) {
+    for (const ws of normalized) {
       if (seen.has(ws.id)) continue;
       seen.add(ws.id);
       deduped.push(ws);
     }
     return deduped;
-  }, [availableWorkspaces, allWorkspacesFromApi]);
+  }, [availableWorkspaces, allWorkspacesFromApi, fabricAccountId]);
 
-  const selectedWorkspace = liveFabricWorkspaces.find(ws => ws.id === fabricWorkspaceId)
-    ?? availableWorkspaces.find(ws => ws.id === fabricWorkspaceId)
-    ?? allWorkspacesFromApi.find(ws => ws.id === fabricWorkspaceId)
-    ?? availableWorkspaces.find(ws => ws.id === activeWorkspaceId)
-    ?? activeWorkspace
-    ?? null;
+  const selectedWorkspace = useMemo(() => {
+    if (!fabricWorkspaceId) return null;
+    return liveFabricWorkspaces.find(ws => ws.id === fabricWorkspaceId) || null;
+  }, [liveFabricWorkspaces, fabricWorkspaceId]);
 
   const selectedModelNames = [...selectedModels]
     .map(modelKey => selectedModelNameByKey[modelKey])
@@ -709,6 +788,9 @@ export default function CreateProjectPage() {
           });
         }
       }
+
+      // Clear the session draft upon successful project creation
+      clearDraft();
     } catch (err) {
       setCreatedProject(null);
       setCreateError(err?.message || 'Create project failed.');
@@ -1066,6 +1148,13 @@ export default function CreateProjectPage() {
           </div>
         ))}
       </div>
+
+      {/* Draft resume banner — shown when a saved draft exists and user hasn't resumed yet */}
+      <DraftBanner
+        visible={hasDraft && !resumedDraft}
+        onResume={resumeDraft}
+        onDiscard={discardDraft}
+      />
 
       {/* Step content */}
       <div style={{ flex: 1, padding: '32px', maxWidth: 700 }}>

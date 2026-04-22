@@ -365,6 +365,42 @@ class TelemetryConfig(BaseSettings):
     )
 
 
+class NetworkConfig(BaseSettings):
+    """Network and proxy configuration."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    https_proxy: Optional[str] = Field(
+        default=None,
+        validation_alias="HTTPS_PROXY",
+        description="HTTPS proxy URL (e.g. http://proxy.company.com:8080)",
+    )
+    http_proxy: Optional[str] = Field(
+        default=None,
+        validation_alias="HTTP_PROXY",
+        description="HTTP proxy URL",
+    )
+    no_proxy: Optional[str] = Field(
+        default=None,
+        validation_alias="NO_PROXY",
+        description="Comma-separated list of hosts to bypass proxy for",
+    )
+
+    @property
+    def proxies(self) -> dict[str, str]:
+        """Return a dict suitable for requests/httpx/msal proxies argument."""
+        p = {}
+        if self.https_proxy:
+            p["https"] = self.https_proxy
+        if self.http_proxy:
+            p["http"] = self.http_proxy
+        return p
+
+
 class DatabaseConfig(BaseSettings):
     """Database connection and pool configuration.
 
@@ -520,6 +556,7 @@ class Settings(BaseSettings):
     _telemetry: Optional[TelemetryConfig] = None
     _database: Optional[DatabaseConfig] = None
     _llm: Optional[LLMConfig] = None
+    _network: Optional[NetworkConfig] = None
     _behavior: Optional[object] = None  # ConnectorBehavior (lazy, avoids circular import)
 
     @property
@@ -589,6 +626,13 @@ class Settings(BaseSettings):
         if self._llm is None:
             self._llm = LLMConfig()
         return self._llm
+
+    @property
+    def network(self) -> NetworkConfig:
+        """Get network and proxy configuration (lazy loaded)."""
+        if self._network is None:
+            self._network = NetworkConfig()
+        return self._network
 
     @property
     def behavior(self):

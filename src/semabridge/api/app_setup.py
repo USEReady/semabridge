@@ -83,6 +83,26 @@ def _apply_schema_compatibility_fixes() -> None:
     if "owner_id" not in existing_columns:
         pending_alters.append("ALTER TABLE accounts ADD COLUMN owner_id INTEGER")
 
+    if not pending_alters and dialect != "postgresql":
+        return
+
+    # In PostgreSQL, we must gracefully migrate the unique constraint from `tag` to `(owner_id, tag)`
+    # This prevents the "Account with tag 'su' already exists" bug for multi-tenant accounts
+    if dialect == "postgresql":
+        try:
+            constraints = inspector.get_unique_constraints("accounts")
+            constraint_names = {c.get("name") for c in constraints if c.get("name")}
+            
+            # Drop the old global constraint if it exists
+            if "accounts_tag_key" in constraint_names:
+                pending_alters.append("ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_tag_key CASCADE")
+            
+            # Add the new composite constraint if it doesn't exist
+            if "uq_account_owner_tag" not in constraint_names:
+                pending_alters.append("ALTER TABLE accounts ADD CONSTRAINT uq_account_owner_tag UNIQUE (owner_id, tag)")
+        except Exception as e:
+            logger.warning("Could not inspect constraints on accounts table: %s", e)
+
     if not pending_alters:
         return
 
@@ -91,6 +111,110 @@ def _apply_schema_compatibility_fixes() -> None:
             conn.execute(text(ddl))
 
     logger.info("Applied accounts schema compatibility fixes: %s", ", ".join(pending_alters))
+
+
+def _apply_rls_policies() -> None:
+    """Apply PostgreSQL Row Level Security policies on tenant-scoped tables.
+
+    RLS is Layer 2 defense-in-depth: even if application code forgets to
+    filter by ``owner_id``, the database refuses to return other users' rows.
+
+    The policy uses the session variable ``app.current_user_id`` which is
+    set by :func:`semabridge.api.deps.get_scoped_db` at the start of each
+    request via ``SET LOCAL``.
+
+    Policy logic:
+        - When ``app.current_user_id`` is set → only rows where
+          ``owner_id = current_user_id`` OR ``owner_id IS NULL`` are visible.
+        - When ``app.current_user_id`` is not set (CLI/internal) → all rows
+          are visible (policy evaluates to ``true``).
+
+    This is idempotent — ``CREATE POLICY ... IF NOT EXISTS`` is not supported
+    by all PG versions, so we use ``DROP POLICY IF EXISTS`` + ``CREATE POLICY``.
+    """
+    from sqlalchemy import text
+    from semabridge.repository.orm.session_factory import get_engine
+
+    engine = get_engine()
+    if engine.dialect.name != "postgresql":
+        return  # RLS is PostgreSQL-specific.
+
+    rls_statements = [
+        # Enable RLS on accounts table (idempotent)
+        "ALTER TABLE accounts ENABLE ROW LEVEL SECURITY",
+        # Drop existing policy if present (idempotent re-creation)
+        "DROP POLICY IF EXISTS account_owner_isolation ON accounts",
+        # Create the policy:
+        #   - When app.current_user_id is '' (not set) → allow all (CLI/internal)
+        #   - When set → only owner's rows + orphaned rows (owner_id IS NULL)
+        """
+        CREATE POLICY account_owner_isolation ON accounts
+        FOR ALL
+        USING (
+            current_setting('app.current_user_id', true) = ''
+            OR current_setting('app.current_user_id', true) IS NULL
+            OR owner_id IS NULL
+            OR owner_id = current_setting('app.current_user_id', true)::integer
+        )
+        """,
+        # Ensure the application role can still see rows through RLS
+        # (superusers bypass RLS by default, but the application role does not)
+        "ALTER TABLE accounts FORCE ROW LEVEL SECURITY",
+    ]
+
+    with engine.begin() as conn:
+        for stmt in rls_statements:
+            conn.execute(text(stmt.strip()))
+
+    logger.info("PostgreSQL RLS policies applied on 'accounts' table.")
+
+def _assign_orphaned_accounts_to_dev_user() -> None:
+    """Assign accounts with NULL owner_id to the first active user.
+
+    This handles the dev-to-multi-user transition. Accounts created before
+    the ``owner_id`` column was added (or before ``AUTH_ENABLED=true``) have
+    ``owner_id IS NULL``.  In development mode, this assigns them to the
+    first active user so they appear correctly in the UI.
+
+    In production (``AUTH_ENABLED=true``), orphaned accounts remain unowned
+    and are inaccessible until an admin assigns them.
+    """
+    if os.environ.get("AUTH_ENABLED", "").lower() == "true":
+        return  # Skip in production — admin must assign explicitly.
+
+    from sqlalchemy import select, update
+    from semabridge.repository.orm.models import Account, User
+    from semabridge.repository.orm.session_factory import db_manager
+
+    with db_manager.get_session() as session:
+        orphan_count = session.execute(
+            select(Account).where(Account.owner_id.is_(None))
+        ).scalars().all()
+
+        if not orphan_count:
+            return
+
+        dev_user = session.execute(
+            select(User).where(User.is_active.is_(True)).order_by(User.id)
+        ).scalars().first()
+
+        if not dev_user:
+            logger.debug(
+                "No active dev user found — %d orphaned accounts remain unassigned.",
+                len(orphan_count),
+            )
+            return
+
+        session.execute(
+            update(Account)
+            .where(Account.owner_id.is_(None))
+            .values(owner_id=dev_user.id)
+        )
+        session.commit()
+        logger.info(
+            "Assigned %d orphaned accounts to dev user '%s' (id=%d).",
+            len(orphan_count), dev_user.username, dev_user.id,
+        )
 
 
 @asynccontextmanager
@@ -155,8 +279,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             _apply_schema_compatibility_fixes()
         except Exception as fix_exc:
             logger.warning('Schema compatibility fix skipped: %s', fix_exc)
+        try:
+            _apply_rls_policies()
+        except Exception as rls_exc:
+            logger.warning('RLS policy setup skipped: %s', rls_exc)
+        try:
+            _assign_orphaned_accounts_to_dev_user()
+        except Exception as orphan_exc:
+            logger.debug('Orphaned account assignment skipped: %s', orphan_exc)
     except Exception as exc:
         logger.error('ORM table setup failed: %s', exc)
+
+    # Phase 3: Log multi-tenant enforcement status at startup.
+    auth_enabled = os.environ.get("AUTH_ENABLED", "").lower() == "true"
+    if auth_enabled:
+        logger.info(
+            "AUTH_ENABLED=true — multi-tenant credential isolation ENFORCED. "
+            "Account ownership checks active on all sync and CRUD endpoints."
+        )
+    else:
+        logger.info(
+            "AUTH_ENABLED is not set — running in single-user development mode. "
+            "Account ownership checks are DISABLED."
+        )
 
     def _prime_msal() -> None:
         try:

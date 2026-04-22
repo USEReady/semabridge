@@ -176,6 +176,16 @@ def scoped_account_env(
 ) -> Generator[str, None, None]:
     """Context manager that injects account credentials into ``os.environ``.
 
+    .. warning::
+
+        **CLI use only.**  This function mutates ``os.environ`` which is a
+        process-global dict shared by all threads.  It is **NOT safe** for
+        concurrent API thread execution where multiple syncs run in parallel.
+
+        For the API (FastAPI) path, use ``auth.credential_builder.build_*_config()``
+        which returns thread-local Pydantic config objects without touching
+        ``os.environ``.
+
     On entry:
         1. Calls ``ensure_valid_token()`` to auto-refresh if needed.
         2. Loads connector-specific credentials from the credential store.

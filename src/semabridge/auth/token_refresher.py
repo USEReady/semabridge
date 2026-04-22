@@ -53,12 +53,24 @@ class TokenExpiredError(Exception):
 
 def _is_token_expired(account: Account) -> bool:
     """Return True if the account's access token is expired or about to expire."""
-    if not account.token_expires_at:
-        # No expiry recorded — assume still valid (e.g. PAT or key-pair auth)
+    expires_at = account.token_expires_at
+
+    # If the row has no explicit expiry, check if the token bundle itself contains an expiry
+    if not expires_at and account.encrypted_token:
+        try:
+            import json
+            decrypted = decrypt_token(account.encrypted_token)
+            bundle = json.loads(decrypted)
+            if isinstance(bundle, dict) and "expires_at" in bundle:
+                expires_at = datetime.fromtimestamp(int(bundle["expires_at"]), tz=timezone.utc)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+
+    if not expires_at:
+        # No expiry recorded at all — assume still valid (e.g. PAT or key-pair auth)
         return False
 
     now = datetime.now(tz=timezone.utc)
-    expires_at = account.token_expires_at
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
 
@@ -79,15 +91,31 @@ def _refresh_fabric_token(account: Account, db: Session) -> str:
     Raises:
         TokenExpiredError: If the refresh token is also expired.
     """
-    if not account.refresh_token:
+    stored_refresh = ""
+    if account.refresh_token:
+        stored_refresh = decrypt_token(account.refresh_token)
+    elif account.encrypted_token:
+        # Fallback to extracting from the JSON bundle
+        try:
+            import json
+            decrypted = decrypt_token(account.encrypted_token)
+            bundle = json.loads(decrypted)
+            if isinstance(bundle, dict):
+                stored_refresh = bundle.get("refresh_token", "")
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+
+    if not stored_refresh:
         raise TokenExpiredError("FABRIC", account.identity_email or account.tag)
 
     from msal import PublicClientApplication
     import os
 
-    stored_refresh = decrypt_token(account.refresh_token)
+    # The Fabric device-code (interactive) login always uses this Microsoft
+    # public client ID — same one used in connection_domain_service.py.
+    # FABRIC_CLIENT_ID env var is only set for service-principal auth.
+    _FABRIC_PUBLIC_CLIENT_ID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
 
-    # Use the same MSAL client_id as the interactive login flow.
     client_id = os.environ.get("FABRIC_CLIENT_ID", "")
 
     if not client_id:
@@ -100,18 +128,44 @@ def _refresh_fabric_token(account: Account, db: Session) -> str:
             pass
 
     if not client_id:
-        raise TokenExpiredError("FABRIC", account.identity_email or account.tag)
+        # Fall back to the standard Microsoft public client ID used in the device-code flow.
+        # This is correct for interactive (non-service-principal) Fabric logins.
+        client_id = _FABRIC_PUBLIC_CLIENT_ID
+        logger.info("Fabric token refresh: falling back to Microsoft public client ID")
 
-    scopes = ["https://analysis.windows.net/powerbi/api/.default"]
+    # Try to get the tenant from the credential bundle for proper authority
+    tenant = "organizations"
+    try:
+        import json
+        decrypted_bundle = decrypt_token(account.encrypted_token)
+        bundle_data = json.loads(decrypted_bundle)
+        tenant = bundle_data.get("tenant_id", "organizations") or "organizations"
+    except Exception:
+        pass
+
+    scopes = ["https://api.fabric.microsoft.com/.default"]
     app = PublicClientApplication(
-        client_id, authority="https://login.microsoftonline.com/organizations"
+        client_id, authority=f"https://login.microsoftonline.com/{tenant}"
     )
 
-    result = app.acquire_token_by_refresh_token(stored_refresh, scopes=scopes)
-
-    if "access_token" not in result:
-        error = result.get("error_description", result.get("error", "unknown"))
-        logger.warning("Fabric token refresh failed: %s", error)
+    try:
+        result = app.acquire_token_by_refresh_token(stored_refresh, scopes=scopes)
+        if "access_token" not in result:
+            error = result.get("error_description", result.get("error", "unknown"))
+            logger.warning("Fabric token refresh failed: %s", error)
+            raise TokenExpiredError("FABRIC", account.identity_email or account.tag)
+    except TokenExpiredError:
+        raise
+    except Exception as exc:
+        error_str = str(exc).lower()
+        if "getaddrinfo" in error_str or "connection" in error_str or "timeout" in error_str:
+            logger.warning("Fabric token refresh failed due to network: %s", exc)
+            # We don't raise TokenExpiredError here because the credentials
+            # might be fine, but the network is just down.
+            # Returning None or raising a generic error is safer.
+            raise ConnectionError(f"Network error during Fabric token refresh: {exc}")
+        
+        logger.warning("Fabric token refresh failed: %s", exc)
         raise TokenExpiredError("FABRIC", account.identity_email or account.tag)
 
     # Check if the existing token is a JSON bundle
@@ -133,9 +187,20 @@ def _refresh_fabric_token(account: Account, db: Session) -> str:
     if result.get("refresh_token"):
         account.refresh_token = encrypt_token(result["refresh_token"])
 
+    import time as _time
     expires_in = int(result.get("expires_in", 3600))
+    # Update expires_at inside the JSON bundle so _is_token_expired reads it correctly
+    try:
+        import json as _json
+        orig_decrypted2 = decrypt_token(account.encrypted_token)
+        bundle2 = _json.loads(orig_decrypted2)
+        if isinstance(bundle2, dict):
+            bundle2["expires_at"] = str(int(_time.time()) + expires_in)
+            account.encrypted_token = encrypt_token(_json.dumps(bundle2))
+    except Exception:
+        pass
     account.token_expires_at = datetime.fromtimestamp(
-        time.time() + expires_in, tz=timezone.utc
+        _time.time() + expires_in, tz=timezone.utc
     )
     db.commit()
 
@@ -193,18 +258,26 @@ def _refresh_databricks_token(account: Account, db: Session) -> str:
     stored_refresh = decrypt_token(account.refresh_token)
     token_url = f"https://{host.rstrip('/')}/oidc/v1/token"
 
-    resp = requests.post(
-        token_url,
-        data={
-            "grant_type": "refresh_token",
-            "refresh_token": stored_refresh,
-            "client_id": os.environ.get("DATABRICKS_CLIENT_ID", ""),
-        },
-        timeout=30,
-    )
-
-    if resp.status_code != 200:
-        logger.warning("Databricks token refresh failed: %s", resp.text)
+    try:
+        resp = requests.post(
+            token_url,
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": stored_refresh,
+                "client_id": os.environ.get("DATABRICKS_CLIENT_ID", ""),
+            },
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            logger.warning("Databricks token refresh failed: %s", resp.text)
+            raise TokenExpiredError("DATABRICKS", account.identity_email or account.tag)
+    except TokenExpiredError:
+        raise
+    except requests.exceptions.RequestException as exc:
+        logger.warning("Databricks token refresh failed due to network: %s", exc)
+        raise ConnectionError(f"Network error during Databricks token refresh: {exc}")
+    except Exception as exc:
+        logger.warning("Databricks token refresh failed: %s", exc)
         raise TokenExpiredError("DATABRICKS", account.identity_email or account.tag)
 
     data = resp.json()
@@ -324,6 +397,9 @@ def _refresh_snowflake_oauth_token(account: Account, db: Session) -> str:
             raise TokenExpiredError("SNOWFLAKE", account.identity_email or account.tag)
     except TokenExpiredError:
         raise
+    except _requests.exceptions.RequestException as exc:
+        logger.warning("Snowflake OAuth token acquisition failed due to network: %s", exc)
+        raise ConnectionError(f"Network error during Snowflake token acquisition: {exc}")
     except Exception as exc:
         logger.warning("Snowflake OAuth token acquisition failed: %s", exc)
         raise TokenExpiredError("SNOWFLAKE", account.identity_email or account.tag)

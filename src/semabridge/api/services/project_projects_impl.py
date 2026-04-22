@@ -103,6 +103,8 @@ async def patch_project_compat(project_id: str, payload: dict):
         project["adapter"] = project["source"]
         if "workspace_id" in payload["source"]:
             project["workspace_id"] = payload["source"].get("workspace_id")
+        if "connection_tag" in payload["source"]:
+            project["connection_tag"] = payload["source"].get("connection_tag")
 
     if isinstance(payload.get("target"), dict):
         project["target_type"] = payload["target"].get("type") or project.get("target_type")
@@ -111,6 +113,11 @@ async def patch_project_compat(project_id: str, payload: dict):
         first_target = payload["targets"][0] if isinstance(payload["targets"][0], dict) else {}
         if first_target.get("type"):
             project["target_type"] = first_target.get("type")
+        if first_target.get("connection_tag"):
+            project["connection_tag"] = first_target.get("connection_tag")
+
+    if payload.get("connection_tag"):
+        project["connection_tag"] = payload.get("connection_tag")
 
     project["updated_at"] = _compat_now_iso()
     _compat_projects[project_id] = project

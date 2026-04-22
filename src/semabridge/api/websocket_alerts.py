@@ -153,6 +153,18 @@ class WebSocketAlertHandler(logging.Handler):
         if self._manager.client_count == 0:
             return  # No clients connected — skip the overhead
 
+        # Filter out sync logs (they are already captured in Run-specific logs)
+        sync_loggers = (
+            "semabridge.connectors.",
+            "semabridge.converter.",
+            "semabridge.core.execution_engine",
+            "semabridge.core.engine",
+            "semabridge.core.concurrency",
+            "semabridge.sync.",
+        )
+        if record.name.startswith(sync_loggers):
+            return
+
         alert_payload: Dict[str, Any] = {
             "id": str(uuid.uuid4()),
             "type": "alert",

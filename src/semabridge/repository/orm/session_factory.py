@@ -168,15 +168,17 @@ class DatabaseManager:
     def fetch_latest_database_url(self) -> str:
         """Fetch the current database URL from configuration / env vars.
 
-        Invalidates the ``db_resolver`` cache first so that runtime changes
-        to environment variables (e.g. from a secret rotation agent) are
-        always reflected.
+        Only invalidates the ``db_resolver`` cache when the active env-var
+        value has changed since the last call.  Clearing the cache on every
+        request caused the URL to always look "new" to ``get_engine()``,
+        triggering a full ``_swap_engine()`` rebuild (200 ms) on every request
+        and starving the asyncio thread pool under concurrent startup load.
 
         Resolution order:
 
         1. ``SEMABRIDGE_DATABASE_URL`` env var.
         2. ``DATABASE_URL`` env var.
-        3. Centralized DB resolver -> ``~/.semabridge/config.yaml`` database
+        3. Centralized DB resolver → ``~/.semabridge/config.yaml`` database
            section, then DuckDB fallback at ``~/.semabridge/semabridge_state.db``.
 
         Returns:
@@ -185,17 +187,28 @@ class DatabaseManager:
         Raises:
             RepositoryError: If no URL can be resolved.
         """
-        # Always clear the resolver cache so live env-var changes are picked up.
-        try:
-            from semabridge.core.db_resolver import clear_db_config_cache, resolve_db_config
+        import os as _os
+        from semabridge.core.db_resolver import clear_db_config_cache, resolve_db_config
+
+        # Detect runtime env-var changes so credential rotation still works,
+        # but avoid clearing the cache on every call (which rebuilds the engine
+        # on every request and blocks the asyncio thread pool).
+        current_env_url = (
+            _os.environ.get("SEMABRIDGE_DATABASE_URL")
+            or _os.environ.get("DATABASE_URL")
+            or ""
+        )
+        if current_env_url != self._current_url:
+            # URL has changed (credential rotation) — force a re-resolve.
             clear_db_config_cache()
+
+        try:
             cfg = resolve_db_config()
             return cfg.connection_url
         except Exception:  # noqa: BLE001
             pass
 
         # Absolute fallback — DuckDB at ~/.semabridge/
-        import os as _os
         from pathlib import Path as _Path
         env_url = _os.environ.get("SEMABRIDGE_DATABASE_URL") or _os.environ.get("DATABASE_URL")
         if env_url:

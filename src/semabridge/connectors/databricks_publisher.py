@@ -6134,8 +6134,9 @@ class DatabricksPublisher:
                     )
                 )
 
-        # Keep statement size controlled while minimizing Databricks API round trips.
-        for value_chunk in self._chunk(row_values, 500):
+        # Keep statement size controlled to prevent 'The request could not be processed by the warehouse.'
+        # API payloads must be relatively small. Reduced chunk size from 500 to 50.
+        for value_chunk in self._chunk(row_values, 50):
             stmts.append(
                 (
                     f"INSERT INTO {model_table} (model_name, dataset_name, object_name, object_kind, data_type, source_data_type, expression, deploy_status, deploy_reason, translation_type, updated_at) "
@@ -6165,14 +6166,49 @@ class DatabricksPublisher:
         if not statements:
             return []
 
+        # Ensure the warehouse is running before submitting statements.
+        # Sleeping Classic warehouses immediately reject /api/2.0/sql/statements with 400 BAD_REQUEST.
+        try:
+            wh_url = f"{self.config.api_base_url}/api/2.0/sql/warehouses/{self.config.warehouse_id}"
+            headers = self._headers()
+            import time
+            
+            for _ in range(15): # wait up to ~45 seconds for state propagation
+                wh_resp = self.session.get(wh_url, headers=headers, timeout=10)
+                if wh_resp.status_code == 200:
+                    wh_state = wh_resp.json().get("state", "UNKNOWN")
+                    if wh_state in {"STOPPED", "STOPPING"}:
+                        logger.info(f"Databricks Warehouse is {wh_state}. Attempting to start it...")
+                        start_resp = self.session.post(f"{wh_url}/start", headers=headers, timeout=15)
+                        if start_resp.status_code >= 400:
+                            logger.warning(f"Failed to start warehouse: {start_resp.text}")
+                        time.sleep(3)
+                        continue
+                    elif wh_state == "STARTING":
+                        # Databricks SQL API accepts statements in STARTING state (places them in PENDING queue)
+                        logger.info("Databricks Warehouse is STARTING. Safe to dispatch SQL queue.")
+                        break
+                    elif wh_state == "RUNNING":
+                        break
+                
+                # Unknown state or failure to check, break and try execution anyway
+                break
+        except Exception as exc:
+            logger.warning(f"Could not pre-check Databricks warehouse status: {exc}")
+
         endpoint = f"{self.config.api_base_url}/api/2.0/sql/statements"
         results: list[dict[str, Any]] = []
 
         def _fire_request(sql: str, is_retry: bool = False) -> dict[str, Any]:
+            # By omitting wait_timeout, we default to 0s asynchronous mode.
+            # This is critical because if the Databricks Warehouse is currently STOPPED/SLEEPING, 
+            # specifying a wait_timeout > 0s causes the Azure API Gateway to instantly reject 
+            # the request with "400 The request could not be processed by the warehouse"
+            # because the gateway knows the cluster takes minutes to start.
             payload = {
                 "statement": sql,
                 "warehouse_id": self.config.warehouse_id,
-                "wait_timeout": self._statement_wait_timeout(),
+
             }
             
             headers = self._headers()
@@ -6211,6 +6247,13 @@ class DatabricksPublisher:
                     )
 
             if resp.status_code >= 400:
+                logger.error(
+                    f"Databricks statement failed (HTTP {resp.status_code}).\n"
+                    f"Warehouse ID: {self.config.warehouse_id}\n"
+                    f"SQL Preview: {sql[:200]}...\n"
+                    f"SQL Length: {len(sql)} bytes\n"
+                    f"Full Response: {resp.text}"
+                )
                 raise DatabricksPublishError(
                     f"Databricks statement failed ({resp.status_code}): {resp.text[:500]}"
                 )

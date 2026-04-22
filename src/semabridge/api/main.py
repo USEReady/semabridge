@@ -14,6 +14,7 @@ from semabridge.api.settings_api import router as settings_router
 from semabridge.api.sync_router import router as sync_router
 from semabridge.api.ui import router as ui_router
 from semabridge.api.websocket_alerts import alert_router
+from semabridge.api.routers.diagnostics_router import router as diagnostics_router
 
 try:
     from semabridge.api.auth_router import router as auth_router
@@ -44,6 +45,7 @@ for router in [
     core_router,
     project_router,
     connection_router,
+    diagnostics_router,
 ]:
     app.include_router(router)
 

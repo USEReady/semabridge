@@ -54,7 +54,7 @@ from semabridge.api.services.sync_execution_service import execute_sync_request
 from semabridge.api.services.version_control_service import VersionControlService
 import time as _time
 
-setup_logging(level="INFO")
+# setup_logging(level="INFO")  # Centralized in app_setup.py
 
 logger = logging.getLogger("semabridge.api")
 

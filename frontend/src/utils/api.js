@@ -1191,12 +1191,16 @@ export const api = {
         return handleResponse(res);
     },
 
-    async discoverFabricReports(workspaceId) {
+    async discoverFabricReports(workspaceId, connectionId = '') {
         if (!workspaceId || workspaceId === 'undefined' || workspaceId === 'null') {
             throw new Error('Workspace ID is required to discover Fabric reports.');
         }
+        const resolvedConnectionId = String(connectionId || '').trim();
+        const query = resolvedConnectionId
+            ? `?identity_id=${encodeURIComponent(resolvedConnectionId)}&connectionId=${encodeURIComponent(resolvedConnectionId)}`
+            : '';
         const res = await authFetch(
-            `${API_BASE_URL}/discovery/fabric/workspaces/${encodeURIComponent(workspaceId)}/reports`
+            `${API_BASE_URL}/discovery/fabric/workspaces/${encodeURIComponent(workspaceId)}/reports${query}`
         );
         return handleResponse(res);
     },

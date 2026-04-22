@@ -5,6 +5,8 @@ import { WorkspaceProvider } from './context/WorkspaceContext';
 import { SyncStatusProvider } from './context/SyncStatusContext';
 import { useAuth } from './context/AuthContext';
 import { useUIStore } from './store/uiStore';
+import MobileGate from './components/MobileGate';
+import { useState } from 'react';
 
 // Layouts
 import DashboardLayout from './layouts/DashboardLayout';
@@ -58,10 +60,23 @@ function ProtectedRoute({ children }) {
 }
 
 export default function App() {
+  const [isMobile, setIsMobile] = useState(false);
   const location = useLocation();
   const hasHydrated = useUIStore(state => state.hasHydrated);
   const lastNavigatedPath = useUIStore(state => state.lastNavigatedPath);
   const setLastNavigatedPath = useUIStore(state => state.setLastNavigatedPath);
+
+  useEffect(() => {
+    const checkMobile = () => {
+      // Basic mobile detection: checking width and user agent
+      const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+      setIsMobile(isMobileDevice);
+    };
+
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   useEffect(() => {
     if (!hasHydrated) return;
@@ -76,6 +91,10 @@ export default function App() {
     lastNavigatedPath,
     setLastNavigatedPath,
   ]);
+
+  if (isMobile) {
+    return <MobileGate />;
+  }
 
   return (
     <div style={{ minHeight: '100vh' }}>
