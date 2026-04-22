@@ -746,6 +746,81 @@ class SemabridgeDDLAdapter(BaseSemanticAdapter):
                         norm["tables"][tbl] = {"name": tbl, "column_count": 0, "metric_count": 0, "relationship_count": 0}
 
 
+class SnowflakeTsmlAdapter(BaseSemanticAdapter):
+    @classmethod
+    def handles(cls, data: dict) -> bool:
+        return str(data.get("source_type", "")).lower() == "snowflake" and "tables" in data and isinstance(data["tables"], dict)
+
+    @classmethod
+    def parse(cls, data: dict) -> dict:
+        norm = _empty_normalized()
+        norm["format"] = "SNOWFLAKE_TSML"
+        
+        tables = data.get("tables", {})
+        columns = data.get("columns", {})
+        metrics = data.get("metrics", {})
+        relationships = data.get("foreign_keys", [])
+        
+        for tbl_name, tbl_data in tables.items():
+            if not isinstance(tbl_data, dict): continue
+            
+            tbl_columns = columns.get(tbl_name, [])
+            tbl_metrics = metrics.get(tbl_name, [])
+            
+            norm["tables"][tbl_name] = {
+                "name": tbl_name,
+                "column_count": len(tbl_columns) if isinstance(tbl_columns, list) else 0,
+                "metric_count": len(tbl_metrics) if isinstance(tbl_metrics, list) else 0,
+                "relationship_count": 0
+            }
+            
+            if isinstance(tbl_columns, list):
+                for col in tbl_columns:
+                    col_name = col.get("name", "Unknown")
+                    norm["columns"][f"{tbl_name}.{col_name}"] = {
+                        "name": col_name,
+                        "table": tbl_name,
+                        "type": str(col.get("data_type", "Unknown")),
+                        "is_key": col.get("is_primary_key", False)
+                    }
+                    
+            if isinstance(tbl_metrics, list):
+                for m in tbl_metrics:
+                    m_name = m.get("name", "Unknown")
+                    norm["metrics"][f"{tbl_name}.{m_name}"] = {
+                        "name": m_name,
+                        "table": tbl_name,
+                        "definition": str(m.get("definition", m.get("expression", m.get("expr", m.get("sql", "Unknown"))))),
+                        "description": m.get("description", "")
+                    }
+                    
+        # Parse relationships if they exist in foreign_keys
+        if isinstance(relationships, list):
+            for i, r in enumerate(relationships):
+                if not isinstance(r, dict): continue
+                left = r.get("from_table", r.get("left_table", "Unknown"))
+                right = r.get("to_table", r.get("right_table", "Unknown"))
+                r_name = r.get("name", f"rel_{left}_{right}_{i}")
+                
+                if left in norm["tables"]:
+                    norm["tables"][left]["relationship_count"] += 1
+                    
+                norm["relationships"][r_name] = {
+                    "name": r_name,
+                    "left_table": left,
+                    "right_table": right,
+                    "left_column": r.get("from_column", r.get("left_column", "Unknown")),
+                    "right_column": r.get("to_column", r.get("right_column", "Unknown")),
+                    "cardinality": r.get("cardinality", "Unknown")
+                }
+                
+        # Handle Snowflake DDL definition (often contains the measures which are missing from the tables/columns list)
+        ddl = str(data.get("semantic_view_ddl", ""))
+        if ddl:
+            SemabridgeDDLAdapter._parse_ddl_string(ddl, norm)
+            
+        return norm
+
 class GenericAdapter(BaseSemanticAdapter):
     @classmethod
     def handles(cls, data: dict) -> bool:
@@ -1022,6 +1097,7 @@ class SemanticRegistry:
         DbtAdapter,
         SmlAdapter,
         SemabridgeDDLAdapter,
+        SnowflakeTsmlAdapter,
         GenericAdapter
     ]
 
