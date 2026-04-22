@@ -1,0 +1,22 @@
+version: 1.0
+datasets:
+  - name: "customers"
+    unique_name: "dim_customers"
+    description: "Customer dimension table - Updated"
+    columns:
+      - name: "customer_id"
+        type: "string"
+        description: "Unique identifier for customer"
+      - name: "email"
+        type: "string"
+        description: "Customer email address"
+      - name: "phone_number"
+        type: "string"
+        description: "Customer phone number"
+metrics:
+  - name: "total_customers"
+    description: "Count of all customers (active only)"
+    expression: "count(distinct customer_id) where status = 'active'"
+  - name: "new_metric"
+    description: "Just a new metric"
+    expression: "sum(sales)"

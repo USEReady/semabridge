@@ -1,0 +1,21 @@
+semantic_model:
+  name: "ecommerce_model"
+  tables:
+    - name: "orders"
+      base_table: "prod.public.orders"
+      dimensions:
+        - name: "order_id"
+          expr: "order_id"
+          data_type: "number"
+        - name: "status"
+          expr: "status"
+          data_type: "varchar"
+        - name: "region"
+          expr: "region_code"
+          data_type: "varchar"
+      measures:
+        - name: "total_orders"
+          expr: "COUNT(order_id) IFF(status != 'CANCELLED')"
+          description: "Count of completed orders"
+        - name: "total_revenue"
+          expr: "SUM(amount)"

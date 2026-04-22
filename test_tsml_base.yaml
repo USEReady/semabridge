@@ -1,0 +1,23 @@
+model:
+  name: "RetailModel"
+  tables:
+    - name: "sales"
+      columns:
+        - name: "order_id"
+          dataType: "int64"
+          isKey: true
+        - name: "product_id"
+          dataType: "int64"
+        - name: "amount"
+          dataType: "double"
+      measures:
+        - name: "total_sales"
+          expression: "SUM(sales[amount])"
+          description: "Total sales amount"
+  relationships:
+    - name: "sales_products"
+      fromTable: "sales"
+      toTable: "products"
+      fromColumn: "product_id"
+      toColumn: "product_id"
+      crossFilteringBehavior: "bothDirections"
