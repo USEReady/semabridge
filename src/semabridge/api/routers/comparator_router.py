@@ -38,6 +38,9 @@ class CompareRequest(BaseModel):
     file1_content: str
     file2_name: str
     file2_content: str
+    # Optional LLM config for auto-evaluating modified metrics
+    provider: str = ""
+    model: str = ""
 
 
 class SemanticCompareRequest(BaseModel):
@@ -812,6 +815,203 @@ class GenericAdapter(BaseSemanticAdapter):
             
         return norm
 
+
+# ---------------------------------------------------------------------------
+# OSI Canonical Conversion (for comparison mode)
+# ---------------------------------------------------------------------------
+# The project's Prime Directive requires all transformations to pass through
+# OSI. These functions bridge the adapter's ad-hoc dict → OSI Pydantic model
+# → comparison-ready dict, ensuring apples-to-apples comparison regardless
+# of the source format.
+
+# Data type normalisation map — unifies platform-specific type names into OSI
+_TYPE_NORMALISE: dict[str, str] = {
+    # Snowflake
+    "number": "integer", "float": "float", "float4": "float", "float8": "float",
+    "double": "float", "real": "float",
+    "varchar": "string", "text": "string", "string": "string", "char": "string",
+    "nvarchar": "string", "nchar": "string", "binary": "binary", "varbinary": "binary",
+    "boolean": "boolean", "bool": "boolean",
+    "date": "date", "datetime": "datetime", "timestamp": "datetime",
+    "timestamp_ntz": "datetime", "timestamp_tz": "datetime", "timestamp_ltz": "datetime",
+    "time": "time", "variant": "variant", "object": "variant", "array": "variant",
+    # TSML / Power BI
+    "int64": "integer", "int32": "integer", "int16": "integer", "int": "integer",
+    "integer": "integer", "bigint": "integer", "smallint": "integer", "tinyint": "integer",
+    "double": "float", "single": "float", "decimal": "decimal", "currency": "decimal",
+    "money": "decimal", "smallmoney": "decimal",
+    "datetimeoffset": "datetime", "datetime2": "datetime",
+    "bit": "boolean",
+    # Generic / computed
+    "expr": "unknown", "unknown": "unknown", "null": "unknown",
+}
+
+
+from semabridge.intermediate.models import (
+    OSIModel, OSIDataset, OSIColumn, OSIMetric, OSIRelationship, OSIDataType, OSICardinality
+)
+from semabridge.utils.relationship_naming import _sanitize_identifier
+
+def _normalise_type(raw: str) -> str:
+    """Map a platform-specific type string to an OSI canonical type name."""
+    return _TYPE_NORMALISE.get(raw.lower().strip(), "unknown")
+
+
+def normalized_to_osi(norm: dict) -> dict:
+    """Convert an adapter's normalized dict into an OSI-canonical comparison dict.
+
+    This passes the extracted data through the strict semabridge.intermediate.models
+    Pydantic objects to guarantee that the data strictly adheres to the canonical
+    OSI schema before it is compared.
+
+    Args:
+        norm: The ad-hoc dict from any BaseSemanticAdapter.parse().
+
+    Returns:
+        A new normalized dict with canonical type names and consistent structure.
+    """
+    datasets = []
+    metrics = []
+    relationships = []
+    
+    # 1. Build OSI Columns and Datasets
+    for tbl_key, tbl_data in norm.get("tables", {}).items():
+        cols = []
+        for col_key, col_data in norm.get("columns", {}).items():
+            if col_data.get("table") == tbl_key:
+                raw_type = _normalise_type(col_data.get("type", "unknown"))
+                try:
+                    dt = OSIDataType(raw_type)
+                except ValueError:
+                    dt = OSIDataType.UNKNOWN
+                    
+                cols.append(OSIColumn(
+                    unique_name=col_data.get("name", "Unknown"),
+                    data_type=dt,
+                    is_key=col_data.get("is_key", False)
+                ))
+                
+        datasets.append(OSIDataset(
+            unique_name=tbl_key,
+            columns=cols
+        ))
+
+    # 2. Build OSI Metrics
+    for met_key, met_data in norm.get("metrics", {}).items():
+        metrics.append(OSIMetric(
+            unique_name=met_data.get("name", "Unknown"),
+            dataset=met_data.get("table", "Unknown"),
+            expression=met_data.get("definition", ""),
+            description=met_data.get("description", "")
+        ))
+
+    # 3. Build OSI Relationships
+    cardinality_map = {
+        "onetomany": "one-to-many", "one_to_many": "one-to-many", "1:n": "one-to-many",
+        "manytoone": "many-to-one", "many_to_one": "many-to-one", "n:1": "many-to-one",
+        "onetoone": "one-to-one", "one_to_one": "one-to-one", "1:1": "one-to-one",
+        "manytomany": "many-to-many", "many_to_many": "many-to-many", "n:n": "many-to-many",
+        "cardinality.many_to_one": "many-to-one", "cardinality.one_to_many": "one-to-many",
+        "cardinality.one_to_one": "one-to-one", "cardinality.many_to_many": "many-to-many",
+    }
+    
+    for rel_key, rel_data in norm.get("relationships", {}).items():
+        left_t = rel_data.get("left_table", "Unknown")
+        left_c = rel_data.get("left_column", "Unknown")
+        right_t = rel_data.get("right_table", "Unknown")
+        right_c = rel_data.get("right_column", "Unknown")
+        
+        # Enforce PRD naming format: REL_<FROM_TABLE>_<FROM_COLUMN>__<TO_TABLE>_<TO_COLUMN>
+        rel_name = f"REL_{_sanitize_identifier(left_t)}_{_sanitize_identifier(left_c)}__{_sanitize_identifier(right_t)}_{_sanitize_identifier(right_c)}"
+        
+        raw_card = str(rel_data.get("cardinality", "unknown")).lower().strip().replace(" ", "")
+        canonical_card = cardinality_map.get(raw_card, raw_card)
+        try:
+            card = OSICardinality(canonical_card)
+        except ValueError:
+            card = OSICardinality.MANY_TO_ONE
+            
+        relationships.append(OSIRelationship(
+            unique_name=rel_name,
+            from_dataset=left_t,
+            from_columns=[left_c],
+            to_dataset=right_t,
+            to_columns=[right_c],
+            cardinality=card
+        ))
+
+    # Instantiate OSIModel (triggers Pydantic validation)
+    try:
+        model = OSIModel(
+            unique_name=_sanitize_identifier(norm.get("format", "UNKNOWN")) + "_MODEL",
+            datasets=datasets[:75], # Obey 75 table PRD boundary
+            metrics=metrics,
+            relationships=relationships[:75] # Obey 75 rel PRD boundary
+        )
+    except Exception as exc:
+        logger.error("OSIModel instantiation failed: %s", exc)
+        raise ValueError(f"Model could not be converted to OSI: {exc}")
+
+    # Build the comparison dict out of the validated OSIModel using canonical matching keys
+    osi: dict = {
+        "format": norm.get("format", "UNKNOWN"),
+        "tables": {},
+        "columns": {},
+        "metrics": {},
+        "relationships": {},
+    }
+    
+    for ds in model.datasets:
+        ds_key = _sanitize_identifier(ds.unique_name)
+        osi["tables"][ds_key] = {
+            "name": ds.unique_name,
+            "column_count": len(ds.columns),
+            "metric_count": sum(1 for m in model.metrics if _sanitize_identifier(m.dataset) == ds_key),
+            "relationship_count": sum(1 for r in model.relationships if _sanitize_identifier(r.from_dataset) == ds_key or _sanitize_identifier(r.to_dataset) == ds_key),
+        }
+        for col in ds.columns:
+            col_key = _sanitize_identifier(col.unique_name)
+            osi["columns"][f"{ds_key}.{col_key}"] = {
+                "name": col.unique_name,
+                "table": ds.unique_name,
+                "type": col.data_type.value,
+                "is_key": col.is_key,
+            }
+            
+    for m in model.metrics:
+        ds_key = _sanitize_identifier(m.dataset)
+        m_key = _sanitize_identifier(m.unique_name)
+        osi["metrics"][f"{ds_key}.{m_key}"] = {
+            "name": m.unique_name,
+            "table": m.dataset,
+            "definition": m.expression or m.source_column or "",
+            "description": m.description or "",
+        }
+        
+    for r in model.relationships:
+        r_key = _sanitize_identifier(r.unique_name)
+        osi["relationships"][r_key] = {
+            "name": r.unique_name,
+            "left_table": r.from_dataset,
+            "right_table": r.to_dataset,
+            "left_column": r.from_columns[0] if r.from_columns else "Unknown",
+            "right_column": r.to_columns[0] if r.to_columns else "Unknown",
+            "cardinality": r.cardinality.value,
+        }
+        
+    return osi
+
+
+def _build_file_summary(osi: dict) -> dict:
+    """Build a per-file entity count summary from an OSI-canonical dict."""
+    return {
+        "total_tables": len(osi.get("tables", {})),
+        "total_columns": len(osi.get("columns", {})),
+        "total_metrics": len(osi.get("metrics", {})),
+        "total_relationships": len(osi.get("relationships", {})),
+    }
+
+
 class SemanticRegistry:
     ADAPTERS = [
         OsiAdapter,
@@ -873,25 +1073,19 @@ def _fingerprint(obj: dict) -> str:
     return hashlib.md5(serialised.encode()).hexdigest()
 
 
+import re
+
 def compare_entities(dict1: dict, dict2: dict, entity_type: str = "generic") -> list:
-    """
-    Set-theoretic diff between two entity dicts.
+    """Set-theoretic diff between two entity dicts.
 
-    Per the spec, 'modified' entities are split into two filter-able states:
-      modified_in_1 : the File 1 (old) version of the entity
-      modified_in_2 : the File 2 (new) version of the entity
-
-    This allows users to filter to see exactly what File 1 had vs what File 2 changed it to.
-
-    Full status taxonomy:
-      identical     : same fingerprint in both files
-      only_in_1     : present in file 1, absent from file 2
-      only_in_2     : present in file 2, absent from file 1
-      modified_in_1 : entity exists in both, but File 1's version (the 'before' state)
-      modified_in_2 : entity exists in both, but File 2's version (the 'after' state)
+    Produces a single row per entity with unified diff status:
+      identical  : same fingerprint in both files
+      only_in_1  : present in file 1, absent from file 2
+      only_in_2  : present in file 2, absent from file 1
+      modified   : entity exists in both, with field-level changes shown inline
 
     For 'metrics' entity type, also stores '_old_definition' / '_new_definition'
-    as isolated strings to feed directly into the LLM compare endpoint.
+    as isolated strings for LLM semantic comparison.
 
     Args:
         dict1:       Entities from file 1, keyed by entity id.
@@ -902,71 +1096,109 @@ def compare_entities(dict1: dict, dict2: dict, entity_type: str = "generic") -> 
         List of entity dicts, each annotated with '_diff_status', '_id',
         and '_changes' (for modified entities).
     """
+    def get_fuzzy_base(identifier: str) -> str:
+        """Strip trailing PowerBI/export suffixes (_2, _3) for fuzzy matching."""
+        return re.sub(r'_\d+$', '', str(identifier or ""))
+
     all_keys = set(dict1.keys()) | set(dict2.keys())
+    
+    # 1. First pass: exact matches
+    matched_keys = []
+    only_in_1_keys = []
+    only_in_2_keys = []
+    
+    for key in all_keys:
+        if key in dict1 and key in dict2:
+            matched_keys.append((key, key))
+        elif key in dict1:
+            only_in_1_keys.append(key)
+        else:
+            only_in_2_keys.append(key)
+            
+    # 2. Second pass: fuzzy matching for suffixed identifiers (e.g. BUSINESS_UNIT_2 vs BUSINESS_UNIT)
+    remaining_1 = []
+    for k1 in only_in_1_keys:
+        fuzzy1 = get_fuzzy_base(k1)
+        found_match = False
+        for k2 in list(only_in_2_keys): # copy list to allow removal
+            if fuzzy1 == get_fuzzy_base(k2):
+                matched_keys.append((k1, k2))
+                only_in_2_keys.remove(k2)
+                found_match = True
+                break
+        if not found_match:
+            remaining_1.append(k1)
+    
+    only_in_1_keys = remaining_1
     results: list[dict] = []
 
-    for key in sorted(all_keys):
-        in_1 = key in dict1
-        in_2 = key in dict2
+    for k1 in sorted(only_in_1_keys):
+        item = dict1[k1].copy()
+        item["_diff_status"] = "only_in_1"
+        item["_id"] = k1
+        results.append(item)
 
-        if in_1 and not in_2:
-            item = dict1[key].copy()
-            item["_diff_status"] = "only_in_1"
-            item["_id"] = key
+    for k2 in sorted(only_in_2_keys):
+        item = dict2[k2].copy()
+        item["_diff_status"] = "only_in_2"
+        item["_id"] = k2
+        results.append(item)
+
+    for k1, k2 in sorted(matched_keys, key=lambda x: x[0]):
+        e1, e2 = dict1[k1], dict2[k2]
+        all_fields = set(e1.keys()) | set(e2.keys())
+        
+        changes = []
+        for field in sorted(all_fields):
+            if field.startswith("_"):
+                continue
+            old_val = e1.get(field)
+            new_val = e2.get(field)
+            
+            if old_val == new_val:
+                continue
+                
+            # Ignore harmless casing/whitespace/suffix differences for identifiers
+            if field in ("name", "table", "left_table", "right_table", "left_column", "right_column"):
+                old_sanitized = _sanitize_identifier(str(old_val or ""))
+                new_sanitized = _sanitize_identifier(str(new_val or ""))
+                if get_fuzzy_base(old_sanitized) == get_fuzzy_base(new_sanitized):
+                    continue
+                    
+            # Industry standard "wildcard" matching for missing metadata:
+            if field == "type":
+                if str(old_val or "").lower() == "unknown" or str(new_val or "").lower() == "unknown":
+                    continue
+            
+            # Similar to 'type', formats like TMSL don't explicitly export primary key constraints
+            # so they default to False. If one is True and the other is False, it's safe to ignore.
+            if field == "is_key":
+                if str(old_val).lower() == "false" or str(new_val).lower() == "false":
+                    continue
+                    
+            changes.append({
+                "field": field,
+                "old_value": old_val,
+                "new_value": new_val,
+            })
+
+        if not changes:
+            item = e2.copy()
+            item["_diff_status"] = "identical"
+            # Use the canonical key (or file 2's key) as the display ID
+            item["_id"] = k2 
             results.append(item)
-
-        elif in_2 and not in_1:
-            item = dict2[key].copy()
-            item["_diff_status"] = "only_in_2"
-            item["_id"] = key
-            results.append(item)
-
         else:
-            e1, e2 = dict1[key], dict2[key]
+            item = e2.copy()
+            item["_diff_status"] = "modified"
+            item["_id"] = k2
+            item["_changes"] = changes
 
-            if _fingerprint(e1) == _fingerprint(e2):
-                item = e2.copy()
-                item["_diff_status"] = "identical"
-                item["_id"] = key
-                results.append(item)
-            else:
-                # Field-level change tracking (dbt manifest approach)
-                all_fields = set(e1.keys()) | set(e2.keys())
-                changes = [
-                    {
-                        "field": field,
-                        "old_value": e1.get(field),
-                        "new_value": e2.get(field),
-                    }
-                    for field in sorted(all_fields)
-                    if not field.startswith("_") and e1.get(field) != e2.get(field)
-                ]
+            if entity_type == "metrics":
+                item["_old_definition"] = e1.get("definition", "")
+                item["_new_definition"] = e2.get("definition", "")
 
-                # Spec requirement: produce two separate filter-able rows per modified entity.
-                # modified_in_1 = what File 1 had (the 'before' state)
-                # modified_in_2 = what File 2 has (the 'after' state)
-
-                item_f1 = e1.copy()
-                item_f1["_diff_status"] = "modified_in_1"
-                item_f1["_id"] = key + "::f1"   # unique per row; ::f1 suffix lets the UI share one LLM result per base key
-                item_f1["_base_id"] = key        # base name used to correlate both rows for LLM state
-                item_f1["_changes"] = changes
-
-                item_f2 = e2.copy()
-                item_f2["_diff_status"] = "modified_in_2"
-                item_f2["_id"] = key + "::f2"   # unique per row
-                item_f2["_base_id"] = key        # same base key → shared LLM verdict between both cards
-                item_f2["_changes"] = changes
-
-                # Isolated definition strings for LLM endpoint (no stringified dicts)
-                if entity_type == "metrics":
-                    item_f1["_old_definition"] = e1.get("definition", "")
-                    item_f1["_new_definition"] = e2.get("definition", "")
-                    item_f2["_old_definition"] = e1.get("definition", "")
-                    item_f2["_new_definition"] = e2.get("definition", "")
-
-                results.append(item_f1)
-                results.append(item_f2)
+            results.append(item)
 
     return results
 
@@ -982,6 +1214,7 @@ async def parse_single_yaml(file: UploadFile = File(...)):
 
     Accepts any of: OSI, SML, TSML, Snowflake Cortex semantic YAML.
     Auto-detects format via structural-marker sniffing.
+    Enforces Canonical OSI mapping via Pydantic models.
 
     Args:
         file: Uploaded YAML file (must end in .yaml or .yml).
@@ -999,7 +1232,9 @@ async def parse_single_yaml(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="File must be UTF-8 encoded.")
 
     try:
-        norm = parse_yaml_to_normalized(content)
+        raw_norm = parse_yaml_to_normalized(content)
+        # Enforce canonical OSI validation
+        norm = normalized_to_osi(raw_norm)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -1020,31 +1255,113 @@ async def parse_single_yaml(file: UploadFile = File(...)):
 
 @router.post("/compare")
 async def compare_yamls(req: CompareRequest):
-    """
-    Compare two YAML files and return a Level 1 structural diff.
+    """Compare two YAML files and return a structural diff with optional LLM evaluation.
+
+    Both files are first converted into OSI canonical format (normalised types,
+    cardinalities) before comparison. This ensures apples-to-apples diffs
+    regardless of source format (Snowflake vs TSML vs dbt etc.).
+
+    If provider/model are specified, modified metrics are automatically sent
+    to the LLM. Metrics judged EQUIVALENT are reclassified as 'identical'.
 
     Each entity in the response is tagged with '_diff_status':
       'identical' | 'only_in_1' | 'only_in_2' | 'modified'
 
-    For 'modified' metrics, '_old_definition' and '_new_definition' are also
-    returned as isolated strings (ready for the /compare-semantic endpoint).
-
     Args:
-        req: CompareRequest with file1/file2 names and YAML content strings.
+        req: CompareRequest with file1/file2 names, content, and optional LLM config.
 
     Returns:
-        dict with file names, per-entity-type diff lists, and summary counts.
+        dict with file names/formats, per-file summaries, diff lists, and summary counts.
     """
     try:
-        norm1 = parse_yaml_to_normalized(req.file1_content)
-        norm2 = parse_yaml_to_normalized(req.file2_content)
+        raw_norm1 = parse_yaml_to_normalized(req.file1_content)
+        raw_norm2 = parse_yaml_to_normalized(req.file2_content)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    tables_diff = compare_entities(norm1["tables"], norm2["tables"], "tables")
-    columns_diff = compare_entities(norm1["columns"], norm2["columns"], "columns")
-    metrics_diff = compare_entities(norm1["metrics"], norm2["metrics"], "metrics")
-    rels_diff = compare_entities(norm1["relationships"], norm2["relationships"], "relationships")
+    # Convert both to OSI canonical format for apples-to-apples comparison
+    osi1 = normalized_to_osi(raw_norm1)
+    osi2 = normalized_to_osi(raw_norm2)
+
+    # Per-file entity counts (requirement #4)
+    file1_summary = _build_file_summary(osi1)
+    file2_summary = _build_file_summary(osi2)
+
+    # Structural diff on canonical representations
+    tables_diff = compare_entities(osi1["tables"], osi2["tables"], "tables")
+    columns_diff = compare_entities(osi1["columns"], osi2["columns"], "columns")
+    metrics_diff = compare_entities(osi1["metrics"], osi2["metrics"], "metrics")
+    rels_diff = compare_entities(osi1["relationships"], osi2["relationships"], "relationships")
+
+    # Auto-LLM evaluation for modified metrics (requirements #6 & #7)
+    has_llm = bool(req.provider and req.model)
+    llm_available = has_llm and any(os.environ.get(k) for k in _ALL_PROVIDER_KEYS)
+
+    if llm_available:
+        for metric in metrics_diff:
+            if metric.get("_diff_status") != "modified":
+                continue
+            old_def = metric.get("_old_definition", "")
+            new_def = metric.get("_new_definition", "")
+            if not old_def or not new_def:
+                continue
+            try:
+                system_prompt = (
+                    "You are a senior data engineering expert evaluating semantic model metric definitions. "
+                    "Always respond with strictly valid JSON only. Do not include markdown, code fences, or explanatory text."
+                )
+                user_prompt = (
+                    "Compare these two metric definitions to determine if they represent the same business calculation.\n\n"
+                    f"<metric_a>\nName: {metric.get('name', metric['_id'])}\nExpression: {old_def}\n</metric_a>\n\n"
+                    f"<metric_b>\nName: {metric.get('name', metric['_id'])}\nExpression: {new_def}\n</metric_b>\n\n"
+                    "Respond with ONLY this JSON structure — no other text:\n"
+                    '{\n  "verdict": "EQUIVALENT" | "DIFFERENT" | "PARTIAL",\n'
+                    '  "reasoning": "<one concise sentence>",\n'
+                    '  "key_differences": ["<diff 1>", "<diff 2>"]\n}\n\n'
+                    "Rules:\n"
+                    "- EQUIVALENT: Mathematically/logically identical result despite different syntax\n"
+                    "- DIFFERENT: Fundamentally different calculations or business meaning\n"
+                    "- PARTIAL: Same intent but different scope, filters, or granularity\n"
+                    "- key_differences: empty array [] if EQUIVALENT"
+                )
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user",   "content": user_prompt},
+                ]
+                raw_content = _call_llm(req.provider, req.model, messages, temperature=0.0)
+
+                try:
+                    parsed = json.loads(raw_content)
+                except json.JSONDecodeError:
+                    match = re.search(r"\{.*\}", raw_content, re.DOTALL)
+                    if match:
+                        parsed = json.loads(match.group())
+                    else:
+                        parsed = {
+                            "verdict": "DIFFERENT",
+                            "reasoning": raw_content[:500],
+                            "key_differences": [],
+                        }
+
+                verdict = parsed.get("verdict", "DIFFERENT").upper()
+                llm_result = {
+                    "verdict": verdict,
+                    "reasoning": str(parsed.get("reasoning", "")),
+                    "key_differences": parsed.get("key_differences", []),
+                    "model_used": f"{req.provider}:{req.model}",
+                }
+
+                if verdict == "EQUIVALENT":
+                    # Reclassify as identical — LLM confirms semantic equivalence
+                    metric["_diff_status"] = "identical"
+                    metric["_llm_verdict"] = llm_result
+                else:
+                    # Attach LLM verdict inline for display
+                    metric["_llm_verdict"] = llm_result
+
+            except Exception as exc:
+                logger.warning("Auto-LLM evaluation failed for metric %s: %s", metric["_id"], exc)
+                metric["_llm_verdict"] = {"error": str(exc)}
 
     def _count(items: list, status: str) -> int:
         return sum(1 for i in items if i.get("_diff_status") == status)
@@ -1053,15 +1370,18 @@ async def compare_yamls(req: CompareRequest):
 
     return {
         "file1_name": req.file1_name,
-        "file1_format": norm1["format"],
+        "file1_format": raw_norm1["format"],
+        "file1_original_format": raw_norm1["format"],
         "file2_name": req.file2_name,
-        "file2_format": norm2["format"],
+        "file2_format": raw_norm2["format"],
+        "file2_original_format": raw_norm2["format"],
+        "file1_summary": file1_summary,
+        "file2_summary": file2_summary,
         "summary": {
             "identical": _count(all_items, "identical"),
             "only_in_1": _count(all_items, "only_in_1"),
             "only_in_2": _count(all_items, "only_in_2"),
-            "modified_in_1": _count(all_items, "modified_in_1"),
-            "modified_in_2": _count(all_items, "modified_in_2"),
+            "modified": _count(all_items, "modified"),
             "total": len(all_items),
         },
         "tables": tables_diff,
@@ -1127,7 +1447,6 @@ Expression: {req.metric2_definition}
 Respond with ONLY this JSON structure — no other text:
 {{
   "verdict": "EQUIVALENT" | "DIFFERENT" | "PARTIAL",
-  "confidence": <float 0.0-1.0>,
   "reasoning": "<one concise sentence>",
   "key_differences": ["<diff 1>", "<diff 2>"]
 }}
@@ -1136,7 +1455,6 @@ Rules:
 - EQUIVALENT: Mathematically/logically identical result despite different syntax (e.g. SUM(a+b) vs SUM(a)+SUM(b))
 - DIFFERENT: Fundamentally different calculations or business meaning
 - PARTIAL: Same intent but different scope, filters, or granularity
-- confidence: your certainty in the verdict (0.9+ = highly certain, <0.6 = uncertain)
 - key_differences: empty array [] if EQUIVALENT"""
 
     messages = [
@@ -1159,7 +1477,6 @@ Rules:
                 # Absolute fallback: return raw content as reasoning
                 parsed = {
                     "verdict": "DIFFERENT",
-                    "confidence": 0.0,
                     "reasoning": raw_content[:500],
                     "key_differences": [],
                 }
@@ -1168,7 +1485,6 @@ Rules:
         return {
             "verdict": verdict,
             "is_semantically_identical": verdict == "EQUIVALENT",
-            "confidence": float(parsed.get("confidence", 0.0)),
             "reasoning": str(parsed.get("reasoning", "")),
             "key_differences": parsed.get("key_differences", []),
             "model_used": model_id,
@@ -1181,4 +1497,5 @@ Rules:
     except Exception as exc:
         logger.error("LLM comparison failed [model=%s]: %s", model_id, exc)
         raise HTTPException(status_code=500, detail=f"LLM comparison failed: {exc}") from exc
+
 

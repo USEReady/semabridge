@@ -48,7 +48,6 @@ export default function DashboardLayout() {
   const navigate = useNavigate();
   const collapsed = useUIStore(state => state.sidebarCollapsed);
   const setSidebarCollapsed = useUIStore(state => state.setSidebarCollapsed);
-  const isAdvancedMode = useUIStore(state => state.isAdvancedMode);
   const [search, setSearch] = useState('');
   const [searchUseRegex, setSearchUseRegex] = useState(false);
 
@@ -57,13 +56,9 @@ export default function DashboardLayout() {
     { to: '/jobs',          label: 'Runs',            icon: PlayCircle },
     { to: '/explore',       label: 'Explore',         icon: Map },
     { to: '/model-mapping', label: 'Model Mapping',   icon: GitBranch },
+    { to: '/comparator',    label: 'Comparator',      icon: Split },
+    { to: '/settings',      label: 'Settings',        icon: Settings },
   ];
-  
-  if (isAdvancedMode) {
-     NAV_ITEMS.push({ to: '/comparator', label: 'Comparator', icon: Split });
-  }
-
-  NAV_ITEMS.push({ to: '/settings', label: 'Settings', icon: Settings });
 
   // Overlay panel toggles
   const [showLogs, setShowLogs] = useState(false);

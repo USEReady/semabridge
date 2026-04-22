@@ -1,8 +1,8 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo } from 'react';
 import {
-  UploadCloud, FileText, Split, ArrowRightLeft, Sparkles,
-  CheckCircle2, AlertCircle, X, ChevronDown, ChevronRight,
-  GitCompare, Layers, Hash, Link2, BarChart3,
+  UploadCloud, FileText, ArrowRightLeft, Sparkles, Split, X,
+  CheckCircle2, AlertCircle, ChevronDown, ChevronRight,
+  GitCompare, Layers, Hash, Link2, BarChart3, Search,
 } from 'lucide-react';
 import PageHeader from '../components/common/PageHeader';
 
@@ -21,20 +21,18 @@ const FORMAT_META = {
 
 // ─── Diff status display config ───────────────────────────────────────────────
 const DIFF_STATUS = {
-  identical:     { label: 'Identical',           color: 'var(--color-success)',   bg: 'var(--color-success-bg)',   border: 'var(--color-success)' },
-  only_in_1:     { label: 'Only in F1',           color: 'var(--accent-blue)',     bg: 'var(--color-accent-faint)', border: 'var(--accent-blue)' },
-  only_in_2:     { label: 'Only in F2',           color: 'var(--accent-purple)',   bg: 'rgba(139,92,246,0.10)',     border: 'var(--accent-purple)' },
-  modified_in_1: { label: 'Modified in F1',       color: 'var(--color-warning)',   bg: 'var(--color-warning-bg)',   border: 'var(--color-warning)' },
-  modified_in_2: { label: 'Modified in F2',       color: 'var(--accent-orange)',   bg: 'rgba(249,115,22,0.08)',     border: 'var(--accent-orange)' },
+  identical:  { label: 'Identical',   color: 'var(--color-success)',  bg: 'var(--color-success-bg)',   border: 'var(--color-success)' },
+  only_in_1:  { label: 'Only in F1',  color: 'var(--accent-blue)',    bg: 'var(--color-accent-faint)', border: 'var(--accent-blue)' },
+  only_in_2:  { label: 'Only in F2',  color: 'var(--accent-purple)',  bg: 'rgba(139,92,246,0.10)',     border: 'var(--accent-purple)' },
+  modified:   { label: 'Modified',    color: 'var(--color-warning)',  bg: 'var(--color-warning-bg)',   border: 'var(--color-warning)' },
 };
 
 const FILTER_OPTIONS = [
-  { id: 'all',           label: 'All' },
-  { id: 'identical',     label: 'Identical' },
-  { id: 'only_in_1',     label: 'Only in F1' },
-  { id: 'only_in_2',     label: 'Only in F2' },
-  { id: 'modified_in_1', label: 'Modified in F1' },
-  { id: 'modified_in_2', label: 'Modified in F2' },
+  { id: 'all',       label: 'All' },
+  { id: 'identical', label: 'Identical' },
+  { id: 'only_in_1', label: 'Only in F1' },
+  { id: 'only_in_2', label: 'Only in F2' },
+  { id: 'modified',  label: 'Modified' },
 ];
 
 // ─── LLM provider options ─────────────────────────────────────────────────────
@@ -109,26 +107,41 @@ function DiffBadge({ status }) {
   );
 }
 
-function StatCard({ icon: Icon, label, value, accent }) {
+function StatCard({ icon: Icon, label, value, accent, breakdown }) {
   return (
     <div style={{
       flex: '1 1 140px', minWidth: 0,
       background: 'var(--bg-surface)',
       border: '1px solid var(--border-main)',
       borderRadius: 10, padding: '14px 16px',
-      display: 'flex', alignItems: 'center', gap: 12,
+      display: 'flex', flexDirection: 'column', gap: 12,
     }}>
-      <div style={{
-        width: 34, height: 34, borderRadius: 8, flexShrink: 0,
-        background: accent ? `${accent}18` : 'var(--color-accent-faint)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        <Icon size={16} color={accent ?? 'var(--accent-blue)'} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{
+          width: 34, height: 34, borderRadius: 8, flexShrink: 0,
+          background: accent ? `${accent}18` : 'var(--color-accent-faint)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <Icon size={16} color={accent ?? 'var(--accent-blue)'} />
+        </div>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.1 }}>{value}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>{label}</div>
+        </div>
       </div>
-      <div>
-        <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.1 }}>{value}</div>
-        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>{label}</div>
-      </div>
+      
+      {breakdown && breakdown.some(b => b.value > 0) && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>
+          {breakdown.map((b, i) => b.value > 0 && (
+            <span key={i} style={{ 
+              fontSize: 10, padding: '2px 6px', borderRadius: 4, 
+              background: b.bg, color: b.color, fontWeight: 600 
+            }}>
+              {b.value} {b.label}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -254,7 +267,33 @@ function CollapsibleRow({ children, defaultOpen = false }) {
 }
 
 function StatsPanel({ data, fileName }) {
+  const [colSearch, setColSearch] = useState('');
+  const [metSearch, setMetSearch] = useState('');
+  const [colTypeFilter, setColTypeFilter] = useState('All Types');
+
+  const availableTypes = useMemo(() => {
+    if (!data?.columns) return [];
+    const types = new Set(data.columns.map(c => c.type || 'unknown'));
+    return Array.from(types).sort();
+  }, [data]);
+
   if (!data) return null;
+
+  const filteredCols = data.columns.filter(col => {
+    const colType = col.type || 'unknown';
+    if (colTypeFilter !== 'All Types' && colType !== colTypeFilter) return false;
+    
+    if (!colSearch) return true;
+    const q = colSearch.toLowerCase();
+    return col.name.toLowerCase().includes(q) || col.table.toLowerCase().includes(q);
+  });
+
+  const filteredMetrics = data.metrics.filter(m => {
+    if (!metSearch) return true;
+    const q = metSearch.toLowerCase();
+    return m.name.toLowerCase().includes(q) || m.table.toLowerCase().includes(q) || (m.definition || '').toLowerCase().includes(q);
+  });
+
   return (
     <div style={{
       background: 'var(--bg-surface)',
@@ -317,13 +356,41 @@ function StatsPanel({ data, fileName }) {
 
       {/* Columns & Metrics side-by-side */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderBottom: '1px solid var(--border-main)' }}>
-        {/* Columns */}
+        {/* Columns with search */}
         <div style={{ borderRight: '1px solid var(--border-main)' }}>
           <div style={{ padding: '10px 16px 6px', fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Columns</div>
+          <div style={{ padding: '0 14px 8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)' }}>
+                <Search size={12} color="var(--text-tertiary)" />
+                <input
+                  type="text" placeholder="Search columns…" value={colSearch}
+                  onChange={e => setColSearch(e.target.value)}
+                  style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: 12, color: 'var(--text-primary)', width: '100%' }}
+                />
+              </div>
+              {availableTypes.length > 0 && (
+                <select
+                  value={colTypeFilter}
+                  onChange={(e) => setColTypeFilter(e.target.value)}
+                  style={{
+                    padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border-main)',
+                    background: 'var(--bg-surface-raised)', color: 'var(--text-primary)',
+                    fontSize: 12, outline: 'none', cursor: 'pointer', maxWidth: '120px'
+                  }}
+                >
+                  <option value="All Types">All Types</option>
+                  {availableTypes.map(type => (
+                    <option key={type} value={type}>{type}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          </div>
           <div style={{ maxHeight: 240, overflowY: 'auto' }} className="custom-scrollbar">
-            {data.columns.length === 0 ? (
-              <div style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-tertiary)', fontStyle: 'italic' }}>None</div>
-            ) : data.columns.map(col => (
+            {filteredCols.length === 0 ? (
+              <div style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-tertiary)', fontStyle: 'italic' }}>{colSearch ? 'No matches' : 'None'}</div>
+            ) : filteredCols.map(col => (
               <div key={`${col.table}.${col.name}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 14px', borderBottom: '1px solid var(--border-light)' }}>
                 <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>
                   <span style={{ color: 'var(--text-tertiary)' }}>{col.table}.</span>{col.name}
@@ -338,13 +405,23 @@ function StatsPanel({ data, fileName }) {
           </div>
         </div>
 
-        {/* Metrics */}
+        {/* Metrics with search */}
         <div>
           <div style={{ padding: '10px 16px 6px', fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Metrics</div>
+          <div style={{ padding: '0 14px 8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)' }}>
+              <Search size={12} color="var(--text-tertiary)" />
+              <input
+                type="text" placeholder="Search metrics…" value={metSearch}
+                onChange={e => setMetSearch(e.target.value)}
+                style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: 12, color: 'var(--text-primary)', width: '100%' }}
+              />
+            </div>
+          </div>
           <div style={{ maxHeight: 240, overflowY: 'auto' }} className="custom-scrollbar">
-            {data.metrics.length === 0 ? (
-              <div style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-tertiary)', fontStyle: 'italic' }}>None</div>
-            ) : data.metrics.map(m => (
+            {filteredMetrics.length === 0 ? (
+              <div style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-tertiary)', fontStyle: 'italic' }}>{metSearch ? 'No matches' : 'None'}</div>
+            ) : filteredMetrics.map(m => (
               <div key={`${m.table}.${m.name}`} style={{ padding: '7px 14px', borderBottom: '1px solid var(--border-light)' }}>
                 <div style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 600, marginBottom: 3 }}>
                   <span style={{ color: 'var(--text-tertiary)' }}>{m.table}.</span>{m.name}
@@ -358,27 +435,45 @@ function StatsPanel({ data, fileName }) {
         </div>
       </div>
 
-      {/* Relationships */}
+      {/* Relationships — structured cards */}
       {data.relationships.length > 0 && (
         <div>
           <div style={{ padding: '10px 16px 6px', fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Relationships</div>
-          {data.relationships.map(r => (
-            <div key={r.name} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 14px', borderBottom: '1px solid var(--border-light)', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', minWidth: 120 }}>{r.name}</span>
-              <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
-                {r.left_table}.{r.left_column}
-              </span>
-              <ArrowRightLeft size={12} color="var(--text-tertiary)" />
-              <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
-                {r.right_table}.{r.right_column}
-              </span>
-              <span style={{
-                marginLeft: 'auto', fontSize: 10, fontWeight: 700,
-                color: 'var(--accent-blue)', background: 'var(--color-accent-faint)',
-                padding: '2px 8px', borderRadius: 12, border: '1px solid var(--accent-blue)30',
-              }}>{r.cardinality}</span>
-            </div>
-          ))}
+          <div style={{ padding: '8px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {data.relationships.map(r => (
+              <div key={r.name} style={{
+                padding: '12px 16px', borderRadius: 8,
+                background: 'var(--bg-surface-raised)',
+                border: '1px solid var(--border-light)',
+              }}>
+                {/* From → To row */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                  <span style={{
+                    padding: '3px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                    background: 'var(--color-accent-faint)', color: 'var(--accent-blue)',
+                    border: '1px solid var(--accent-blue)25',
+                  }}>{r.left_table}</span>
+                  <ArrowRightLeft size={14} color="var(--text-tertiary)" />
+                  <span style={{
+                    padding: '3px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                    background: 'rgba(139,92,246,0.10)', color: 'var(--accent-purple)',
+                    border: '1px solid var(--accent-purple)25',
+                  }}>{r.right_table}</span>
+                  <span style={{
+                    marginLeft: 'auto', fontSize: 10, fontWeight: 700,
+                    color: 'var(--accent-cyan)', background: 'rgba(56,189,248,0.10)',
+                    padding: '2px 10px', borderRadius: 12, border: '1px solid var(--accent-cyan)30',
+                  }}>{r.cardinality}</span>
+                </div>
+                {/* Column mapping */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
+                  <span style={{ color: 'var(--accent-blue)' }}>{r.left_column}</span>
+                  <span style={{ color: 'var(--text-tertiary)' }}>→</span>
+                  <span style={{ color: 'var(--accent-purple)' }}>{r.right_column}</span>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -431,7 +526,7 @@ function FilterPillBar({ active, onChange, counts }) {
 
 // ─── Diff section card ────────────────────────────────────────────────────────
 
-function DiffSection({ title, items, icon: SectionIcon, renderDetail }) {
+function DiffSection({ title, items, icon: SectionIcon, renderTitle, renderDetail }) {
   if (items.length === 0) return null;
   return (
     <div style={{
@@ -456,9 +551,11 @@ function DiffSection({ title, items, icon: SectionIcon, renderDetail }) {
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', wordBreak: 'break-word' }}>
-                  {item._id}
-                </span>
+                {renderTitle ? renderTitle(item) : (
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', wordBreak: 'break-word' }}>
+                    {item._id}
+                  </span>
+                )}
                 <DiffBadge status={item._diff_status} />
               </div>
               {renderDetail && (
@@ -486,48 +583,10 @@ function DiffSection({ title, items, icon: SectionIcon, renderDetail }) {
   );
 }
 
-// ─── Metrics section — with LLM trigger ───────────────────────────────────────
+// ─── Metrics section — LLM results shown inline from backend ──────────────────
 
-function MetricsDiffSection({ items, selectedProvider, onLlmResult, llmResults, llmLoading }) {
+function MetricsDiffSection({ items }) {
   if (items.length === 0) return null;
-
-  const triggerLlm = useCallback(async (metric) => {
-    const isModified = metric._diff_status === 'modified_in_1' || metric._diff_status === 'modified_in_2';
-    if (!isModified) return;
-
-    // Use _base_id (without ::f1/::f2 suffix) as the shared state key so both
-    // the f1-row and the f2-row cards share a single LLM response.
-    const key = metric._base_id ?? metric._id.split('::')[0];
-    onLlmResult(key, null, true); // loading
-
-    try {
-      const token = localStorage.getItem('semabridge-token');
-      const res = await fetch('/api/comparator/compare-semantic', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          metric1_name: metric.name ?? key,
-          metric1_definition: metric._old_definition ?? '',
-          metric2_name: metric.name ?? key,
-          metric2_definition: metric._new_definition ?? metric.definition ?? '',
-          provider: selectedProvider.provider,
-          model: selectedProvider.model,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        onLlmResult(key, { error: data.detail ?? 'LLM request failed' }, false);
-      } else {
-        onLlmResult(key, data, false);
-      }
-    } catch (err) {
-      onLlmResult(key, { error: err.message }, false);
-    }
-  }, [onLlmResult, selectedProvider]);
 
   return (
     <div style={{
@@ -538,13 +597,8 @@ function MetricsDiffSection({ items, selectedProvider, onLlmResult, llmResults, 
       <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
         {items.map(m => {
           const cfg = DIFF_STATUS[m._diff_status] ?? DIFF_STATUS.identical;
-          // Shared LLM state key — strips ::f1/::f2 suffix so both rows share one verdict
-          const llmKey = m._base_id ?? m._id.split('::')[0];
-          const llmRes = llmResults[llmKey];
-          const isLoading = llmLoading[llmKey] === true;
-          const isModified = m._diff_status === 'modified_in_1' || m._diff_status === 'modified_in_2';
-          // Display name — strips ::f1/::f2 suffix that was added for React key uniqueness
-          const displayName = m._base_id ?? m._id.replace(/::f[12]$/, '');
+          const isModified = m._diff_status === 'modified';
+          const llmRes = m._llm_verdict;
 
           return (
             <div key={m._id} style={{
@@ -559,7 +613,7 @@ function MetricsDiffSection({ items, selectedProvider, onLlmResult, llmResults, 
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
               }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', wordBreak: 'break-word' }}>
-                  {displayName}
+                  {m._id}
                 </span>
                 <DiffBadge status={m._diff_status} />
               </div>
@@ -583,8 +637,8 @@ function MetricsDiffSection({ items, selectedProvider, onLlmResult, llmResults, 
                       </div>
                     </div>
 
-                    {/* LLM comparison area */}
-                    {llmRes ? (
+                    {/* LLM verdict — shown inline (no button, no confidence) */}
+                    {llmRes && (
                       llmRes.error ? (
                         <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--color-error-bg)', border: '1px solid var(--color-error)30', display: 'flex', alignItems: 'center', gap: 8 }}>
                           <AlertCircle size={14} color="var(--color-error)" />
@@ -604,11 +658,6 @@ function MetricsDiffSection({ items, selectedProvider, onLlmResult, llmResults, 
                             <span style={{ fontSize: 13, fontWeight: 700, color: llmRes.verdict === 'EQUIVALENT' ? 'var(--color-success)' : llmRes.verdict === 'PARTIAL' ? 'var(--color-warning)' : 'var(--color-error)' }}>
                               {llmRes.verdict}
                             </span>
-                            {typeof llmRes.confidence === 'number' && (
-                              <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'monospace' }}>
-                                {(llmRes.confidence * 100).toFixed(0)}% confidence
-                              </span>
-                            )}
                           </div>
                           <div style={{ fontSize: 12, color: 'var(--text-primary)' }}>{llmRes.reasoning}</div>
                           {llmRes.key_differences && llmRes.key_differences.length > 0 && (
@@ -623,30 +672,6 @@ function MetricsDiffSection({ items, selectedProvider, onLlmResult, llmResults, 
                           </div>
                         </div>
                       )
-                    ) : (
-                      <button
-                        onClick={() => triggerLlm(m)}
-                        disabled={isLoading}
-                        style={{
-                          display: 'inline-flex', alignItems: 'center', gap: 7,
-                          padding: '7px 14px', borderRadius: 8,
-                          background: isLoading ? 'var(--bg-surface-raised)' : 'transparent',
-                          border: '1px solid var(--border-main)',
-                          color: 'var(--text-secondary)',
-                          fontSize: 12, fontWeight: 600,
-                          cursor: isLoading ? 'not-allowed' : 'pointer',
-                          alignSelf: 'flex-start',
-                          transition: 'all var(--transition-normal)',
-                        }}
-                        onMouseEnter={(e) => { if (!isLoading) { e.currentTarget.style.borderColor = 'var(--accent-purple)'; e.currentTarget.style.color = 'var(--accent-purple)'; } }}
-                        onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-main)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
-                      >
-                        {isLoading
-                          ? <div style={{ width: 12, height: 12, border: '2px solid var(--border-main)', borderTopColor: 'var(--accent-purple)', borderRadius: '50%' }} className="animate-spin" />
-                          : <Sparkles size={13} color="var(--accent-purple)" />
-                        }
-                        {isLoading ? 'Analysing…' : 'Evaluate Semantic Identity (AI)'}
-                      </button>
                     )}
                   </div>
                 ) : (
@@ -674,8 +699,6 @@ export default function ComparatorPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [filterType, setFilterType] = useState('all');
-  const [llmResults, setLlmResults] = useState({});
-  const [llmLoading, setLlmLoading] = useState({});
   const [selectedProviderIdx, setSelectedProviderIdx] = useState(0);
   const selectedProvider = LLM_PROVIDERS[selectedProviderIdx];
 
@@ -685,8 +708,6 @@ export default function ComparatorPage() {
     setCompareResults(null);
     setError('');
     setFilterType('all');
-    setLlmResults({});
-    setLlmLoading({});
   };
 
   const handleFileChange = (e, index) => {
@@ -747,6 +768,9 @@ export default function ComparatorPage() {
             file1_content: f1c,
             file2_name: file2.name,
             file2_content: f2c,
+            // Pass LLM config for auto-evaluation of modified metrics
+            provider: selectedProvider.provider,
+            model: selectedProvider.model,
           }),
         });
         const data = await res.json();
@@ -759,11 +783,6 @@ export default function ComparatorPage() {
       setLoading(false);
     }
   };
-
-  const handleLlmResult = useCallback((key, result, isLoading) => {
-    setLlmLoading(prev => ({ ...prev, [key]: isLoading }));
-    if (result !== null) setLlmResults(prev => ({ ...prev, [key]: result }));
-  }, []);
 
   // Build per-status counts from compareResults for the filter pill bar
   const filterCounts = useMemo(() => {
@@ -786,6 +805,25 @@ export default function ComparatorPage() {
   const applyFilter = (items) =>
     filterType === 'all' ? items : items.filter(i => i._diff_status === filterType);
 
+  const entityDiffs = useMemo(() => {
+    if (!compareResults) return null;
+    const getDiffs = (items) => {
+      if (!items) return { identical: 0, only_in_1: 0, only_in_2: 0, modified: 0 };
+      return {
+        identical: items.filter(i => i._diff_status === 'identical').length,
+        only_in_1: items.filter(i => i._diff_status === 'only_in_1').length,
+        only_in_2: items.filter(i => i._diff_status === 'only_in_2').length,
+        modified: items.filter(i => i._diff_status === 'modified').length,
+      };
+    };
+    return {
+      tables: getDiffs(compareResults.tables),
+      columns: getDiffs(compareResults.columns),
+      metrics: getDiffs(compareResults.metrics),
+      relationships: getDiffs(compareResults.relationships),
+    };
+  }, [compareResults]);
+
   const canAnalyze = (file1 || file2) && !loading;
 
   return (
@@ -793,7 +831,6 @@ export default function ComparatorPage() {
       <PageHeader
         title="Semantic Comparator"
         description="Analyse and diff OSI, SML, TSML, and Snowflake semantic model YAML definitions."
-        breadcrumb={['Semantic Comparator']}
       />
 
       {/* Error banner — matches pattern used across all Semabridge pages */}
@@ -897,30 +934,49 @@ export default function ComparatorPage() {
               <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' }}>
                 Semantic Diff
               </h2>
+              {compareResults.file1_name && <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{compareResults.file1_name}</span>}
               {compareResults.file1_format && <FormatBadge format={compareResults.file1_format} />}
               <span style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>vs</span>
+              {compareResults.file2_name && <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{compareResults.file2_name}</span>}
               {compareResults.file2_format && <FormatBadge format={compareResults.file2_format} />}
             </div>
 
-            {/* Summary stat row */}
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-              {[
-                { label: 'Identical',     value: compareResults.summary?.identical ?? 0,     color: 'var(--color-success)' },
-                { label: 'Only in F1',    value: compareResults.summary?.only_in_1 ?? 0,      color: 'var(--accent-blue)' },
-                { label: 'Only in F2',    value: compareResults.summary?.only_in_2 ?? 0,      color: 'var(--accent-purple)' },
-                { label: 'Modified in F1', value: compareResults.summary?.modified_in_1 ?? 0, color: 'var(--color-warning)' },
-                { label: 'Modified in F2', value: compareResults.summary?.modified_in_2 ?? 0, color: 'var(--accent-orange)' },
-              ].map(s => (
-                <div key={s.label} style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '6px 14px', borderRadius: 8,
-                  background: 'var(--bg-surface)', border: '1px solid var(--border-main)',
-                }}>
-                  <span style={{ fontSize: 17, fontWeight: 700, color: s.color }}>{s.value}</span>
-                  <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{s.label}</span>
-                </div>
-              ))}
-            </div>
+            {/* Per-file entity counts and Differences summary */}
+            {compareResults.file1_summary && compareResults.file2_summary && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 14 }}>
+                {[
+                  { name: compareResults.file1_name, format: compareResults.file1_format, summary: compareResults.file1_summary, accent: 'var(--accent-blue)' },
+                  { name: compareResults.file2_name, format: compareResults.file2_format, summary: compareResults.file2_summary, accent: 'var(--accent-purple)' },
+                ].map((f, i) => {
+                  const makeBreakdown = (diffs) => [
+                    { label: 'Identical', value: diffs.identical, bg: 'var(--color-success-bg)', color: 'var(--color-success)' },
+                    i === 0 
+                      ? { label: 'Only F1', value: diffs.only_in_1, bg: 'var(--color-accent-faint)', color: 'var(--accent-blue)' }
+                      : { label: 'Only F2', value: diffs.only_in_2, bg: 'rgba(139,92,246,0.12)', color: 'var(--accent-purple)' },
+                    { label: 'Modified', value: diffs.modified, bg: 'rgba(245,158,11,0.1)', color: 'var(--color-warning)' },
+                  ];
+                  return (
+                    <div key={i} style={{
+                      padding: '16px 20px', borderRadius: 12,
+                      background: 'var(--bg-surface-raised)',
+                      border: `1px solid var(--border-main)`,
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+                        <FileText size={16} color={f.accent} />
+                        <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{f.name}</span>
+                        {f.format && <FormatBadge format={f.format} />}
+                      </div>
+                      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                        <StatCard icon={Layers}   label="Tables"        value={f.summary.total_tables}         accent="var(--accent-blue)" breakdown={makeBreakdown(entityDiffs.tables)} />
+                        <StatCard icon={Hash}     label="Columns"       value={f.summary.total_columns}        accent="var(--accent-purple)" breakdown={makeBreakdown(entityDiffs.columns)} />
+                        <StatCard icon={BarChart3} label="Metrics"       value={f.summary.total_metrics}        accent="var(--accent-orange)" breakdown={makeBreakdown(entityDiffs.metrics)} />
+                        <StatCard icon={Link2}    label="Relationships" value={f.summary.total_relationships}   accent="var(--accent-cyan)" breakdown={makeBreakdown(entityDiffs.relationships)} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             {/* Filter pill bar */}
             <FilterPillBar active={filterType} onChange={setFilterType} counts={filterCounts} />
@@ -943,19 +999,36 @@ export default function ComparatorPage() {
             title="Relationships"
             items={applyFilter(compareResults.relationships)}
             icon={Link2}
+            renderTitle={(r) => (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <span style={{
+                  padding: '3px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                  background: 'var(--color-accent-faint)', color: 'var(--accent-blue)',
+                  border: '1px solid var(--accent-blue)25',
+                }}>{r.left_table || 'unknown'}</span>
+                <ArrowRightLeft size={14} color="var(--text-tertiary)" />
+                <span style={{
+                  padding: '3px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                  background: 'rgba(139,92,246,0.10)', color: 'var(--accent-purple)',
+                  border: '1px solid var(--accent-purple)25',
+                }}>{r.right_table || 'unknown'}</span>
+                <span style={{
+                  fontSize: 10, fontWeight: 700,
+                  color: 'var(--accent-cyan)', background: 'rgba(56,189,248,0.10)',
+                  padding: '2px 10px', borderRadius: 12, border: '1px solid var(--accent-cyan)30',
+                }}>{r.cardinality || 'many-to-one'}</span>
+              </div>
+            )}
             renderDetail={(r) => (
-              <span style={{ fontFamily: 'monospace' }}>
-                {r.left_table}.{r.left_column} → {r.right_table}.{r.right_column}
-                {r.cardinality ? ` (${r.cardinality})` : ''}
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
+                <span style={{ color: 'var(--accent-blue)' }}>{r.left_column || 'unknown'}</span>
+                <span style={{ color: 'var(--text-tertiary)' }}>→</span>
+                <span style={{ color: 'var(--accent-purple)' }}>{r.right_column || 'unknown'}</span>
+              </div>
             )}
           />
           <MetricsDiffSection
             items={applyFilter(compareResults.metrics)}
-            selectedProvider={selectedProvider}
-            onLlmResult={handleLlmResult}
-            llmResults={llmResults}
-            llmLoading={llmLoading}
           />
 
           {applyFilter([

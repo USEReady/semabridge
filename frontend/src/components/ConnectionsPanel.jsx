@@ -411,9 +411,11 @@ const SNOWFLAKE_FIELDS = [
     { key: 'account', label: 'Account URL', placeholder: 'abc123.us-east-1', secret: false, required: true },
     { key: 'user', label: 'Username', placeholder: 'your_username', secret: false, required: true },
     { key: 'password', label: 'Password', placeholder: 'Enter your Snowflake password', secret: true, passwordOnly: true },
-    { key: 'private_key', label: 'Private Key (PEM)', placeholder: 'Paste your private key content', secret: true, keypairOnly: true },
+    { key: 'private_key', label: 'Private Key (PEM)', placeholder: 'Paste your private key content', secret: true, keypairOnly: true, multiline: true },
     { key: 'oauth_client_id', label: 'OAuth Client ID', placeholder: 'Enter your OAuth client ID', secret: false, oauthOnly: true },
     { key: 'oauth_client_secret', label: 'OAuth Client Secret', placeholder: 'Enter your OAuth client secret', secret: true, oauthOnly: true },
+    { key: 'warehouse', label: 'Warehouse', placeholder: 'COMPUTE_WH', secret: false, required: true },
+    { key: 'database', label: 'Database', placeholder: 'SEMABRIDGE_DB', secret: false, required: true },
 ];
 
 function SnowflakeAccountForm({ initialTag, status, onSave, onCancel }) {
@@ -621,8 +623,13 @@ function SnowflakeAccountForm({ initialTag, status, onSave, onCancel }) {
                                     onChange={e => { setFormData(p => ({ ...p, [field.key]: e.target.value })); setTestResult(null); }}
                                     placeholder={field.placeholder}
                                     rows={4}
-                                    className="w-full px-3 py-2 rounded-lg text-xs border outline-none focus:ring-1 transition-colors resize-none font-mono"
-                                    style={{ background: 'var(--bg-input, var(--bg-primary))', borderColor: 'var(--border-main)', color: 'var(--text-primary)' }}
+                                    className={`w-full px-3 py-2 rounded-lg text-xs border outline-none focus:ring-1 transition-colors resize-none font-mono ${field.secret ? 'pr-8' : ''}`}
+                                    style={{ 
+                                        background: 'var(--bg-input, var(--bg-primary))', 
+                                        borderColor: 'var(--border-main)', 
+                                        color: 'var(--text-primary)',
+                                        WebkitTextSecurity: (field.secret && !showSecrets[field.key]) ? 'disc' : 'none'
+                                    }}
                                 />
                             ) : (
                                 <input
@@ -630,13 +637,13 @@ function SnowflakeAccountForm({ initialTag, status, onSave, onCancel }) {
                                     value={formData[field.key] || ''}
                                     onChange={e => { setFormData(p => ({ ...p, [field.key]: e.target.value })); setTestResult(null); }}
                                     placeholder={field.placeholder}
-                                    className="w-full px-3 py-2 rounded-lg text-xs border outline-none focus:ring-1 transition-colors"
+                                    className={`w-full px-3 py-2 rounded-lg text-xs border outline-none focus:ring-1 transition-colors ${field.secret ? 'pr-8' : ''}`}
                                     style={{ background: 'var(--bg-input, var(--bg-primary))', borderColor: 'var(--border-main)', color: 'var(--text-primary)' }}
                                 />
                             )}
-                            {field.secret && !field.multiline && (
+                            {field.secret && (
                                 <button onClick={() => setShowSecrets(p => ({ ...p, [field.key]: !p[field.key] }))}
-                                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded opacity-40 hover:opacity-100" type="button">
+                                    className={`absolute right-2 p-1 rounded opacity-40 hover:opacity-100 ${field.multiline ? 'top-2' : 'top-1/2 -translate-y-1/2'}`} type="button">
                                     {showSecrets[field.key]
                                         ? <EyeOff size={12} style={{ color: 'var(--text-secondary)' }} />
                                         : <Eye size={12} style={{ color: 'var(--text-secondary)' }} />}

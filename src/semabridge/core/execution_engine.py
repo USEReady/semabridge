@@ -2806,8 +2806,11 @@ class ExecutionEngine:
 
         # ── Snowflake observability push (if enabled) ────────────────────────
         try:
-            sf_cfg = context.scoped_snowflake_config or context.config.snowflake
-            if getattr(sf_cfg, "push_run_summary_to_snowflake", False):
+            sf_cfg = context.scoped_snowflake_config
+            if not sf_cfg and context.config.validate_snowflake():
+                sf_cfg = context.config.snowflake
+                
+            if sf_cfg and getattr(sf_cfg, "push_run_summary_to_snowflake", False):
                 from semabridge.repository.observability_table import ObservabilityTable
                 obs = ObservabilityTable(sf_cfg)
                 obs.insert_run_summary(finalized)

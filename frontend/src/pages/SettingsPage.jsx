@@ -11,7 +11,6 @@ import ConfigEditor from '../components/ConfigEditor';
 import Modal from '../components/common/Modal';
 import { ConfigurationProvider } from '../context/ConfigurationContext';
 import { api } from '../utils/api';
-import { useUIStore } from '../store/uiStore';
 
 const ENVIRONMENTS = ['Dev', 'Staging', 'Prod'];
 
@@ -62,9 +61,7 @@ function renderConnectorIcon(connectorId, size = 18) {
 }
 
 export default function SettingsPage() {
-  const isAdvancedMode = useUIStore(state => state.isAdvancedMode);
-  const setIsAdvancedMode = useUIStore(state => state.setIsAdvancedMode);
-  
+
   const [env, setEnv] = useState('Dev');
   const [connectors, setConnectors] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -343,42 +340,7 @@ export default function SettingsPage() {
         <ConfigEditor />
       </div>
 
-      {/* Advanced Experience */}
-      <div className="mb-8" style={{ background: 'var(--bg-surface)', padding: 24, borderRadius: 12, border: '1px solid var(--border-main)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-           <div>
-             <h2 className="text-primary font-semibold mb-1" style={{ fontSize: 15, margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
-               Advanced Experience
-             </h2>
-             <p className="text-secondary" style={{ fontSize: 12, margin: '4px 0 0' }}>
-               Enable advanced technical tools such as Semantic Comparator for debugging definitions.
-             </p>
-           </div>
-           
-           <label style={{ position: 'relative', display: 'inline-block', width: 44, height: 24 }}>
-              <input 
-                 type="checkbox" 
-                 checked={isAdvancedMode} 
-                 onChange={(e) => setIsAdvancedMode(e.target.checked)} 
-                 style={{ opacity: 0, width: 0, height: 0 }} 
-              />
-              <span style={{ 
-                 position: 'absolute', cursor: 'pointer', top: 0, left: 0, right: 0, bottom: 0, 
-                 backgroundColor: isAdvancedMode ? 'var(--accent-blue)' : 'var(--bg-subtle)', 
-                 border: `1px solid ${isAdvancedMode ? 'var(--accent-blue)' : 'var(--border-main)'}`,
-                 transition: '.4s', borderRadius: 34 
-              }}>
-                <span style={{
-                   position: 'absolute', content: '""', height: 16, width: 16, left: 4, bottom: 3,
-                   backgroundColor: 'white', transition: '.4s', borderRadius: '50%',
-                   transform: isAdvancedMode ? 'translateX(18px)' : 'translateX(0)'
-                }}></span>
-              </span>
-           </label>
-        </div>
-      </div>
 
-      {/* Local Folder Management */}
       <div className="mb-8">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
           <div>

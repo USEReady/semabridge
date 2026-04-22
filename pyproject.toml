@@ -25,7 +25,7 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "pyyaml>=6.0",
     "ruamel-yaml>=0.19.1",
-    "httpx>=0.25.0",
+    "httpx>=0.28.1",
     "aiohttp>=3.11.0",
     "msal>=1.24.0",
     "requests>=2.31.0",
@@ -67,7 +67,7 @@ dependencies = [
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "prometheus-client>=0.20.0",
-    "aisuite[google]>=0.1.14",
+    "aisuite[all]>=0.1.14",
 ]
 
 [project.optional-dependencies]

@@ -1,20 +1,17 @@
-# Semabridge project configuration
-# Resolution: kept our active Snowflake→Fabric config (this machine's live values).
-# Team's Databricks test config is preserved separately in their test files.
-project_name: f1
+project_name: te
 source:
-  type: snowflake
-  database: ""
-  schema: ""
-  model: CONTINENT_SEMANTIC
+  type: fabric
+  identity_id: 5e826e99-3f37-4d50-9ba3-3f30037d6485
+  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
+  workspace: semabridge
+  models:
+    - P2P_Spend_Semantic_Model_DA
 targets:
-  - type: fabric
-    identity_id: 5e826e99-3f37-4d50-9ba3-3f30037d6485
-    workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
-    workspace: semabridge
+  - type: snowflake
+    identity_id: ce7a7b2b-ba49-4ed9-b81c-4c09eff7afa2
 mappings:
-  - source: CONTINENT_SEMANTIC
-    target: CONTINENT_SEMANTIC
+  - source: P2P_Spend_Semantic_Model_DA
+    target: P2P_SPEND_SEMANTIC_MODEL_DA
     type: table
     columns:
       - source: id
@@ -36,11 +33,9 @@ ui:
   output_format: osi
 selection:
   model_ids:
-    - CONTINENT_SEMANTIC
+    - 59f6dfdd-c8ae-41d3-ad3f-b4a9c17ae367
 options:
   auto_relationships: true
   generate_descriptions: true
 target:
-  type: fabric
-  identity_id: 5e826e99-3f37-4d50-9ba3-3f30037d6485
-  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
+  type: snowflake
