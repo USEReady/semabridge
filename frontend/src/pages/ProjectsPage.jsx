@@ -532,14 +532,14 @@ export default function ProjectsPage() {
             setDragOverFolder(null);
           }}
         >
-          {dragOverFolder === 'root' ? 'Release to remove' : 'Drop here to remove from folder'}
+          {dragOverFolder === 'root' ? 'Release to remove' : ''}
         </div>
       </aside>
 
       {/* ── Main content ── */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', maxWidth: 1400, margin: '0 auto', padding: '28px 16px' }} className="md:px-10">
         {/* Header */}
-        <div style={{ padding: '20px 28px 0', flexShrink: 0 }}>
+        <div style={{ padding: '0 0 16px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
             <div>
               <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
@@ -550,22 +550,6 @@ export default function ProjectsPage() {
               </p>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button
-                onClick={() => updateFilterOption('viewMode', viewMode === 'folder' ? 'adapter' : 'folder')}
-                title={viewMode === 'folder' ? 'View by source' : 'View by folder'}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '8px 14px', borderRadius: 6, cursor: 'pointer',
-                  background: 'var(--accent-blue)12', border: '1.5px solid var(--accent-blue)40',
-                  color: 'var(--accent-blue)', fontSize: 12, fontWeight: 500,
-                  transition: 'all 0.2s',
-                }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-blue)20'; e.currentTarget.style.borderColor = 'var(--accent-blue)60'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'var(--accent-blue)12'; e.currentTarget.style.borderColor = 'var(--accent-blue)40'; }}
-              >
-                <Layers size={13} />
-                {viewMode === 'folder' ? 'By Source' : 'By Folder'}
-              </button>
               <button onClick={() => setImportOpen(true)} style={btnStyle('secondary')}>
                 <Upload size={13} /> Import
               </button>
@@ -732,7 +716,7 @@ export default function ProjectsPage() {
         <div
           id="projects-grid-scroll"
           onScroll={(e) => setProjectListScrollTop(e.currentTarget.scrollTop)}
-          style={{ flex: 1, overflowY: 'auto', padding: '4px 28px 28px' }}
+          style={{ flex: 1, overflowY: 'auto', padding: '4px 0 28px' }}
         >
           {loading ? (
             <div style={{ padding: '80px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>

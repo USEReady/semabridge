@@ -252,13 +252,6 @@ export default function ProjectDetailPage() {
             </div>
           </div>
 
-          {/* Quick Help / Info */}
-          <div className="bg-surface-raised rounded-xl p-6 border border-main">
-            <h3 className="text-primary font-semibold text-xs mb-2 uppercase tracking-wide">Quick Info</h3>
-            <p className="text-tertiary text-xs leading-relaxed">
-              This screen provides a detailed breakdown of your project configuration. You can monitor the status, update tags, or trigger a manual synchronization.
-            </p>
-          </div>
         </div>
       </div>
     </div>

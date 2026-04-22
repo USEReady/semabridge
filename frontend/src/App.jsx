@@ -17,6 +17,7 @@ import ProjectConfigPage from './pages/ProjectConfigPage';
 import ProjectJobsPage  from './pages/ProjectJobsPage';
 import ModelMappingPage from './pages/ModelMappingPage';
 import SettingsPage    from './pages/SettingsPage';
+import GlobalConfigPage from './pages/GlobalConfigPage';
 import ProjectDetailPage from './pages/ProjectDetailPage';
 
 /**
@@ -104,6 +105,7 @@ export default function App() {
           <Route path="/jobs"          element={<ProjectJobsPage />} />
           <Route path="/model-mapping" element={<ModelMappingPage />} />
           <Route path="/settings"      element={<SettingsPage />} />
+          <Route path="/global-config" element={<GlobalConfigPage />} />
         </Route>
 
         {/* Fallback */}
