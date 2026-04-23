@@ -139,6 +139,7 @@ def _call_llm(
             system=system_text,
             messages=[{"role": "user", "content": user_text}],
             temperature=temperature,
+            timeout=15.0,  # Fast fail for bad connections
         )
         return response.content[0].text.strip()
 
@@ -155,10 +156,16 @@ def _call_llm(
         )
 
     from openai import OpenAI  # already installed, fast import, no heavy SDKs
-    client_kwargs: dict[str, str] = {"api_key": api_key}
+    client_kwargs: dict[str, str] = {"api_key": api_key, "timeout": "15.0", "max_retries": "1"}
     if base_url:
         client_kwargs["base_url"] = base_url
-    client = OpenAI(**client_kwargs)
+    
+    # Must cast types because typing expects int/float but dict values are typed str
+    kwargs_final = {k: v for k, v in client_kwargs.items() if k not in ["timeout", "max_retries"]}
+    kwargs_final["timeout"] = 15.0
+    kwargs_final["max_retries"] = 1
+    
+    client = OpenAI(**kwargs_final)
 
     response = client.chat.completions.create(
         model=model,
@@ -1382,6 +1389,7 @@ def compare_yamls(req: CompareRequest):
     llm_available = has_llm and any(os.environ.get(k) for k in _ALL_PROVIDER_KEYS)
 
     if llm_available:
+        llm_evaluated_count = 0
         for metric in metrics_diff:
             if metric.get("_diff_status") != "modified":
                 continue
@@ -1389,6 +1397,18 @@ def compare_yamls(req: CompareRequest):
             new_def = metric.get("_new_definition", "")
             if not old_def or not new_def:
                 continue
+            
+            # Prevent API spam/timeouts by capping the max evaluations per request
+            if llm_evaluated_count >= 10:
+                metric["_llm_verdict"] = {
+                    "verdict": "PARTIAL",
+                    "reasoning": "Skipped evaluation. Maximum of 10 LLM metrics reached per request.",
+                    "key_differences": [],
+                    "model_used": "system_limit",
+                }
+                continue
+                
+            llm_evaluated_count += 1
             try:
                 system_prompt = (
                     "You are a senior data engineering expert evaluating semantic model metric definitions. "
