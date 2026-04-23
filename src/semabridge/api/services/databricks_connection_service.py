@@ -52,12 +52,25 @@ async def databricks_native_oauth_login(request: Request, payload: Dict[str, Any
     flow_id = str(_uuid.uuid4())
     user_ip = _get_client_ip(request)
 
+    # Resolve the authenticated user so that tokens are stored under their ID.
+    user_id = 0
+    try:
+        from semabridge.api.deps import get_current_user_optional
+        from semabridge.repository.orm.session_factory import db_manager
+        with db_manager.get_session() as session:
+            user = get_current_user_optional(request, session)
+            if user:
+                user_id = user.id
+    except Exception:
+        pass
+
     with _poll_sessions_lock:
         _poll_sessions[flow_id] = {
             "status": "polling",
             "service": "databricks",
             "expires_at": _time.time() + _POLL_SESSION_TTL,
             "user_ip": user_ip,
+            "user_id": user_id,
             "host": host,
             "client_id": client_id,
             "redirect_uri": redirect_uri,
@@ -241,6 +254,10 @@ async def databricks_device_code_poll(request: Request, payload: Dict[str, Any] 
             _poll_sessions.pop(flow_id, None)
             _last_poll_time.pop(flow_id, None)
 
+        # Retrieve the user_id captured at login initiation time.
+        # Falls back to 0 (global/sentinel) if no authenticated user was present.
+        owner_id: int = state.get("user_id", 0)
+
         try:
             cm = CredentialManager()
             cm.save_databricks_token(
@@ -253,8 +270,9 @@ async def databricks_device_code_poll(request: Request, payload: Dict[str, Any] 
                 catalog=state.get("catalog", "main"),
                 schema_name=state.get("schema_name", "semabridge"),
                 expires_in=state.get("expires_in", 3600),
+                user_id=owner_id,
             )
-            cm.save_credentials("databricks", {"client_id": state.get("client_id")})
+            cm.save_credentials("databricks", {"client_id": state.get("client_id")}, user_id=owner_id)
 
             # Persist to Account table for multi-user token refresh
             from semabridge.repository.orm.session_factory import db_manager

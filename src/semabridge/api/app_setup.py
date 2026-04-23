@@ -113,6 +113,93 @@ def _apply_schema_compatibility_fixes() -> None:
     logger.info("Applied accounts schema compatibility fixes: %s", ", ".join(pending_alters))
 
 
+def _migrate_credentials_table() -> None:
+    """Migrate semabridge_credentials to user-scoped composite PK (idempotent).
+
+    Old schema: PRIMARY KEY (service, key)  — global, shared by all users.
+    New schema: PRIMARY KEY (owner_id, service, key)  — sentinel 0 = global.
+
+    Safe to run multiple times. Checks for the ``owner_id`` column before
+    executing any DDL so that subsequent restarts are a pure no-op.
+    """
+    from sqlalchemy import inspect, text
+    from semabridge.repository.orm.session_factory import get_engine
+
+    engine = get_engine()
+    if engine.dialect.name not in ("postgresql", "duckdb", "sqlite"):
+        logger.debug("Credentials migration skipped for dialect: %s", engine.dialect.name)
+        return
+
+    inspector = inspect(engine)
+    if "semabridge_credentials" not in set(inspector.get_table_names()):
+        # Table doesn't exist yet — create_all() will create it with the new schema.
+        return
+
+    existing_cols = {col["name"] for col in inspector.get_columns("semabridge_credentials")}
+    if "owner_id" in existing_cols:
+        return  # Already migrated — nothing to do.
+
+    dialect = engine.dialect.name
+    logger.info("Migrating semabridge_credentials: adding owner_id to composite PK...")
+
+    ddl_steps: list[str] = []
+
+    if dialect == "postgresql":
+        ddl_steps = [
+            # 1. Add column with default 0 — existing rows become system/global automatically.
+            "ALTER TABLE semabridge_credentials ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0",
+            # 2. Drop the old (service, key) primary key.
+            "ALTER TABLE semabridge_credentials DROP CONSTRAINT IF EXISTS semabridge_credentials_pkey",
+            # 3. Create new (owner_id, service, key) primary key.
+            "ALTER TABLE semabridge_credentials ADD PRIMARY KEY (owner_id, service, key)",
+            # 4. Supporting index for per-user, per-service range scans.
+            "CREATE INDEX IF NOT EXISTS ix_credential_owner_service "
+            "ON semabridge_credentials (owner_id, service)",
+        ]
+    elif dialect == "sqlite":
+        # SQLite can't ALTER PRIMARY KEY — recreate the table.
+        ddl_steps = [
+            "ALTER TABLE semabridge_credentials RENAME TO _semabridge_credentials_old",
+            """
+            CREATE TABLE semabridge_credentials (
+                owner_id INTEGER NOT NULL DEFAULT 0,
+                service  VARCHAR(50)  NOT NULL,
+                key      VARCHAR(100) NOT NULL,
+                value    TEXT NOT NULL,
+                is_secret BOOLEAN NOT NULL DEFAULT 0,
+                updated_at TIMESTAMP,
+                PRIMARY KEY (owner_id, service, key)
+            )
+            """,
+            """
+            INSERT INTO semabridge_credentials (owner_id, service, key, value, is_secret, updated_at)
+            SELECT 0, service, key, value, is_secret, updated_at
+            FROM _semabridge_credentials_old
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_credential_owner_service "
+            "ON semabridge_credentials (owner_id, service)",
+            "DROP TABLE _semabridge_credentials_old",
+        ]
+    else:
+        # DuckDB — same approach as PostgreSQL.
+        ddl_steps = [
+            "ALTER TABLE semabridge_credentials ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE semabridge_credentials DROP PRIMARY KEY",
+            "ALTER TABLE semabridge_credentials ADD PRIMARY KEY (owner_id, service, key)",
+        ]
+
+    try:
+        with engine.begin() as conn:
+            for ddl in ddl_steps:
+                conn.execute(text(ddl.strip()))
+        logger.info(
+            "semabridge_credentials migration complete: PK is now (owner_id, service, key). "
+            "Existing rows assigned owner_id=0 (global/system)."
+        )
+    except Exception as exc:
+        logger.warning("semabridge_credentials migration failed (may already be migrated): %s", exc)
+
+
 def _apply_rls_policies() -> None:
     """Apply PostgreSQL Row Level Security policies on tenant-scoped tables.
 
@@ -279,6 +366,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             _apply_schema_compatibility_fixes()
         except Exception as fix_exc:
             logger.warning('Schema compatibility fix skipped: %s', fix_exc)
+        try:
+            _migrate_credentials_table()
+        except Exception as cred_exc:
+            logger.warning('Credentials table migration skipped: %s', cred_exc)
         try:
             _apply_rls_policies()
         except Exception as rls_exc:

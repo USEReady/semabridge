@@ -147,12 +147,17 @@ class CredentialManager:
     # Write Operations
     # ------------------------------------------------------------------
 
-    def save_credentials(self, service: str, credentials: Dict[str, Any]) -> int:
+    def save_credentials(self, service: str, credentials: Dict[str, Any], user_id: int = 0) -> int:
         """Store or update credentials for a service.
 
         Args:
-            service: Service name ('fabric' or 'snowflake').
+            service:     Service name ('fabric', 'snowflake', 'databricks').
             credentials: Key-value pairs of configuration fields.
+            user_id:     Owner of these credentials.  ``0`` (default) stores as
+                         global/system credentials accessible by the CLI and
+                         background sync.  Pass the authenticated user's ID for
+                         user-scoped storage that takes precedence over the
+                         global row.
 
         Returns:
             Number of credentials saved.
@@ -176,26 +181,27 @@ class CredentialManager:
                     keys_to_purge = _AUTH_EXCLUSIVE_KEYS.get(new_auth_type, [])
                     for stale_key in keys_to_purge:
                         existing_stale = session.get(
-                            Credential, (service, stale_key)
+                            Credential, (user_id, service, stale_key)
                         )
                         if existing_stale:
                             session.delete(existing_stale)
                             logger.debug(
-                                "Purged stale key '%s' for '%s' (switched to %s)",
-                                stale_key, service, new_auth_type,
+                                "Purged stale key '%s' for '%s' (switched to %s, owner=%d)",
+                                stale_key, service, new_auth_type, user_id,
                             )
 
                 for key, value in credentials.items():
                     if not value and value != 0:
                         continue
                     is_secret = key in secret_keys
-                    existing = session.get(Credential, (service, key))
+                    existing = session.get(Credential, (user_id, service, key))
                     if existing:
                         existing.value = str(value)
                         existing.is_secret = is_secret
                     else:
                         session.add(
                             Credential(
+                                owner_id=user_id,
                                 service=service,
                                 key=key,
                                 value=str(value),
@@ -205,18 +211,20 @@ class CredentialManager:
                     saved += 1
                 session.commit()
 
-            logger.info("Saved %d credentials for '%s'", saved, service)
+            logger.info("Saved %d credentials for '%s' (owner=%d)", saved, service, user_id)
             return saved
         except Exception as exc:
             raise RepositoryError(
                 f"Failed to save credentials for '{service}': {exc}"
             ) from exc
 
-    def delete_credentials(self, service: str) -> int:
+    def delete_credentials(self, service: str, user_id: int = 0) -> int:
         """Remove all stored credentials for a service.
 
         Args:
             service: Service name to delete credentials for.
+            user_id: Scope to delete.  ``0`` removes global/system rows;
+                     pass a user ID to remove only that user's rows.
 
         Returns:
             Number of credentials removed.
@@ -224,11 +232,14 @@ class CredentialManager:
         try:
             with self._session() as session:
                 result = session.execute(
-                    delete(Credential).where(Credential.service == service)
+                    delete(Credential).where(
+                        Credential.service == service,
+                        Credential.owner_id == user_id,
+                    )
                 )
                 session.commit()
                 count = result.rowcount or 0
-            logger.info("Deleted credentials for '%s'", service)
+            logger.info("Deleted credentials for '%s' (owner=%d): %d rows", service, user_id, count)
             return count
         except Exception as exc:
             raise RepositoryError(f"Failed to delete credentials: {exc}") from exc
@@ -238,17 +249,20 @@ class CredentialManager:
     # ------------------------------------------------------------------
 
     def get_credentials(
-        self, service: str, mask_secrets: bool = True
+        self, service: str, mask_secrets: bool = True, user_id: int = 0
     ) -> Dict[str, str]:
         """Retrieve stored credentials for a service.
 
-        Reads from the database first.  If the database has no rows for this
-        service, falls back to os.environ (populated from .env at startup) so
-        that credentials configured only in .env are still surfaced in the UI.
+        Lookup precedence:
+          1. User-scoped rows (``owner_id == user_id``) when ``user_id > 0``.
+          2. Global/system rows (``owner_id == 0``) as fallback.
+          3. ``os.environ`` (populated from .env at startup) for any key not
+             found in the database.
 
         Args:
-            service: Service name ('fabric', 'snowflake', 'databricks').
+            service:      Service name ('fabric', 'snowflake', 'databricks').
             mask_secrets: If True, secret values are replaced with '••••••••'.
+            user_id:      Authenticated user ID.  ``0`` reads global rows only.
 
         Returns:
             Dictionary of credential key-value pairs.
@@ -257,21 +271,45 @@ class CredentialManager:
         env_map = _ENV_MAP.get(service, {})
         result: Dict[str, str] = {}
 
-        # --- Step 1: Read from database ---
-        try:
-            with self._session() as session:
-                rows = session.execute(
-                    select(Credential).where(Credential.service == service)
-                ).scalars().all()
-                for row in rows:
-                    if mask_secrets and row.is_secret:
-                        result[row.key] = "••••••••"
-                    else:
-                        result[row.key] = row.value
-        except Exception:
-            pass
+        def _rows_to_dict(rows: list) -> Dict[str, str]:
+            out: Dict[str, str] = {}
+            for row in rows:
+                if mask_secrets and row.is_secret:
+                    out[row.key] = "••••••••"
+                else:
+                    out[row.key] = row.value
+            return out
 
-        # --- Step 2: Supplement from os.environ for any keys NOT already in DB.
+        # --- Step 1: Try user-scoped rows first (when user_id > 0) ---
+        if user_id > 0:
+            try:
+                with self._session() as session:
+                    user_rows = session.execute(
+                        select(Credential).where(
+                            Credential.owner_id == user_id,
+                            Credential.service == service,
+                        )
+                    ).scalars().all()
+                if user_rows:
+                    result = _rows_to_dict(user_rows)
+            except Exception:
+                pass
+
+        # --- Step 2: Fall back to global rows (owner_id=0) ---
+        if not result:
+            try:
+                with self._session() as session:
+                    global_rows = session.execute(
+                        select(Credential).where(
+                            Credential.owner_id == 0,
+                            Credential.service == service,
+                        )
+                    ).scalars().all()
+                result = _rows_to_dict(global_rows)
+            except Exception:
+                pass
+
+        # --- Step 3: Supplement from os.environ for any keys NOT already in DB ---
         # This ensures credentials set only in .env are always surfaced in the UI,
         # and that required fields like workspace_id are not hidden when the DB
         # only has the MSAL tokens (access_token / refresh_token).
@@ -286,17 +324,21 @@ class CredentialManager:
 
         return result
 
-    def get_connection_status(self) -> Dict[str, Any]:
+    def get_connection_status(self, user_id: int = 0) -> Dict[str, Any]:
         """Get the configuration status for all supported services.
+
+        Args:
+            user_id: Authenticated user ID.  ``0`` reads global rows only
+                     (CLI / background sync mode).
 
         Returns a dict per service with standardized 'status' field ("connected"/"disconnected"),
         plus existing details for UI display.
         """
         status: Dict[str, Any] = {}
         for service in _ENV_MAP:
-            stored = self.get_credentials(service, mask_secrets=True)
+            stored = self.get_credentials(service, mask_secrets=True, user_id=user_id)
             # Use raw (unmasked) credentials for auth-type detection
-            raw = self.get_credentials(service, mask_secrets=False)
+            raw = self.get_credentials(service, mask_secrets=False, user_id=user_id)
             required = self._get_required_keys(service, raw)
             missing = [k for k in required if k not in stored]
 
@@ -339,11 +381,15 @@ class CredentialManager:
     # Environment Injection
     # ------------------------------------------------------------------
 
-    def inject_credentials_to_env(self, service: str) -> int:
+    def inject_credentials_to_env(self, service: str, user_id: int = 0) -> int:
         """Inject stored credentials into os.environ.
 
+        Reads credentials using the user_id precedence (user row first,
+        global row fallback) then injects them into ``os.environ``.
+
         Args:
-            service: Service name ('fabric' or 'snowflake').
+            service: Service name ('fabric', 'snowflake', 'databricks').
+            user_id: Authenticated user ID.  ``0`` injects global rows only.
 
         Returns:
             Number of environment variables set.
@@ -351,7 +397,7 @@ class CredentialManager:
         Raises:
             RepositoryError: If the service has no stored credentials.
         """
-        credentials = self.get_credentials(service, mask_secrets=False)
+        credentials = self.get_credentials(service, mask_secrets=False, user_id=user_id)
         if not credentials:
             raise RepositoryError(
                 f"No stored credentials for '{service}'. "
@@ -471,8 +517,15 @@ class CredentialManager:
         account_username: str,
         tenant_id: str,
         expires_in: int = 3600,
+        user_id: int = 0,
     ) -> None:
-        """Store MSAL tokens from an interactive login."""
+        """Store MSAL tokens from an interactive Fabric login.
+
+        Args:
+            user_id: Owner of this token.  ``0`` stores as a global/system
+                     token (legacy behaviour, used when no authenticated user
+                     context is available — e.g. CLI background refresh).
+        """
         import time
 
         token_data = {
@@ -488,13 +541,14 @@ class CredentialManager:
             with self._session() as session:
                 for key, value in token_data.items():
                     is_secret = key in ("access_token", "refresh_token")
-                    existing = session.get(Credential, ("fabric_token", key))
+                    existing = session.get(Credential, (user_id, "fabric_token", key))
                     if existing:
                         existing.value = value
                         existing.is_secret = is_secret
                     else:
                         session.add(
                             Credential(
+                                owner_id=user_id,
                                 service="fabric_token",
                                 key=key,
                                 value=value,
@@ -504,18 +558,35 @@ class CredentialManager:
                 session.commit()
 
             # Also save tenant_id into fabric service for env injection
-            self.save_credentials("fabric", {"tenant_id": tenant_id})
-            logger.info("Saved MSAL tokens for user '%s'", account_username)
+            self.save_credentials("fabric", {"tenant_id": tenant_id}, user_id=user_id)
+            logger.info("Saved MSAL tokens for user '%s' (owner=%d)", account_username, user_id)
         except Exception as exc:
             raise RepositoryError(f"Failed to save MSAL token: {exc}") from exc
 
-    def get_msal_token(self) -> Optional[Dict[str, str]]:
-        """Retrieve the stored MSAL token."""
+    def get_msal_token(self, user_id: int = 0) -> Optional[Dict[str, str]]:
+        """Retrieve the stored Fabric MSAL token.
+
+        Args:
+            user_id: Owner ID.  ``0`` reads the global/system token.
+        """
         try:
             with self._session() as session:
-                rows = session.execute(
-                    select(Credential).where(Credential.service == "fabric_token")
-                ).scalars().all()
+                # Try user-scoped first, fall back to global
+                rows = None
+                if user_id > 0:
+                    rows = session.execute(
+                        select(Credential).where(
+                            Credential.owner_id == user_id,
+                            Credential.service == "fabric_token",
+                        )
+                    ).scalars().all()
+                if not rows:
+                    rows = session.execute(
+                        select(Credential).where(
+                            Credential.owner_id == 0,
+                            Credential.service == "fabric_token",
+                        )
+                    ).scalars().all()
                 if not rows:
                     return None
                 return {row.key: row.value for row in rows}
@@ -599,19 +670,14 @@ class CredentialManager:
         catalog: str = "main",
         schema_name: str = "semabridge",
         expires_in: int = 3600,
+        user_id: int = 0,
     ) -> None:
         """Store Databricks MSAL tokens from an interactive device code login.
 
         Args:
-            access_token: The Azure AD access token scoped to Databricks.
-            refresh_token: The refresh token for silent re-auth.
-            account_username: Azure AD user principal name.
-            tenant_id: Azure AD tenant ID.
-            host: Databricks workspace hostname.
-            warehouse_id: SQL Warehouse ID.
-            catalog: Unity Catalog name.
-            schema_name: Target schema name.
-            expires_in: Token lifetime in seconds.
+            user_id: Owner of this token.  ``0`` (default) stores as a global
+                     token.  Pass the authenticated user's ID for user-scoped
+                     storage that takes precedence over the global row.
         """
         import time
 
@@ -628,21 +694,21 @@ class CredentialManager:
             "schema_name": schema_name,
         }
 
-        self.save_credentials("databricks", token_data)
+        self.save_credentials("databricks", token_data, user_id=user_id)
         logger.info(
-            "Saved Databricks MSAL tokens for user '%s' (tenant: %s)",
+            "Saved Databricks MSAL tokens for user '%s' (tenant: %s, owner=%d)",
             account_username,
             tenant_id[:8] + "..." if len(tenant_id) > 8 else tenant_id,
+            user_id,
         )
 
-    def get_databricks_token(self) -> Optional[Dict[str, str]]:
+    def get_databricks_token(self, user_id: int = 0) -> Optional[Dict[str, str]]:
         """Retrieve stored Databricks MSAL token data.
 
-        Returns:
-            Dictionary with access_token, refresh_token, expires_at, etc.
-            or None if no interactive token exists.
+        Args:
+            user_id: Owner ID.  ``0`` reads the global/system token.
         """
-        creds = self.get_credentials("databricks", mask_secrets=False)
+        creds = self.get_credentials("databricks", mask_secrets=False, user_id=user_id)
         if creds.get("auth_type") != "interactive":
             return None
         if not creds.get("access_token"):

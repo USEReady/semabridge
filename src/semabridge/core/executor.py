@@ -261,78 +261,140 @@ class CLIExecutor:
     def _step_3_resolve_auth(self) -> None:
         """
         Step 3: Resolve Authentication.
-        
-        Resolves credentials strictly from environment variables (via .env file).
-        Validates all required variables for source and target connectors.
-        Does NOT allow inline secrets in configuration files.
+
+        Resolves credentials strictly from environment variables (via .env file)
+        or from the credential database (injected into os.environ at startup).
+
+        Auth-type-aware: validates only the credentials required by the
+        configured auth mode (password, keypair, externalbrowser, oauth, etc.).
         """
         step_start = time.time()
         logger.info("Step 3: Resolving authentication...")
-        
-        # Force reload settings to ensure we have latest .env values
+
+        # Re-inject credentials from DB into os.environ so that any credentials
+        # saved via the UI after server startup are visible to reload_settings().
+        # Uses user_id=0 (global/system scope) for CLI-initiated pipeline runs.
+        try:
+            from semabridge.repository.credential_manager import CredentialManager
+            cm = CredentialManager()
+            for svc in ("snowflake", "fabric", "databricks"):
+                try:
+                    cm.inject_credentials_to_env(svc)
+                except Exception:
+                    pass  # Service may not be configured; that's fine
+            logger.debug("Step 3: DB credentials re-injected into os.environ")
+        except Exception as _inject_err:
+            logger.warning("Step 3: Could not re-inject DB credentials: %s", _inject_err)
+
+        # Force reload settings to pick up any DB-injected env vars
         from semabridge.core.settings import reload_settings
         settings = reload_settings()
-        
+
         errors = []
-        
-        # Validate source authentication using Settings (which reads from .env)
+
+        def _check_snowflake(sf) -> None:
+            """Auth-type-aware Snowflake credential validation."""
+            import os
+
+            # Detect corrupted values — e.g. a raw .env comment stored as value.
+            # This can happen when the UI textarea receives a pre-filled hint line.
+            for attr in ("user", "account", "warehouse", "database"):
+                val = getattr(sf, attr, None) or ""
+                if val.startswith("#") or "=" in val.split("#")[0]:
+                    raise ValueError(
+                        f"SNOWFLAKE_{attr.upper()} appears to contain a raw .env comment "
+                        f"or key=value string ({val!r}). "
+                        "Fix this in Settings → Connections before retrying."
+                    )
+
+            if not sf.account:
+                raise ValueError("SNOWFLAKE_ACCOUNT is not set.")
+            if not sf.user:
+                raise ValueError("SNOWFLAKE_USER is not set.")
+            if not sf.warehouse:
+                raise ValueError("SNOWFLAKE_WAREHOUSE is not set.")
+            if not sf.database:
+                raise ValueError("SNOWFLAKE_DATABASE is not set.")
+
+            auth = (sf.auth_type or "password").lower().strip()
+
+            if auth == "keypair":
+                if not sf.private_key:
+                    raise ValueError(
+                        "auth_type=keypair but SNOWFLAKE_PRIVATE_KEY is not set."
+                    )
+            elif auth == "externalbrowser":
+                pass  # SSO — no extra stored credential required
+            elif auth == "oauth":
+                if not sf.oauth_client_id:
+                    raise ValueError(
+                        "auth_type=oauth but SNOWFLAKE_OAUTH_CLIENT_ID is not set."
+                    )
+                if not sf.oauth_client_secret:
+                    raise ValueError(
+                        "auth_type=oauth but SNOWFLAKE_OAUTH_CLIENT_SECRET is not set."
+                    )
+                if not sf.oauth_token_endpoint:
+                    # Azure tenant from env is acceptable as fallback
+                    if not os.environ.get("AZURE_TENANT_ID"):
+                        raise ValueError(
+                            "auth_type=oauth but SNOWFLAKE_OAUTH_TOKEN_ENDPOINT "
+                            "(or AZURE_TENANT_ID) is not set."
+                        )
+            else:
+                # Default: password auth
+                if not sf.password:
+                    raise ValueError(
+                        "auth_type=password but SNOWFLAKE_PASSWORD is not set."
+                    )
+
+        # Validate source authentication
         if self.config.source.type == "snowflake":
             try:
-                # This will raise if any required Snowflake vars are missing
-                sf = settings.snowflake
-                # Access properties to trigger validation
-                _ = sf.account
-                _ = sf.user
-                _ = sf.password
-                _ = sf.warehouse
-                _ = sf.database
+                _check_snowflake(settings.snowflake)
             except Exception as e:
-                errors.append(f"Snowflake: {e}")
-                
+                errors.append(f"Snowflake source: {e}")
+
         elif self.config.source.type == "fabric":
             try:
-                # This will raise if any required Fabric vars are missing
                 fb = settings.fabric
                 _ = fb.tenant_id
                 _ = fb.client_id
-                _ = fb.client_secret
                 _ = fb.workspace_id
+                # client_secret is only needed for service-principal auth;
+                # interactive / MSAL token flows don't require it.
             except Exception as e:
                 errors.append(f"Fabric: {e}")
-        
+
         # Validate target authentication (if configured)
         if self.config.target:
             if self.config.target.type == "snowflake":
                 try:
-                    sf = settings.snowflake
-                    _ = sf.account
-                    _ = sf.user
-                    _ = sf.password
-                    _ = sf.warehouse
-                    _ = sf.database
+                    _check_snowflake(settings.snowflake)
                 except Exception as e:
-                    if f"Snowflake: {e}" not in errors:
-                        errors.append(f"Snowflake: {e}")
-                        
+                    msg = f"Snowflake target: {e}"
+                    if msg not in errors:
+                        errors.append(msg)
+
             elif self.config.target.type == "fabric":
                 try:
                     fb = settings.fabric
                     _ = fb.tenant_id
                     _ = fb.client_id
-                    _ = fb.client_secret
                     _ = fb.workspace_id
                 except Exception as e:
-                    if f"Fabric: {e}" not in errors:
-                        errors.append(f"Fabric: {e}")
-        
+                    msg = f"Fabric target: {e}"
+                    if msg not in errors:
+                        errors.append(msg)
+
         if errors:
             raise ExecutionError(
-                3, 
-                f"Authentication failed - check .env file: {'; '.join(errors)}"
+                3,
+                f"Authentication failed: {'; '.join(errors)}"
             )
-        
+
         logger.info("  Authentication resolved from environment")
-        
+
         duration_ms = int((time.time() - step_start) * 1000)
         self.summary.add_step(3, STEP_NAMES[3], StepStatus.SUCCESS,
                                message="Credentials verified", duration_ms=duration_ms)

@@ -8,7 +8,7 @@ import PageHeader from '../components/common/PageHeader';
 
 // ─── Format badge colours (one per dialect) ─────────────────────────────────
 const FORMAT_META = {
-  OSI:            { label: 'OSI v1.0',       bg: 'var(--color-accent-faint)',   color: 'var(--accent-blue)' },
+  OSI:            { label: 'OSI',       bg: 'var(--color-accent-faint)',   color: 'var(--accent-blue)' },
   FABRIC_OSI:     { label: 'Fabric',         bg: 'rgba(59,130,246,0.12)',       color: '#3b82f6' },
   SML:            { label: 'SML',            bg: 'rgba(139,92,246,0.12)',        color: 'var(--accent-purple)' },
   TSML:           { label: 'TSML',           bg: 'rgba(249,115,22,0.10)',        color: 'var(--accent-orange)' },
@@ -23,16 +23,16 @@ const FORMAT_META = {
 // ─── Diff status display config ───────────────────────────────────────────────
 const DIFF_STATUS = {
   identical:  { label: 'Identical',   color: 'var(--color-success)',  bg: 'var(--color-success-bg)',   border: 'var(--color-success)' },
-  only_in_1:  { label: 'Only in F1',  color: 'var(--accent-blue)',    bg: 'var(--color-accent-faint)', border: 'var(--accent-blue)' },
-  only_in_2:  { label: 'Only in F2',  color: 'var(--accent-purple)',  bg: 'rgba(139,92,246,0.10)',     border: 'var(--accent-purple)' },
+  only_in_1:  { label: 'Only in File 1',  color: 'var(--accent-blue)',    bg: 'var(--color-accent-faint)', border: 'var(--accent-blue)' },
+  only_in_2:  { label: 'Only in File 2',  color: 'var(--accent-purple)',  bg: 'rgba(139,92,246,0.10)',     border: 'var(--accent-purple)' },
   modified:   { label: 'Modified',    color: 'var(--color-warning)',  bg: 'var(--color-warning-bg)',   border: 'var(--color-warning)' },
 };
 
 const FILTER_OPTIONS = [
   { id: 'all',       label: 'All' },
   { id: 'identical', label: 'Identical' },
-  { id: 'only_in_1', label: 'Only in F1' },
-  { id: 'only_in_2', label: 'Only in F2' },
+  { id: 'only_in_1', label: 'Only in File 1' },
+  { id: 'only_in_2', label: 'Only in File 2' },
   { id: 'modified',  label: 'Modified' },
 ];
 
@@ -132,14 +132,24 @@ function StatCard({ icon: Icon, label, value, accent, breakdown }) {
       </div>
       
       {breakdown && breakdown.some(b => b.value > 0) && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
           {breakdown.map((b, i) => b.value > 0 && (
-            <span key={i} style={{ 
-              fontSize: 10, padding: '2px 6px', borderRadius: 4, 
-              background: b.bg, color: b.color, fontWeight: 600 
+            <div key={i} style={{ 
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '3px 6px 3px 10px', borderRadius: 20, 
+              background: b.bg,
+              border: `1px solid ${b.color}30`,
+              color: b.color, fontSize: 11, fontWeight: 600 
             }}>
-              {b.value} {b.label}
-            </span>
+              {b.label}
+              <span style={{
+                background: b.color, color: '#fff',
+                padding: '1px 6px', borderRadius: 10, fontSize: 10, fontWeight: 700,
+                minWidth: 18, textAlign: 'center'
+              }}>
+                {b.value}
+              </span>
+            </div>
           ))}
         </div>
       )}
@@ -296,177 +306,158 @@ function StatsPanel({ data, fileName }) {
   });
 
   return (
-    <div style={{
-      background: 'var(--bg-surface)',
-      border: '1px solid var(--border-main)',
-      borderRadius: 12, marginTop: 24, overflow: 'hidden',
-    }}>
-      {/* Header */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 24 }}>
+      {/* Header and Summary Cards */}
       <div style={{
-        padding: '14px 20px',
-        borderBottom: '1px solid var(--border-main)',
-        background: 'var(--bg-surface-raised)',
-        display: 'flex', alignItems: 'center', gap: 10,
+        background: 'var(--bg-surface)',
+        border: '1px solid var(--border-main)',
+        borderRadius: 12, overflow: 'hidden',
       }}>
-        <FileText size={16} color="var(--accent-blue)" />
-        <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
-          {fileName}
-        </span>
-        <FormatBadge format={data.format} />
-      </div>
-
-      {/* Summary stat cards */}
-      <div style={{ padding: '16px 20px', display: 'flex', gap: 12, flexWrap: 'wrap', borderBottom: '1px solid var(--border-main)' }}>
-        <StatCard icon={Layers}   label="Tables"        value={data.summary.total_tables}         accent="var(--accent-blue)" />
-        <StatCard icon={Hash}     label="Columns"       value={data.summary.total_columns}        accent="var(--accent-purple)" />
-        <StatCard icon={BarChart3} label="Metrics"       value={data.summary.total_metrics}        accent="var(--accent-orange)" />
-        <StatCard icon={Link2}    label="Relationships" value={data.summary.total_relationships}   accent="var(--accent-cyan)" />
-      </div>
-
-      {/* Table breakdown */}
-      <div style={{ borderBottom: '1px solid var(--border-main)' }}>
-        <div style={{ padding: '10px 16px 6px', fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-          Tables
+        <div style={{
+          padding: '14px 20px',
+          borderBottom: '1px solid var(--border-main)',
+          background: 'var(--bg-surface-raised)',
+          display: 'flex', alignItems: 'center', gap: 10,
+        }}>
+          <FileText size={16} color="var(--accent-blue)" />
+          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+            {fileName}
+          </span>
+          <FormatBadge format={data.format} />
         </div>
-        {data.tables.length === 0 ? (
-          <div style={{ padding: '12px 16px', fontSize: 13, color: 'var(--text-tertiary)', fontStyle: 'italic' }}>No tables detected.</div>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ background: 'var(--bg-surface-raised)' }}>
-                {['Table', 'Columns', 'Metrics', 'Relationships'].map(h => (
-                  <th key={h} style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em', borderBottom: '1px solid var(--border-main)' }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {data.tables.map((t, i) => (
-                <tr key={t.name} style={{ borderTop: i > 0 ? '1px solid var(--border-light)' : 'none' }}>
-                  <td style={{ padding: '10px 16px', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{t.name}</td>
-                  <td style={{ padding: '10px 16px', fontSize: 13, color: 'var(--text-secondary)' }}>{t.column_count}</td>
-                  <td style={{ padding: '10px 16px', fontSize: 13, color: 'var(--text-secondary)' }}>{t.metric_count}</td>
-                  <td style={{ padding: '10px 16px', fontSize: 13, color: 'var(--text-secondary)' }}>{t.relationship_count}</td>
-                </tr>
+        <div style={{ padding: '16px 20px', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <StatCard icon={Layers}   label="Tables"        value={data.summary.total_tables}         accent="var(--accent-blue)" />
+          <StatCard icon={Hash}     label="Columns"       value={data.summary.total_columns}        accent="var(--accent-purple)" />
+          <StatCard icon={BarChart3} label="Metrics"       value={data.summary.total_metrics}        accent="var(--accent-orange)" />
+          <StatCard icon={Link2}    label="Relationships" value={data.summary.total_relationships}   accent="var(--accent-cyan)" />
+        </div>
+      </div>
+
+      {/* Tables Section */}
+      <div style={{
+        background: 'var(--bg-surface)',
+        border: '1px solid var(--border-main)',
+        borderRadius: 12, overflow: 'hidden',
+      }}>
+        <SectionHeader title="Tables" count={data.tables.length} icon={Layers} />
+        <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {data.tables.length === 0 ? (
+            <div style={{ padding: '10px 14px', fontSize: 13, color: 'var(--text-tertiary)', fontStyle: 'italic', textAlign: 'center' }}>No tables detected.</div>
+          ) : data.tables.map(t => (
+            <div key={t.name} style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--bg-surface-raised)', border: '1px solid var(--border-light)', borderLeft: '3px solid var(--accent-blue)' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>{t.name}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{t.column_count} col &middot; {t.metric_count} metric &middot; {t.relationship_count} rel</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Columns Section */}
+      <div style={{
+        background: 'var(--bg-surface)',
+        border: '1px solid var(--border-main)',
+        borderRadius: 12, overflow: 'hidden',
+      }}>
+        <SectionHeader title="Columns" count={filteredCols.length} icon={Hash} />
+        <div style={{ padding: '10px 14px 0', display: 'flex', gap: 10 }}>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)' }}>
+            <Search size={14} color="var(--text-tertiary)" />
+            <input
+              type="text" placeholder="Search columns…" value={colSearch}
+              onChange={e => setColSearch(e.target.value)}
+              style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: 'var(--text-primary)', width: '100%' }}
+            />
+          </div>
+          {availableTypes.length > 0 && (
+            <select
+              value={colTypeFilter}
+              onChange={(e) => setColTypeFilter(e.target.value)}
+              style={{
+                padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border-main)',
+                background: 'var(--bg-surface-raised)', color: 'var(--text-primary)',
+                fontSize: 12, outline: 'none', cursor: 'pointer', maxWidth: '140px'
+              }}
+            >
+              <option value="All Types">All Types</option>
+              {availableTypes.map(type => (
+                <option key={type} value={type}>{type}</option>
               ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {/* Columns & Metrics side-by-side */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderBottom: '1px solid var(--border-main)' }}>
-        {/* Columns with search */}
-        <div style={{ borderRight: '1px solid var(--border-main)' }}>
-          <div style={{ padding: '10px 16px 6px', fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Columns</div>
-          <div style={{ padding: '0 14px 8px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)' }}>
-                <Search size={12} color="var(--text-tertiary)" />
-                <input
-                  type="text" placeholder="Search columns…" value={colSearch}
-                  onChange={e => setColSearch(e.target.value)}
-                  style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: 12, color: 'var(--text-primary)', width: '100%' }}
-                />
-              </div>
-              {availableTypes.length > 0 && (
-                <select
-                  value={colTypeFilter}
-                  onChange={(e) => setColTypeFilter(e.target.value)}
-                  style={{
-                    padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border-main)',
-                    background: 'var(--bg-surface-raised)', color: 'var(--text-primary)',
-                    fontSize: 12, outline: 'none', cursor: 'pointer', maxWidth: '120px'
-                  }}
-                >
-                  <option value="All Types">All Types</option>
-                  {availableTypes.map(type => (
-                    <option key={type} value={type}>{type}</option>
-                  ))}
-                </select>
-              )}
-            </div>
-          </div>
-          <div style={{ maxHeight: 240, overflowY: 'auto' }} className="custom-scrollbar">
-            {filteredCols.length === 0 ? (
-              <div style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-tertiary)', fontStyle: 'italic' }}>{colSearch ? 'No matches' : 'None'}</div>
-            ) : filteredCols.map(col => (
-              <div key={`${col.table}.${col.name}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 14px', borderBottom: '1px solid var(--border-light)' }}>
-                <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>
-                  <span style={{ color: 'var(--text-tertiary)' }}>{col.table}.</span>{col.name}
-                </span>
-                <span style={{
-                  fontSize: 10, fontWeight: 600, fontFamily: 'monospace',
-                  color: 'var(--accent-orange)', background: 'rgba(249,115,22,0.08)',
-                  padding: '2px 6px', borderRadius: 4,
-                }}>{col.type || '—'}</span>
-              </div>
-            ))}
-          </div>
+            </select>
+          )}
         </div>
-
-        {/* Metrics with search */}
-        <div>
-          <div style={{ padding: '10px 16px 6px', fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Metrics</div>
-          <div style={{ padding: '0 14px 8px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)' }}>
-              <Search size={12} color="var(--text-tertiary)" />
-              <input
-                type="text" placeholder="Search metrics…" value={metSearch}
-                onChange={e => setMetSearch(e.target.value)}
-                style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: 12, color: 'var(--text-primary)', width: '100%' }}
-              />
+        <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {filteredCols.length === 0 ? (
+            <div style={{ padding: '10px 14px', fontSize: 13, color: 'var(--text-tertiary)', fontStyle: 'italic', textAlign: 'center' }}>{colSearch ? 'No matches' : 'None'}</div>
+          ) : filteredCols.map(col => (
+            <div key={`${col.table}.${col.name}`} style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--bg-surface-raised)', border: '1px solid var(--border-light)', borderLeft: '3px solid var(--accent-purple)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>
+                <span style={{ color: 'var(--text-tertiary)' }}>{col.table}.</span>{col.name}
+              </span>
+              <span style={{
+                fontSize: 10, fontWeight: 600, fontFamily: 'monospace',
+                color: 'var(--accent-orange)', background: 'rgba(249,115,22,0.08)',
+                padding: '2px 6px', borderRadius: 4,
+              }}>{col.type || '—'}</span>
             </div>
-          </div>
-          <div style={{ maxHeight: 240, overflowY: 'auto' }} className="custom-scrollbar">
-            {filteredMetrics.length === 0 ? (
-              <div style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-tertiary)', fontStyle: 'italic' }}>{metSearch ? 'No matches' : 'None'}</div>
-            ) : filteredMetrics.map(m => (
-              <div key={`${m.table}.${m.name}`} style={{ padding: '7px 14px', borderBottom: '1px solid var(--border-light)' }}>
-                <div style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 600, marginBottom: 3 }}>
-                  <span style={{ color: 'var(--text-tertiary)' }}>{m.table}.</span>{m.name}
-                </div>
-                <div style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--accent-orange)', wordBreak: 'break-all' }}>
-                  {m.definition}
-                </div>
-              </div>
-            ))}
-          </div>
+          ))}
         </div>
       </div>
 
-      {/* Relationships — structured cards */}
+      {/* Metrics Section */}
+      <div style={{
+        background: 'var(--bg-surface)',
+        border: '1px solid var(--border-main)',
+        borderRadius: 12, overflow: 'hidden',
+      }}>
+        <SectionHeader title="Metrics" count={filteredMetrics.length} icon={BarChart3} />
+        <div style={{ padding: '10px 14px 0', display: 'flex', gap: 10 }}>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)' }}>
+            <Search size={14} color="var(--text-tertiary)" />
+            <input
+              type="text" placeholder="Search metrics…" value={metSearch}
+              onChange={e => setMetSearch(e.target.value)}
+              style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: 'var(--text-primary)', width: '100%' }}
+            />
+          </div>
+        </div>
+        <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {filteredMetrics.length === 0 ? (
+            <div style={{ padding: '10px 14px', fontSize: 13, color: 'var(--text-tertiary)', fontStyle: 'italic', textAlign: 'center' }}>{metSearch ? 'No matches' : 'None'}</div>
+          ) : filteredMetrics.map(m => (
+            <div key={`${m.table}.${m.name}`} style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--bg-surface-raised)', border: '1px solid var(--border-light)', borderLeft: '3px solid var(--accent-orange)' }}>
+              <div style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 600, marginBottom: 6 }}>
+                <span style={{ color: 'var(--text-tertiary)' }}>{m.table}.</span>{m.name}
+              </div>
+              <div style={{ padding: '10px 14px', background: 'var(--bg-surface)', borderRadius: 6, fontSize: 11, fontFamily: 'monospace', color: 'var(--accent-orange)', wordBreak: 'break-all' }}>
+                {m.definition}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Relationships Section */}
       {data.relationships.length > 0 && (
-        <div>
-          <div style={{ padding: '10px 16px 6px', fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Relationships</div>
-          <div style={{ padding: '8px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{
+          background: 'var(--bg-surface)',
+          border: '1px solid var(--border-main)',
+          borderRadius: 12, overflow: 'hidden',
+        }}>
+          <SectionHeader title="Relationships" count={data.relationships.length} icon={Link2} />
+          <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
             {data.relationships.map(r => (
               <div key={r.name} style={{
                 padding: '12px 16px', borderRadius: 8,
                 background: 'var(--bg-surface-raised)',
                 border: '1px solid var(--border-light)',
+                borderLeft: '3px solid var(--accent-cyan)'
               }}>
-                {/* From → To row */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                  <span style={{
-                    padding: '3px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600,
-                    background: 'var(--color-accent-faint)', color: 'var(--accent-blue)',
-                    border: '1px solid var(--accent-blue)25',
-                  }}>{r.left_table}</span>
+                  <span style={{ padding: '3px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600, background: 'var(--color-accent-faint)', color: 'var(--accent-blue)', border: '1px solid var(--accent-blue)25' }}>{r.left_table}</span>
                   <ArrowRightLeft size={14} color="var(--text-tertiary)" />
-                  <span style={{
-                    padding: '3px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600,
-                    background: 'rgba(139,92,246,0.10)', color: 'var(--accent-purple)',
-                    border: '1px solid var(--accent-purple)25',
-                  }}>{r.right_table}</span>
-                  <span style={{
-                    marginLeft: 'auto', fontSize: 10, fontWeight: 700,
-                    color: 'var(--accent-cyan)', background: 'rgba(56,189,248,0.10)',
-                    padding: '2px 10px', borderRadius: 12, border: '1px solid var(--accent-cyan)30',
-                  }}>{r.cardinality}</span>
+                  <span style={{ padding: '3px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600, background: 'rgba(139,92,246,0.10)', color: 'var(--accent-purple)', border: '1px solid var(--accent-purple)25' }}>{r.right_table}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, color: 'var(--accent-cyan)', background: 'rgba(56,189,248,0.10)', padding: '2px 10px', borderRadius: 12, border: '1px solid var(--accent-cyan)30' }}>{r.cardinality}</span>
                 </div>
-                {/* Column mapping */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
                   <span style={{ color: 'var(--accent-blue)' }}>{r.left_column}</span>
                   <span style={{ color: 'var(--text-tertiary)' }}>→</span>
@@ -742,7 +733,7 @@ function MetricsDiffSection({ items }) {
           </div>
         ) : filteredItems.map(m => {
           const cfg = DIFF_STATUS[m._diff_status] ?? DIFF_STATUS.identical;
-          const isModified = m._diff_status === 'modified';
+          const isModified = m._diff_status === 'modified' || (m._diff_status === 'identical' && m._llm_verdict != null);
           const llmRes = m._llm_verdict;
 
           return (
@@ -975,7 +966,7 @@ export default function ComparatorPage() {
     <div style={{ padding: '28px 32px', minHeight: '100%' }}>
       <PageHeader
         title="Semantic Comparator"
-        description="Analyse and diff OSI, SML, TSML, and Snowflake semantic model YAML definitions."
+        description="Analyse and difference OSI, SML, TSML, and Snowflake semantic model YAML definitions."
       />
 
       {/* Error banner — matches pattern used across all Semabridge pages */}
@@ -1077,7 +1068,7 @@ export default function ComparatorPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
               <GitCompare size={18} color="var(--accent-blue)" />
               <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' }}>
-                Semantic Diff
+                Semantic Difference
               </h2>
               {compareResults.file1_name && <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{compareResults.file1_name}</span>}
               {compareResults.file1_format && <FormatBadge format={compareResults.file1_format} />}
@@ -1096,8 +1087,8 @@ export default function ComparatorPage() {
                   const makeBreakdown = (diffs) => [
                     { label: 'Identical', value: diffs.identical, bg: 'var(--color-success-bg)', color: 'var(--color-success)' },
                     i === 0 
-                      ? { label: 'Only F1', value: diffs.only_in_1, bg: 'var(--color-accent-faint)', color: 'var(--accent-blue)' }
-                      : { label: 'Only F2', value: diffs.only_in_2, bg: 'rgba(139,92,246,0.12)', color: 'var(--accent-purple)' },
+                      ? { label: 'Only in File 1', value: diffs.only_in_1, bg: 'var(--color-accent-faint)', color: 'var(--accent-blue)' }
+                      : { label: 'Only in File 2', value: diffs.only_in_2, bg: 'rgba(139,92,246,0.12)', color: 'var(--accent-purple)' },
                     { label: 'Modified', value: diffs.modified, bg: 'rgba(245,158,11,0.1)', color: 'var(--color-warning)' },
                   ];
                   return (

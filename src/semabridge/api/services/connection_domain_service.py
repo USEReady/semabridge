@@ -1250,26 +1250,39 @@ def _sync_workspace_to_config(workspace_id: str, workspace_name: str) -> None:
 # Connections Management (UI-Driven Auth)
 # -------------------------------------------------------
 
-async def get_connections_status():
-    """Get configuration status for all supported services."""
+async def get_connections_status(user_id: int = 0):
+    """Get configuration status for all supported services.
+
+    Args:
+        user_id: Authenticated user ID.  ``0`` returns global/system status.
+    """
     from semabridge.repository.credential_manager import CredentialManager
 
     try:
         cm = CredentialManager()
-        return cm.get_connection_status()
+        return cm.get_connection_status(user_id=user_id)
     except Exception as e:
         logger.exception(f"Failed to fetch connection status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def save_connection(service: str, payload: Dict[str, Any]):
-    """Save credentials for a service and refresh in-process settings."""
+async def save_connection(service: str, payload: Dict[str, Any], user_id: int = 0):
+    """Save credentials for a service and refresh in-process settings.
+
+    Args:
+        user_id: Owner of these credentials.  ``0`` stores as global/system.
+                 Pass the authenticated user's ID for user-scoped storage.
+    """
     from semabridge.repository.credential_manager import CredentialManager
 
     try:
         cm = CredentialManager()
-        saved = cm.save_credentials(service, payload)
-        cm.inject_credentials_to_env(service)
+        saved = cm.save_credentials(service, payload, user_id=user_id)
+        # Inject to os.environ using the full precedence chain so that
+        # connectors initialised in this process pick up the new values.
+        # For user-scoped saves, we inject the user's credentials (not global)
+        # so that the in-process settings.reload() picks them up correctly.
+        cm.inject_credentials_to_env(service, user_id=user_id)
         reload_settings()
         return {
             "status": "saved",
@@ -1281,26 +1294,35 @@ async def save_connection(service: str, payload: Dict[str, Any]):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def delete_connection(service: str):
-    """Remove stored credentials for a service."""
+async def delete_connection(service: str, user_id: int = 0):
+    """Remove stored credentials for a service.
+
+    Args:
+        user_id: Scope to delete.  ``0`` removes global rows; pass a user
+                 ID to remove only that user's rows.
+    """
     from semabridge.repository.credential_manager import CredentialManager
 
     try:
         cm = CredentialManager()
-        cm.delete_credentials(service)
+        cm.delete_credentials(service, user_id=user_id)
         return {"status": "deleted", "service": service}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def test_connection(service: str):
-    """Test the stored credentials for a service by attempting authentication."""
+async def test_connection(service: str, user_id: int = 0):
+    """Test the stored credentials for a service by attempting authentication.
+
+    Args:
+        user_id: Authenticated user ID.  ``0`` uses global/system credentials.
+    """
     from semabridge.repository.credential_manager import CredentialManager
 
     cm = CredentialManager()
 
     try:
-        cm.inject_credentials_to_env(service)
+        cm.inject_credentials_to_env(service, user_id=user_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"No credentials stored: {e}")
 

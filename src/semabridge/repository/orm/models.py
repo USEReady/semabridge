@@ -695,14 +695,44 @@ class SyncCheckpointRow(Base):
 # =============================================================================
 
 class Credential(Base):
-    """Service credential storage.
+    """Service credential storage — user-scoped via composite PK.
 
     Replaces the ``semabridge_credentials`` table created by
-    CredentialManager DDL.  Composite PK on (service, key).
+    CredentialManager DDL.
+
+    Primary Key: ``(owner_id, service, key)``
+
+    Scoping:
+        - ``owner_id = 0``          → global / system row used by the CLI,
+                                       background sync, and startup injection.
+                                       This is the sentinel value (no matching
+                                       ``users`` row required — FK is not
+                                       enforced for the sentinel).
+        - ``owner_id = <user.id>``  → user-scoped row.  Takes precedence over
+                                       the sentinel row when both exist for the
+                                       same ``(service, key)`` pair.
+
+    Lookup precedence (inside CredentialManager):
+        1. User-scoped row  (owner_id == user_id, user_id > 0)
+        2. Global row       (owner_id == 0)
+        3. os.environ       (populated from .env at startup)
+
+    The leading ``owner_id`` column in the composite PK physically co-locates
+    each user's credentials on disk, making per-user range scans an index seek
+    rather than a full scan.  This matches the industry-standard multi-tenant
+    composite-key pattern (HashiCorp Vault, Stripe internal KV store).
     """
 
     __tablename__ = "semabridge_credentials"
+    __table_args__ = (
+        # Composite index on (owner_id, service) enables efficient
+        # "give me all credentials for user X and service Y" queries.
+        Index("ix_credential_owner_service", "owner_id", "service"),
+    )
 
+    # owner_id=0 is the sentinel for system/global credentials.
+    # User rows use the actual users.id value (always > 0).
+    owner_id: Mapped[int] = mapped_column(Integer, primary_key=True, default=0)
     service: Mapped[str] = mapped_column(String(50), primary_key=True)
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[str] = mapped_column(Text, nullable=False)
@@ -714,7 +744,7 @@ class Credential(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<Credential(service={self.service!r}, key={self.key!r})>"
+        return f"<Credential(owner_id={self.owner_id}, service={self.service!r}, key={self.key!r})>"
 
 
 class CommandLog(Base):

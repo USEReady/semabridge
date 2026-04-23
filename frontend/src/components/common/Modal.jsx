@@ -40,13 +40,16 @@ export default function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'var(--bg-backdrop)', backdropFilter: 'blur(4px)' }}
+      style={{ 
+        position: 'fixed', inset: 0, zIndex: 50,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+        background: 'var(--bg-backdrop)', backdropFilter: 'blur(4px)' 
+      }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose?.(); }}
     >
       <div
-        className="w-full rounded-2xl flex flex-col overflow-hidden"
         style={{
+          width: '100%', borderRadius: 16, display: 'flex', flexDirection: 'column', overflow: 'hidden',
           maxWidth: isMaximized ? '96vw' : maxW,
           background: 'var(--bg-surface)',
           border: '1px solid var(--border-main)',
@@ -56,27 +59,26 @@ export default function Modal({
       >
         {/* Header */}
         <div
-          className="flex items-center justify-between px-6 py-4 flex-shrink-0"
-          style={{ borderBottom: '1px solid var(--border-main)' }}
+          style={{ 
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', 
+            padding: '16px 24px', flexShrink: 0,
+            borderBottom: '1px solid var(--border-main)' 
+          }}
         >
-          <h2 className="text-primary font-semibold text-base" style={{ margin: 0 }}>
+          <h2 style={{ margin: 0, color: 'var(--text-primary)', fontWeight: 600, fontSize: 16 }}>
             {title}
           </h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             {allowMaximize && (
               <button
                 onClick={onToggleMaximize}
-                className="flex items-center justify-center rounded-lg transition-colors"
                 style={{
-                  width: 28,
-                  height: 28,
-                  color: 'var(--text-tertiary)',
-                  background: 'transparent',
-                  border: 'none',
-                  cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, transition: 'background-color 0.2s',
+                  width: 28, height: 28, padding: 0, margin: 0,
+                  color: 'var(--text-secondary)', background: 'transparent', border: 'none', cursor: 'pointer', outline: 'none'
                 }}
                 onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-surface-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
                 title={isMaximized ? 'Exit fullscreen' : 'Maximize'}
                 aria-label={isMaximized ? 'Exit fullscreen' : 'Maximize'}
               >
@@ -85,33 +87,35 @@ export default function Modal({
             )}
             <button
               onClick={onClose}
-              className="flex items-center justify-center rounded-lg transition-colors"
               style={{
-                width: 28,
-                height: 28,
-                color: 'var(--text-tertiary)',
-                background: 'transparent',
-                border: 'none',
-                cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, transition: 'background-color 0.2s',
+                width: 28, height: 28, padding: 0, margin: 0,
+                color: 'var(--text-secondary)', background: 'transparent', border: 'none', cursor: 'pointer', outline: 'none'
               }}
               onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-surface-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
             >
-              <X size={16} />
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
             </button>
           </div>
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+        <div className="custom-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
           {children}
         </div>
 
         {/* Footer */}
         {footer && (
           <div
-            className="flex items-center justify-end gap-3 px-6 py-4 flex-shrink-0"
-            style={{ borderTop: '1px solid var(--border-main)' }}
+            style={{ 
+              display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12, 
+              padding: '16px 24px', flexShrink: 0,
+              borderTop: '1px solid var(--border-main)' 
+            }}
           >
             {footer}
           </div>

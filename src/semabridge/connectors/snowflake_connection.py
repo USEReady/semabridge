@@ -185,8 +185,26 @@ def get_snowflake_connect_kwargs(config: SnowflakeConfig) -> Dict[str, Any]:
 
     Raises:
         ValueError: When required credentials for the chosen auth mode
-            are missing or invalid.
+            are missing or invalid, or when a field contains a corrupted value
+            (e.g. a raw .env comment string such as ``# SNOWFLAKE_USER=...``).
     """
+    # --- Guard: reject corrupted credential values before hitting the network ---
+    # A value like '# SNOWFLAKE_USER=SABIHA' is a raw .env comment that ended up
+    # in the credential store.  Sending it to Snowflake produces a cryptic
+    # "JWT token is invalid" (or "Failed to connect") error with no hint about
+    # the real cause.  Catching it here gives an immediately actionable message.
+    for field_name in ("user", "account", "warehouse", "database"):
+        val: str = getattr(config, field_name, None) or ""
+        val_stripped = val.strip()
+        if val_stripped.startswith("#") or (
+            "=" in val_stripped and not val_stripped.startswith("-----")
+        ):
+            raise ValueError(
+                f"SNOWFLAKE_{field_name.upper()} has an invalid value: {val!r}. "
+                "This looks like a raw .env comment or key=value string. "
+                "Update the credential in Settings \u2192 Connections and retry."
+            )
+
     kwargs: Dict[str, Any] = {
         "user": config.user,
         "account": config.account,

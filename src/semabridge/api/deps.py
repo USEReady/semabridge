@@ -166,7 +166,50 @@ def get_current_user(
     return user
 
 
+def get_current_user_optional(
+    request: Request,
+    db: "Session | None" = None,
+) -> "User | None":
+    """Resolve the authenticated user without raising on failure.
+
+    Unlike :func:`get_current_user`, this function returns ``None`` when
+    authentication is disabled or no valid token is present.  Use this
+    wherever the caller must gracefully handle unauthenticated contexts
+    (e.g. dev mode, CLI, or optional-auth endpoints).
+
+    Args:
+        request: The incoming FastAPI request.
+        db: Optional SQLAlchemy session.  If ``None``, one is opened from
+            the session factory for the duration of this call.
+
+    Returns:
+        The authenticated :class:`User` row, or ``None`` if not authenticated.
+    """
+    from semabridge.repository.orm.models import User as UserModel
+
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        return None
+
+    def _fetch(session: "Session") -> "User | None":
+        user = session.get(UserModel, int(user_id))
+        if not user or not user.is_active:
+            return None
+        return user
+
+    if db is not None:
+        return _fetch(db)
+
+    try:
+        from semabridge.repository.orm.session_factory import db_manager
+        with db_manager.get_session() as session:
+            return _fetch(session)
+    except Exception:
+        return None
+
+
 def get_scoped_db(request: Request) -> Generator["Session", None, None]:
+
     """FastAPI dependency — yield a tenant-scoped SQLAlchemy session.
 
     Like :func:`get_db`, but also sets the PostgreSQL session variable
