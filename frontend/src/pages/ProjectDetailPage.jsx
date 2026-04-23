@@ -8,6 +8,7 @@ import {
 import { api } from '../utils/api';
 import StatusBadge from '../components/common/StatusBadge';
 import PageHeader from '../components/common/PageHeader';
+import { useUIStore } from '../store/uiStore';
 
 function normalizeSourceKey(value) {
   if (!value) return '';
@@ -38,12 +39,14 @@ export default function ProjectDetailPage() {
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const setActiveProjectId = useUIStore(state => state.setActiveProjectId);
 
   useEffect(() => {
     const fetchProject = async () => {
       try {
         const data = await api.getProject(id);
         setProject(data);
+        setActiveProjectId(data?.id || id);
       } catch (err) {
         console.error('Failed to fetch project:', err);
       } finally {

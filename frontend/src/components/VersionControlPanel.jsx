@@ -79,8 +79,6 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
     const [diffs, setDiffs] = useState(null);
     const [isComparing, setIsComparing] = useState(false);
     const [rollbackTarget, setRollbackTarget] = useState(null);
-    const [deleteConfirm, setDeleteConfirm] = useState(false);
-    const [isDeleting, setIsDeleting] = useState(false);
     const [isRollingBack, setIsRollingBack] = useState(false);
     const [rollbackError, setRollbackError] = useState('');
     const [objectTypeFilter, setObjectTypeFilter] = useState('All');
@@ -117,12 +115,12 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
         } finally {
             setIsLoading(false);
         }
-    }, [activeModelId, addLog]);
+    }, [activeProjectId, addLog]);
 
-    // Reload versions when panel opens or active model changes
+    // Reload versions when panel opens or active project changes
     useEffect(() => {
         if (isOpen) loadVersions();
-    }, [isOpen, loadVersions]);
+    }, [isOpen, activeProjectId, loadVersions]);
 
     useEffect(() => {
         return () => {
@@ -153,22 +151,21 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
         }
     };
 
-    const handleRollback = async (versionId) => {
+    const handleRollback = async (runId) => {
         setIsRollingBack(true);
         setRollbackError('');
         try {
-            const v = versions.find(ver => ver.version_id === versionId);
-            if (v?.can_rollback === false) {
-                addLog('warning', 'Version Control', 'Rollback is not supported for this version source.');
+            const v = versions.find(ver => ver.run_id === runId);
+            if (!v || !v.after_tgt_snapshots || !v.after_tgt_snapshots[0]) {
+                addLog('warning', 'Version Control', 'Cannot rollback: no target snapshot found for this run.');
                 setRollbackTarget(null);
                 return;
             }
-            const modelId = v?.model_id || activeModelId || 'default';
-            const wsId = v?.workspace_id || 'default';
-            const result = await api.rollbackVersion(versionId, modelId, wsId);
+            const payload = { snapshot_id: v.after_tgt_snapshots[0] };
+            const result = await api.restoreProjectVersion(activeProjectId, payload);
             setRollbackTarget(null);
             addLog('info', 'Version Control',
-                `Rollback successful: ${modelId} restored to ${v?.version_tag || versionId.substring(0, 8)}. New version: ${result.new_version_id?.substring(0, 8)}`
+                `Rollback initiated: new restore run ${result.run_id?.substring(0, 8)} created.`
             );
             loadVersions();
         } catch (err) {
@@ -177,24 +174,6 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
             addLog('error', 'Version Control', `Rollback failed: ${err.message}`);
         } finally {
             setIsRollingBack(false);
-        }
-    };
-
-    const handleDeleteAll = async () => {
-        if (!activeModelId) return;
-        setIsDeleting(true);
-        try {
-            const result = await api.deleteAllVersions(activeModelId);
-            addLog('info', 'Version Control', `Deleted ${result.deleted} version(s) for ${activeModelId}`);
-            setVersions([]);
-            setDiffs(null);
-            setSelectedForCompare([]);
-            setDeleteConfirm(false);
-        } catch (err) {
-            console.error('Delete failed:', err);
-            addLog('error', 'Version Control', `Delete failed: ${err.message}`);
-        } finally {
-            setIsDeleting(false);
         }
     };
 
@@ -265,8 +244,8 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                             <button
                                 onClick={() => setViewMode('history')}
                                 className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 border ${viewMode === 'history'
-                                        ? 'bg-[#6467f2]/20 text-[#6467f2] border-[#6467f2]/50 shadow-lg shadow-[#6467f2]/15'
-                                        : 'text-slate-400 border-slate-700/50 hover:border-[#6467f2]/50 hover:text-[#6467f2] hover:bg-slate-800/40'
+                                    ? 'bg-[#6467f2]/20 text-[#6467f2] border-[#6467f2]/50 shadow-lg shadow-[#6467f2]/15'
+                                    : 'text-slate-400 border-slate-700/50 hover:border-[#6467f2]/50 hover:text-[#6467f2] hover:bg-slate-800/40'
                                     }`}
                             >
                                 History
@@ -281,8 +260,8 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                                     }, 0);
                                 }}
                                 className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 border ${viewMode === 'diff'
-                                        ? 'bg-[#6467f2]/20 text-[#6467f2] border-[#6467f2]/50 shadow-lg shadow-[#6467f2]/15'
-                                        : 'text-slate-400 border-slate-700/50 hover:border-[#6467f2]/50 hover:text-[#6467f2] hover:bg-slate-800/40'
+                                    ? 'bg-[#6467f2]/20 text-[#6467f2] border-[#6467f2]/50 shadow-lg shadow-[#6467f2]/15'
+                                    : 'text-slate-400 border-slate-700/50 hover:border-[#6467f2]/50 hover:text-[#6467f2] hover:bg-slate-800/40'
                                     }`}
                             >
                                 Diff Mode
@@ -409,149 +388,110 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                     )}
 
                     {viewMode === 'diff' && <div ref={diffSectionRef} className="px-6 pb-6 space-y-6">
-                    {/* Version History List */}
-                    <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                            <h3 className="text-sm font-bold text-primary">Version History • {activeSnapshotLabel}</h3>
-                            <div className="flex items-center gap-2">
-                            <button
-                                onClick={() => versions.length > 0 && setDeleteConfirm(true)}
-                                disabled={!activeModelId || versions.length === 0}
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all border border-red-500/30 text-red-400 hover:bg-red-500/10 disabled:opacity-40 disabled:cursor-not-allowed"
-                                title="Delete all versions for this model"
-                            >
-                                <Trash2 size={12} /> Delete All
-                            </button>
-                            <button
-                                onClick={handleCompare}
-                                disabled={selectedForCompare.length !== 2 || isComparing}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all border ${selectedForCompare.length === 2
-                                    ? 'bg-accent-blue/10 text-accent-blue border-accent-blue/30 hover:bg-accent-blue/20'
-                                    : 'text-tertiary border-main cursor-not-allowed opacity-50'
-                                    }`}
-                            >
-                                {isComparing ? <Loader2 size={12} className="animate-spin" /> : <GitCompare size={12} />}
-                                Compare Selected ({selectedForCompare.length}/2)
-                            </button>
+                        {/* Version History List */}
+                        <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-sm font-bold text-primary">Version History • {activeSnapshotLabel}</h3>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => versions.length > 0 && setDeleteConfirm(true)}
+                                        disabled={!activeModelId || versions.length === 0}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all border border-red-500/30 text-red-400 hover:bg-red-500/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                                        title="Delete all versions for this model"
+                                    >
+                                        <Trash2 size={12} /> Delete All
+                                    </button>
+                                    <button
+                                        onClick={handleCompare}
+                                        disabled={selectedForCompare.length !== 2 || isComparing}
+                                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all border ${selectedForCompare.length === 2
+                                            ? 'bg-accent-blue/10 text-accent-blue border-accent-blue/30 hover:bg-accent-blue/20'
+                                            : 'text-tertiary border-main cursor-not-allowed opacity-50'
+                                            }`}
+                                    >
+                                        {isComparing ? <Loader2 size={12} className="animate-spin" /> : <GitCompare size={12} />}
+                                        Compare Selected ({selectedForCompare.length}/2)
+                                    </button>
+                                </div>
                             </div>
-                        </div>
 
-                        {isLoading ? (
-                            <div className="flex items-center justify-center py-8">
-                                <Loader2 size={24} className="animate-spin text-[#6467f2]" />
-                            </div>
-                        ) : (
-                            <div
-                                className={`border border-slate-800/70 rounded-lg overflow-hidden bg-slate-900/70 transition-opacity duration-150 ${isSnapshotSwitching ? 'opacity-70' : 'opacity-100'}`}
-                                onMouseMove={handleHistoryMouseMove}
-                                onMouseLeave={handleHistoryMouseLeave}
-                                style={{
-                                    transform: `perspective(1200px) rotateX(${historyTilt.x}deg) rotateY(${historyTilt.y}deg)`,
-                                    transition: 'transform 180ms ease-out, opacity 150ms ease-out',
-                                    willChange: 'transform, opacity',
-                                }}
-                            >
-                                <table className="w-full text-xs">
-                                    <thead className="border-b border-slate-800/70 bg-slate-900/80">
-                                        <tr>
-                                            <th className="w-10 px-3 py-2.5"></th>
-                                            <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Version ID</th>
-                                            <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Tag</th>
-                                            <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Model</th>
-                                            <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Timestamp</th>
-                                            <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Author</th>
-                                            <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Summary</th>
-                                            <th className="text-right px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {versions.length === 0 && (
+                            {isLoading ? (
+                                <div className="flex items-center justify-center py-8">
+                                    <Loader2 size={24} className="animate-spin text-[#6467f2]" />
+                                </div>
+                            ) : (
+                                <div
+                                    className={`border border-slate-800/70 rounded-lg overflow-hidden bg-slate-900/70 transition-opacity duration-150 ${isSnapshotSwitching ? 'opacity-70' : 'opacity-100'}`}
+                                    onMouseMove={handleHistoryMouseMove}
+                                    onMouseLeave={handleHistoryMouseLeave}
+                                    style={{
+                                        transform: `perspective(1200px) rotateX(${historyTilt.x}deg) rotateY(${historyTilt.y}deg)`,
+                                        transition: 'transform 180ms ease-out, opacity 150ms ease-out',
+                                        willChange: 'transform, opacity',
+                                    }}
+                                >
+                                    <table className="w-full text-xs">
+                                        <thead className="border-b border-slate-800/70 bg-slate-900/80">
                                             <tr>
-                                                <td colSpan={8} className="px-3 py-8 text-center text-tertiary text-sm">
-                                                    {activeModelId
-                                                        ? `No versions recorded for ${activeModelId} yet.`
-                                                        : 'No version history found. Versions appear here after a model sync or manual commit.'}
-                                                </td>
+                                                <th className="w-10 px-3 py-2.5"></th>
+                                                <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Run ID</th>
+                                                <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Type</th>
+                                                <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Status</th>
+                                                <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Started At</th>
                                             </tr>
-                                        )}
-                                        {versions.map(v => {
-                                            const isChecked = selectedForCompare.includes(v.version_id);
-                                            const canCompare = v.can_compare !== false;
-                                            const canRollback = v.can_rollback !== false;
-                                            return (
-                                                <tr
-                                                    key={v.version_id}
-                                                    onClick={() => handleVersionSelect(v)}
-                                                    className={`border-b border-slate-800/70 last:border-0 hover:bg-slate-800/40 transition-colors cursor-pointer ${activeVersionId === v.version_id ? 'bg-[#6467f2]/10' : ''}`}
-                                                >
-                                                    <td className="px-3 py-2.5">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={isChecked}
-                                                            onChange={() => toggleCompareSelection(v.version_id)}
-                                                            onClick={(e) => e.stopPropagation()}
-                                                            disabled={!canCompare}
-                                                            className="rounded border-slate-700 accent-[#6467f2]"
-                                                        />
-                                                    </td>
-                                                    <td className="px-3 py-2.5 font-mono text-[#6467f2] font-bold">{v.version_id?.substring(0, 8)}</td>
-                                                    <td className="px-3 py-2.5">
-                                                        {v.version_tag ? (
-                                                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-purple-500/15 text-purple-400 border border-purple-500/30">
-                                                                {v.version_tag}
-                                                            </span>
-                                                        ) : (
-                                                            <span className="text-tertiary">—</span>
-                                                        )}
-                                                    </td>
-                                                    <td className="px-3 py-2.5">
-                                                        <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-indigo-500/15 text-indigo-400 border border-indigo-500/30">
-                                                            {v.model_id || '—'}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-3 py-2.5 text-slate-300">
-                                                        <div className="flex items-center gap-1">
-                                                            <Clock size={10} className="text-slate-500" />
-                                                            {new Date(v.timestamp).toLocaleString()}
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-3 py-2.5 text-slate-300 capitalize">{v.author || 'system'}</td>
-                                                    <td className="px-3 py-2.5 text-slate-100">
-                                                        <div className="flex items-center gap-1.5">
-                                                            {v.is_rollback && (
-                                                                <span className="px-1.5 py-0.5 rounded-full text-[8px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                                                                    ↩ ROLLBACK
-                                                                </span>
-                                                            )}
-                                                            {v.description}
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-3 py-2.5 text-right">
-                                                        <button
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                if (!canRollback) return;
-                                                                setRollbackError('');
-                                                                setRollbackTarget(v);
-                                                            }}
-                                                            disabled={!canRollback}
-                                                            className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold transition-colors ${
-                                                                canRollback
-                                                                    ? 'text-amber-400 hover:bg-amber-500/10'
-                                                                    : 'text-tertiary opacity-50 cursor-not-allowed'
-                                                            }`}
-                                                        >
-                                                            <RotateCcw size={10} /> Rollback
-                                                        </button>
+                                        </thead>
+                                        <tbody>
+                                            {versions.length === 0 && (
+                                                <tr>
+                                                    <td colSpan={5} className="px-3 py-8 text-center text-tertiary text-sm">
+                                                        No run history found.
                                                     </td>
                                                 </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
+                                            )}
+                                            {versions.map(v => {
+                                                const isChecked = selectedForCompare.includes(v.run_id);
+                                                return (
+                                                    <tr
+                                                        key={v.run_id}
+                                                        onClick={() => handleVersionSelect(v)}
+                                                        className={`border-b border-slate-800/70 last:border-0 hover:bg-slate-800/40 transition-colors cursor-pointer ${activeVersionId === v.run_id ? 'bg-[#6467f2]/10' : ''}`}
+                                                    >
+                                                        <td className="px-3 py-2.5">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={isChecked}
+                                                                onChange={() => toggleCompareSelection(v.run_id)}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                                className="rounded border-slate-700 accent-[#6467f2]"
+                                                            />
+                                                        </td>
+                                                        <td className="px-3 py-2.5 font-mono text-[#6467f2] font-bold">{v.run_id?.substring(0, 8)}</td>
+                                                        <td className="px-3 py-2.5">
+                                                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-indigo-500/15 text-indigo-400 border border-indigo-500/30">
+                                                                {v.run_type || 'Sync'}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-3 py-2.5">
+                                                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-slate-500/15 text-slate-400 border border-slate-500/30">
+                                                                {v.status || 'unknown'}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-3 py-2.5 text-slate-300">
+                                                            <div className="flex items-center gap-1">
+                                                                <Clock size={10} className="text-slate-500" />
+                                                                {v.started_at ? new Date(v.started_at).toLocaleString() : '—'}
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
                     </div>
+                    )}
 
                     {/* Diff Table */}
                     {diffs && (
@@ -581,110 +521,72 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                             </div>
                         </div>
                     )}
-                    </div>}
-                </div>
+                </div>}
+            </div>
 
-                {/* Delete All Confirmation Dialog */}
-                {deleteConfirm && (
-                    <div className="absolute inset-0 z-10 flex items-center justify-center backdrop-blur-sm rounded-xl" style={{ background: 'var(--bg-backdrop)' }}>
-                        <div className="bg-surface border border-main rounded-xl p-6 max-w-md shadow-2xl">
-                            <div className="flex items-center gap-3 mb-4">
-                                <div className="p-2 rounded-lg bg-red-500/15 text-red-400">
-                                    <Trash2 size={20} />
-                                </div>
-                                <h3 className="text-base font-bold text-primary">Delete All Versions?</h3>
+            {/* Rollback Confirmation Dialog */}
+            {rollbackTarget && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center backdrop-blur-sm rounded-xl" style={{ background: 'var(--bg-backdrop)' }}>
+                    <div className="bg-surface border border-main rounded-xl p-6 max-w-md shadow-2xl">
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="p-2 rounded-lg bg-amber-500/15 text-amber-400">
+                                <AlertTriangle size={20} />
                             </div>
-                            <p className="text-xs text-secondary mb-4">
-                                This will permanently delete <strong>all {versions.length} version(s)</strong> for{' '}
-                                <strong className="text-accent-blue">{activeModelId}</strong>. This action cannot be undone.
-                            </p>
-                            <div className="flex justify-end gap-3">
-                                <button
-                                    onClick={() => setDeleteConfirm(false)}
-                                    disabled={isDeleting}
-                                    className="px-4 py-2 rounded-lg text-xs font-bold text-secondary border border-main hover:bg-surface-hover"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    onClick={handleDeleteAll}
-                                    disabled={isDeleting}
-                                    className="px-4 py-2 rounded-lg text-xs font-bold text-white bg-red-500 hover:bg-red-600 shadow-lg flex items-center gap-2"
-                                >
-                                    {isDeleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                                    Delete All
-                                </button>
+                            <h3 className="text-base font-bold text-primary">Confirm Rollback</h3>
+                        </div>
+                        <p className="text-xs text-secondary mb-2">
+                            This will revert the project configuration and models to the state of Run{' '}
+                            <strong className="text-accent-blue font-mono">
+                                {rollbackTarget.run_id?.substring(0, 8)}
+                            </strong>
+                            .
+                        </p>
+                        <p className="text-[11px] text-tertiary mb-4">
+                            {rollbackTarget.run_type || 'Sync'} Run created on {rollbackTarget.started_at ? new Date(rollbackTarget.started_at).toLocaleString() : 'Now'}
+                        </p>
+                        <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-300/80 mb-6">
+                            <p>• A <strong>new version record</strong> will be created representing this restore.</p>
+                            <p>• Target models will be overwritten with the restored content upon applying.</p>
+                            <p>• All existing version history will be <strong>preserved</strong>.</p>
+                        </div>
+                        {rollbackError && (
+                            <div className="mb-4 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">
+                                {rollbackError}
                             </div>
+                        )}
+                        <div className="flex justify-end gap-3">
+                            <button
+                                onClick={() => {
+                                    setRollbackTarget(null);
+                                    setRollbackError('');
+                                }}
+                                disabled={isRollingBack}
+                                className="px-4 py-2 rounded-lg text-xs font-bold text-secondary border border-main hover:bg-surface-hover"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={() => handleRollback(rollbackTarget.run_id)}
+                                disabled={isRollingBack}
+                                className="px-4 py-2 rounded-lg text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 shadow-lg disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                            >
+                                {isRollingBack ? <Loader2 size={12} className="animate-spin" /> : null}
+                                {isRollingBack ? 'Restoring...' : 'Restore to this run'}
+                            </button>
                         </div>
                     </div>
-                )}
-
-                {/* Rollback Confirmation Dialog */}
-                {rollbackTarget && (
-                    <div className="absolute inset-0 z-10 flex items-center justify-center backdrop-blur-sm rounded-xl" style={{ background: 'var(--bg-backdrop)' }}>
-                        <div className="bg-surface border border-main rounded-xl p-6 max-w-md shadow-2xl">
-                            <div className="flex items-center gap-3 mb-4">
-                                <div className="p-2 rounded-lg bg-amber-500/15 text-amber-400">
-                                    <AlertTriangle size={20} />
-                                </div>
-                                <h3 className="text-base font-bold text-primary">Confirm Rollback</h3>
-                            </div>
-                            <p className="text-xs text-secondary mb-2">
-                                This will revert the configuration to version{' '}
-                                <strong className="text-accent-blue font-mono">
-                                    {rollbackTarget.version_tag || rollbackTarget.version_id?.substring(0, 8)}
-                                </strong>
-                                {rollbackTarget.version_tag && (
-                                    <span className="text-tertiary"> ({rollbackTarget.version_id?.substring(0, 8)})</span>
-                                )}
-                                .
-                            </p>
-                            <p className="text-[11px] text-tertiary mb-4">
-                                {rollbackTarget.description || 'No description available'}
-                            </p>
-                            <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-300/80 mb-6">
-                                <p>• A <strong>new version record</strong> will be created from this snapshot.</p>
-                                <p>• The local model file will be overwritten with the restored content.</p>
-                                <p>• All existing version history will be <strong>preserved</strong>.</p>
-                            </div>
-                            {rollbackError && (
-                                <div className="mb-4 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">
-                                    {rollbackError}
-                                </div>
-                            )}
-                            <div className="flex justify-end gap-3">
-                                <button
-                                    onClick={() => {
-                                        setRollbackTarget(null);
-                                        setRollbackError('');
-                                    }}
-                                    disabled={isRollingBack}
-                                    className="px-4 py-2 rounded-lg text-xs font-bold text-secondary border border-main hover:bg-surface-hover"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    onClick={() => handleRollback(rollbackTarget.version_id)}
-                                    disabled={isRollingBack}
-                                    className="px-4 py-2 rounded-lg text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 shadow-lg disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
-                                >
-                                    {isRollingBack ? <Loader2 size={12} className="animate-spin" /> : null}
-                                    {isRollingBack ? 'Rolling back...' : 'Rollback to this version'}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* Footer */}
-                <div className="h-12 px-6 bg-[#020617] border-t border-slate-800/80 flex justify-between items-center">
-                    <span className="text-[10px] uppercase tracking-wider text-slate-500">© 2026 DataStore Labs</span>
-                    <button onClick={onClose} className="px-5 py-2 bg-[#6467f2] text-white rounded-lg text-sm font-bold hover:bg-[#4f46e5] active:scale-95 transition-all">
-                        Done
-                    </button>
                 </div>
+            )}
+
+            {/* Footer */}
+            <div className="h-12 px-6 bg-[#020617] border-t border-slate-800/80 flex justify-between items-center">
+                <span className="text-[10px] uppercase tracking-wider text-slate-500">© 2026 DataStore Labs</span>
+                <button onClick={onClose} className="px-5 py-2 bg-[#6467f2] text-white rounded-lg text-sm font-bold hover:bg-[#4f46e5] active:scale-95 transition-all">
+                    Done
+                </button>
             </div>
         </div>
+        </div >
     );
 }
 

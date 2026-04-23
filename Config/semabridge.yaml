@@ -1,17 +1,16 @@
-project_name: ff
+project_name: finalll
 source:
-  type: snowflake
-  database: ""
-  schema: ""
-  model: CONTINENT_SEMANTIC
+  type: fabric
+  identity_id: ebf63ea0-29e4-4c83-960b-15482494c649
+  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
+  workspace: semabridge
+  models:
+    - INVENTORY_SEMANTIC_MODEL_SEMANTIC
 targets:
-  - type: fabric
-    identity_id: 44630220-a0a8-429a-999f-30928fc4fd49
-    workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
-    workspace: semabridge
+  - type: databricks
 mappings:
-  - source: CONTINENT_SEMANTIC
-    target: CONTINENT_SEMANTIC
+  - source: INVENTORY_SEMANTIC_MODEL_SEMANTIC
+    target: INVENTORY_SEMANTIC_MODEL_SEMANTIC
     type: table
     columns:
       - source: id
@@ -33,11 +32,30 @@ ui:
   output_format: osi
 selection:
   model_ids:
-    - CONTINENT_SEMANTIC
+    - eb8c6b55-dce0-45bd-8587-6134bd53332a
 options:
   auto_relationships: true
   generate_descriptions: true
 target:
-  type: fabric
-  identity_id: 44630220-a0a8-429a-999f-30928fc4fd49
-  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
+  type: databricks
+mappings_overrides:
+  - source_path: datasets.INVENTORY_SEMANTIC_MODEL_SEMANTIC
+    target_name: INVENTORY_SEMANTIC_MODEL_SEMANTIC
+    entity_kind: table
+    source_name: INVENTORY_SEMANTIC_MODEL_SEMANTIC
+  - source_path: datasets.INVENTORY_SEMANTIC_MODEL_SEMANTIC.columns.id
+    target_name: ID
+    entity_kind: column
+    source_name: id
+  - source_path: datasets.INVENTORY_SEMANTIC_MODEL_SEMANTIC.columns.name
+    target_name: NAME
+    entity_kind: column
+    source_name: name
+  - source_path: datasets.INVENTORY_SEMANTIC_MODEL_SEMANTIC.columns.created_at
+    target_name: CREATED_AT
+    entity_kind: column
+    source_name: created_at
+  - source_path: datasets.INVENTORY_SEMANTIC_MODEL_SEMANTIC.columns.updated_at
+    target_name: UPDATED_AT
+    entity_kind: column
+    source_name: updated_at
