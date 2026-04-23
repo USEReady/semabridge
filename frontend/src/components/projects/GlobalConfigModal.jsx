@@ -106,9 +106,9 @@ export default function GlobalConfigModal({ open, onClose }) {
               Connector fields only (fabric and snowflake)
             </div>
           </div>
-          <div style={{ display: 'flex', border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden' }}>
-            <ModeBtn active={mode === 'form'} onClick={() => setMode('form')} icon={<SlidersHorizontal size={12} />} label="Form" />
-            <ModeBtn active={mode === 'yaml'} onClick={() => setMode('yaml')} icon={<FileCode2 size={12} />} label="YAML" />
+          <div style={{ display: 'inline-flex', border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden' }}>
+            <ModeBtn active={mode === 'form'} onClick={() => setMode('form')} icon={<SlidersHorizontal size={12} />} ariaLabel="Form view" />
+            <ModeBtn active={mode === 'yaml'} onClick={() => setMode('yaml')} icon={<FileCode2 size={12} />} ariaLabel="YAML view" />
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
             <X size={17} />
@@ -186,19 +186,23 @@ export default function GlobalConfigModal({ open, onClose }) {
   );
 }
 
-function ModeBtn({ active, onClick, icon, label }) {
+function ModeBtn({ active, onClick, icon, ariaLabel }) {
   return (
     <button
+      type="button"
       onClick={onClick}
+      aria-label={ariaLabel}
+      title={ariaLabel}
       style={{
-        display: 'inline-flex', alignItems: 'center', gap: 5,
-        padding: '6px 10px', border: 'none', cursor: 'pointer',
+        width: 36, height: 32,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        padding: 0, border: 'none', cursor: 'pointer',
         background: active ? 'var(--accent-blue)' : 'transparent',
         color: active ? '#fff' : 'var(--text-secondary)',
         fontSize: 11, fontWeight: 600,
       }}
     >
-      {icon} {label}
+      {icon}
     </button>
   );
 }

@@ -1402,9 +1402,9 @@ export default function ProjectConfigPage() {
           <Settings2 size={13} /> Global Config
         </button>
 
-        <div style={{ display: 'flex', border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden' }}>
-          <ModeButton active={viewMode === 'form'} onClick={() => handleViewModeChange('form')} icon={<SlidersHorizontal size={13} />} label="Form" />
-          <ModeButton active={viewMode === 'yaml'} onClick={() => handleViewModeChange('yaml')} icon={<FileCode2 size={13} />} label="YAML" />
+        <div style={{ display: 'inline-flex', border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden' }}>
+          <ModeButton active={viewMode === 'form'} onClick={() => handleViewModeChange('form')} icon={<SlidersHorizontal size={13} />} ariaLabel="Form view" />
+          <ModeButton active={viewMode === 'yaml'} onClick={() => handleViewModeChange('yaml')} icon={<FileCode2 size={13} />} ariaLabel="YAML view" />
         </div>
       </div>
 
@@ -2461,19 +2461,23 @@ function FormEditor({
   );
 }
 
-function ModeButton({ active, onClick, icon, label }) {
+function ModeButton({ active, onClick, icon, ariaLabel }) {
   return (
     <button
+      type="button"
       onClick={onClick}
+      aria-label={ariaLabel}
+      title={ariaLabel}
       style={{
-        display: 'inline-flex', alignItems: 'center', gap: 5,
-        padding: '7px 12px', border: 'none', cursor: 'pointer',
+        width: 38, height: 34,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        padding: 0, border: 'none', cursor: 'pointer',
         background: active ? 'var(--accent-blue)' : 'transparent',
         color: active ? '#fff' : 'var(--text-secondary)',
         fontSize: 12, fontWeight: 600,
       }}
     >
-      {icon} {label}
+      {icon}
     </button>
   );
 }
