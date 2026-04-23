@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 import uuid
 from datetime import datetime
@@ -13,7 +12,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, delete
 from sqlalchemy.orm import Session
 
-from semabridge.api.deps import get_db, get_current_user
+from semabridge.api.deps import get_db
+from semabridge.auth.deps import get_current_user
 from semabridge.repository.orm.models import LocalFolder, UserCredential
 
 logger = logging.getLogger("semabridge.api.settings")
@@ -247,10 +247,10 @@ def save_secret(
         db.commit()
         db.refresh(row)
 
-    # Live-inject into os.environ so the secret is usable immediately
-    # without a backend restart. This mirrors how CredentialManager.inject_all() works.
-    os.environ[normalized_key] = body.value
-    logger.info("API secret '%s' saved and injected into os.environ for user %d.", normalized_key, current_user.id)
+    # Secret injected into DB — the comparator reads user secrets from DB at request-time.
+    # We do NOT mutate os.environ here because it is a process-level singleton:
+    # doing so would allow one user's secret to overwrite another's in memory.
+    logger.info("API secret '%s' saved for user %d.", normalized_key, current_user.id)
 
     return SecretResponse(
         key=normalized_key,
@@ -292,6 +292,4 @@ def delete_secret(
     if result.rowcount == 0:
         raise HTTPException(status_code=404, detail=f"Secret '{normalized_key}' not found.")
 
-    # Remove from os.environ so it stops being usable immediately
-    os.environ.pop(normalized_key, None)
-    logger.info("API secret '%s' deleted and removed from os.environ for user %d.", normalized_key, current_user.id)
+    logger.info("API secret '%s' deleted for user %d.", normalized_key, current_user.id)
