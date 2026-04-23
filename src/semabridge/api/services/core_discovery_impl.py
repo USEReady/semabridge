@@ -108,7 +108,7 @@ async def discover_fabric_models_by_workspace(
     )
 
 
-async def discover_snowflake(identity_id: Optional[str] = Query(None)):
+def discover_snowflake(identity_id: Optional[str] = Query(None)):
     import time
     from pydantic import ValidationError
     from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
@@ -194,7 +194,7 @@ async def discover_snowflake(identity_id: Optional[str] = Query(None)):
         raise HTTPException(status_code=500, detail=f"Snowflake semantic view discovery failed: {e}")
 
 
-async def discover_repository():
+def discover_repository():
     from semabridge.repository.orm.models import ModelVersion
     from sqlalchemy import select, func
 

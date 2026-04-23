@@ -100,7 +100,7 @@ class ResumeJobRequest(BaseModel):
 
 
 @router.post("/jobs")
-async def start_sync_job(request: StartSyncRequest) -> Dict[str, Any]:
+def start_sync_job(request: StartSyncRequest) -> Dict[str, Any]:
     """Start a new synchronization job."""
     config = SyncConfig(
         direction=request.direction,
@@ -135,7 +135,7 @@ async def start_sync_job(request: StartSyncRequest) -> Dict[str, Any]:
 
 
 @router.get("/jobs")
-async def list_sync_jobs(
+def list_sync_jobs(
     status: Optional[str] = None,
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
@@ -159,7 +159,7 @@ async def list_sync_jobs(
 
 
 @router.get("/jobs/{job_id}")
-async def get_sync_job(job_id: str) -> Dict[str, Any]:
+def get_sync_job(job_id: str) -> Dict[str, Any]:
     """Get detailed status of a sync job."""
     try:
         orchestrator = _get_orchestrator()
@@ -169,7 +169,7 @@ async def get_sync_job(job_id: str) -> Dict[str, Any]:
 
 
 @router.post("/jobs/{job_id}/cancel")
-async def cancel_sync_job(job_id: str) -> Dict[str, Any]:
+def cancel_sync_job(job_id: str) -> Dict[str, Any]:
     """Cancel a running or paused sync job."""
     try:
         orchestrator = _get_orchestrator()
@@ -180,7 +180,7 @@ async def cancel_sync_job(job_id: str) -> Dict[str, Any]:
 
 
 @router.post("/jobs/{job_id}/resume")
-async def resume_sync_job(
+def resume_sync_job(
     job_id: str, request: ResumeJobRequest
 ) -> Dict[str, Any]:
     """Resolve all conflicts and resume a paused sync job."""
@@ -206,7 +206,7 @@ async def resume_sync_job(
 
 
 @router.get("/jobs/{job_id}/conflicts")
-async def get_conflicts(job_id: str) -> List[Dict[str, Any]]:
+def get_conflicts(job_id: str) -> List[Dict[str, Any]]:
     """Get all conflicts for a sync job."""
     repo = _get_repo()
     conflicts = repo.get_conflicts_for_job(job_id)
@@ -214,7 +214,7 @@ async def get_conflicts(job_id: str) -> List[Dict[str, Any]]:
 
 
 @router.post("/conflicts/{conflict_id}/resolve")
-async def resolve_conflict(
+def resolve_conflict(
     conflict_id: str, request: ResolveConflictRequest
 ) -> Dict[str, str]:
     """Resolve a single conflict."""
@@ -234,7 +234,7 @@ async def resolve_conflict(
 
 
 @router.get("/mappings")
-async def list_mappings(active_only: bool = True) -> List[Dict[str, Any]]:
+def list_mappings(active_only: bool = True) -> List[Dict[str, Any]]:
     """List all model mappings."""
     repo = _get_repo()
     mappings = repo.list_mappings(active_only=active_only)
@@ -242,7 +242,7 @@ async def list_mappings(active_only: bool = True) -> List[Dict[str, Any]]:
 
 
 @router.get("/schema/{model_name}/history")
-async def get_schema_history(
+def get_schema_history(
     model_name: str, limit: int = 20
 ) -> List[Dict[str, Any]]:
     """Get schema version history for a model."""

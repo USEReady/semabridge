@@ -510,7 +510,7 @@ def _git_info(repo_root: Path) -> Dict[str, Optional[str]]:
 # -------------------------------------------------------
 
 @router.get("/tree")
-async def get_repo_tree():
+def get_repo_tree():
     """REQ-MAP-001: Return full directory + file tree of the repository."""
     # Client-facing tree should be scoped to semantic models path so
     # internal repository artifacts (frontend, docs, test files, etc.)
@@ -535,7 +535,7 @@ async def get_repo_tree():
 
 
 @router.get("/models")
-async def get_repo_models(
+def get_repo_models(
     workspace_id: str = Query("", description="Filter by workspace"),
     repo: ModelRepository = Depends(get_model_repository),
 ):
@@ -553,7 +553,7 @@ async def get_repo_models(
 
 
 @router.get("/models/{model_id}/graph")
-async def get_model_graph(
+def get_model_graph(
     model_id: str,
     repo: ModelRepository = Depends(get_model_repository),
 ):
@@ -572,7 +572,7 @@ async def get_model_graph(
 
 
 @router.get("/file")
-async def get_file_content(path: str = Query(..., description="Relative file path")):
+def get_file_content(path: str = Query(..., description="Relative file path")):
     """REQ-MAP-001: Return raw file content for preview."""
     file_root = _resolve_models_path()
     if not file_root.exists():
@@ -606,7 +606,7 @@ async def get_file_content(path: str = Query(..., description="Relative file pat
 
 
 @router.post("/sync")
-async def sync_repository(
+def sync_repository(
     repo: ModelRepository = Depends(get_model_repository),
 ):
     """REQ-MAP-008: Re-parse repository and update cached data."""
@@ -631,7 +631,7 @@ async def sync_repository(
 
 
 @router.get("/diagnostics")
-async def get_repository_diagnostics() -> Dict[str, Any]:
+def get_repository_diagnostics() -> Dict[str, Any]:
     """Return Explore/repository-map diagnostics for the active backend."""
     diagnostics: Dict[str, Any] = {
         "database": {},

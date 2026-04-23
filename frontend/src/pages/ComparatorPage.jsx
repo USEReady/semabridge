@@ -9,6 +9,7 @@ import PageHeader from '../components/common/PageHeader';
 // ─── Format badge colours (one per dialect) ─────────────────────────────────
 const FORMAT_META = {
   OSI:            { label: 'OSI v1.0',       bg: 'var(--color-accent-faint)',   color: 'var(--accent-blue)' },
+  FABRIC_OSI:     { label: 'Fabric',         bg: 'rgba(59,130,246,0.12)',       color: '#3b82f6' },
   SML:            { label: 'SML',            bg: 'rgba(139,92,246,0.12)',        color: 'var(--accent-purple)' },
   TSML:           { label: 'TSML',           bg: 'rgba(249,115,22,0.10)',        color: 'var(--accent-orange)' },
   SNOWFLAKE:      { label: 'Snowflake',      bg: 'rgba(56,189,248,0.10)',        color: 'var(--accent-cyan)' },
@@ -524,9 +525,83 @@ function FilterPillBar({ active, onChange, counts }) {
   );
 }
 
+function UserFriendlyDiffValue({ field, val }) {
+  if (val === null || val === undefined || val === '') {
+    return <span style={{ color: 'var(--text-tertiary)', fontStyle: 'italic' }}>—</span>;
+  }
+
+  const isTrue = val === true || val === 'true' || val === 'True';
+  const isFalse = val === false || val === 'false' || val === 'False';
+
+  if (isTrue || isFalse) {
+    return (
+      <span style={{
+        display: 'inline-flex', alignItems: 'center', gap: 4,
+        padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 700,
+        background: isTrue ? 'rgba(16,185,129,0.1)' : 'rgba(107,114,128,0.1)',
+        color: isTrue ? 'var(--color-success)' : 'var(--text-secondary)',
+        border: `1px solid ${isTrue ? 'rgba(16,185,129,0.2)' : 'rgba(107,114,128,0.2)'}`,
+      }}>
+        {isTrue ? 'Yes' : 'No'}
+      </span>
+    );
+  }
+
+  if (field === 'type' || field === 'data_type') {
+    return (
+      <span style={{
+        padding: '2px 6px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+        background: 'var(--bg-surface-raised)', border: '1px solid var(--border-main)',
+        color: 'var(--text-primary)', fontFamily: 'monospace'
+      }}>
+        {String(val)}
+      </span>
+    );
+  }
+
+  return <span style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>{String(val)}</span>;
+}
+
 // ─── Diff section card ────────────────────────────────────────────────────────
 
-function DiffSection({ title, items, icon: SectionIcon, renderTitle, renderDetail }) {
+function DiffSection({ title, items, icon: SectionIcon, renderTitle, renderDetail, file1Name, file2Name, enableSearch, enableTypeFilter }) {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [typeFilter, setTypeFilter] = useState('All Types');
+
+  const availableTypes = useMemo(() => {
+    if (!enableTypeFilter) return [];
+    const types = new Set();
+    items.forEach(item => {
+      // In diff mode, type might be at the top level or inside _changes if it was modified
+      let typeVal = item.type;
+      if (!typeVal && item._changes) {
+        const typeChange = item._changes.find(c => c.field === 'type' || c.field === 'data_type');
+        if (typeChange) typeVal = typeChange.new_value || typeChange.old_value;
+      }
+      if (typeVal) types.add(typeVal);
+    });
+    return Array.from(types).sort();
+  }, [items, enableTypeFilter]);
+
+  const filteredItems = useMemo(() => {
+    let result = items;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(item => String(item._id).toLowerCase().includes(q));
+    }
+    if (enableTypeFilter && typeFilter !== 'All Types') {
+      result = result.filter(item => {
+        let typeVal = item.type;
+        if (!typeVal && item._changes) {
+          const typeChange = item._changes.find(c => c.field === 'type' || c.field === 'data_type');
+          if (typeChange) typeVal = typeChange.new_value || typeChange.old_value;
+        }
+        return typeVal === typeFilter;
+      });
+    }
+    return result;
+  }, [items, searchQuery, typeFilter, enableTypeFilter]);
+
   if (items.length === 0) return null;
   return (
     <div style={{
@@ -534,9 +609,45 @@ function DiffSection({ title, items, icon: SectionIcon, renderTitle, renderDetai
       border: '1px solid var(--border-main)',
       borderRadius: 12, marginBottom: 16, overflow: 'hidden',
     }}>
-      <SectionHeader title={title} count={items.length} icon={SectionIcon} />
+      <SectionHeader title={title} count={filteredItems.length} icon={SectionIcon} />
+      
+      {(enableSearch || enableTypeFilter) && (
+        <div style={{ padding: '10px 14px 0', display: 'flex', gap: 10 }}>
+          {enableSearch && (
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)' }}>
+              <Search size={14} color="var(--text-tertiary)" />
+              <input
+                type="text" placeholder={`Search ${title.toLowerCase()}...`} value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: 'var(--text-primary)', width: '100%' }}
+              />
+            </div>
+          )}
+          {enableTypeFilter && availableTypes.length > 0 && (
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value)}
+              style={{
+                padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border-main)',
+                background: 'var(--bg-surface-raised)', color: 'var(--text-primary)',
+                fontSize: 12, outline: 'none', cursor: 'pointer', maxWidth: '140px'
+              }}
+            >
+              <option value="All Types">All Types</option>
+              {availableTypes.map(type => (
+                <option key={type} value={type}>{type}</option>
+              ))}
+            </select>
+          )}
+        </div>
+      )}
+
       <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {items.map(item => {
+        {filteredItems.length === 0 ? (
+          <div style={{ padding: '10px 14px', fontSize: 13, color: 'var(--text-tertiary)', fontStyle: 'italic', textAlign: 'center' }}>
+            No matches found
+          </div>
+        ) : filteredItems.map(item => {
           const cfg = DIFF_STATUS[item._diff_status] ?? DIFF_STATUS.identical;
           return (
             <div
@@ -564,13 +675,23 @@ function DiffSection({ title, items, icon: SectionIcon, renderTitle, renderDetai
                 </div>
               )}
               {item._diff_status === 'modified' && item._changes && item._changes.length > 0 && (
-                <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <div style={{ marginTop: 8, background: 'var(--bg-surface)', borderRadius: 6, border: '1px solid var(--border-main)', overflow: 'hidden' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1fr) 1.5fr 1.5fr', gap: 12, background: 'var(--bg-surface-raised)', borderBottom: '1px solid var(--border-main)', padding: '8px 12px', fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)' }}>
+                    <div>Changed Property</div>
+                    <div>{file1Name || 'Primary File'}</div>
+                    <div style={{ color: 'var(--accent-blue)' }}>{file2Name || 'Secondary File'}</div>
+                  </div>
                   {item._changes.map((ch, ci) => (
-                    <div key={ci} style={{ display: 'flex', gap: 8, fontSize: 11, fontFamily: 'monospace', flexWrap: 'wrap' }}>
-                      <span style={{ color: 'var(--text-tertiary)', fontFamily: 'inherit', fontWeight: 600 }}>{ch.field}:</span>
-                      <span style={{ color: 'var(--color-error)', textDecoration: 'line-through' }}>{String(ch.old_value ?? '—')}</span>
-                      <span style={{ color: 'var(--text-tertiary)' }}>→</span>
-                      <span style={{ color: 'var(--color-success)' }}>{String(ch.new_value ?? '—')}</span>
+                    <div key={ci} style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1fr) 1.5fr 1.5fr', gap: 12, padding: '10px 12px', fontSize: 12, borderBottom: ci < item._changes.length - 1 ? '1px solid var(--border-light)' : 'none', alignItems: 'center' }}>
+                      <div style={{ fontWeight: 600, color: 'var(--text-primary)', textTransform: 'capitalize' }}>
+                        {ch.field.replace(/_/g, ' ')}
+                      </div>
+                      <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                        <UserFriendlyDiffValue field={ch.field} val={ch.old_value} />
+                      </div>
+                      <div style={{ color: 'var(--text-primary)', fontSize: 12 }}>
+                        <UserFriendlyDiffValue field={ch.field} val={ch.new_value} />
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -586,6 +707,14 @@ function DiffSection({ title, items, icon: SectionIcon, renderTitle, renderDetai
 // ─── Metrics section — LLM results shown inline from backend ──────────────────
 
 function MetricsDiffSection({ items }) {
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const filteredItems = useMemo(() => {
+    if (!searchQuery) return items;
+    const q = searchQuery.toLowerCase();
+    return items.filter(item => String(item._id).toLowerCase().includes(q));
+  }, [items, searchQuery]);
+
   if (items.length === 0) return null;
 
   return (
@@ -593,9 +722,25 @@ function MetricsDiffSection({ items }) {
       background: 'var(--bg-surface)', border: '1px solid var(--border-main)',
       borderRadius: 12, marginBottom: 16, overflow: 'hidden',
     }}>
-      <SectionHeader title="Metrics" count={items.length} icon={BarChart3} />
+      <SectionHeader title="Metrics" count={filteredItems.length} icon={BarChart3} />
+      
+      <div style={{ padding: '10px 14px 0' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)' }}>
+          <Search size={14} color="var(--text-tertiary)" />
+          <input
+            type="text" placeholder="Search metrics..." value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: 'var(--text-primary)', width: '100%' }}
+          />
+        </div>
+      </div>
+
       <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {items.map(m => {
+        {filteredItems.length === 0 ? (
+          <div style={{ padding: '10px 14px', fontSize: 13, color: 'var(--text-tertiary)', fontStyle: 'italic', textAlign: 'center' }}>
+            No matches found
+          </div>
+        ) : filteredItems.map(m => {
           const cfg = DIFF_STATUS[m._diff_status] ?? DIFF_STATUS.identical;
           const isModified = m._diff_status === 'modified';
           const llmRes = m._llm_verdict;
@@ -988,17 +1133,32 @@ export default function ComparatorPage() {
             items={applyFilter(compareResults.tables)}
             icon={Layers}
             renderDetail={(t) => `${t.column_count} col · ${t.metric_count} metric · ${t.relationship_count} rel`}
+            file1Name={compareResults.file1_name}
+            file2Name={compareResults.file2_name}
           />
           <DiffSection
             title="Columns"
             items={applyFilter(compareResults.columns)}
             icon={Hash}
-            renderDetail={(c) => c.type ? `Type: ${c.type}` : null}
+            renderDetail={(c) => {
+              let typeVal = c.type;
+              if (!typeVal && c._changes) {
+                const typeChange = c._changes.find(ch => ch.field === 'type' || ch.field === 'data_type');
+                if (typeChange) typeVal = typeChange.new_value || typeChange.old_value;
+              }
+              return typeVal ? `Type: ${typeVal}` : null;
+            }}
+            file1Name={compareResults.file1_name}
+            file2Name={compareResults.file2_name}
+            enableSearch={true}
+            enableTypeFilter={true}
           />
           <DiffSection
             title="Relationships"
             items={applyFilter(compareResults.relationships)}
             icon={Link2}
+            file1Name={compareResults.file1_name}
+            file2Name={compareResults.file2_name}
             renderTitle={(r) => (
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 <span style={{

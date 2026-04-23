@@ -1108,6 +1108,14 @@ class SemanticRegistry:
         except yaml.YAMLError as exc:
             raise ValueError(f"Invalid YAML: {exc}") from exc
 
+        # Unwrap JSON-string payloads: some export pipelines produce YAML
+        # files whose entire content is a single JSON string in quotes.
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         if not isinstance(data, dict):
             raise ValueError("YAML root must be a mapping/object (got a list or scalar).")
 

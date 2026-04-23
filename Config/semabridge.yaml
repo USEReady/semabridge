@@ -1,17 +1,17 @@
-project_name: te
+project_name: tes
 source:
-  type: fabric
-  identity_id: 5e826e99-3f37-4d50-9ba3-3f30037d6485
-  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
-  workspace: semabridge
-  models:
-    - P2P_Spend_Semantic_Model_DA
+  type: snowflake
+  database: ""
+  schema: ""
+  model: P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
 targets:
-  - type: snowflake
-    identity_id: ce7a7b2b-ba49-4ed9-b81c-4c09eff7afa2
+  - type: fabric
+    identity_id: 5e826e99-3f37-4d50-9ba3-3f30037d6485
+    workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
+    workspace: semabridge
 mappings:
-  - source: P2P_Spend_Semantic_Model_DA
-    target: P2P_SPEND_SEMANTIC_MODEL_DA
+  - source: P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+    target: P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
     type: table
     columns:
       - source: id
@@ -33,9 +33,11 @@ ui:
   output_format: osi
 selection:
   model_ids:
-    - 59f6dfdd-c8ae-41d3-ad3f-b4a9c17ae367
+    - P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
 options:
   auto_relationships: true
   generate_descriptions: true
 target:
-  type: snowflake
+  type: fabric
+  identity_id: 5e826e99-3f37-4d50-9ba3-3f30037d6485
+  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
