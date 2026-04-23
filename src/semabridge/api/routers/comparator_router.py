@@ -1338,7 +1338,7 @@ async def parse_single_yaml(file: UploadFile = File(...)):
 
 
 @router.post("/compare")
-async def compare_yamls(req: CompareRequest):
+def compare_yamls(req: CompareRequest):
     """Compare two YAML files and return a structural diff with optional LLM evaluation.
 
     Both files are first converted into OSI canonical format (normalised types,
