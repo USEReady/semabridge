@@ -1,0 +1,48 @@
+Corporate_DSI_Aggregate:
+  - FISCAL_YR_PERIOD
+  - BUSINESS_UNIT
+  - COS_EXCLDNG_LIFO_AMT
+  - IOH_EXCLDNG_LIFO_AMT
+  - DSI_MNTHLY
+  - DSI_QTD
+  - DSI_YRLY
+  - Update_Timestamp
+  - Source_Value_Total_Stock
+  - WAC_Value_Total_Stock
+Dates:
+  - CAL_DT
+  - QTR_YR
+  - QTR_NAME
+  - FISCAL_YR
+  - FISCAL_YR_PERIOD
+  - MNTH_NAME
+  - MNTH_ABRV
+  - MNTH_QTR_YR
+  - WEEK_DAY
+  - WEEK_DAY_FLAG
+  - CAL_DAY_NUM
+  - FISCAL_MNTH
+  - Day_of_Week_Name
+  - Day_of_Week_Short
+  - MNTH_START
+Business_Units:
+  - Business_Unit
+  - Curated_BU
+Inventory_Fact:
+  - Calendar_Date
+  - Company_Code
+  - FISCAL_YR_PERIOD
+  - Business_Unit
+  - TPLANT_CURR_SKEY
+  - PLANT_BU_MAPPING_CURR_SKEY
+  - Total_Stock_Qty
+  - WAC_Value_Total_Stock
+  - ENTITY_HIER_CURR_SKEY
+  - Source_Value_Total_Stock
+  - Update_Timestamp
+Corporate_DSI_Last_Refreshed:
+  - GL_Refresh_Datetime
+  - PBI_Refresh_Datetime
+Inventory_Fact_Last_Refreshed:
+  - GL_Refresh_Datetime
+  - PBI_Refresh_Datetime

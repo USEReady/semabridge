@@ -11,68 +11,83 @@ import {
     Trash2,
 } from 'lucide-react';
 import { api } from '../utils/api';
+import { useUIStore } from '../store/uiStore';
 import { useLogs } from '../context/LogsContext';
 
-// Diff table component
-function DiffTable({ diffs, objectTypeFilter, changeTypeFilter }) {
-    const filtered = diffs.filter(d =>
-        (objectTypeFilter === 'All' || d.object_type === objectTypeFilter) &&
-        (changeTypeFilter === 'All' || d.change_type === changeTypeFilter)
-    );
-
-    if (filtered.length === 0) {
+// Diff table component for Project Runs
+function DiffTable({ diffs }) {
+    if (!diffs || (!diffs.metadata_diff && (!diffs.models || diffs.models.length === 0))) {
         return (
             <div className="p-8 text-center text-tertiary text-sm">
                 <GitCompare size={32} className="mx-auto mb-2 opacity-30" />
-                No differences found for selected filters
+                No differences found
             </div>
         );
     }
 
+    const models = diffs.models || [];
+    const meta = diffs.metadata_diff || {};
+
     return (
-        <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-                <thead className="sticky top-0 backdrop-blur-md" style={{ background: 'var(--bg-surface-raised)', borderBottom: '1px solid var(--border-main)' }}>
-                    <tr>
-                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Object Name</th>
-                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Type</th>
-                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Property</th>
-                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>
-                            Old Value {filtered[0]?.old_version_tag ? `(${filtered[0].old_version_tag})` : ''}
-                        </th>
-                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>
-                            New Value {filtered[0]?.new_version_tag ? `(${filtered[0].new_version_tag})` : ''}
-                        </th>
-                        <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Change</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {filtered.map((d, idx) => (
-                        <tr key={idx} className="transition-colors" style={{ borderBottom: '1px solid var(--border-light)', }} onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-surface-hover)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                            <td className="px-3 py-2 font-medium" style={{ color: 'var(--text-primary)' }}>{d.object_name}</td>
-                            <td className="px-3 py-2" style={{ color: 'var(--text-secondary)' }}>{d.object_type}</td>
-                            <td className="px-3 py-2 font-mono" style={{ color: 'var(--text-secondary)' }}>{d.property}</td>
-                            <td className="px-3 py-2">
-                                {d.old_value && <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono" style={{ background: 'var(--color-error-bg)', color: 'var(--color-error)' }}>{d.old_value}</span>}
-                            </td>
-                            <td className="px-3 py-2">
-                                {d.new_value && <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono" style={{ background: 'var(--color-success-bg)', color: 'var(--color-success)' }}>{d.new_value}</span>}
-                            </td>
-                            <td className="px-3 py-2">
-                                <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase" style={{
-                                    background: d.change_type === 'Added' ? 'var(--color-success-bg)' : d.change_type === 'Removed' ? 'var(--color-error-bg)' : 'var(--color-warning-bg)',
-                                    color: d.change_type === 'Added' ? 'var(--color-success)' : d.change_type === 'Removed' ? 'var(--color-error)' : 'var(--color-warning)'
-                                }}>{d.change_type}</span>
-                            </td>
+        <div className="flex flex-col gap-6">
+            {/* Metadata Section */}
+            {meta.snapshot_a && meta.snapshot_b && (
+                <div className="border border-main rounded-lg bg-surface-raised p-4">
+                    <h4 className="text-xs font-bold text-slate-400 mb-3 uppercase tracking-wider">Metadata Diff</h4>
+                    <div className="grid grid-cols-2 gap-4 text-xs">
+                        <div>
+                            <div className="text-[10px] text-tertiary mb-1">Old Snapshot</div>
+                            <div className="text-secondary">Models: {meta.snapshot_a.model_count}</div>
+                            <div className="text-secondary">Format: {meta.snapshot_a.format}</div>
+                        </div>
+                        <div>
+                            <div className="text-[10px] text-tertiary mb-1">New Snapshot</div>
+                            <div className="text-secondary">Models: {meta.snapshot_b.model_count}</div>
+                            <div className="text-secondary">Format: {meta.snapshot_b.format}</div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Models Section */}
+            <div className="overflow-x-auto border border-main rounded-lg bg-surface-raised">
+                <table className="w-full text-xs">
+                    <thead className="sticky top-0 backdrop-blur-md" style={{ background: 'var(--bg-surface-raised)', borderBottom: '1px solid var(--border-main)' }}>
+                        <tr>
+                            <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Model Name</th>
+                            <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Status</th>
+                            <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Details</th>
                         </tr>
-                    ))}
-                </tbody>
-            </table>
+                    </thead>
+                    <tbody>
+                        {models.length === 0 && (
+                            <tr>
+                                <td colSpan="3" className="px-3 py-4 text-center text-tertiary">No model changes</td>
+                            </tr>
+                        )}
+                        {models.map((m, idx) => (
+                            <tr key={idx} className="transition-colors border-b border-light hover:bg-surface-hover">
+                                <td className="px-3 py-2 font-medium" style={{ color: 'var(--text-primary)' }}>{m.name}</td>
+                                <td className="px-3 py-2">
+                                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase" style={{
+                                        background: m.status === 'ADDED' ? 'var(--color-success-bg)' : m.status === 'REMOVED' ? 'var(--color-error-bg)' : m.status === 'MODIFIED' ? 'var(--color-warning-bg)' : 'var(--bg-surface)',
+                                        color: m.status === 'ADDED' ? 'var(--color-success)' : m.status === 'REMOVED' ? 'var(--color-error)' : m.status === 'MODIFIED' ? 'var(--color-warning)' : 'var(--text-tertiary)'
+                                    }}>{m.status}</span>
+                                </td>
+                                <td className="px-3 py-2 font-mono text-[10px] text-secondary">
+                                    {JSON.stringify(m.details)}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
         </div>
     );
 }
 
-export default function VersionControlPanel({ isOpen, onClose, activeModelId = null }) {
+export default function VersionControlPanel({ isOpen, onClose }) {
+    const activeProjectId = useUIStore(state => state.activeProjectId);
     const [versions, setVersions] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [selectedForCompare, setSelectedForCompare] = useState([]);
@@ -81,8 +96,6 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
     const [rollbackTarget, setRollbackTarget] = useState(null);
     const [isRollingBack, setIsRollingBack] = useState(false);
     const [rollbackError, setRollbackError] = useState('');
-    const [objectTypeFilter, setObjectTypeFilter] = useState('All');
-    const [changeTypeFilter, setChangeTypeFilter] = useState('All');
     const [activeVersionId, setActiveVersionId] = useState(null);
     const [isSnapshotSwitching, setIsSnapshotSwitching] = useState(false);
     const [historyTilt, setHistoryTilt] = useState({ x: 0, y: 0 });
@@ -97,21 +110,26 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
         setDiffs(null);
         setSelectedForCompare([]);
         try {
-            // When no model is selected, fetch versions for all models.
-            const data = await api.getModelVersions(activeModelId || '');
-            setVersions(data || []);
-            if ((data || []).length > 0) {
-                setActiveVersionId(data[0].version_id);
+            if (!activeProjectId) {
+                setVersions([]);
+                setActiveVersionId(null);
+                setIsLoading(false);
+                return;
+            }
+            const data = await api.getProjectRuns(activeProjectId);
+            const sortedData = (data || []).sort((a, b) => new Date(b.started_at || 0) - new Date(a.started_at || 0));
+            setVersions(sortedData);
+            if (sortedData.length > 0) {
+                setActiveVersionId(sortedData[0].run_id);
             } else {
                 setActiveVersionId(null);
             }
-            const label = activeModelId ? `for ${activeModelId}` : 'across all models';
-            addLog('info', 'Version Control', `Loaded ${(data || []).length} versions ${label}`);
+            addLog('info', 'Version Control', `Loaded ${sortedData.length} runs for project ${activeProjectId}`);
         } catch (err) {
-            console.error('Failed to load versions:', err);
+            console.error('Failed to load runs:', err);
             setVersions([]);
             setActiveVersionId(null);
-            addLog('error', 'Version Control', `Failed to load versions: ${err.message}`);
+            addLog('error', 'Version Control', `Failed to load runs: ${err.message}`);
         } finally {
             setIsLoading(false);
         }
@@ -130,22 +148,27 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
 
     const handleCompare = async () => {
         if (selectedForCompare.length !== 2) return;
-        const selectedRows = versions.filter(v => selectedForCompare.includes(v.version_id));
-        const unsupportedCompare = selectedRows.some(v => v.can_compare === false);
-        if (unsupportedCompare) {
-            addLog('warning', 'Version Control', 'Selected versions cannot be compared (read-only config history entries).');
+        const run1 = versions.find(v => v.run_id === selectedForCompare[0]);
+        const run2 = versions.find(v => v.run_id === selectedForCompare[1]);
+        
+        // Use after_tgt_snapshots if available, else before_tgt_snapshots, else fallback
+        const snap1 = run1?.after_tgt_snapshots?.[0] || run1?.before_tgt_snapshots?.[0];
+        const snap2 = run2?.after_tgt_snapshots?.[0] || run2?.before_tgt_snapshots?.[0];
+
+        if (!snap1 || !snap2) {
+            addLog('warning', 'Version Control', 'Selected runs do not have valid snapshots to compare.');
             return;
         }
+
         setIsComparing(true);
         try {
-            const data = await api.compareVersions(selectedForCompare[0], selectedForCompare[1]);
-            setDiffs(data.changes || []);
-            const changeCount = (data.changes || []).length;
-            addLog('info', 'Version Control', `Comparison complete: ${changeCount} difference(s) found`);
+            const data = await api.compareProjectSnapshots(activeProjectId, snap1, snap2);
+            setDiffs(data || { metadata_diff: {}, models: [] });
+            addLog('info', 'Version Control', `Comparison complete.`);
         } catch (err) {
             console.error('Compare failed:', err);
             addLog('error', 'Version Control', `Comparison failed: ${err.message}`);
-            setDiffs([]);
+            setDiffs(null);
         } finally {
             setIsComparing(false);
         }
@@ -177,17 +200,17 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
         }
     };
 
-    const toggleCompareSelection = (versionId) => {
+    const toggleCompareSelection = (runId) => {
         setSelectedForCompare(prev => {
-            if (prev.includes(versionId)) return prev.filter(v => v !== versionId);
-            if (prev.length >= 2) return [prev[1], versionId];
-            return [...prev, versionId];
+            if (prev.includes(runId)) return prev.filter(v => v !== runId);
+            if (prev.length >= 2) return [prev[1], runId];
+            return [...prev, runId];
         });
     };
 
     const handleVersionSelect = (version) => {
-        if (!version?.version_id || version.version_id === activeVersionId) return;
-        setActiveVersionId(version.version_id);
+        if (!version?.run_id || version.run_id === activeVersionId) return;
+        setActiveVersionId(version.run_id);
         setIsSnapshotSwitching(true);
         if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
         switchTimerRef.current = setTimeout(() => setIsSnapshotSwitching(false), 180);
@@ -204,13 +227,11 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
         setHistoryTilt({ x: 0, y: 0 });
     };
 
-    const objectTypes = ['All', ...new Set((diffs || []).map(d => d.object_type))];
-    const changeTypes = ['All', ...new Set((diffs || []).map(d => d.change_type))];
     const activeVersion = versions.length === 0
         ? null
-        : (versions.find(v => v.version_id === activeVersionId) || versions[0]);
+        : (versions.find(v => v.run_id === activeVersionId) || versions[0]);
     const activeSnapshotLabel = activeVersion
-        ? (activeVersion.version_tag || activeVersion.version_id?.substring(0, 8))
+        ? `Run ${activeVersion.run_id?.substring(0, 8)}`
         : 'None';
     const timelineEntries = versions;
 
@@ -219,7 +240,7 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
     return (
         <div className="fixed inset-0 z-50 flex justify-end">
             <div className="absolute inset-0 backdrop-blur-sm bg-[#020617]/65" onClick={onClose} />
-            <div className="relative w-full h-full bg-[#020617] border-l border-slate-800/70 flex flex-col shadow-2xl animate-in slide-in-from-right duration-300 text-slate-200">
+            <div className="relative w-[100vw] sm:w-[90vw] lg:w-[1000px] h-full bg-[#020617] border-l border-slate-800/70 flex flex-col shadow-2xl animate-in slide-in-from-right duration-300 text-slate-200">
                 {/* Header */}
                 <div className="h-16 px-6 flex items-center justify-between border-b border-slate-800/60 bg-[#020617]/80 backdrop-blur-md">
                     <div className="flex items-center gap-3">
@@ -227,14 +248,14 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                             <GitCommit size={20} />
                         </div>
                         <div>
-                            <h2 className="text-lg font-bold text-slate-100">Version <span className="text-[#6467f2]">History</span></h2>
+                            <h2 className="text-lg font-bold text-slate-100">Project <span className="text-[#6467f2]">History</span></h2>
                             <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-widest">
-                                {activeModelId
-                                    ? `${versions.length} version(s) for ${activeModelId}`
-                                    : `${versions.length} version(s) across all models`}
+                                {activeProjectId
+                                    ? `${versions.length} run(s) for project`
+                                    : `No project selected`}
                             </p>
                             <p className="text-[10px] mt-1 uppercase tracking-widest text-slate-500 font-semibold">
-                                Active Snapshot:
+                                Active Run:
                                 <span className="ml-2 text-xs font-mono text-[#6467f2] bg-[#6467f2]/10 px-2 py-0.5 rounded-full border border-[#6467f2]/20 normal-case">{activeSnapshotLabel}</span>
                             </p>
                         </div>
@@ -292,14 +313,14 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                                             <div className={`grid grid-cols-1 md:grid-cols-2 gap-5 transition-opacity duration-150 ${isSnapshotSwitching ? 'opacity-70' : 'opacity-100'}`}>
                                                 <article className="rounded-lg border border-[#6467f2]/30 bg-slate-900/95 overflow-hidden shadow-xl ring-1 ring-white/5">
                                                     <div className="p-4 border-b border-[#6467f2]/20 bg-[#6467f2]/10">
-                                                        <h3 className="text-sm font-bold text-[#6467f2]">{activeModelId || activeVersion?.model_id || 'Orders_Fact'}</h3>
+                                                        <h3 className="text-sm font-bold text-[#6467f2]">{activeVersion?.run_id?.substring(0, 8) || 'Orders_Fact'}</h3>
                                                         <p className="text-[10px] uppercase tracking-wider text-slate-500 mt-1 font-bold">Primary Transactional Model</p>
                                                     </div>
                                                     <div className="p-4 space-y-2 text-xs">
-                                                        <div className="flex justify-between"><span className="text-slate-400">Version:</span><span className="text-[#6467f2] font-mono">{activeSnapshotLabel}</span></div>
-                                                        <div className="flex justify-between"><span className="text-slate-400">Author:</span><span className="text-slate-200">{activeVersion?.author || 'system'}</span></div>
-                                                        <div className="flex justify-between"><span className="text-slate-400">Timestamp:</span><span className="text-slate-200">{activeVersion?.timestamp ? new Date(activeVersion.timestamp).toLocaleString() : '—'}</span></div>
-                                                        <div className="border-t border-slate-800/60 pt-2 text-slate-300">{activeVersion?.description || 'Snapshot selected from timeline.'}</div>
+                                                        <div className="flex justify-between"><span className="text-slate-400">Version:</span><span className="text-[#6467f2] font-mono">None</span></div>
+                                                        <div className="flex justify-between"><span className="text-slate-400">Author:</span><span className="text-slate-200">system</span></div>
+                                                        <div className="flex justify-between"><span className="text-slate-400">Timestamp:</span><span className="text-slate-200">—</span></div>
+                                                        <div className="border-t border-slate-800/60 pt-2 text-slate-300">Snapshot selected from timeline.</div>
                                                     </div>
                                                 </article>
 
@@ -310,8 +331,8 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                                                     </div>
                                                     <div className="p-4 space-y-2 text-xs">
                                                         <div className="flex justify-between"><span className="text-slate-400">Diff Selected:</span><span className="text-slate-200">{selectedForCompare.length}/2</span></div>
-                                                        <div className="flex justify-between"><span className="text-slate-400">Changes Loaded:</span><span className="text-emerald-400">{(diffs || []).length}</span></div>
-                                                        <div className="flex justify-between"><span className="text-slate-400">Rollback Ready:</span><span className="text-amber-400">{activeVersion?.can_rollback === false ? 'No' : 'Yes'}</span></div>
+                                                        <div className="flex justify-between"><span className="text-slate-400">Changes Loaded:</span><span className="text-emerald-400">0</span></div>
+                                                        <div className="flex justify-between"><span className="text-slate-400">Rollback Ready:</span><span className="text-amber-400">Yes</span></div>
                                                         <div className="border-t border-slate-800/60 pt-2 text-slate-300">Click a timeline entry to switch active snapshot instantly.</div>
                                                     </div>
                                                 </article>
@@ -331,10 +352,10 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                                         <p className="text-xs text-slate-500">No snapshots available yet.</p>
                                     )}
                                     {timelineEntries.map((v, idx) => {
-                                        const isActive = v.version_id === activeVersion?.version_id;
+                                        const isActive = v.run_id === activeVersion?.run_id;
                                         return (
                                             <button
-                                                key={v.version_id}
+                                                key={v.run_id}
                                                 onClick={() => handleVersionSelect(v)}
                                                 className={`w-full text-left relative pl-5 pr-2 py-1 border-l-2 rounded-r-lg transition-all duration-150 ${isActive ? 'border-[#6467f2] bg-[#6467f2]/8' : 'border-slate-800 hover:border-[#6467f2]/40 hover:bg-slate-800/35 hover:translate-x-0.5'} group`}
                                             >
@@ -344,12 +365,12 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                                                 />
                                                 <div className={`pb-4 ${idx === timelineEntries.length - 1 ? 'pb-0' : ''} ${isActive ? 'opacity-100' : 'opacity-60 group-hover:opacity-100'} transition-opacity`}>
                                                     <p className={`text-[10px] uppercase tracking-wider font-bold ${isActive ? 'text-[#6467f2]' : 'text-slate-500'}`}>
-                                                        {v.timestamp ? new Date(v.timestamp).toLocaleDateString() : 'Now'}
+                                                        {v.started_at ? new Date(v.started_at).toLocaleDateString() : 'Now'}
                                                     </p>
                                                     <p className={`text-sm font-semibold mt-1 ${isActive ? 'text-slate-100' : 'text-slate-300'}`}>
-                                                        {v.version_tag || `v${v.version_id.substring(0, 6)}`}
+                                                        {v.run_type || 'Sync'}
                                                     </p>
-                                                    <p className="text-xs text-slate-500 truncate">{v.description || 'Config snapshot'}</p>
+                                                    <p className="text-xs text-slate-500 truncate">{v.status}</p>
                                                 </div>
                                             </button>
                                         );
@@ -359,9 +380,9 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                                 <div className="p-5 border-t border-slate-800/80 bg-slate-950/80">
                                     <h4 className="text-[10px] uppercase tracking-[0.15em] text-slate-500 font-bold mb-4">Metadata Inspector</h4>
                                     <div className="space-y-2 text-xs">
-                                        <div className="flex justify-between"><span className="text-slate-400">Total Models:</span><span className="text-slate-200">{new Set(versions.map(v => v.model_id).filter(Boolean)).size || (activeModelId ? 1 : 0)}</span></div>
-                                        <div className="flex justify-between"><span className="text-slate-400">Snapshots:</span><span className="text-slate-200">{versions.length}</span></div>
-                                        <div className="flex justify-between"><span className="text-slate-400">Current:</span><span className="px-2 py-0.5 rounded-full bg-[#6467f2]/15 border border-[#6467f2]/30 text-[#6467f2] font-mono font-bold">{activeSnapshotLabel}</span></div>
+                                        <div className="flex justify-between"><span className="text-slate-400">Total Models:</span><span className="text-slate-200">0</span></div>
+                                        <div className="flex justify-between"><span className="text-slate-400">Snapshots:</span><span className="text-slate-200">0</span></div>
+                                        <div className="flex justify-between"><span className="text-slate-400">Current:</span><span className="px-2 py-0.5 rounded-full bg-[#6467f2]/15 border border-[#6467f2]/30 text-[#6467f2] font-mono font-bold">None</span></div>
                                     </div>
                                 </div>
                             </aside>
@@ -369,224 +390,206 @@ export default function VersionControlPanel({ isOpen, onClose, activeModelId = n
                     </div>
 
                     {viewMode === 'history' && (
-                        <div className="px-6 pb-6">
+                        <div className="px-6 pb-6 space-y-6">
                             <div className="h-12 border border-slate-800/80 bg-[#020617] rounded-lg px-4 flex items-center justify-between text-[10px] font-bold text-slate-500 uppercase tracking-wide">
                                 <div className="flex items-center gap-4">
                                     <span className="inline-flex items-center gap-2">
                                         <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(74,222,128,0.6)] animate-pulse" />
                                         Live Sync Connected
                                     </span>
-                                    <span className="h-4 w-px bg-slate-800/80" />
-                                    <span className="normal-case font-medium">Query Engine: BigQuery</span>
                                 </div>
                                 <div className="flex items-center gap-4 normal-case">
-                                    <span>Space: Play History</span>
-                                    <span>S: Split Screen</span>
+                                    <span>Space: Run History</span>
                                 </div>
+                            </div>
+                            
+                            {/* Run History List */}
+                            <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <h3 className="text-sm font-bold text-primary">Run History • {activeSnapshotLabel}</h3>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={handleCompare}
+                                            disabled={selectedForCompare.length !== 2 || isComparing}
+                                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all border ${selectedForCompare.length === 2
+                                                ? 'bg-accent-blue/10 text-accent-blue border-accent-blue/30 hover:bg-accent-blue/20'
+                                                : 'text-tertiary border-main cursor-not-allowed opacity-50'
+                                                }`}
+                                        >
+                                            {isComparing ? <Loader2 size={12} className="animate-spin" /> : <GitCompare size={12} />}
+                                            Compare Selected ({selectedForCompare.length}/2)
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {isLoading ? (
+                                    <div className="flex items-center justify-center py-8">
+                                        <Loader2 size={24} className="animate-spin text-[#6467f2]" />
+                                    </div>
+                                ) : (
+                                    <div
+                                        className={`border border-slate-800/70 rounded-lg overflow-hidden bg-slate-900/70 transition-opacity duration-150 ${isSnapshotSwitching ? 'opacity-70' : 'opacity-100'}`}
+                                        onMouseMove={handleHistoryMouseMove}
+                                        onMouseLeave={handleHistoryMouseLeave}
+                                        style={{
+                                            transform: `perspective(1200px) rotateX(${historyTilt.x}deg) rotateY(${historyTilt.y}deg)`,
+                                            transition: 'transform 180ms ease-out, opacity 150ms ease-out',
+                                            willChange: 'transform, opacity',
+                                        }}
+                                    >
+                                        <table className="w-full text-xs">
+                                            <thead className="border-b border-slate-800/70 bg-slate-900/80">
+                                                <tr>
+                                                    <th className="w-10 px-3 py-2.5"></th>
+                                                    <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Run ID</th>
+                                                    <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Type</th>
+                                                    <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Status</th>
+                                                    <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Started At</th>
+                                                    <th className="text-right px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {versions.length === 0 && (
+                                                    <tr>
+                                                        <td colSpan={6} className="px-3 py-8 text-center text-tertiary text-sm">
+                                                            No run history found.
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                                {versions.map(v => {
+                                                    const isChecked = selectedForCompare.includes(v.run_id);
+                                                    return (
+                                                        <tr
+                                                            key={v.run_id}
+                                                            onClick={() => handleVersionSelect(v)}
+                                                            className={`border-b border-slate-800/70 last:border-0 hover:bg-slate-800/40 transition-colors cursor-pointer ${activeVersionId === v.run_id ? 'bg-[#6467f2]/10' : ''}`}
+                                                        >
+                                                            <td className="px-3 py-2.5">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={isChecked}
+                                                                    onChange={() => toggleCompareSelection(v.run_id)}
+                                                                    onClick={(e) => e.stopPropagation()}
+                                                                    className="rounded border-slate-700 accent-[#6467f2]"
+                                                                />
+                                                            </td>
+                                                            <td className="px-3 py-2.5 font-mono text-[#6467f2] font-bold">{v.run_id?.substring(0, 8)}</td>
+                                                            <td className="px-3 py-2.5">
+                                                                <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-indigo-500/15 text-indigo-400 border border-indigo-500/30">
+                                                                    {v.run_type || 'Sync'}
+                                                                </span>
+                                                            </td>
+                                                            <td className="px-3 py-2.5">
+                                                                <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-slate-500/15 text-slate-400 border border-slate-500/30">
+                                                                    {v.status || 'unknown'}
+                                                                </span>
+                                                            </td>
+                                                            <td className="px-3 py-2.5 text-slate-300">
+                                                                <div className="flex items-center gap-1">
+                                                                    <Clock size={10} className="text-slate-500" />
+                                                                    {v.started_at ? new Date(v.started_at).toLocaleString() : '—'}
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-3 py-2.5 text-right">
+                                                                <button
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        setRollbackTarget(v);
+                                                                    }}
+                                                                    className="px-2 py-1 rounded text-[10px] font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20 hover:bg-amber-500/20 transition-colors"
+                                                                >
+                                                                    Restore
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
 
                     {viewMode === 'diff' && <div ref={diffSectionRef} className="px-6 pb-6 space-y-6">
-                        {/* Version History List */}
-                        <div className="space-y-3">
-                            <div className="flex items-center justify-between">
-                                <h3 className="text-sm font-bold text-primary">Version History • {activeSnapshotLabel}</h3>
-                                <div className="flex items-center gap-2">
-                                    <button
-                                        onClick={() => versions.length > 0 && setDeleteConfirm(true)}
-                                        disabled={!activeModelId || versions.length === 0}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all border border-red-500/30 text-red-400 hover:bg-red-500/10 disabled:opacity-40 disabled:cursor-not-allowed"
-                                        title="Delete all versions for this model"
-                                    >
-                                        <Trash2 size={12} /> Delete All
-                                    </button>
-                                    <button
-                                        onClick={handleCompare}
-                                        disabled={selectedForCompare.length !== 2 || isComparing}
-                                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all border ${selectedForCompare.length === 2
-                                            ? 'bg-accent-blue/10 text-accent-blue border-accent-blue/30 hover:bg-accent-blue/20'
-                                            : 'text-tertiary border-main cursor-not-allowed opacity-50'
-                                            }`}
-                                    >
-                                        {isComparing ? <Loader2 size={12} className="animate-spin" /> : <GitCompare size={12} />}
-                                        Compare Selected ({selectedForCompare.length}/2)
-                                    </button>
-                                </div>
+                        {/* Diff Table */}
+                        {diffs ? (
+                            <div className="space-y-3">
+                                <h3 className="text-sm font-bold text-primary">Comparison Results</h3>
+                                <DiffTable diffs={diffs} />
                             </div>
-
-                            {isLoading ? (
-                                <div className="flex items-center justify-center py-8">
-                                    <Loader2 size={24} className="animate-spin text-[#6467f2]" />
-                                </div>
-                            ) : (
-                                <div
-                                    className={`border border-slate-800/70 rounded-lg overflow-hidden bg-slate-900/70 transition-opacity duration-150 ${isSnapshotSwitching ? 'opacity-70' : 'opacity-100'}`}
-                                    onMouseMove={handleHistoryMouseMove}
-                                    onMouseLeave={handleHistoryMouseLeave}
-                                    style={{
-                                        transform: `perspective(1200px) rotateX(${historyTilt.x}deg) rotateY(${historyTilt.y}deg)`,
-                                        transition: 'transform 180ms ease-out, opacity 150ms ease-out',
-                                        willChange: 'transform, opacity',
-                                    }}
-                                >
-                                    <table className="w-full text-xs">
-                                        <thead className="border-b border-slate-800/70 bg-slate-900/80">
-                                            <tr>
-                                                <th className="w-10 px-3 py-2.5"></th>
-                                                <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Run ID</th>
-                                                <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Type</th>
-                                                <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Status</th>
-                                                <th className="text-left px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Started At</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {versions.length === 0 && (
-                                                <tr>
-                                                    <td colSpan={5} className="px-3 py-8 text-center text-tertiary text-sm">
-                                                        No run history found.
-                                                    </td>
-                                                </tr>
-                                            )}
-                                            {versions.map(v => {
-                                                const isChecked = selectedForCompare.includes(v.run_id);
-                                                return (
-                                                    <tr
-                                                        key={v.run_id}
-                                                        onClick={() => handleVersionSelect(v)}
-                                                        className={`border-b border-slate-800/70 last:border-0 hover:bg-slate-800/40 transition-colors cursor-pointer ${activeVersionId === v.run_id ? 'bg-[#6467f2]/10' : ''}`}
-                                                    >
-                                                        <td className="px-3 py-2.5">
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={isChecked}
-                                                                onChange={() => toggleCompareSelection(v.run_id)}
-                                                                onClick={(e) => e.stopPropagation()}
-                                                                className="rounded border-slate-700 accent-[#6467f2]"
-                                                            />
-                                                        </td>
-                                                        <td className="px-3 py-2.5 font-mono text-[#6467f2] font-bold">{v.run_id?.substring(0, 8)}</td>
-                                                        <td className="px-3 py-2.5">
-                                                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-indigo-500/15 text-indigo-400 border border-indigo-500/30">
-                                                                {v.run_type || 'Sync'}
-                                                            </span>
-                                                        </td>
-                                                        <td className="px-3 py-2.5">
-                                                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-slate-500/15 text-slate-400 border border-slate-500/30">
-                                                                {v.status || 'unknown'}
-                                                            </span>
-                                                        </td>
-                                                        <td className="px-3 py-2.5 text-slate-300">
-                                                            <div className="flex items-center gap-1">
-                                                                <Clock size={10} className="text-slate-500" />
-                                                                {v.started_at ? new Date(v.started_at).toLocaleString() : '—'}
-                                                            </div>
-                                                        </td>
-                                                    </tr>
-                                                );
-                                            })}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                    )}
-
-                    {/* Diff Table */}
-                    {diffs && (
-                        <div className="space-y-3">
-                            <h3 className="text-sm font-bold text-primary">Comparison Results</h3>
-                            <div className="flex items-center gap-3">
-                                <div className="flex items-center gap-2">
-                                    <Filter size={12} className="text-tertiary" />
-                                    <select
-                                        value={objectTypeFilter}
-                                        onChange={e => setObjectTypeFilter(e.target.value)}
-                                        className="bg-surface border border-main rounded-md px-2 py-1 text-[11px] text-primary"
-                                    >
-                                        {objectTypes.map(t => <option key={t} value={t}>{t}</option>)}
-                                    </select>
-                                    <select
-                                        value={changeTypeFilter}
-                                        onChange={e => setChangeTypeFilter(e.target.value)}
-                                        className="bg-surface border border-main rounded-md px-2 py-1 text-[11px] text-primary"
-                                    >
-                                        {changeTypes.map(t => <option key={t} value={t}>{t}</option>)}
-                                    </select>
-                                </div>
-                            </div>
-                            <div className="border border-main rounded-xl overflow-hidden bg-surface-raised">
-                                <DiffTable diffs={diffs} objectTypeFilter={objectTypeFilter} changeTypeFilter={changeTypeFilter} />
-                            </div>
-                        </div>
-                    )}
-                </div>}
-            </div>
-
-            {/* Rollback Confirmation Dialog */}
-            {rollbackTarget && (
-                <div className="absolute inset-0 z-10 flex items-center justify-center backdrop-blur-sm rounded-xl" style={{ background: 'var(--bg-backdrop)' }}>
-                    <div className="bg-surface border border-main rounded-xl p-6 max-w-md shadow-2xl">
-                        <div className="flex items-center gap-3 mb-4">
-                            <div className="p-2 rounded-lg bg-amber-500/15 text-amber-400">
-                                <AlertTriangle size={20} />
-                            </div>
-                            <h3 className="text-base font-bold text-primary">Confirm Rollback</h3>
-                        </div>
-                        <p className="text-xs text-secondary mb-2">
-                            This will revert the project configuration and models to the state of Run{' '}
-                            <strong className="text-accent-blue font-mono">
-                                {rollbackTarget.run_id?.substring(0, 8)}
-                            </strong>
-                            .
-                        </p>
-                        <p className="text-[11px] text-tertiary mb-4">
-                            {rollbackTarget.run_type || 'Sync'} Run created on {rollbackTarget.started_at ? new Date(rollbackTarget.started_at).toLocaleString() : 'Now'}
-                        </p>
-                        <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-300/80 mb-6">
-                            <p>• A <strong>new version record</strong> will be created representing this restore.</p>
-                            <p>• Target models will be overwritten with the restored content upon applying.</p>
-                            <p>• All existing version history will be <strong>preserved</strong>.</p>
-                        </div>
-                        {rollbackError && (
-                            <div className="mb-4 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">
-                                {rollbackError}
+                        ) : (
+                            <div className="p-8 text-center text-tertiary text-sm border border-main rounded-xl bg-surface-raised">
+                                <GitCompare size={32} className="mx-auto mb-2 opacity-30" />
+                                Select two runs in History mode and click Compare to see differences.
                             </div>
                         )}
-                        <div className="flex justify-end gap-3">
-                            <button
-                                onClick={() => {
-                                    setRollbackTarget(null);
-                                    setRollbackError('');
-                                }}
-                                disabled={isRollingBack}
-                                className="px-4 py-2 rounded-lg text-xs font-bold text-secondary border border-main hover:bg-surface-hover"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={() => handleRollback(rollbackTarget.run_id)}
-                                disabled={isRollingBack}
-                                className="px-4 py-2 rounded-lg text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 shadow-lg disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
-                            >
-                                {isRollingBack ? <Loader2 size={12} className="animate-spin" /> : null}
-                                {isRollingBack ? 'Restoring...' : 'Restore to this run'}
-                            </button>
+                    </div>}
+                </div>
+
+                {/* Rollback Confirmation Dialog */}
+                {rollbackTarget && (
+                    <div className="absolute inset-0 z-10 flex items-center justify-center backdrop-blur-sm rounded-xl" style={{ background: 'var(--bg-backdrop)' }}>
+                        <div className="bg-surface border border-main rounded-xl p-6 max-w-md shadow-2xl">
+                            <div className="flex items-center gap-3 mb-4">
+                                <div className="p-2 rounded-lg bg-amber-500/15 text-amber-400">
+                                    <AlertTriangle size={20} />
+                                </div>
+                                <h3 className="text-base font-bold text-primary">Confirm Rollback</h3>
+                            </div>
+                            <p className="text-xs text-secondary mb-2">
+                                This will revert the project configuration and models to the state of Run{' '}
+                                <strong className="text-accent-blue font-mono">
+                                    {rollbackTarget.run_id?.substring(0, 8)}
+                                </strong>
+                                .
+                            </p>
+                            <p className="text-[11px] text-tertiary mb-4">
+                                {rollbackTarget.run_type || 'Sync'} Run created on {rollbackTarget.started_at ? new Date(rollbackTarget.started_at).toLocaleString() : 'Now'}
+                            </p>
+                            <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-300/80 mb-6">
+                                <p>• A <strong>new version record</strong> will be created representing this restore.</p>
+                                <p>• Target models will be overwritten with the restored content upon applying.</p>
+                                <p>• All existing version history will be <strong>preserved</strong>.</p>
+                            </div>
+                            {rollbackError && (
+                                <div className="mb-4 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">
+                                    {rollbackError}
+                                </div>
+                            )}
+                            <div className="flex justify-end gap-3">
+                                <button
+                                    onClick={() => {
+                                        setRollbackTarget(null);
+                                        setRollbackError('');
+                                    }}
+                                    disabled={isRollingBack}
+                                    className="px-4 py-2 rounded-lg text-xs font-bold text-secondary border border-main hover:bg-surface-hover"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={() => handleRollback(rollbackTarget.run_id)}
+                                    disabled={isRollingBack}
+                                    className="px-4 py-2 rounded-lg text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 shadow-lg disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                                >
+                                    {isRollingBack ? <Loader2 size={12} className="animate-spin" /> : null}
+                                    {isRollingBack ? 'Restoring...' : 'Restore to this run'}
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )}
 
-            {/* Footer */}
-            <div className="h-12 px-6 bg-[#020617] border-t border-slate-800/80 flex justify-between items-center">
-                <span className="text-[10px] uppercase tracking-wider text-slate-500">© 2026 DataStore Labs</span>
-                <button onClick={onClose} className="px-5 py-2 bg-[#6467f2] text-white rounded-lg text-sm font-bold hover:bg-[#4f46e5] active:scale-95 transition-all">
-                    Done
-                </button>
+                {/* Footer */}
+                <div className="h-12 px-6 bg-[#020617] border-t border-slate-800/80 flex justify-between items-center">
+                    <span className="text-[10px] uppercase tracking-wider text-slate-500">© 2026 DataStore Labs</span>
+                    <button onClick={onClose} className="px-5 py-2 bg-[#6467f2] text-white rounded-lg text-sm font-bold hover:bg-[#4f46e5] active:scale-95 transition-all">
+                        Done
+                    </button>
+                </div>
             </div>
         </div>
-        </div >
     );
 }
-

@@ -28,7 +28,11 @@ from urllib3.util.retry import Retry
 
 from semabridge.core.behavior import ConnectorBehavior, DatabricksBehavior
 from semabridge.core.settings import DatabricksConfig
-from semabridge.connectors.databricks_measure_translation import DatabricksMeasureTranslator
+from semabridge.connectors.databricks_measure_translation import (
+    DatabricksMeasureTranslator,
+    TIER_DEFERRED,
+    TIER_RELATIONSHIP_AWARE_FILTERED_AGGREGATION,
+)
 from semabridge.connectors.schema_reconciler import SchemaMapper
 from semabridge.repository.orm.session_factory import db_manager
 from semabridge.repository.semantic_routing_repository import RouterDecision, SemanticRoutingRepository
@@ -92,7 +96,10 @@ DEPLOY_REASON_GRAPH_INTEGRITY = "GRAPH_INTEGRITY"
 TRANSLATION_TYPE_SQL_NATIVE = "SQL_NATIVE"
 TRANSLATION_TYPE_AGGREGATION_BUILT = "AGGREGATION_BUILT"
 TRANSLATION_TYPE_DAX_TRANSLATED = "DAX_TRANSLATED"
+TRANSLATION_TYPE_DAX_LLM = "DAX_LLM_TRANSLATED"
 TRANSLATION_TYPE_DAX_SKIPPED = "DAX_SKIPPED"
+TRANSLATION_TYPE_PRECOMPUTED = "PRECOMPUTED_SQL"
+TRANSLATION_TYPE_PRECOMPUTE_REQUIRED = "PRECOMPUTE_REQUIRED"
 
 # ── Confidence Levels ────────────────────────────────────────────────────────
 CONFIDENCE_HIGH = "HIGH"
@@ -1898,13 +1905,21 @@ class DatabricksPublisher:
         dataset: SMLDataset,
         source_fq: str,
         bindings: list[MetricViewColumnBinding],
+        extra_allowed_prefixes: set[str] | None = None,
     ) -> str | None:
         """Rewrite dataset-local measure SQL to the metric-view source projection."""
-        expr = str(sql_expression or "").strip()
+        expr = self._normalize_semantic_sql_aliases(sql_expression)
         if not expr:
             return None
 
         allowed_prefixes = self._metric_view_allowed_prefixes(dataset, source_fq)
+        join_prefixes = {
+            str(p or "").strip().lower()
+            for p in (extra_allowed_prefixes or set())
+            if str(p or "").strip()
+        }
+        if join_prefixes:
+            allowed_prefixes.update(join_prefixes)
         column_lookup: dict[str, str] = {}
         physical_cols = {str(c).lower() for c in self._get_source_table_columns(source_fq)}
         for binding in bindings:
@@ -1921,6 +1936,30 @@ class DatabricksPublisher:
                     column_lookup[normalized] = binding.projected_name
 
         unresolved = False
+
+        reserved_tokens = {
+            "and", "or", "not", "null", "true", "false",
+            "case", "when", "then", "else", "end",
+            "as", "distinct", "over", "partition", "order", "by",
+            "sum", "avg", "min", "max", "count", "count_distinct", "count_if",
+            "coalesce", "nullif", "cast", "try_cast", "date_trunc", "datediff",
+            "any_value", "concat", "concat_ws", "date_format", "format_string",
+            "char", "chr", "unicode", "unichar",
+            # Common scalar functions used by translated measures.
+            "round", "bround", "abs", "ceil", "ceiling", "floor", "greatest", "least",
+            "pow", "power", "sqrt", "exp", "ln", "log", "log10",
+            "upper", "lower", "initcap", "trim", "ltrim", "rtrim", "length",
+            "substr", "substring", "replace", "regexp_replace", "regexp_extract", "regexp_like",
+            "to_date", "to_timestamp", "date_add", "date_sub", "add_months", "last_day",
+            "year", "month", "day", "weekofyear", "quarter",
+            "if", "iif", "nvl", "ifnull", "isnull", "isnan",
+            # Common SQL type tokens used in CAST(... AS <type>).
+            "string", "double", "float", "decimal", "numeric",
+            "int", "integer", "bigint", "smallint", "tinyint",
+            "boolean", "date", "timestamp",
+            "lag", "lead", "rank", "dense_rank", "row_number",
+            "current_date", "current_timestamp", "now",
+        }
 
         def _resolve_projected_name(column_name: str) -> str | None:
             normalized = self._sanitize_identifier(column_name).lower()
@@ -1952,7 +1991,11 @@ class DatabricksPublisher:
             ).strip().lower()
             column_name = match.group("bt") or match.group("dq") or match.group("bare") or ""
             
-            # Try to resolve with allowed prefix first
+            # Pass-through for join prefixes (non-root tables)
+            if prefix in join_prefixes:
+                return f"`{prefix}`.`{self._sanitize_identifier(column_name)}`"
+
+            # Try to resolve with allowed prefix first (root dataset)
             if prefix in allowed_prefixes:
                 projected = _resolve_projected_name(column_name)
                 if projected:
@@ -1994,6 +2037,64 @@ class DatabricksPublisher:
         expr = quoted_pattern.sub(_replace_quoted, expr)
         if unresolved:
             return None
+
+        bare_pattern = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b")
+
+        def _replace_bare(match: re.Match[str]) -> str:
+            nonlocal unresolved
+            token = match.group(1)
+            raw_token = str(token or "").strip()
+            # Preserve leading underscore identifiers (computed columns injected
+            # into the metric-view `source:` projection). `_sanitize_identifier`
+            # strips leading underscores, which would incorrectly turn
+            # `_current_fiscal_period` into `current_fiscal_period` and make the
+            # reference unresolved.
+            if raw_token.startswith("_") and re.fullmatch(r"_[A-Za-z0-9_]+", raw_token):
+                return f"`{raw_token.lower()}`"
+
+            normalized = self._sanitize_identifier(raw_token).lower()
+            if not normalized:
+                return token
+            if normalized in reserved_tokens:
+                return token
+            if normalized in allowed_prefixes or normalized in join_prefixes:
+                return token
+            projected = _resolve_projected_name(token)
+            if projected:
+                return f"`{projected}`"
+            if normalized in physical_cols or not physical_cols:
+                return f"`{self._sanitize_identifier(token)}`"
+            unresolved = True
+            return token
+
+        def _replace_bare_in_segment(segment: str) -> str:
+            if not segment:
+                return segment
+            parts = segment.split("'")
+            for idx in range(0, len(parts), 2):
+                parts[idx] = bare_pattern.sub(_replace_bare, parts[idx])
+            return "'".join(parts)
+
+        backtick_parts = expr.split("`")
+        for idx in range(0, len(backtick_parts), 2):
+            backtick_parts[idx] = _replace_bare_in_segment(backtick_parts[idx])
+        expr = "`".join(backtick_parts)
+        if unresolved:
+            return None
+        return expr
+
+    def _normalize_semantic_sql_aliases(self, sql_expression: str) -> str:
+        """Normalize known semantic-layer aliases to Databricks-safe SQL references."""
+        expr = str(sql_expression or "").strip()
+        if not expr:
+            return ""
+
+        # Some translated expressions reference synthetic measure-table aliases
+        # that do not exist in Databricks source SQL.
+        expr = re.sub(r"(?i)\b(projectmeasures|project_measures|measuretable)\s*\.", "", expr)
+
+        # Legacy translator token used for current fiscal period comparisons.
+        expr = re.sub(r"(?i)\bFISCAL_MONTH_VALUE\b", "_current_fiscal_period", expr)
         return expr
 
     def _rewrite_sql_view_measure_expression(
@@ -2009,7 +2110,7 @@ class DatabricksPublisher:
         references to Databricks backtick identifiers and rejects expressions
         that still reference another dataset alias/table.
         """
-        expr = str(sql_expression or "").strip()
+        expr = self._normalize_semantic_sql_aliases(sql_expression)
         if not expr:
             return None
 
@@ -2289,9 +2390,13 @@ class DatabricksPublisher:
             lines.append(f"  - name: {yaml_quote(prefixed_measure_name)}")
             lines.append(f"    expr: {yaml_quote(safe_expr)}")
             measures_added += 1
-            
+             
         if measures_added == 0:
-            lines[-1] = "measures: []"
+            # Avoid in-place mutation of the last line: depending on earlier
+            # injections, the last line might not be the "measures:" header.
+            if lines and lines[-1].strip() == "measures:":
+                lines.pop()
+            lines.append("measures: []")
 
         output_yaml = "\n".join(lines)
 
@@ -2392,9 +2497,51 @@ class DatabricksPublisher:
                 lines.append("")
         
         if joins:
-            self._emit_join_yaml(sml_model, joins, lines, indent=1)
+            # Top-level join items must align at two spaces under `joins:`.
+            # Using indent=1 caused relationship-derived joins to be indented
+            # differently than config `pre_joins`, producing invalid YAML.
+            self._emit_join_yaml(sml_model, joins, lines, indent=0)
         
         return lines
+
+    def _metric_view_join_prefixes(
+        self,
+        sml_model: SMLModel,
+        dataset: SMLDataset,
+    ) -> set[str]:
+        """Return join aliases that should be allowed in metric-view expressions."""
+        if not (self._dbx_behavior.enable_metric_view_joins and self._dbx_behavior.enable_cross_table_joins):
+            return set()
+        prefixes: set[str] = set()
+
+        try:
+            builder = JoinTreeBuilder(sml_model)
+            joins = builder.build_join_tree(dataset.unique_name)
+        except ValueError:
+            joins = []
+
+        def _collect(nodes: list) -> None:
+            for node in nodes or []:
+                name = str(getattr(node, "name", "") or "").strip().lower()
+                if name:
+                    prefixes.add(name)
+                nested = getattr(node, "joins", None)
+                if nested:
+                    _collect(nested)
+
+        _collect(joins)
+
+        if hasattr(self, "_config_pre_joins") and self._config_pre_joins:
+            for join_cfg in self._config_pre_joins:
+                alias = str(
+                    (join_cfg or {}).get("alias")
+                    or (join_cfg or {}).get("name")
+                    or ""
+                ).strip().lower()
+                if alias:
+                    prefixes.add(alias)
+
+        return prefixes
     
     def _metric_view_join_alias(self, dataset_name: str) -> str:
         """Build the deterministic join alias used by JoinTreeBuilder."""
@@ -2679,6 +2826,7 @@ class DatabricksPublisher:
             if not ds_name:
                 continue
             metrics = metrics_by_dataset.get(ds_name, [])
+            join_prefixes = self._metric_view_join_prefixes(sml_model, dataset)
 
             # Resolve source table — schema-first: never skip on missing data
             expected_source = self._resolve_source_table(dataset)
@@ -2727,6 +2875,7 @@ class DatabricksPublisher:
                     metric,
                     dataset,
                     measure_sql_map=measure_sql_map,
+                    sml_model=sml_model,
                 )
                 if not sql_expr:
                     if self._dbx_behavior.enable_low_confidence_drafts:
@@ -2747,23 +2896,13 @@ class DatabricksPublisher:
                         })
                     continue
 
-                # Pre-translated SQL (SQL_NATIVE) already has validated bare column refs.
-                # Skip projection rewriting to prevent spurious unresolved-binding failures.
-                if translation_type == TRANSLATION_TYPE_SQL_NATIVE:
-                    metric_view_expr = sql_expr
-                else:
-                    metric_view_expr = self._rewrite_metric_view_measure_expression(
-                        sql_expr,
-                        dataset,
-                        source_fq,
-                        bindings,
-                    )
-                if not metric_view_expr:
-                    metric_view_expr = self._build_scalar_subquery_aggregate_expression(
-                        sql_expr,
-                        dataset,
-                        sml_model,
-                    )
+                metric_view_expr = self._rewrite_metric_view_measure_expression(
+                    sql_expr,
+                    dataset,
+                    source_fq,
+                    bindings,
+                    extra_allowed_prefixes=join_prefixes,
+                )
                 if not metric_view_expr:
                     if self._dbx_behavior.enable_cross_table_joins:
                         resolved.append(ResolvedMeasure(
@@ -2855,7 +2994,10 @@ class DatabricksPublisher:
         return {
             TRANSLATION_TYPE_SQL_NATIVE: CONFIDENCE_HIGH,
             TRANSLATION_TYPE_AGGREGATION_BUILT: CONFIDENCE_HIGH,
+            TRANSLATION_TYPE_PRECOMPUTED: CONFIDENCE_HIGH,
             TRANSLATION_TYPE_DAX_TRANSLATED: CONFIDENCE_MEDIUM,
+            TRANSLATION_TYPE_DAX_LLM: CONFIDENCE_MEDIUM,
+            TRANSLATION_TYPE_PRECOMPUTE_REQUIRED: CONFIDENCE_LOW,
             TRANSLATION_TYPE_DAX_SKIPPED: CONFIDENCE_LOW,
         }.get(translation_type, CONFIDENCE_NONE)
 
@@ -3159,7 +3301,7 @@ class DatabricksPublisher:
         sml_model: SMLModel,
     ) -> str | None:
         """Build a scalar subquery for a simple table-qualified aggregate."""
-        expr = str(sql_expression or "").strip()
+        expr = self._normalize_semantic_sql_aliases(sql_expression)
         if not expr:
             return None
 
@@ -3899,6 +4041,74 @@ class DatabricksPublisher:
 
         return names_by_metric_id
 
+    def _build_llm_schema_context(self, sml_model: SMLModel) -> dict[str, list[str]]:
+        """Build a lightweight schema context for LLM-based DAX translation."""
+        context: dict[str, list[str]] = {}
+        for dataset in sml_model.datasets:
+            ds_name = str(dataset.unique_name or "").strip()
+            if not ds_name:
+                continue
+            alias = self._sanitize_identifier(ds_name)
+            if not alias:
+                continue
+            columns: list[str] = []
+            for col in dataset.columns:
+                col_name = self._sanitize_identifier(col.unique_name)
+                if col_name:
+                    columns.append(col_name.upper())
+            if columns:
+                context[alias] = sorted(set(columns))
+        return context
+
+    def _try_llm_metric_fallback_expression(
+        self,
+        metric: SMLMetric,
+        dataset: Optional[SMLDataset],
+        sml_model: SMLModel,
+    ) -> Optional[str]:
+        """Attempt LLM-based DAX translation when deterministic rules fail."""
+        if not dataset:
+            return None
+        dax_expr = (metric.expression or "").strip()
+        if not dax_expr:
+            return None
+
+        try:
+            from semabridge.converter.gemini_dax_translator import get_gemini_translator
+        except Exception as exc:  # pragma: no cover - import guard
+            logger.debug("Gemini translator unavailable: %s", exc)
+            return None
+
+        translator = get_gemini_translator()
+        if not translator.use_gemini or not translator.api_key:
+            logger.debug("Gemini translator disabled or missing API key")
+            return None
+
+        table_alias = self._sanitize_identifier(dataset.unique_name) or "source"
+        schema_context = self._build_llm_schema_context(sml_model)
+        result = translator.translate(
+            dax=dax_expr,
+            table_alias=table_alias,
+            dataset_name=str(dataset.unique_name or ""),
+            metric_name=str(metric.unique_name or ""),
+            schema_context=schema_context,
+        )
+        if result and result.is_valid and result.sql:
+            logger.info(
+                "LLM translated DAX for measure '%s': %s → %s",
+                metric.unique_name,
+                dax_expr[:60],
+                result.sql,
+            )
+            return result.sql
+        if result and result.sql:
+            logger.warning(
+                "LLM translation rejected for measure '%s': %s",
+                metric.unique_name,
+                result.sql[:80],
+            )
+        return None
+
     # ── Measure SQL Resolution ───────────────────────────────────────────────
 
     def _is_simple_sum_dax_expression(self, dax_expression: str) -> bool:
@@ -3913,12 +4123,84 @@ class DatabricksPublisher:
             )
         )
 
+    def _hybrid_complex_tiers(self) -> set[str]:
+        """Return configured DAX tiers that must use precomputed execution."""
+        configured = getattr(self._dbx_behavior, "precompute_tiers", []) or []
+        tiers = {
+            str(item).strip().upper()
+            for item in configured
+            if str(item).strip()
+        }
+        if tiers:
+            return tiers
+        return {
+            TIER_RELATIONSHIP_AWARE_FILTERED_AGGREGATION,
+            TIER_DEFERRED,
+        }
+
+    def _build_precomputed_sql_expression(
+        self,
+        metric: SMLMetric,
+        dataset: Optional[SMLDataset],
+        sml_model: Optional[SMLModel],
+    ) -> Optional[str]:
+        """Resolve SQL expression from precomputed data-layer fields."""
+        precomputed_expr = str(getattr(metric, "precomputed_sql_expression", "") or "").strip()
+        if precomputed_expr:
+            return precomputed_expr
+
+        dataset_name = str(getattr(metric, "precomputed_dataset", "") or "").strip()
+        precomputed_dataset = dataset
+        if dataset_name and sml_model:
+            precomputed_dataset = sml_model.get_dataset(dataset_name) or precomputed_dataset
+
+        precomputed_column = str(getattr(metric, "precomputed_column", "") or "").strip()
+        if not precomputed_column:
+            source_column = str(metric.source_column or "").strip()
+            prefix = str(getattr(self._dbx_behavior, "precomputed_column_prefix", "precomputed_") or "precomputed_")
+            if source_column and source_column.lower().startswith(prefix.lower()):
+                precomputed_column = source_column
+
+        if not precomputed_column:
+            return None
+
+        safe_col = self._sanitize_identifier(precomputed_column)
+        if not safe_col:
+            return None
+
+        if precomputed_dataset and precomputed_dataset.columns:
+            if not precomputed_dataset.get_column(precomputed_column):
+                column_names = {
+                    self._sanitize_identifier(col.unique_name).upper()
+                    for col in precomputed_dataset.columns
+                }
+                if safe_col.upper() not in column_names:
+                    logger.warning(
+                        "Precomputed column '%s' for metric '%s' not found in dataset '%s'.",
+                        precomputed_column,
+                        metric.unique_name,
+                        precomputed_dataset.unique_name,
+                    )
+                    return None
+
+        agg_map: dict[AggregationType, str] = {
+            AggregationType.SUM: f"SUM(`{safe_col}`)",
+            AggregationType.COUNT: f"COUNT(`{safe_col}`)",
+            AggregationType.COUNT_DISTINCT: f"COUNT(DISTINCT `{safe_col}`)",
+            AggregationType.AVG: f"AVG(`{safe_col}`)",
+            AggregationType.MIN: f"MIN(`{safe_col}`)",
+            AggregationType.MAX: f"MAX(`{safe_col}`)",
+            AggregationType.NONE: f"MAX(`{safe_col}`)",
+        }
+        return agg_map.get(metric.aggregation, f"MAX(`{safe_col}`)")
+
     def _resolve_measure_sql(
         self,
         metric: SMLMetric,
         dataset: Optional[SMLDataset],
         measure_sql_map: Optional[dict[str, str]] = None,
         allow_simple_sum_translation: bool = True,
+        sml_model: Optional[SMLModel] = None,
     ) -> tuple[Optional[str], str]:
         """Resolve the executable SQL expression for a metric.
 
@@ -3936,6 +4218,25 @@ class DatabricksPublisher:
             Tuple of (sql_expression, translation_type).
             sql_expression is None if unresolvable.
         """
+        hybrid_enabled = bool(getattr(self._dbx_behavior, "hybrid_metric_execution_enabled", False))
+        metric_tier = self._measure_translator.classify_dax_measure_tier(metric.expression or "")
+        complex_tiers = self._hybrid_complex_tiers()
+
+        if hybrid_enabled:
+            precomputed_sql = self._build_precomputed_sql_expression(metric, dataset, sml_model)
+            if precomputed_sql:
+                return precomputed_sql, TRANSLATION_TYPE_PRECOMPUTED
+            if (
+                bool(getattr(self._dbx_behavior, "strict_precompute_for_complex", True))
+                and metric_tier in complex_tiers
+            ):
+                logger.warning(
+                    "Hybrid execution requires precomputed logic for complex metric '%s' (tier=%s).",
+                    metric.unique_name,
+                    metric_tier,
+                )
+                return None, TRANSLATION_TYPE_PRECOMPUTE_REQUIRED
+
         # Priority 1: Pre-translated SQL expression
         sql_expr = (metric.sql_expression or "").strip()
         if sql_expr:
@@ -3984,6 +4285,15 @@ class DatabricksPublisher:
                             contextual,
                         )
                         return contextual, TRANSLATION_TYPE_DAX_TRANSLATED
+
+                if self._dbx_behavior.enable_llm_dax_translation and sml_model:
+                    llm_expr = self._try_llm_metric_fallback_expression(
+                        metric,
+                        dataset,
+                        sml_model,
+                    )
+                    if llm_expr:
+                        return llm_expr, TRANSLATION_TYPE_DAX_LLM
 
         # Priority 4: Skip — complex DAX, no viable translation
         logger.warning(
@@ -4358,9 +4668,11 @@ class DatabricksPublisher:
 
         aggregation_votes: dict[str, int] = {name: 0 for name in dataset_by_name}
         for metric in sml_model.metrics:
-            effective_dataset_name = self._resolve_effective_metric_dataset_name(metric, sml_model)
-            ds_name = self._sanitize_identifier(effective_dataset_name)
+            ds_name = self._sanitize_identifier(str(metric.dataset or ""))
             if ds_name not in aggregation_votes:
+                continue
+            dataset = dataset_by_name.get(ds_name)
+            if dataset and not dataset.columns:
                 continue
             if metric.aggregation != AggregationType.NONE or bool(metric.source_column):
                 aggregation_votes[ds_name] += 1
@@ -4420,6 +4732,18 @@ class DatabricksPublisher:
                 referenced_datasets.add(dataset.unique_name)
 
         if len(referenced_datasets) != 1:
+            fact_candidates = {ds.unique_name for ds in self._identify_fact_datasets(sml_model)}
+            referenced_facts = [name for name in referenced_datasets if name in fact_candidates]
+            if len(referenced_facts) == 1:
+                resolved_name = referenced_facts[0]
+                if self._sanitize_identifier(resolved_name) != self._sanitize_identifier(original_name):
+                    logger.info(
+                        "Relocating dummy-dataset metric '%s' from '%s' to fact '%s' for deployment.",
+                        metric.unique_name,
+                        self._sanitize_identifier(original_name),
+                        self._sanitize_identifier(resolved_name),
+                    )
+                return resolved_name
             return original_name
 
         resolved_name = next(iter(referenced_datasets))
@@ -4476,6 +4800,7 @@ class DatabricksPublisher:
             dataset,
             measure_sql_map=measure_sql_map,
             allow_simple_sum_translation=allow_simple_sum_translation,
+            sml_model=sml_model,
         )
         return {
             "metric_id": id(metric),
@@ -4695,6 +5020,7 @@ class DatabricksPublisher:
                 self._reconcile_dataset_schema(fact_dataset, source_fq)
 
             bindings = self._build_metric_view_column_bindings(fact_dataset, source_fq, scoped_model)
+            join_prefixes = self._metric_view_join_prefixes(scoped_model, fact_dataset)
 
             resolved: list[ResolvedMeasure] = []
             for metric in sml_model.metrics:
@@ -4734,6 +5060,7 @@ class DatabricksPublisher:
                     metric_dataset,
                     measure_sql_map=measure_sql_map,
                     allow_simple_sum_translation=not self._dbx_behavior.metric_view_only_sum_translation,
+                    sml_model=sml_model,
                 )
 
                 if not sql_expr:
@@ -4744,34 +5071,15 @@ class DatabricksPublisher:
                     })
                     continue
 
-                metric_expr = None
-                if self._sanitize_identifier(metric_dataset.unique_name) == self._sanitize_identifier(fact_name):
-                    metric_expr = self._rewrite_metric_view_measure_expression(
-                        sql_expr,
-                        fact_dataset,
-                        source_fq,
-                        bindings,
-                    )
-                else:
-                    metric_expected_source = self._resolve_source_table(metric_dataset)
-                    metric_source = self._resolve_existing_source_for_dataset(metric_dataset, metric_expected_source) or metric_expected_source
-                    non_root_expr = self._rewrite_sql_view_measure_expression(
-                        sql_expr,
-                        metric_dataset,
-                        metric_source,
-                    )
-                    if non_root_expr:
-                        if self._is_metric_view_safe_scalar_expression(non_root_expr):
-                            metric_expr = non_root_expr
-                        else:
-                            metric_expr = f"(SELECT {non_root_expr} FROM {metric_source})"
-
-                if not metric_expr:
-                    metric_expr = self._build_scalar_subquery_aggregate_expression(
-                        sql_expr,
-                        metric_dataset,
-                        scoped_model,
-                    )
+                # Metric views do not allow scalar subqueries. Always attempt to
+                # rewrite into the fact-root projection (plus join prefixes).
+                metric_expr = self._rewrite_metric_view_measure_expression(
+                    sql_expr,
+                    fact_dataset,
+                    source_fq,
+                    bindings,
+                    extra_allowed_prefixes=join_prefixes,
+                )
 
                 if not metric_expr:
                     skipped_details.append({
@@ -4954,6 +5262,7 @@ class DatabricksPublisher:
                 dataset,
                 measure_sql_map=measure_sql_map,
                 allow_simple_sum_translation=not self._dbx_behavior.metric_view_only_sum_translation,
+                sml_model=sml_model,
             )
 
             if not sql_expr:
@@ -5105,6 +5414,7 @@ class DatabricksPublisher:
         root_expected = self._resolve_source_table(root_dataset)
         root_source = self._resolve_existing_source_for_dataset(root_dataset, root_expected) or root_expected
         root_bindings = self._build_metric_view_column_bindings(root_dataset, root_source, sml_model)
+        root_join_prefixes = self._metric_view_join_prefixes(sml_model, root_dataset)
 
         missing_sources: set[str] = set()
         for dataset in sml_model.datasets:
@@ -5132,16 +5442,26 @@ class DatabricksPublisher:
             effective_dataset_name = metric_dataset_by_id.get(id(metric), str(metric.dataset or "").strip())
             metric_dataset = sml_model.get_dataset(effective_dataset_name) or sml_model.get_dataset(metric.dataset)
             if not metric_dataset:
-                resolved_measures.append(
-                    ResolvedMeasure(
-                        name=measure_name,
-                        sql_expression=DRAFT_MEASURE_SQL,
-                        translation_type=TRANSLATION_TYPE_DAX_SKIPPED,
-                        confidence=CONFIDENCE_LOW,
-                        original_dax=(metric.expression or ""),
-                        warnings=[DEPLOY_REASON_VALIDATION_FAILED],
+                if self._dbx_behavior.enable_low_confidence_drafts:
+                    resolved_measures.append(
+                        ResolvedMeasure(
+                            name=measure_name,
+                            sql_expression=DRAFT_MEASURE_SQL,
+                            translation_type=TRANSLATION_TYPE_DAX_SKIPPED,
+                            confidence=CONFIDENCE_LOW,
+                            original_dax=(metric.expression or ""),
+                            warnings=[DEPLOY_REASON_VALIDATION_FAILED],
+                        )
                     )
-                )
+                else:
+                    skipped_count += 1
+                    skipped_details.append(
+                        {
+                            "name": measure_name,
+                            "reason": DEPLOY_REASON_VALIDATION_FAILED,
+                            "translation_type": TRANSLATION_TYPE_DAX_SKIPPED,
+                        }
+                    )
                 continue
 
             dataset_key = self._sanitize_identifier(
@@ -5156,66 +5476,64 @@ class DatabricksPublisher:
                 metric_dataset,
                 measure_sql_map=measure_sql_map,
                 allow_simple_sum_translation=not self._dbx_behavior.metric_view_only_sum_translation,
+                sml_model=sml_model,
             )
 
             if not sql_expr:
-                resolved_measures.append(
-                    ResolvedMeasure(
-                        name=measure_name,
-                        sql_expression=DRAFT_MEASURE_SQL,
-                        translation_type=translation_type,
-                        confidence=CONFIDENCE_LOW,
-                        original_dax=(metric.expression or ""),
-                        warnings=[DEPLOY_REASON_DAX_NOT_SUPPORTED],
+                if self._dbx_behavior.enable_low_confidence_drafts:
+                    resolved_measures.append(
+                        ResolvedMeasure(
+                            name=measure_name,
+                            sql_expression=DRAFT_MEASURE_SQL,
+                            translation_type=translation_type,
+                            confidence=CONFIDENCE_LOW,
+                            original_dax=(metric.expression or ""),
+                            warnings=[DEPLOY_REASON_DAX_NOT_SUPPORTED],
+                        )
                     )
-                )
+                else:
+                    skipped_count += 1
+                    skipped_details.append(
+                        {
+                            "name": measure_name,
+                            "reason": DEPLOY_REASON_DAX_NOT_SUPPORTED,
+                            "translation_type": translation_type,
+                        }
+                    )
                 continue
 
-            metric_expr: str | None = None
-            # Pre-translated SQL (SQL_NATIVE) already uses bare column names validated by
-            # the DAX translator — skip the projection rewriter to prevent it from
-            # marking unrecognised binding names as unresolved and returning None.
-            if translation_type == TRANSLATION_TYPE_SQL_NATIVE:
-                metric_expr = sql_expr
-            elif self._sanitize_identifier(metric_dataset.unique_name) == root_dataset_name:
-                metric_expr = self._rewrite_metric_view_measure_expression(
-                    sql_expr,
-                    metric_dataset,
-                    root_source,
-                    root_bindings,
-                )
-            else:
-                metric_expected = self._resolve_source_table(metric_dataset)
-                metric_source = self._resolve_existing_source_for_dataset(metric_dataset, metric_expected) or metric_expected
-                non_root_expr = self._rewrite_sql_view_measure_expression(
-                    sql_expr,
-                    metric_dataset,
-                    metric_source,
-                )
-                if non_root_expr:
-                    if self._is_metric_view_safe_scalar_expression(non_root_expr):
-                        metric_expr = non_root_expr
-                    else:
-                        metric_expr = f"(SELECT {non_root_expr} FROM {metric_source})"
+            # Metric views do not allow scalar subqueries. Rewrite everything into
+            # the root projection (plus join prefixes) and drop anything that
+            # still cannot be resolved.
+            metric_expr = self._rewrite_metric_view_measure_expression(
+                sql_expr,
+                root_dataset,
+                root_source,
+                root_bindings,
+                extra_allowed_prefixes=root_join_prefixes,
+            )
 
             if not metric_expr:
-                metric_expr = self._build_scalar_subquery_aggregate_expression(
-                    sql_expr,
-                    metric_dataset,
-                    sml_model,
-                )
-
-            if not metric_expr:
-                resolved_measures.append(
-                    ResolvedMeasure(
-                        name=measure_name,
-                        sql_expression=DRAFT_MEASURE_SQL,
-                        translation_type=translation_type,
-                        confidence=CONFIDENCE_LOW,
-                        original_dax=(metric.expression or ""),
-                        warnings=[DEPLOY_REASON_CROSS_TABLE],
+                if self._dbx_behavior.enable_low_confidence_drafts:
+                    resolved_measures.append(
+                        ResolvedMeasure(
+                            name=measure_name,
+                            sql_expression=DRAFT_MEASURE_SQL,
+                            translation_type=translation_type,
+                            confidence=CONFIDENCE_LOW,
+                            original_dax=(metric.expression or ""),
+                            warnings=[DEPLOY_REASON_CROSS_TABLE],
+                        )
                     )
-                )
+                else:
+                    skipped_count += 1
+                    skipped_details.append(
+                        {
+                            "name": measure_name,
+                            "reason": DEPLOY_REASON_CROSS_TABLE,
+                            "translation_type": translation_type,
+                        }
+                    )
                 continue
 
             resolved_measures.append(
@@ -5836,6 +6154,7 @@ class DatabricksPublisher:
                     dataset,
                     measure_sql_map=measure_sql_map,
                     allow_simple_sum_translation=not self._dbx_behavior.metric_view_only_sum_translation,
+                    sml_model=sml_model,
                 )
                 if not sql_expr:
                     sql_view_expr = None
@@ -6048,8 +6367,9 @@ class DatabricksPublisher:
                 continue
             metrics_by_dataset.setdefault(ds_name, []).append(metric)
 
-        # Build set of measures that got views + their translation types
+        # Build set of measures that got views + their translation types/expressions
         deployed_measures: dict[str, str] = {}  # name -> translation_type
+        resolved_measure_expressions: dict[str, str] = {}  # name -> resolved sql expression
         for metric in sml_model.metrics:
             m_name = metric_name_index.get(
                 id(metric),
@@ -6071,9 +6391,11 @@ class DatabricksPublisher:
                         view_type_override != VIEW_TYPE_SQL
                         or not self._dbx_behavior.metric_view_only_sum_translation
                     ),
+                    sml_model=sml_model,
                 )
                 if sql_expr:
                     deployed_measures[m_name] = translation_type
+                    resolved_measure_expressions[m_name] = self._normalize_semantic_sql_aliases(sql_expr)
 
         # Build lookup from skipped details for translation type
         skipped_translation_types: dict[str, str] = {
@@ -6110,7 +6432,11 @@ class DatabricksPublisher:
                 )
                 if not m_name:
                     continue
-                expr = self._escape_literal(metric.sql_expression or metric.expression or "")
+                raw_expr = resolved_measure_expressions.get(
+                    m_name,
+                    metric.sql_expression or metric.expression or "",
+                )
+                expr = self._escape_literal(raw_expr)
 
                 # Determine deploy status for this measure
                 if m_name in deployed_measures:
@@ -6134,9 +6460,8 @@ class DatabricksPublisher:
                     )
                 )
 
-        # Keep statement size controlled to prevent 'The request could not be processed by the warehouse.'
-        # API payloads must be relatively small. Reduced chunk size from 500 to 50.
-        for value_chunk in self._chunk(row_values, 50):
+        # Keep statement size controlled while minimizing Databricks API round trips.
+        for value_chunk in self._chunk(row_values, 500):
             stmts.append(
                 (
                     f"INSERT INTO {model_table} (model_name, dataset_name, object_name, object_kind, data_type, source_data_type, expression, deploy_status, deploy_reason, translation_type, updated_at) "
@@ -6166,49 +6491,14 @@ class DatabricksPublisher:
         if not statements:
             return []
 
-        # Ensure the warehouse is running before submitting statements.
-        # Sleeping Classic warehouses immediately reject /api/2.0/sql/statements with 400 BAD_REQUEST.
-        try:
-            wh_url = f"{self.config.api_base_url}/api/2.0/sql/warehouses/{self.config.warehouse_id}"
-            headers = self._headers()
-            import time
-            
-            for _ in range(15): # wait up to ~45 seconds for state propagation
-                wh_resp = self.session.get(wh_url, headers=headers, timeout=10)
-                if wh_resp.status_code == 200:
-                    wh_state = wh_resp.json().get("state", "UNKNOWN")
-                    if wh_state in {"STOPPED", "STOPPING"}:
-                        logger.info(f"Databricks Warehouse is {wh_state}. Attempting to start it...")
-                        start_resp = self.session.post(f"{wh_url}/start", headers=headers, timeout=15)
-                        if start_resp.status_code >= 400:
-                            logger.warning(f"Failed to start warehouse: {start_resp.text}")
-                        time.sleep(3)
-                        continue
-                    elif wh_state == "STARTING":
-                        # Databricks SQL API accepts statements in STARTING state (places them in PENDING queue)
-                        logger.info("Databricks Warehouse is STARTING. Safe to dispatch SQL queue.")
-                        break
-                    elif wh_state == "RUNNING":
-                        break
-                
-                # Unknown state or failure to check, break and try execution anyway
-                break
-        except Exception as exc:
-            logger.warning(f"Could not pre-check Databricks warehouse status: {exc}")
-
         endpoint = f"{self.config.api_base_url}/api/2.0/sql/statements"
         results: list[dict[str, Any]] = []
 
         def _fire_request(sql: str, is_retry: bool = False) -> dict[str, Any]:
-            # By omitting wait_timeout, we default to 0s asynchronous mode.
-            # This is critical because if the Databricks Warehouse is currently STOPPED/SLEEPING, 
-            # specifying a wait_timeout > 0s causes the Azure API Gateway to instantly reject 
-            # the request with "400 The request could not be processed by the warehouse"
-            # because the gateway knows the cluster takes minutes to start.
             payload = {
                 "statement": sql,
                 "warehouse_id": self.config.warehouse_id,
-
+                "wait_timeout": self._statement_wait_timeout(),
             }
             
             headers = self._headers()
@@ -6247,13 +6537,6 @@ class DatabricksPublisher:
                     )
 
             if resp.status_code >= 400:
-                logger.error(
-                    f"Databricks statement failed (HTTP {resp.status_code}).\n"
-                    f"Warehouse ID: {self.config.warehouse_id}\n"
-                    f"SQL Preview: {sql[:200]}...\n"
-                    f"SQL Length: {len(sql)} bytes\n"
-                    f"Full Response: {resp.text}"
-                )
                 raise DatabricksPublishError(
                     f"Databricks statement failed ({resp.status_code}): {resp.text[:500]}"
                 )
@@ -6364,13 +6647,49 @@ class DatabricksPublisher:
         cfg_path = get_project_file_path("semabridge.yaml")
         if not cfg_path.exists():
             cfg_path = get_project_file_path("semabridge.yml")
+
+        # Optional: allow model overrides to live in a separate file so the UI
+        # can rewrite semabridge.yaml without clobbering `models:` config.
+        overrides_path = get_project_file_path("semabridge.models.yaml")
+        if not overrides_path.exists():
+            overrides_path = get_project_file_path("semabridge.models.yml")
             
         model_cfg = {}
-        if cfg_path.exists():
+        if cfg_path.exists() or overrides_path.exists():
             try:
-                cfg = yaml_lib.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
-                models_cfg = cfg.get("models", {})
-                model_cfg = models_cfg.get(sml_model.unique_name, {})
+                base_cfg: dict[str, Any] = {}
+                if cfg_path.exists():
+                    base_cfg = yaml_lib.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+
+                overrides_cfg: dict[str, Any] = {}
+                if overrides_path.exists():
+                    overrides_cfg = yaml_lib.safe_load(overrides_path.read_text(encoding="utf-8")) or {}
+
+                base_models = base_cfg.get("models", {})
+                override_models = overrides_cfg.get("models", {})
+                models_cfg: dict[str, Any] = {}
+                if isinstance(base_models, dict):
+                    models_cfg.update(base_models)
+                if isinstance(override_models, dict):
+                    models_cfg.update(override_models)
+
+                # semabridge.yaml uses a free-form `models:` mapping that can be keyed
+                # by display name (Fabric), sanitized name, or case variants.
+                model_key = str(sml_model.unique_name or "").strip()
+                if isinstance(models_cfg, dict) and model_key:
+                    model_cfg = models_cfg.get(model_key, {})
+                    if not model_cfg:
+                        want = self._sanitize_identifier(model_key).lower()
+                        for k, v in models_cfg.items():
+                            candidate = str(k or "").strip()
+                            if not candidate:
+                                continue
+                            if candidate.lower() == model_key.lower():
+                                model_cfg = v
+                                break
+                            if self._sanitize_identifier(candidate).lower() == want:
+                                model_cfg = v
+                                break
             except Exception as e:
                 logger.warning("Failed to parse semabridge.yaml: %s", str(e))
         # -------------------------------------------------------------
@@ -6496,9 +6815,46 @@ class DatabricksPublisher:
         overrides = model_cfg.get("measure_sql_overrides", {})
         if overrides:
             logger.info("  - Loaded %d measure_sql_overrides", len(overrides))
+            # Allow overrides keyed by either the Fabric display name ("Corporate IOH")
+            # or the normalized SQL-safe identifier ("Corporate_IOH").
+            normalized_overrides: dict[str, str] = {}
+            for raw_key, raw_sql in overrides.items():
+                key = str(raw_key or "").strip()
+                sql_text = str(raw_sql or "").strip()
+                if not key or not sql_text:
+                    continue
+                candidates = {
+                    key,
+                    self._sanitize_identifier(key),
+                    self._normalize_metric_identifier(key),
+                }
+                for candidate in candidates:
+                    norm = self._sanitize_identifier(candidate).lower()
+                    if norm and norm not in normalized_overrides:
+                        normalized_overrides[norm] = sql_text
+
+            # Also support overrides keyed by the final emitted metric-view measure name.
+            # In practice this is usually the normalized identifier, but it can differ due to
+            # dataset-scoped deduping (e.g. "Measure", "Measure_2") or symbol rewrites.
+            metric_name_index: dict[int, str] = self._build_metric_name_index(sml_model)
+
             for metric in sml_model.metrics:
-                if metric.unique_name in overrides:
-                    metric.sql_expression = overrides[metric.unique_name].strip()
+                raw_name = str(metric.unique_name or "").strip()
+                if not raw_name:
+                    continue
+                emitted_name = str(metric_name_index.get(id(metric), "") or "").strip()
+                lookup_keys = [
+                    self._sanitize_identifier(raw_name).lower(),
+                    self._normalize_metric_identifier(raw_name).lower(),
+                    self._sanitize_identifier(emitted_name).lower() if emitted_name else "",
+                ]
+                sql_override = None
+                for lk in lookup_keys:
+                    if lk and lk in normalized_overrides:
+                        sql_override = normalized_overrides[lk]
+                        break
+                if sql_override:
+                    metric.sql_expression = sql_override
                     metric.expression = ""
 
     def publish(self, sml_model: SMLModel) -> str:
@@ -6887,4 +7243,3 @@ class DatabricksPublisher:
             return f"databricks://{self.config.catalog}/{self.config.schema_name}/{sml_model.unique_name}"
         finally:
             self._dbx_behavior.measure_view_mode = original_view_mode
-
