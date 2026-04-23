@@ -9,6 +9,7 @@ import StatusBadge from '../components/common/StatusBadge';
 import ConnectionsPanel from '../components/ConnectionsPanel';
 import ConfigEditor from '../components/ConfigEditor';
 import Modal from '../components/common/Modal';
+import SecretsPanel from '../components/SecretsPanel';
 import { ConfigurationProvider } from '../context/ConfigurationContext';
 import { api } from '../utils/api';
 
@@ -464,6 +465,9 @@ export default function SettingsPage() {
           ))}
         </div>
       </div>
+
+      {/* API Secrets */}
+      <SecretsPanel />
 
       {/* API Health / Backend Service */}
       <div className="mb-8">

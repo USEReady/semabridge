@@ -1283,6 +1283,42 @@ export const api = {
         });
         return handleResponse(res);
     },
+
+    // ── API Secrets (user-scoped key-value store) ─────────────────────────
+
+    /**
+     * List all stored secret keys for the current user.
+     * Values are NEVER returned — only the key name, masked hint, and updated_at.
+     */
+    async listSecrets() {
+        const res = await authFetch(`${API_BASE_URL}/settings/secrets`);
+        return handleResponse(res);
+    },
+
+    /**
+     * Create or update a secret for the current user.
+     * Key is normalized to UPPER_SNAKE_CASE by the backend.
+     */
+    async saveSecret({ key, value }) {
+        const res = await authFetch(`${API_BASE_URL}/settings/secrets`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key, value }),
+        });
+        return handleResponse(res);
+    },
+
+    /**
+     * Delete a secret by key name for the current user.
+     * Also removes the key from the backend os.environ.
+     */
+    async deleteSecret(key) {
+        const res = await authFetch(`${API_BASE_URL}/settings/secrets/${encodeURIComponent(key)}`, {
+            method: 'DELETE',
+        });
+        if (res.status === 204) return null;
+        return handleResponse(res);
+    },
 };
 
 // ---------------------------------------------------------------------------
