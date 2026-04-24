@@ -505,9 +505,12 @@ def _run_parallel_jobs(
         if executor_kind == "thread":
             import contextvars
 
-            ctx = contextvars.copy_context()
-            future_to_job = {
-                executor.submit(
+            future_to_job = {}
+            for job in sync_jobs:
+                # Copy the parent context for EACH job individually.
+                # Sharing the same Context object across threads causes "already entered" errors.
+                ctx = contextvars.copy_context()
+                future = executor.submit(
                     ctx.run,
                     _run_single_job,
                     job,
@@ -518,9 +521,8 @@ def _run_parallel_jobs(
                     deploy_enabled=deploy_enabled,
                     resolved_workspace_id=resolved_workspace_id,
                     account_id=account_id,
-                ): job
-                for job in sync_jobs
-            }
+                )
+                future_to_job[future] = job
         else:
             # Process workers get their own memory space — context vars
             # do not propagate. They rely on account_id for isolation.

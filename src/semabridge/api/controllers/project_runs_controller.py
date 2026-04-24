@@ -3,10 +3,27 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Request
 
-from semabridge.api.services.project_runs_service import get_project_runs_compat, run_project_now_compat
+from semabridge.api.services.project_runs_service import (
+    get_project_runs_compat,
+    run_project_now_compat,
+    tag_snapshot_compat,
+    preview_restore_compat,
+    get_audit_logs_compat,
+    get_project_lineage_compat,
+    toggle_snapshot_pin_compat,
+    get_model_history_compat,
+    get_project_stats_compat,
+)
 
 router = APIRouter()
 router.get('/api/projects/{project_id}/runs')(get_project_runs_compat)
+router.get('/api/projects/{project_id}/audit-logs')(get_audit_logs_compat)
+router.get('/api/projects/{project_id}/lineage')(get_project_lineage_compat)
+router.put('/api/projects/{project_id}/snapshots/{snapshot_id}/tag')(tag_snapshot_compat)
+router.get('/api/projects/{project_id}/snapshots/{snapshot_id}/preview-restore')(preview_restore_compat)
+router.put('/api/projects/{project_id}/snapshots/{snapshot_id}/pin')(toggle_snapshot_pin_compat)
+router.get('/api/projects/{project_id}/models/{model_name}/history')(get_model_history_compat)
+router.get('/api/projects/{project_id}/stats')(get_project_stats_compat)
 
 
 @router.post('/api/projects/{project_id}/run')

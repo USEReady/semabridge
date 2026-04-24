@@ -9,4 +9,12 @@ from semabridge.api.services.project_domain_service import (
     delete_project_snapshots_compat,
     apply_project_retention_policy,
     get_project_storage_stats,
+    tag_snapshot_compat,
+    preview_restore_compat,
+    get_audit_logs_compat,
+    get_audit_logs_compat,
+    get_project_lineage_compat,
+    toggle_snapshot_pin_compat,
+    get_model_history_compat,
+    get_project_stats_compat,
 )

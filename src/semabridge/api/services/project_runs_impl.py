@@ -502,8 +502,18 @@ async def compare_project_snapshots_compat(
         raise HTTPException(status_code=404, detail="from_snapshot_id not found")
     if not to_row:
         raise HTTPException(status_code=404, detail="to_snapshot_id not found")
-    left_state = from_row.get("state") if isinstance(from_row.get("state"), dict) else {}
-    right_state = to_row.get("state") if isinstance(to_row.get("state"), dict) else {}
+    left_state = from_row.get("state")
+    if isinstance(left_state, str):
+        try: left_state = json.loads(left_state)
+        except: left_state = {}
+        
+    right_state = to_row.get("state")
+    if isinstance(right_state, str):
+        try: right_state = json.loads(right_state)
+        except: right_state = {}
+
+    if not isinstance(left_state, dict): left_state = {}
+    if not isinstance(right_state, dict): right_state = {}
     models_diff = _diff_models(left_state, right_state)
 
     payload: Dict[str, Any] = {
@@ -1661,3 +1671,222 @@ async def delete_mappings_compat(project_id: Optional[str] = None):
         _compat_mappings.clear()
     _compat_save_store()
     return Response(status_code=204)
+
+
+# --- Advanced Version Control Extensions ---
+
+def _compat_log_audit(project_id: str, action: str, user: str, details: str) -> None:
+    """Helper to record system events."""
+    _compat_ensure_loaded()
+    # In-memory audit log for compatibility store
+    if "_audit_logs" not in _compat_snapshot_groups: # Reusing a persistent slot or adding new one
+         _compat_snapshot_groups["_audit_logs"] = []
+    
+    _compat_snapshot_groups["_audit_logs"].insert(0, {
+        "timestamp": _compat_now_iso(),
+        "project_id": project_id,
+        "action": action,
+        "user": user,
+        "details": details
+    })
+    # Keep last 500 logs
+    _compat_snapshot_groups["_audit_logs"] = _compat_snapshot_groups["_audit_logs"][:500]
+    _compat_save_store()
+
+
+async def get_audit_logs_compat(project_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    _compat_ensure_loaded()
+    logs = _compat_snapshot_groups.get("_audit_logs", [])
+    if project_id:
+        return [log for log in logs if log.get("project_id") == project_id]
+    return logs
+
+
+async def tag_snapshot_compat(project_id: str, snapshot_id: str, tag: str, comment: str = "") -> Dict[str, Any]:
+    _compat_ensure_loaded()
+    found = False
+    
+    for snap in _compat_project_snapshots.get(project_id, []):
+        if snap.get("snapshot_id") == snapshot_id:
+            snap["tag"] = tag
+            snap["comment"] = comment
+            found = True
+            break
+            
+    # Propagate to runs for UI convenience
+    for run in _compat_project_runs.get(project_id, []):
+        if run.get("after_src_snapshot_id") == snapshot_id or run.get("before_src_snapshot_id") == snapshot_id:
+            run.setdefault("tags", [])
+            if tag and tag not in run["tags"]:
+                run["tags"].append(tag)
+            if comment:
+                run["last_comment"] = comment
+                
+    if found:
+        _compat_log_audit(project_id, "TAG_SNAPSHOT", "system", f"Tagged {snapshot_id} as '{tag}'")
+        _compat_save_store()
+        return {"status": "success", "snapshot_id": snapshot_id, "tag": tag}
+    return {"status": "error", "message": "Snapshot not found"}
+
+
+async def preview_restore_compat(project_id: str, snapshot_id: str) -> Dict[str, Any]:
+    """Dry-run diff: Compare CURRENT state with TARGET snapshot state."""
+    _compat_ensure_loaded()
+    
+    # 1. Get current state
+    current_state = _compat_latest_sml_state(project_id)
+    
+    # 2. Get target state
+    target_snap = None
+    for snap in _compat_project_snapshots.get(project_id, []):
+        if snap.get("snapshot_id") == snapshot_id:
+            target_snap = snap
+            break
+            
+    if not target_snap:
+        raise HTTPException(status_code=404, detail="Target snapshot not found")
+        
+    target_state = target_snap.get("state") or {}
+    if isinstance(target_state, str):
+        try: target_state = json.loads(target_state)
+        except: target_state = {}
+        
+    # 3. Diff them
+    diff_results = _diff_models(current_state, target_state)
+    
+    _compat_log_audit(project_id, "PREVIEW_RESTORE", "system", f"Previewed restore to {snapshot_id}")
+    
+    return {
+        "project_id": project_id,
+        "target_snapshot_id": snapshot_id,
+        "models": diff_results,
+        "impact_summary": {
+            "added": len([m for m in diff_results if m["status"] == "ADDED"]),
+            "removed": len([m for m in diff_results if m["status"] == "REMOVED"]),
+            "modified": len([m for m in diff_results if m["status"] == "MODIFIED"]),
+            "unchanged": len([m for m in diff_results if m["status"] == "UNCHANGED"]),
+        }
+    }
+
+
+async def get_project_lineage_compat(project_id: str) -> Dict[str, Any]:
+    """Return nodes and edges for the version history graph."""
+    _compat_ensure_loaded()
+    nodes = []
+    edges = []
+    
+    # 1. Snapshots as nodes
+    snapshots = _compat_project_snapshots.get(project_id, [])
+    for snap in snapshots:
+        nodes.append({
+            "id": snap["snapshot_id"],
+            "type": "snapshot",
+            "label": snap.get("tag") or f"Snap {snap['snapshot_id'][:8]}",
+            "metadata": {
+                "role": snap.get("role"),
+                "created_at": snap.get("created_at"),
+                "connector": snap.get("connector"),
+                "is_pinned": snap.get("is_pinned", False)
+            }
+        })
+        
+    # 2. Runs as nodes and link to snapshots
+    runs = _compat_project_runs.get(project_id, [])
+    for run in runs:
+        run_node_id = f"run-{run['run_id']}"
+        nodes.append({
+            "id": run_node_id,
+            "type": "run",
+            "label": f"Run {run['run_id'][:8]}",
+            "metadata": {
+                "status": run.get("status"),
+                "type": run.get("run_type"),
+                "started_at": run.get("started_at")
+            }
+        })
+        
+        # Edges
+        if run.get("before_src_snapshot_id"):
+            edges.append({"source": run["before_src_snapshot_id"], "target": run_node_id, "label": "input"})
+        if run.get("after_src_snapshot_id"):
+            edges.append({"source": run_node_id, "target": run["after_src_snapshot_id"], "label": "output"})
+        
+        # Link to target snapshots
+        for tsid in (run.get("after_tgt_snapshots") or []):
+            edges.append({"source": run_node_id, "target": tsid, "label": "deploy"})
+
+    return {"nodes": nodes, "edges": edges}
+
+
+async def toggle_snapshot_pin_compat(project_id: str, snapshot_id: str, is_pinned: bool) -> Dict[str, Any]:
+    _compat_ensure_loaded()
+    found = False
+    for snap in _compat_project_snapshots.get(project_id, []):
+        if snap.get("snapshot_id") == snapshot_id:
+            snap["is_pinned"] = is_pinned
+            found = True
+            break
+            
+    if found:
+        _compat_save_store()
+        status = "pinned" if is_pinned else "unpinned"
+        _compat_log_audit(project_id, "TOGGLE_PIN", "system", f"Snapshot {snapshot_id} {status}")
+        return {"status": "success", "is_pinned": is_pinned}
+    return {"status": "error", "message": "Snapshot not found"}
+
+
+async def get_model_history_compat(project_id: str, model_name: str) -> List[Dict[str, Any]]:
+    """Return a timeline of changes for a specific model across all snapshots."""
+    _compat_ensure_loaded()
+    history = []
+    
+    # Sort runs chronologically
+    runs = sorted(_compat_project_runs.get(project_id, []), key=lambda x: x.get("started_at", ""))
+    
+    for run in runs:
+        # Check if this model was involved in this run's snapshots
+        snap_id = run.get("after_tgt_snapshots", [None])[0] or run.get("before_tgt_snapshots", [None])[0]
+        if not snap_id: continue
+        
+        # Find snapshot
+        snap = next((s for s in _compat_project_snapshots.get(project_id, []) if s["snapshot_id"] == snap_id), None)
+        if not snap: continue
+        
+        # Check model state in this snapshot
+        state = snap.get("state") or {}
+        if isinstance(state, str):
+            try: state = json.loads(state)
+            except: state = {}
+            
+        models = state.get("models", [])
+        model = next((m for m in models if m.get("name") == model_name), None)
+        
+        if model:
+            history.append({
+                "run_id": run["run_id"],
+                "snapshot_id": snap_id,
+                "timestamp": run["started_at"],
+                "status": "active",
+                "model_data": model
+            })
+            
+    return history
+
+
+async def get_project_stats_compat(project_id: str) -> Dict[str, Any]:
+    _compat_ensure_loaded()
+    runs = _compat_project_runs.get(project_id, [])
+    snaps = _compat_project_snapshots.get(project_id, [])
+    
+    total_size = sum(len(str(s.get("state", ""))) for s in snaps)
+    avg_models = sum(len((s.get("state") or {}).get("models", [])) if isinstance(s.get("state"), dict) else 0 for s in snaps) / (len(snaps) or 1)
+    
+    return {
+        "project_id": project_id,
+        "total_runs": len(runs),
+        "total_snapshots": len(snaps),
+        "pinned_count": len([s for s in snaps if s.get("is_pinned")]),
+        "storage_estimate": f"{total_size / 1024 / 1024:.2f} MB",
+        "avg_models_per_snapshot": int(avg_models),
+        "health_score": int(95 if len([r for r in runs if r.get("status") == "success"]) / (len(runs) or 1) > 0.8 else 70)
+    }

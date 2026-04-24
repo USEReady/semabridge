@@ -799,6 +799,56 @@ export const api = {
         return dedupeProjects(data || []);
     },
 
+    async getProjectRuns(projectId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/runs`);
+        return handleResponse(res);
+    },
+
+    async getProjectLineage(projectId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/lineage`);
+        return handleResponse(res);
+    },
+
+    async tagSnapshot(projectId, snapshotId, tag, comment = '') {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots/${snapshotId}/tag?tag=${encodeURIComponent(tag)}&comment=${encodeURIComponent(comment)}`, {
+            method: 'PUT'
+        });
+        return handleResponse(res);
+    },
+
+    async toggleSnapshotPin(projectId, snapshotId, isPinned) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots/${snapshotId}/pin?is_pinned=${isPinned}`, {
+            method: 'PUT'
+        });
+        return handleResponse(res);
+    },
+
+    async previewRestore(projectId, snapshotId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots/${snapshotId}/preview-restore`);
+        return handleResponse(res);
+    },
+
+    async compareProjectSnapshots(projectId, s1, s2) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots/compare?s1=${s1}&s2=${s2}`);
+        return handleResponse(res);
+    },
+
+    async restoreProjectVersion(projectId, payload) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...payload, run_type: 'restore' })
+        });
+        return handleResponse(res);
+    },
+
+    // Generic fetch for specialized calls
+    async apiFetch(url, options = {}) {
+        const fullUrl = url.startsWith('http') ? url : `${API_BASE_URL}${url}`;
+        const res = await authFetch(fullUrl, options);
+        return res; // Return raw response so caller can handle json()
+    },
+
     async listProjectDiscovery() {
         const res = await authFetch(`${API_BASE_URL}/projects/discovery`);
         const data = await handleResponse(res);
@@ -920,6 +970,10 @@ export const api = {
             : `${API_BASE_URL}/mappings`;
         const res = await authFetch(url);
         return handleResponse(res);
+    },
+
+    async listMappings(projectId) {
+        return this.getMappings(projectId);
     },
 
     async autoMap(projectIdOrPayload) {
@@ -1082,14 +1136,6 @@ export const api = {
         return handleResponse(res);
     },
 
-    async restoreProjectVersion(projectId, payload) {
-        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/restore-version`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload || {}),
-        });
-        return handleResponse(res);
-    },
 
     async compareProjectSnapshots(projectId, fromSnapshotId, toSnapshotId, options = {}) {
         const params = new URLSearchParams();
