@@ -1,8 +1,0 @@
-profile_name: "profitability_schema"
-tables:
-  - source_name: "Customer Profitability"
-    target_name: "CUSTOMER_PROFITABILITY"
-    columns:
-      - {src: "id", tgt: "ID", type: "integer", pk: true}
-      - {src: "name", tgt: "NAME", type: "string"}
-      - {src: "created_at", tgt: "CREATED_AT", type: "timestamp"}

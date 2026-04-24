@@ -46,6 +46,7 @@ from semabridge.api.services.project_projects_impl import (
     patch_project_compat,
     save_project_config_compat,
     compare_graph_snapshots_compat,
+    list_project_discovery_compat,
 )
 from semabridge.api.services.project_runs_impl import (
     _create_project_run,

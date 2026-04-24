@@ -27,6 +27,11 @@ from semabridge.api.services import project_runs_impl as pri
 @pytest.mark.asyncio
 async def test_auto_map_attaches_invalid_identifier_diagnostics(monkeypatch):
     monkeypatch.setattr(pri, "_compat_projects", {"project-1": {"name": "Core_Finance_v1", "source": "fabric"}})
+    from semabridge.api.services import core_domain_service
+    async def fake_sync_models(payload):
+        return {"status": "success", "summary": {}, "results": []}
+
+    monkeypatch.setattr(core_domain_service, "sync_models", fake_sync_models)
     monkeypatch.setattr(
         pri,
         "_compat_project_runs",
@@ -42,7 +47,7 @@ async def test_auto_map_attaches_invalid_identifier_diagnostics(monkeypatch):
         },
     )
 
-    def fake_build_project_entity_mappings(project_id: str, save_store: bool = True, target_connector=None):
+    def fake_build_project_entity_mappings(project_id: str, save_store: bool = True, target_connector=None, **kwargs):
         return {
             "project_id": project_id,
             "session_key": "session",
@@ -57,6 +62,7 @@ async def test_auto_map_attaches_invalid_identifier_diagnostics(monkeypatch):
                     "entity_kind": "metric",
                     "source_name": "FABRICMODEL_DATA_SUM_OF_QUANTITY",
                     "source_path": "metrics.FABRICMODEL_DATA_SUM_OF_QUANTITY",
+                    "source_expression": "SUM('ORDERS'[QUANTITY])",
                     "target_name": "FABRICMODEL_DATA_SUM_OF_QUANTITY",
                     "is_user_edited": False,
                     "collision_detected": False,
@@ -85,3 +91,35 @@ async def test_auto_map_attaches_invalid_identifier_diagnostics(monkeypatch):
     assert metric["validation_status"] == "invalid"
     assert metric["collision_detected"] is True
     assert "ORDERS.QUANTITY" in metric["validation_message"]
+
+
+def test_apply_identifier_diagnostics_ignores_target_name_only_matches():
+    mappings = [
+        {
+            "id": "m1",
+            "entity_kind": "metric",
+            "source_name": "Orders - Sum of Revenue",
+            "source_path": "metrics.Orders - Sum of Revenue",
+            "source_expression": "SUM('ORDERS'[REVENUE])",
+            "target_name": "ORDERS_SUM_OF_QUANTITY2",
+            "collision_detected": False,
+            "validation_status": "valid",
+            "validation_code": "OK",
+            "validation_message": "",
+        }
+    ]
+    diagnostics = [
+        {
+            "code": "INVALID_IDENTIFIER_REFERENCE",
+            "actual_identifier": "ORDERS.QUANTITY",
+            "source_hint": "QUANTITY",
+            "message": "Deploy SQL references invalid identifier ORDERS.QUANTITY.",
+        }
+    ]
+
+    pri._compat_apply_identifier_diagnostics_to_mappings(mappings, diagnostics)
+
+    metric = mappings[0]
+    assert metric["validation_code"] == "OK"
+    assert metric["validation_status"] == "valid"
+    assert metric["collision_detected"] is False

@@ -7,6 +7,7 @@ from semabridge.api.services.projects_service import (
     get_project_compat,
     get_project_config_compat,
     list_projects_compat,
+    list_project_discovery_compat,
     patch_project_compat,
     save_project_config_compat,
 )
@@ -24,6 +25,7 @@ from semabridge.api.services.project_runs_service import (
 
 router = APIRouter()
 router.get('/api/projects')(list_projects_compat)
+router.get('/api/projects/discovery')(list_project_discovery_compat)
 router.post('/api/projects')(create_project_compat)
 router.get('/api/projects/{project_id}')(get_project_compat)
 router.patch('/api/projects/{project_id}')(patch_project_compat)

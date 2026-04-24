@@ -152,17 +152,25 @@ class ExecutionEngine:
         return path
 
     @staticmethod
-    def _apply_mapping_overrides_from_config(sml_model: SMLModel, config_path: Path) -> None:
+    def _apply_mapping_overrides_from_config(
+        sml_model: SMLModel,
+        config_path: Path,
+        config_payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """Apply user-edited mapping overrides from config to SML names before deploy."""
-        try:
-            if not config_path.exists():
+        parsed: Dict[str, Any] = {}
+        if isinstance(config_payload, dict) and isinstance(config_payload.get("mappings_overrides"), list):
+            parsed = config_payload
+        else:
+            try:
+                if not config_path.exists():
+                    return
+                parsed = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+                if not isinstance(parsed, dict):
+                    return
+            except Exception as exc:
+                logger.debug("Skipping mapping override load from %s: %s", config_path, exc)
                 return
-            parsed = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-            if not isinstance(parsed, dict):
-                return
-        except Exception as exc:
-            logger.debug("Skipping mapping override load from %s: %s", config_path, exc)
-            return
 
         raw_overrides = parsed.get("mappings_overrides")
         if not isinstance(raw_overrides, list):
@@ -189,9 +197,12 @@ class ExecutionEngine:
 
         for source_path, target_name in overrides.items():
             if source_path.startswith("metrics."):
-                metric_name = source_path[len("metrics."):]
+                metric_name = source_path[len("metrics."):].strip()
+                metric_lookup = metric_name.lower()
                 for metric in sml_model.metrics:
-                    if str(metric.unique_name) == metric_name:
+                    metric_unique_name = str(getattr(metric, "unique_name", "")).strip()
+                    metric_label = str(getattr(metric, "label", "")).strip()
+                    if metric_unique_name.lower() == metric_lookup or metric_label.lower() == metric_lookup:
                         if str(metric.unique_name) != target_name:
                             metric.unique_name = target_name
                             metric.label = target_name
@@ -424,7 +435,7 @@ class ExecutionEngine:
             
             # Step 6: Convert to Canonical SML
             sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id)
-            self._apply_mapping_overrides_from_config(sml_model, Path(config_path))
+            self._apply_mapping_overrides_from_config(sml_model, Path(config_path), config_payload=config_dict)
             context.sml_model = sml_model
             
             # Step 7: Persist Artifacts
@@ -1315,7 +1326,8 @@ class ExecutionEngine:
         
         config = context.config
         source_config = getattr(config, "source", None)
-        ws_id = workspace_id or config.fabric.workspace_id
+        fabric_cfg = config.fabric
+        ws_id = workspace_id or fabric_cfg.workspace_id
         interactive_token: Optional[str] = None
         stored_workspace_id: str = ""
         identity_id: str = str(getattr(source_config, "identity_id", "") or "").strip()
@@ -1361,7 +1373,7 @@ class ExecutionEngine:
             cm = CredentialManager()
             stored_fabric = cm.get_credentials("fabric", mask_secrets=False)
             stored_workspace_id = (stored_fabric.get("workspace_id") or "").strip()
-            configured_workspace_id = str(getattr(config.fabric, "workspace_id", "") or "").strip()
+            configured_workspace_id = str(getattr(fabric_cfg, "workspace_id", "") or "").strip()
             if not workspace_id and not configured_workspace_id and stored_workspace_id:
                 ws_id = stored_workspace_id
 
@@ -1403,7 +1415,7 @@ class ExecutionEngine:
             return bool(value and re.match(guid_pattern, value))
 
         requested_ws = str(ws_id or "").strip()
-        configured_ws = str(config.fabric.workspace_id or "").strip()
+        configured_ws = str(fabric_cfg.workspace_id or "").strip()
         stored_ws = str(stored_workspace_id or "").strip()
 
         # UI aliases (for example, semabridge-local) are not accepted by Fabric API.
@@ -1426,10 +1438,41 @@ class ExecutionEngine:
 
         ws_id = requested_ws or configured_ws or stored_ws
 
-        if ws_id and config.fabric.workspace_id != ws_id:
-            config.fabric.workspace_id = ws_id
+        if ws_id and fabric_cfg.workspace_id != ws_id:
+            fabric_cfg.workspace_id = ws_id
         
-        extractor = FabricExtractor(config.fabric)
+
+        # Refresh token just-in-time at Stage 4 for the source identity.
+        # context.scoped_fabric_token was resolved at Stage 3. In long-queued
+        # batch runs (e.g. scheduled jobs) that token may have expired by the
+        # time Stage 4 executes. Re-resolving here mirrors the Stage 9 pattern
+        # and guarantees freshness for the Fabric extraction API call.
+        if identity_id:
+            try:
+                from semabridge.api.services.connection_domain_service import _resolve_fabric_access_token
+                jit_token = _resolve_fabric_access_token(None, identity_id)
+                if jit_token:
+                    interactive_token = jit_token
+                    logger.info(
+                        "_extract_fabric: resolved JIT fresh token for source identity %s",
+                        identity_id,
+                    )
+            except Exception as exc:
+                if interactive_token:
+                    logger.info(
+                        "_extract_fabric: JIT token resolution failed for %s; "
+                        "continuing with Stage 3 scoped token (%s)",
+                        identity_id, exc,
+                    )
+                else:
+                    logger.warning(
+                        "_extract_fabric: JIT token resolution failed for %s and no "
+                        "Stage 3 scoped token is available: %s",
+                        identity_id, exc,
+                    )
+
+        extractor = FabricExtractor(fabric_cfg)
+
         if interactive_token:
             extractor._access_token = interactive_token
             extractor._token_expires_at = time.time() + 1800

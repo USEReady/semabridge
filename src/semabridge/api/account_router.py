@@ -82,7 +82,20 @@ def create_account(request: Request, body: AccountCreate, db: Session = Depends(
         existing = db.execute(stmt).scalar_one_or_none()
 
         if existing:
-            raise HTTPException(status_code=400, detail=f"Account with tag '{body.tag}' already exists.")
+            if existing.connector_type == body.connector_type.upper():
+                logger.info(
+                    "Account with tag %s already exists for connector %s; returning existing account list",
+                    body.tag,
+                    body.connector_type.upper(),
+                )
+                return get_accounts(request=request, connector_type=body.connector_type, db=db)
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Account tag '{body.tag}' is already used by connector "
+                    f"'{existing.connector_type}'."
+                ),
+            )
 
         # Encrypt the credential bundle at rest
         safe_token = None
@@ -214,7 +227,7 @@ def link_project_account(
                     source_cfg["identity_id"] = account.id
                     parsed["source"] = source_cfg
                     main_module._compat_project_configs[project_id] = yaml.safe_dump(parsed, sort_keys=False, allow_unicode=False)
-                    main_module._compat_save_repo_yaml_text(main_module._compat_project_configs[project_id])
+                    main_module._compat_save_project_yaml_text(project_id, main_module._compat_project_configs[project_id])
     except Exception as exc:
         logger.warning("Could not sync compatibility project/account state for %s: %s", project_id, exc)
     

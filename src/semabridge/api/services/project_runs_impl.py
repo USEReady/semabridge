@@ -1,8 +1,12 @@
 import json
-import yaml
-from typing import Dict, List, Any, Optional
 import time as _time
 import uuid
+import re
+from typing import Any, Dict, List, Optional
+
+import yaml
+
+import semabridge.api.services.project_shared as project_shared
 
 from semabridge.api.services.project_shared import *
 from semabridge.api.services.project_shared import (
@@ -21,7 +25,10 @@ from semabridge.api.services.project_shared import (
     _compat_save_store,
     _compat_snapshot_groups,
 )
-from semabridge.api.services.project_mapping_engine import build_entity_mappings
+from semabridge.api.services.project_mapping_engine import (
+    _extract_metric_source_tables,
+    build_entity_mappings,
+)
 
 
 def _compat_parse_project_cfg_dict(project_cfg: str) -> Dict[str, Any]:
@@ -124,43 +131,27 @@ def _compat_connector_descriptors(project_cfg: str) -> Dict[str, Any]:
 
 def _compat_latest_sml_state(project_id: str, preferred_snapshot_id: str = "") -> Dict[str, Any]:
     sid = str(preferred_snapshot_id or "").strip()
-    logger.debug("VC: Resolving latest state for %s (pref: %s)", project_id, sid)
-    
     if sid:
         try:
             snap = db_manager.get_snapshot(sid)
-            if snap:
-                # Some snapshots use .sml_blob, others .content or .blob
-                blob = getattr(snap, "sml_blob", None) or getattr(snap, "content", None) or getattr(snap, "blob", None)
-                if isinstance(blob, dict):
-                    return blob
-                elif isinstance(blob, str):
-                    try:
-                        return json.loads(blob)
-                    except:
-                        pass
-        except Exception as exc:
-            logger.debug("VC: Failed to get snapshot %s: %s", sid, exc)
+            if snap and isinstance(getattr(snap, "sml_blob", None), dict):
+                return snap.sml_blob
+        except Exception:
+            pass
 
-    # Fallback to scanning project runs for ANY snapshot ID
     for run in _compat_project_runs.get(project_id, []):
         if not isinstance(run, dict):
             continue
-        summary = run.get("summary") or {}
-        # Try multiple potential keys for snapshot ID
-        sid = str(summary.get("sml_snapshot_id") or summary.get("snapshot_id") or run.get("after_src_snapshot_id") or "").strip()
+        summary = run.get("summary") if isinstance(run.get("summary"), dict) else {}
+        sid = str(summary.get("sml_snapshot_id") or "").strip()
         if not sid:
             continue
         try:
             snap = db_manager.get_snapshot(sid)
-            if snap:
-                blob = getattr(snap, "sml_blob", None) or getattr(snap, "content", None) or getattr(snap, "blob", None)
-                if isinstance(blob, dict):
-                    return blob
+            if snap and isinstance(getattr(snap, "sml_blob", None), dict):
+                return snap.sml_blob
         except Exception:
             continue
-            
-    logger.warning("VC: Could not find any valid state blob for project %s", project_id)
     return {}
 
 
@@ -207,7 +198,6 @@ def _compat_capture_snapshots_for_run(
     selected_format = _compat_selected_intermediate_format(project_cfg)
     connector_descriptors = _compat_connector_descriptors(project_cfg)
     state_blob = _compat_state_in_selected_format(_compat_latest_sml_state(project_id, preferred_snapshot_id), selected_format)
-    logger.info("VC: Captured state for %s (%s format), size: %d keys", project_id, selected_format, len(state_blob.get("datasets") or state_blob.get("models") or []))
     run_id = str(run.get("run_id") or run.get("id") or "")
     origin = "RUN_BEFORE" if stage == "before" else "RUN_AFTER"
     timing = "before" if stage == "before" else "after"
@@ -285,7 +275,6 @@ def _compat_apply_restore_overrides(config_yaml: str, overrides: Dict[str, Any])
 
 
 def _compat_diff_states(left: Any, right: Any, *, max_changes: int = 200) -> Dict[str, Any]:
-    # Legacy generic diff kept for internal use if needed
     changes: List[Dict[str, Any]] = []
     summary = {"added": 0, "removed": 0, "modified": 0}
 
@@ -322,43 +311,39 @@ def _compat_diff_states(left: Any, right: Any, *, max_changes: int = 200) -> Dic
 
 def _diff_models(left_state: Dict[str, Any], right_state: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Compare models/datasets between two states and return status for each."""
-    # Handle both list and dict formats for datasets/models
+
     def _extract_models(state: Dict[str, Any]) -> Dict[str, Any]:
         raw = state.get("datasets") or state.get("models") or []
         if isinstance(raw, dict):
-            # If it's a dict, use keys as names
             return {str(k): (v if isinstance(v, dict) else {"name": k}) for k, v in raw.items()}
-        elif isinstance(raw, list):
-            # If it's a list, look for 'name' or use string itself
+        if isinstance(raw, list):
             res = {}
-            for m in raw:
-                if isinstance(m, dict) and m.get("name"):
-                    res[str(m["name"])] = m
-                elif isinstance(m, str):
-                    res[m] = {"name": m}
+            for item in raw:
+                if isinstance(item, dict) and item.get("name"):
+                    res[str(item["name"])] = item
+                elif isinstance(item, str):
+                    res[item] = {"name": item}
             return res
         return {}
 
     left_models = _extract_models(left_state)
     right_models = _extract_models(right_state)
-    
     all_names = sorted(set(left_models.keys()) | set(right_models.keys()))
-    results = []
-    
+    results: List[Dict[str, Any]] = []
+
     for name in all_names:
-        l_m = left_models.get(name)
-        r_m = right_models.get(name)
-        
-        if not l_m:
+        left_model = left_models.get(name)
+        right_model = right_models.get(name)
+
+        if not left_model:
             status = "ADDED"
             details = {"message": "New model detected in target snapshot"}
-        elif not r_m:
+        elif not right_model:
             status = "REMOVED"
             details = {"message": "Model removed in target snapshot"}
         else:
-            # Safer comparison for potentially large or complex dicts
             try:
-                if json.dumps(l_m, sort_keys=True) == json.dumps(r_m, sort_keys=True):
+                if json.dumps(left_model, sort_keys=True) == json.dumps(right_model, sort_keys=True):
                     status = "UNCHANGED"
                     details = {}
                 else:
@@ -367,13 +352,9 @@ def _diff_models(left_state: Dict[str, Any], right_state: Dict[str, Any]) -> Lis
             except Exception:
                 status = "MODIFIED"
                 details = {"message": "Changes detected (failed to hash)"}
-        
-        results.append({
-            "name": name,
-            "status": status,
-            "details": details
-        })
-        
+
+        results.append({"name": name, "status": status, "details": details})
+
     return results
 
 
@@ -524,7 +505,7 @@ async def compare_project_snapshots_compat(
     left_state = from_row.get("state") if isinstance(from_row.get("state"), dict) else {}
     right_state = to_row.get("state") if isinstance(to_row.get("state"), dict) else {}
     models_diff = _diff_models(left_state, right_state)
-    
+
     payload: Dict[str, Any] = {
         "metadata_diff": {
             "snapshot_a": {
@@ -533,7 +514,7 @@ async def compare_project_snapshots_compat(
                 "model_count": len(left_state.get("datasets") or left_state.get("models") or []),
                 "taken_at": from_row.get("created_at"),
                 "connector_id": from_row.get("connector_identifier"),
-                "trigger": from_row.get("snapshot_origin", "").lower()
+                "trigger": str(from_row.get("snapshot_origin") or "").lower(),
             },
             "snapshot_b": {
                 "id": to_snapshot_id,
@@ -541,10 +522,10 @@ async def compare_project_snapshots_compat(
                 "model_count": len(right_state.get("datasets") or right_state.get("models") or []),
                 "taken_at": to_row.get("created_at"),
                 "connector_id": to_row.get("connector_identifier"),
-                "trigger": to_row.get("snapshot_origin", "").lower()
-            }
+                "trigger": str(to_row.get("snapshot_origin") or "").lower(),
+            },
         },
-        "models": models_diff
+        "models": models_diff,
     }
     if include_states:
         payload["from_state"] = left_state
@@ -553,8 +534,118 @@ async def compare_project_snapshots_compat(
 
 
 async def get_project_runs_compat(project_id: str):
+    """
+    Retrieve run history for a project.
+    Falls back to ORM queries if the in-memory compatibility store is empty.
+    """
     _compat_ensure_loaded()
-    return _compat_project_runs.get(project_id, [])
+    pid = str(project_id).strip()
+
+    runs = _compat_project_runs.get(pid, [])
+    if runs:
+        return runs
+
+    try:
+        from semabridge.repository.orm.models import Run
+        from sqlalchemy import select
+        from semabridge.repository.orm.session_factory import db_manager
+
+        session = db_manager._session()
+        try:
+            stmt = (
+                select(Run)
+                .where(Run.project_id == pid)
+                .order_by(Run.started_at.desc())
+                .limit(100)
+            )
+            rows = session.execute(stmt).scalars().all()
+
+            results: List[Dict[str, Any]] = []
+            for row in rows:
+                def _parse_list(attr_name: str) -> List[Any]:
+                    val = getattr(row, attr_name, None)
+                    if not val:
+                        return []
+                    try:
+                        return json.loads(val) if isinstance(val, str) else val
+                    except Exception:
+                        return []
+
+                before_ids = _parse_list("before_target_snapshot_ids")
+                after_ids = _parse_list("after_target_snapshot_ids")
+
+                run_data = {
+                    "run_id": row.run_id,
+                    "id": row.run_id,
+                    "project_id": row.project_id,
+                    "run_type": getattr(row, "run_type", "SYNC") or "SYNC",
+                    "status": row.status or "unknown",
+                    "started_at": row.started_at.isoformat() if row.started_at else None,
+                    "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+                    "before_target_snapshot_ids": before_ids,
+                    "after_target_snapshot_ids": after_ids,
+                    "after_tgt_snapshots": after_ids,
+                }
+                results.append(run_data)
+
+            if results:
+                _compat_project_runs[pid] = results
+
+            return results
+        finally:
+            session.close()
+    except Exception as exc:
+        logger.error("Failed to retrieve runs from ORM: %s", exc)
+        return []
+
+
+async def delete_project_snapshots_compat(project_id: str, snapshot_ids: List[str]):
+    """
+    Soft-delete snapshots after ensuring they are not referenced by any project runs.
+    """
+    _compat_ensure_loaded()
+    from semabridge.repository.orm.models import SnapshotRow, Run
+    from sqlalchemy import select, update, or_
+    from semabridge.repository.orm.session_factory import db_manager
+
+    session = db_manager._session()
+    try:
+        stmt = (
+            select(Run)
+            .where(Run.project_id == project_id)
+            .where(
+                or_(
+                    Run.before_src_snapshot_id.in_(snapshot_ids),
+                    Run.restore_snapshot_id.in_(snapshot_ids),
+                )
+            )
+        )
+        active_runs = session.execute(stmt).scalars().all()
+
+        blocked_ids: List[str] = []
+        for run in active_runs:
+            for snapshot_id in snapshot_ids:
+                if snapshot_id == run.before_src_snapshot_id or snapshot_id == run.restore_snapshot_id:
+                    blocked_ids.append(snapshot_id)
+
+        to_delete = [snapshot_id for snapshot_id in snapshot_ids if snapshot_id not in blocked_ids]
+
+        if to_delete:
+            stmt = (
+                update(SnapshotRow)
+                .where(SnapshotRow.snapshot_id.in_(to_delete))
+                .values(deleted_at=_compat_now_iso())
+            )
+            session.execute(stmt)
+            session.commit()
+
+        return {
+            "deleted_count": len(to_delete),
+            "blocked_ids": list(set(blocked_ids)),
+            "status": "success" if not blocked_ids else "partial",
+        }
+    finally:
+        session.close()
 
 
 def _create_project_run(
@@ -570,7 +661,14 @@ def _create_project_run(
 
     started = _time.time()
     run_id = f"run-{int(_time.time() * 1000)}"
-    project_cfg = project_cfg_override or _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(_compat_projects[project_id])
+    modular_bundle = project_shared._compat_load_modular_project(project_id)
+    project_cfg = (
+        project_cfg_override
+        or (str(modular_bundle.get("config_yaml") or "") if modular_bundle else "")
+        or _compat_project_configs.get(project_id)
+        or _compat_load_repo_yaml_text()
+        or _compat_default_project_yaml(_compat_projects[project_id])
+    )
     run = {
         "run_id": run_id,
         "id": run_id,
@@ -603,7 +701,11 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
     try:
         from semabridge.api.services.core_domain_service import sync_models
 
-        sync_result = await sync_models({"content": project_cfg})
+        sync_payload: Dict[str, Any] = {"content": project_cfg, "project_id": project_id}
+        user_id = run.get("user_id")
+        if user_id is not None and str(user_id).strip():
+            sync_payload["user_id"] = user_id
+        sync_result = await sync_models(sync_payload)
         run["duration_ms"] = int((_time.time() - started) * 1000)
         run["completed_at"] = _compat_now_iso()
         overall = str((sync_result or {}).get("status") or "").lower()
@@ -670,10 +772,14 @@ async def restore_project_version_compat(project_id: str, payload: Dict[str, Any
 
 
 async def run_project_now_compat(project_id: str, background_tasks: BackgroundTasks, payload: Optional[Dict[str, Any]] = None):
+    _compat_ensure_loaded()
     if bool((payload or {}).get("dry_run", False)):
         preview_payload = dict(payload or {})
         preview_payload["project_id"] = project_id
         preview_payload["dry_run"] = True
+        # Dry-run route should guarantee a fresh non-deploy sync; do not
+        # silently continue with stale state when pre-sync fails.
+        preview_payload["require_sync"] = True
         preview_result = await auto_map_compat(preview_payload)
         return {
             **preview_result,
@@ -682,13 +788,38 @@ async def run_project_now_compat(project_id: str, background_tasks: BackgroundTa
             "message": "Dry run preview generated using the shared run pipeline.",
         }
 
+    # Safety gate: deploy only after dry-run blocker checks pass.
+    preview_payload = dict(payload or {})
+    preview_payload["project_id"] = project_id
+    preview_payload["dry_run"] = True
+    preview_payload["require_sync"] = True
+    preview_result = await auto_map_compat(preview_payload)
+    blockers = _compat_collect_dry_run_blockers(preview_result)
+    if blockers:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "status": "blocked",
+                "mode": "DRY_RUN",
+                "message": f"Deploy blocked: resolve {len(blockers)} blocking mapping issue(s) found by dry run.",
+                "blocking_issue_count": len(blockers),
+                "blocking_issues": blockers,
+            },
+        )
+
     run_type = str((payload or {}).get("run_type") or "SYNC").upper()
     if run_type not in {"SYNC", "RESTORE"}:
         run_type = "SYNC"
     restore_snapshot_id = str((payload or {}).get("restore_snapshot_id") or "").strip() or None
     config_override = None
     if run_type == "SYNC":
-        base_cfg = _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(_compat_projects.get(project_id, {}))
+        modular_bundle = project_shared._compat_load_modular_project(project_id)
+        base_cfg = (
+            (str(modular_bundle.get("config_yaml") or "") if modular_bundle else "")
+            or _compat_project_configs.get(project_id)
+            or _compat_load_repo_yaml_text()
+            or _compat_default_project_yaml(_compat_projects.get(project_id, {}))
+        )
         config_override = _compat_apply_manual_mapping_overrides_to_cfg(base_cfg, project_id)
         _compat_project_configs[project_id] = config_override
     run, project_cfg, started = _create_project_run(
@@ -698,6 +829,9 @@ async def run_project_now_compat(project_id: str, background_tasks: BackgroundTa
         project_cfg_override=config_override,
         restore_snapshot_id=restore_snapshot_id,
     )
+    user_id = (payload or {}).get("user_id")
+    if user_id is not None and str(user_id).strip():
+        run["user_id"] = user_id
     background_tasks.add_task(_run_project_background, run, project_cfg, started)
     return {"run_id": run["id"], "status": "running", "run_type": run_type, "message": "Sync started in background"}
 
@@ -949,16 +1083,102 @@ def _compat_hydrate_missing_metrics_from_manual_mappings(
     return model
 
 
+def _compat_scope_model_for_dry_run(
+    latest_model: Dict[str, Any],
+    selected_model_names: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    model = dict(latest_model or {})
+    selected = [str(item or "").strip() for item in (selected_model_names or []) if str(item or "").strip()]
+    if not selected:
+        return model
+
+    selected_lookup = {name.lower() for name in selected}
+    datasets = model.get("datasets") if isinstance(model.get("datasets"), list) else []
+    filtered_datasets = [
+        row for row in datasets
+        if isinstance(row, dict) and str(row.get("unique_name") or "").strip().lower() in selected_lookup
+    ]
+    if not filtered_datasets:
+        return model
+
+    model["datasets"] = filtered_datasets
+
+    # Keep metrics that can be attributed to the selected dataset scope.
+    metrics = model.get("metrics") if isinstance(model.get("metrics"), list) else []
+    if metrics:
+        dataset_lookup = {
+            str(row.get("unique_name") or "").strip().lower(): str(row.get("unique_name") or "").strip()
+            for row in filtered_datasets
+            if isinstance(row, dict) and str(row.get("unique_name") or "").strip()
+        }
+        scoped_metrics: List[Dict[str, Any]] = []
+        for metric in metrics:
+            if not isinstance(metric, dict):
+                continue
+            source_tables = _extract_metric_source_tables(metric, dataset_lookup)
+            if source_tables:
+                scoped_metrics.append(metric)
+        model["metrics"] = scoped_metrics
+    else:
+        model["metrics"] = []
+
+    return model
+
+
+def _compat_preferred_snapshot_id_from_sync_result(
+    sync_result: Dict[str, Any],
+    selected_model_names: Optional[List[str]] = None,
+) -> str:
+    if not isinstance(sync_result, dict):
+        return ""
+
+    selected_lookup = {
+        str(item or "").strip().lower()
+        for item in (selected_model_names or [])
+        if str(item or "").strip()
+    }
+
+    results = sync_result.get("results") if isinstance(sync_result.get("results"), list) else []
+    if selected_lookup and results:
+        for row in results:
+            if not isinstance(row, dict):
+                continue
+            model_name = str(row.get("model") or "").strip().lower()
+            if model_name not in selected_lookup:
+                continue
+            summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
+            sid = str(summary.get("sml_snapshot_id") or "").strip()
+            if sid:
+                return sid
+
+    summary = sync_result.get("summary") if isinstance(sync_result.get("summary"), dict) else {}
+    sid = str(summary.get("sml_snapshot_id") or "").strip()
+    if sid:
+        return sid
+
+    for row in results:
+        if not isinstance(row, dict):
+            continue
+        item_summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
+        sid = str(item_summary.get("sml_snapshot_id") or "").strip()
+        if sid:
+            return sid
+
+    return ""
+
+
 def _compat_build_project_entity_mappings(
     project_id: str,
     save_store: bool = True,
     target_connector: Optional[str] = None,
+    selected_model_names: Optional[List[str]] = None,
+    preferred_snapshot_id: str = "",
 ) -> Dict[str, Any]:
     _compat_ensure_loaded()
     if project_id not in _compat_projects:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    latest_model = _compat_latest_sml_state(project_id)
+    latest_model = _compat_latest_sml_state(project_id, preferred_snapshot_id)
     if not latest_model:
         project_cfg = _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(_compat_projects[project_id])
         parsed_cfg = _compat_parse_project_cfg_dict(project_cfg)
@@ -972,6 +1192,7 @@ def _compat_build_project_entity_mappings(
 
     existing_mappings = _compat_existing_entity_mappings(project_id)
     latest_model = _compat_hydrate_missing_metrics_from_manual_mappings(latest_model, existing_mappings)
+    latest_model = _compat_scope_model_for_dry_run(latest_model, selected_model_names)
 
     built = build_entity_mappings(
         project_id=project_id,
@@ -1106,40 +1327,45 @@ def _compat_extract_invalid_identifier(message: str) -> str:
 
 
 def _compat_latest_identifier_diagnostics(project_id: str) -> List[Dict[str, str]]:
+    latest_run: Optional[Dict[str, Any]] = None
     for run in _compat_project_runs.get(project_id, []):
-        if not isinstance(run, dict):
+        if isinstance(run, dict):
+            latest_run = run
+            break
+
+    if not latest_run:
+        return []
+
+    candidates: List[str] = []
+    candidates.extend([str(item) for item in (latest_run.get("logs") or []) if str(item or "").strip()])
+    if isinstance(latest_run.get("summary"), dict):
+        for err in (latest_run.get("summary", {}).get("errors") or []):
+            if isinstance(err, dict):
+                candidates.append(str(err.get("message") or ""))
+    candidates.append(str(latest_run.get("error") or ""))
+    candidates.append(str(latest_run.get("message") or ""))
+
+    diagnostics: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        actual_identifier = _compat_extract_invalid_identifier(candidate)
+        if not actual_identifier:
             continue
+        key = actual_identifier.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        parts = actual_identifier.split(".")
+        source_hint = (parts[-1] if parts else actual_identifier).replace('"', "").strip().upper()
+        diagnostics.append({
+            "code": "INVALID_IDENTIFIER_REFERENCE",
+            "actual_identifier": actual_identifier,
+            "source_hint": source_hint,
+            "message": f"Deploy SQL references invalid identifier {actual_identifier}.",
+        })
 
-        candidates: List[str] = []
-        candidates.extend([str(item) for item in (run.get("logs") or []) if str(item or "").strip()])
-        if isinstance(run.get("summary"), dict):
-            for err in (run.get("summary", {}).get("errors") or []):
-                if isinstance(err, dict):
-                    candidates.append(str(err.get("message") or ""))
-        candidates.append(str(run.get("error") or ""))
-        candidates.append(str(run.get("message") or ""))
-
-        diagnostics: List[Dict[str, str]] = []
-        seen: set[str] = set()
-        for candidate in candidates:
-            actual_identifier = _compat_extract_invalid_identifier(candidate)
-            if not actual_identifier:
-                continue
-            key = actual_identifier.upper()
-            if key in seen:
-                continue
-            seen.add(key)
-            parts = actual_identifier.split(".")
-            source_hint = (parts[-1] if parts else actual_identifier).replace('"', "").strip().upper()
-            diagnostics.append({
-                "code": "INVALID_IDENTIFIER_REFERENCE",
-                "actual_identifier": actual_identifier,
-                "source_hint": source_hint,
-                "message": f"Deploy SQL references invalid identifier {actual_identifier}.",
-            })
-
-        if diagnostics:
-            return diagnostics
+    if diagnostics:
+        return diagnostics
     return []
 
 
@@ -1149,6 +1375,27 @@ def _compat_apply_identifier_diagnostics_to_mappings(
 ) -> None:
     if not diagnostics:
         return
+
+    def _metric_expression_references_identifier(expression: str, identifier: str) -> bool:
+        expr = str(expression or "")
+        ident = str(identifier or "").strip()
+        if not expr or not ident or "." not in ident:
+            return False
+
+        table_name, column_name = ident.rsplit(".", 1)
+        table_name = table_name.strip().strip('"').strip("'").strip()
+        column_name = column_name.strip().strip('"').strip("'").strip()
+        if not table_name or not column_name:
+            return False
+
+        patterns = [
+            rf"\b{re.escape(table_name)}\s*\.\s*{re.escape(column_name)}\b",
+            rf"'{re.escape(table_name)}'\s*\[\s*{re.escape(column_name)}\s*\]",
+            rf"\b{re.escape(table_name)}\s*\[\s*{re.escape(column_name)}\s*\]",
+            rf"\"{re.escape(table_name)}\"\s*\.\s*\"{re.escape(column_name)}\"",
+        ]
+        return any(re.search(pattern, expr, flags=re.IGNORECASE) for pattern in patterns)
+
     for mapping in mappings:
         if not isinstance(mapping, dict):
             continue
@@ -1156,14 +1403,17 @@ def _compat_apply_identifier_diagnostics_to_mappings(
             continue
 
         source_name = str(mapping.get("source_name") or "").upper()
-        target_name = str(mapping.get("target_name") or "").upper()
         source_path = str(mapping.get("source_path") or "").upper()
+        source_expression = str(mapping.get("source_expression") or "")
 
         for diag in diagnostics:
+            actual_identifier = str(diag.get("actual_identifier") or "").strip()
             hint = str(diag.get("source_hint") or "").upper()
             if not hint:
                 continue
-            if hint in source_name or hint in target_name or hint in source_path:
+            expression_match = _metric_expression_references_identifier(source_expression, actual_identifier)
+            path_or_name_match = bool(hint in source_name or hint in source_path)
+            if expression_match or (not source_expression.strip() and path_or_name_match):
                 mapping["collision_detected"] = True
                 mapping["validation_status"] = "invalid"
                 mapping["validation_code"] = str(diag.get("code") or "INVALID_IDENTIFIER_REFERENCE")
@@ -1174,6 +1424,67 @@ def _compat_apply_identifier_diagnostics_to_mappings(
                     "stage": "deploy_sql_compile",
                 }
                 break
+
+
+def _compat_is_blocking_mapping(mapping: Dict[str, Any]) -> bool:
+    if not isinstance(mapping, dict):
+        return False
+
+    validation_code = str(mapping.get("validation_code") or "").strip().upper()
+    target_name = str(mapping.get("target_name") or "").strip()
+    validation_message = str(mapping.get("validation_message") or "").strip().lower()
+    status = str(mapping.get("status") or "").strip().lower()
+
+    # Deterministic NAME_COLLISION rows are auto-resolved by suffixing the
+    # identifier; they should not block deploy when a target exists.
+    if (
+        validation_code == "NAME_COLLISION"
+        and target_name
+        and ("resolved" in validation_message or status in {"auto", "manual"})
+    ):
+        return False
+
+    if status in {"collision", "unmapped"}:
+        return True
+
+    validation_status = str(mapping.get("validation_status") or "").strip().lower()
+    if validation_status in {"invalid", "collision"}:
+        return True
+
+    if validation_code and validation_code != "OK":
+        return True
+
+    if not target_name:
+        return True
+
+    if bool(mapping.get("collision_detected")):
+        return True
+
+    return False
+
+
+def _compat_collect_dry_run_blockers(preview_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    blockers: List[Dict[str, Any]] = []
+    mappings = preview_result.get("entity_mappings") if isinstance(preview_result, dict) else []
+    if not isinstance(mappings, list):
+        return blockers
+
+    for mapping in mappings:
+        if not isinstance(mapping, dict):
+            continue
+        if not _compat_is_blocking_mapping(mapping):
+            continue
+        blockers.append({
+            "id": str(mapping.get("id") or "").strip(),
+            "source_path": str(mapping.get("source_path") or "").strip(),
+            "source_name": str(mapping.get("source_name") or "").strip(),
+            "target_name": str(mapping.get("target_name") or "").strip(),
+            "status": str(mapping.get("status") or "").strip().lower(),
+            "validation_status": str(mapping.get("validation_status") or "").strip().lower(),
+            "validation_code": str(mapping.get("validation_code") or "").strip().upper(),
+            "validation_message": str(mapping.get("validation_message") or "").strip(),
+        })
+    return blockers
 
 
 async def list_mappings_compat(project_id: Optional[str] = None):
@@ -1220,6 +1531,7 @@ async def list_mappings_compat(project_id: Optional[str] = None):
 
 async def auto_map_compat(payload: dict):
     project_id = str((payload or {}).get("project_id") or "").strip()
+    user_id = (payload or {}).get("user_id")
     selected_model_names = (payload or {}).get("selected_model_names") if isinstance((payload or {}).get("selected_model_names"), list) else []
     target_connectors = (payload or {}).get("target_connectors") if isinstance((payload or {}).get("target_connectors"), list) else []
     explicit_target = str((payload or {}).get("target_connector") or "").strip()
@@ -1238,6 +1550,24 @@ async def auto_map_compat(payload: dict):
     # from the latest model state are preserved.
     preview_mode = (not project_id) and dry_run and (bool(config_yaml) or bool(selected_model_names))
     if project_id and not preview_mode:
+        from semabridge.api.services.core_domain_service import sync_models
+        sync_result: Dict[str, Any] = {}
+        preferred_snapshot_id = ""
+        try:
+            sync_result = await sync_models({
+                "project_id": project_id,
+                "content": config_yaml or None,
+                "dry_run": True,
+                "user_id": user_id,
+            })
+            preferred_snapshot_id = _compat_preferred_snapshot_id_from_sync_result(sync_result, selected_model_names)
+        except Exception as exc:
+            logger.warning("Auto-map pre-sync failed for project %s: %s", project_id, exc)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Dry-run sync failed before auto-map for project '{project_id}': {exc}",
+            )
+
         if not dry_run:
             for mapping_id, mapping in list(_compat_mappings.items()):
                 if str(mapping.get("project_id") or "") != project_id:
@@ -1253,6 +1583,8 @@ async def auto_map_compat(payload: dict):
             project_id,
             save_store=not dry_run,
             target_connector=target_connector,
+            selected_model_names=selected_model_names if dry_run else None,
+            preferred_snapshot_id=preferred_snapshot_id,
         )
     else:
         preview_seed = config_yaml or '|'.join(str(item) for item in selected_model_names)
@@ -1329,120 +1661,3 @@ async def delete_mappings_compat(project_id: Optional[str] = None):
         _compat_mappings.clear()
     _compat_save_store()
     return Response(status_code=204)
-
-
-async def get_project_runs_compat(project_id: str):
-    """
-    Retrieve run history for a project.
-    Falls back to ORM queries if the in-memory compatibility store is empty.
-    """
-    _compat_ensure_loaded()
-    pid = str(project_id).strip()
-
-    # Try in-memory store first
-    runs = _compat_project_runs.get(pid, [])
-    if runs:
-        return runs
-
-    # Fallback to persistent ORM database
-    try:
-        from semabridge.repository.orm.models import Run
-        from sqlalchemy import select
-        from semabridge.repository.orm.session_factory import db_manager
-
-        session = db_manager._session()
-        try:
-            # Query runs for this project
-            stmt = (
-                select(Run)
-                .where(Run.project_id == pid)
-                .order_by(Run.started_at.desc())
-                .limit(100)
-            )
-            rows = session.execute(stmt).scalars().all()
-
-            results = []
-            for r in rows:
-                def _parse_list(attr_name):
-                    val = getattr(r, attr_name, None)
-                    if not val: return []
-                    try: return json.loads(val) if isinstance(val, str) else val
-                    except: return []
-
-                before_ids = _parse_list("before_target_snapshot_ids")
-                after_ids = _parse_list("after_target_snapshot_ids")
-                
-                run_data = {
-                    "run_id": r.run_id,
-                    "id": r.run_id,
-                    "project_id": r.project_id,
-                    "run_type": getattr(r, "run_type", "SYNC") or "SYNC",
-                    "status": r.status or "unknown",
-                    "started_at": r.started_at.isoformat() if r.started_at else None,
-                    "completed_at": r.completed_at.isoformat() if r.completed_at else None,
-                    "before_target_snapshot_ids": before_ids,
-                    "after_target_snapshot_ids": after_ids,
-                    "after_tgt_snapshots": after_ids,
-                }
-                results.append(run_data)
-
-            # Seed the cache to avoid repeated DB hits
-            if results:
-                _compat_project_runs[pid] = results
-
-            return results
-        finally:
-            session.close()
-    except Exception as exc:
-        logger.error("Failed to retrieve runs from ORM: %s", exc)
-        return []
-
-
-async def delete_project_snapshots_compat(project_id: str, snapshot_ids: List[str]):
-    """
-    Soft-delete snapshots after ensuring they are not referenced by any project runs.
-    """
-    _compat_ensure_loaded()
-    from semabridge.repository.orm.models import SnapshotRow, Run
-    from sqlalchemy import select, update, or_
-    from semabridge.repository.orm.session_factory import db_manager
-
-    session = db_manager._session()
-    try:
-        # 1. Identify which snapshots are "active" (referenced as before/after/restore targets)
-        stmt = (
-            select(Run)
-            .where(Run.project_id == project_id)
-            .where(
-                or_(
-                    Run.before_src_snapshot_id.in_(snapshot_ids),
-                    Run.restore_snapshot_id.in_(snapshot_ids),
-                )
-            )
-        )
-        active_runs = session.execute(stmt).scalars().all()
-        
-        blocked_ids = []
-        for r in active_runs:
-            for sid in snapshot_ids:
-                if sid == r.before_src_snapshot_id or sid == r.restore_snapshot_id:
-                    blocked_ids.append(sid)
-        
-        to_delete = [sid for sid in snapshot_ids if sid not in blocked_ids]
-        
-        if to_delete:
-            stmt = (
-                update(SnapshotRow)
-                .where(SnapshotRow.snapshot_id.in_(to_delete))
-                .values(deleted_at=_compat_now_iso())
-            )
-            session.execute(stmt)
-            session.commit()
-            
-        return {
-            "deleted_count": len(to_delete),
-            "blocked_ids": list(set(blocked_ids)),
-            "status": "success" if not blocked_ids else "partial"
-        }
-    finally:
-        session.close()

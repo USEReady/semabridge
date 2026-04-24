@@ -250,6 +250,8 @@ export default function VersionControlPage() {
             
             const sorted = (Array.isArray(runs) ? runs : []).sort((a, b) => new Date(b.started_at || 0) - new Date(a.started_at || 0));
             setVersions(sorted);
+            const runIds = new Set(sorted.map((r) => r.run_id));
+            setDiffSelection((prev) => prev.filter((id) => runIds.has(id)));
             
             // Stats might be raw from fetch
             if (vcStats && vcStats.json) {
@@ -257,15 +259,17 @@ export default function VersionControlPage() {
                 setStats(s);
             }
 
-            if (sorted.length > 0 && !selectedRun) {
-                setSelectedRun(sorted[0]);
-            }
+            setSelectedRun((prev) => {
+                if (!sorted.length) return null;
+                if (!prev || !runIds.has(prev.run_id)) return sorted[0];
+                return prev;
+            });
         } catch (err) {
             addLog('error', 'VC', 'Load failed: ' + err.message);
         } finally {
             setIsLoading(false);
         }
-    }, [selectedRun, addLog]);
+    }, [addLog]);
 
     useEffect(() => {
         loadProjects();
@@ -273,12 +277,12 @@ export default function VersionControlPage() {
 
     useEffect(() => {
         if (selectedProjectId) {
-            loadVersions(selectedProjectId);
             // Reset state when switching projects
             setDiffSelection([]);
             setViewMode('history');
             setDiffData(null);
             setSelectedRun(null);
+            loadVersions(selectedProjectId);
         }
     }, [selectedProjectId, loadVersions]);
 
@@ -587,7 +591,7 @@ export default function VersionControlPage() {
                                             <div className="flex flex-col gap-1">
                                                 <div className="flex items-center gap-2">
                                                     <Calendar size={12} className={selectedRun?.run_id === v.run_id ? 'text-blue-100' : 'text-[var(--text-tertiary)]'} />
-                                                    <span className={`text-[11px] font-bold ${selectedRun?.run_id === v.run_id ? 'text-blue-500-100' : 'text-[var(--text-secondary)]'}`}>
+                                                    <span className={`text-[11px] font-bold ${selectedRun?.run_id === v.run_id ? 'text-blue-100' : 'text-[var(--text-secondary)]'}`}>
                                                         {new Date(v.started_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
                                                     </span>
                                                 </div>

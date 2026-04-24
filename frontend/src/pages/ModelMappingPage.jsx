@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Check, Cloud, Database, Loader2, Play, RefreshCw, Rocket, Search, Snowflake } from 'lucide-react';
+import { AlertTriangle, Check, Cloud, Database, FileCode2, Loader2, Play, RefreshCw, Rocket, Search, Snowflake } from 'lucide-react';
 import { parseDocument as parseYamlDocument } from 'yaml';
+import SearchableSelect from '../components/common/SearchableSelect';
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
 import { api } from '../utils/api';
@@ -109,6 +110,29 @@ function getConnectorPresentation(type) {
   return { label: normalized || 'Connector', icon: <Database size={14} />, accent: '#94a3b8' };
 }
 
+function getProjectYamlLabel(project) {
+  return String(project?.display_name || project?.name || project?.file_name || project?.project_name || project?.id || 'Project YAML').trim();
+}
+
+function getProjectYamlPath(project) {
+  return String(project?.file_path || project?.yaml_path || '').trim();
+}
+
+function renderProjectYamlOption(project) {
+  const label = getProjectYamlLabel(project);
+  const fileName = String(project?.file_name || '').trim();
+  const filePath = getProjectYamlPath(project);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+      <span style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+      <span style={{ fontSize: 11, color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {fileName || filePath}
+      </span>
+    </div>
+  );
+}
+
 function normalizeStatus(item) {
   const validation = String(item?.validation_status || '').toLowerCase();
   const explicit = String(item?.status || '').toLowerCase();
@@ -129,6 +153,18 @@ function isBlockingRow(row) {
   if (validationCode && validationCode !== 'OK') return true;
 
   return false;
+}
+
+function extractDryRunBlockers(error) {
+  const detail = error?.payload?.detail;
+  if (!detail || typeof detail !== 'object') return null;
+  const mode = String(detail.mode || '').toUpperCase();
+  const blockers = Array.isArray(detail.blocking_issues) ? detail.blocking_issues : [];
+  if (mode !== 'DRY_RUN' || blockers.length === 0) return null;
+  return {
+    message: String(detail.message || '').trim(),
+    blockers,
+  };
 }
 
 function parseDatasetFromPath(pathValue) {
@@ -171,7 +207,7 @@ function resolveMeasureExpression(row) {
 function normalizeRows(data) {
   const entityRows = Array.isArray(data?.entity_mappings) ? data.entity_mappings : [];
   if (entityRows.length > 0) {
-    return entityRows
+    const scopedEntityRows = entityRows
       .filter((row) => {
         const kind = String(row?.entity_kind || '').toLowerCase();
         return kind === 'column' || kind === 'metric';
@@ -201,6 +237,9 @@ function normalizeRows(data) {
           isDirty: false,
         };
       });
+    if (scopedEntityRows.length > 0) {
+      return scopedEntityRows;
+    }
   }
 
   const rows = [];
@@ -311,7 +350,7 @@ function validateTargetName(value, targetPlatform, sourceType, targetType) {
 function parseProjectSemabridgeYaml(rawYaml) {
   if (!rawYaml || typeof rawYaml !== 'string') {
     return {
-      projectName: 'semabridge.yaml',
+      projectName: 'Project YAML',
       sourceName: 'Source Model',
       sourceType: 'Unknown',
       targetName: 'Target Model',
@@ -334,7 +373,7 @@ function parseProjectSemabridgeYaml(rawYaml) {
     const targetName = String(target?.name || target?.type || 'snowflake');
 
     return {
-      projectName: String(tree?.project_name || 'semabridge.yaml'),
+      projectName: String(tree?.project_name || 'Project YAML'),
       sourceName,
       sourceType: String(source?.type || 'Unknown'),
       targetName,
@@ -343,7 +382,7 @@ function parseProjectSemabridgeYaml(rawYaml) {
     };
   } catch {
     return {
-      projectName: 'semabridge.yaml',
+      projectName: 'Project YAML',
       sourceName: 'Source Model',
       sourceType: 'Unknown',
       targetName: 'Target Model',
@@ -362,9 +401,12 @@ export default function ModelMappingPage() {
     }
   }, []);
 
-  const [projects, setProjects] = useState([]);
+  const [projectFiles, setProjectFiles] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState(queryProjectId);
-  const [activeProjectLabel, setActiveProjectLabel] = useState('semabridge.yaml');
+  const [activeProjectLabel, setActiveProjectLabel] = useState('Project YAML');
+  const [activeProjectPath, setActiveProjectPath] = useState('');
+  const [availableModels, setAvailableModels] = useState([]);
+  const [activeModelName, setActiveModelName] = useState('');
   const [sourceModel, setSourceModel] = useState({ name: 'Source Model', type: 'Unknown', field_count: 0 });
   const [targetModel, setTargetModel] = useState({ name: 'Target Model', type: 'Unknown', field_count: 0 });
 
@@ -377,33 +419,51 @@ export default function ModelMappingPage() {
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState('all');
 
+  const selectedProjectFile = useMemo(
+    () => projectFiles.find((project) => String(project?.id || project?.project_id || '') === String(selectedProjectId || '')) || null,
+    [projectFiles, selectedProjectId],
+  );
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const list = await api.listProjects();
+        setPageError('');
+        const list = await api.listProjectDiscovery();
         if (cancelled) return;
-        setProjects(Array.isArray(list) ? list : []);
-        if (!selectedProjectId && Array.isArray(list) && list.length > 0) {
-          const preferred = list.find((project) => {
-            const name = String(project?.name || '').toLowerCase();
-            const label = String(project?.config_name || project?.project_name || '').toLowerCase();
-            return name.includes('semabridge') || label.includes('semabridge');
-          }) || list[0];
-          const firstId = String(preferred?.id || preferred?.project_id || '').trim();
-          if (firstId) {
-            setSelectedProjectId(firstId);
-            setActiveProjectLabel(String(preferred?.name || 'semabridge.yaml'));
-          }
+        const nextFiles = Array.isArray(list) ? list : [];
+        setProjectFiles(nextFiles);
+        if (nextFiles.length === 0) {
+          setPageError('No YAML files were found in Config/projects.');
+          return;
+        }
+
+        const preferred = nextFiles.find((project) => String(project?.id || project?.project_id || '') === String(queryProjectId || '')) || nextFiles[0];
+        const preferredId = String(preferred?.id || preferred?.project_id || '').trim();
+        if (preferredId) {
+          setSelectedProjectId((current) => current || preferredId);
+        }
+        if (preferred) {
+          setActiveProjectLabel(getProjectYamlLabel(preferred));
+          setActiveProjectPath(getProjectYamlPath(preferred));
         }
       } catch {
-        if (!cancelled) setProjects([]);
+        if (!cancelled) {
+          setProjectFiles([]);
+          setPageError('Failed to load project YAML files from Config/projects.');
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [selectedProjectId]);
+  }, [queryProjectId]);
+
+  useEffect(() => {
+    if (!selectedProjectFile) return;
+    setActiveProjectLabel(getProjectYamlLabel(selectedProjectFile));
+    setActiveProjectPath(getProjectYamlPath(selectedProjectFile));
+  }, [selectedProjectFile]);
 
   const loadProjectMappings = useCallback(async (projectId) => {
     if (!projectId) {
@@ -417,25 +477,24 @@ export default function ModelMappingPage() {
     setHasDryRunResult(false);
 
     try {
-      const config = await api.getProjectConfig(projectId, { preferRepo: true });
+      const config = await api.getProjectConfig(projectId);
       const semabridgeContext = parseProjectSemabridgeYaml(config?.config_yaml || '');
-
-      const mappingData = await api.autoMap({
-        project_id: projectId,
-        dry_run: true,
-        config_yaml: config?.config_yaml || '',
-        target_connector: String(semabridgeContext.targetType || 'snowflake'),
-        selected_model_names: semabridgeContext.selectedModels,
-        project_name: semabridgeContext.projectName,
+      const discoveredModels = Array.isArray(semabridgeContext.selectedModels) ? semabridgeContext.selectedModels : [];
+      setAvailableModels(discoveredModels);
+      setActiveModelName((current) => {
+        if (current && discoveredModels.includes(current)) return current;
+        return discoveredModels[0] || '';
       });
 
+      const mappingData = await api.getMappings(projectId);
       const nextRows = normalizeRows(mappingData);
       setRows(nextRows);
-      setHasDryRunResult(true);
+      setHasDryRunResult(false);
 
       const sourceLabel = String(semabridgeContext.sourceType || 'fabric');
       const targetLabel = String(semabridgeContext.targetType || 'snowflake');
-      setActiveProjectLabel(String(semabridgeContext.projectName || 'semabridge.yaml'));
+      setActiveProjectLabel(getProjectYamlLabel(selectedProjectFile) || String(semabridgeContext.projectName || 'Project YAML'));
+      setActiveProjectPath(getProjectYamlPath(selectedProjectFile) || String(config?.yaml_path || ''));
       setSourceModel({
         name: String(semabridgeContext.sourceName || 'fabric'),
         type: sourceLabel,
@@ -452,7 +511,7 @@ export default function ModelMappingPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedProjectFile]);
 
   useEffect(() => {
     loadProjectMappings(selectedProjectId);
@@ -465,26 +524,39 @@ export default function ModelMappingPage() {
     setPageError('');
 
     try {
-      const projectConfig = await api.getProjectConfig(selectedProjectId, { preferRepo: true });
+      const projectConfig = await api.getProjectConfig(selectedProjectId);
       const semabridgeContext = parseProjectSemabridgeYaml(projectConfig?.config_yaml || '');
-      const result = await api.runProjectNow(selectedProjectId, {
-        project_id: selectedProjectId,
+      const discoveredModels = Array.isArray(semabridgeContext.selectedModels) ? semabridgeContext.selectedModels : [];
+      const scopedModel = (activeModelName && discoveredModels.includes(activeModelName))
+        ? activeModelName
+        : (discoveredModels[0] || '');
+      const dryRunPayload = {
         dry_run: true,
         config_yaml: projectConfig?.config_yaml || '',
         target_connector: String(semabridgeContext.targetType || targetModel.type || 'snowflake'),
-        selected_model_names: semabridgeContext.selectedModels,
+        selected_model_names: scopedModel ? [scopedModel] : [],
         project_name: semabridgeContext.projectName,
+      };
+
+      const result = await api.autoMap({
+        project_id: selectedProjectId,
+        ...dryRunPayload,
       });
+
       const nextRows = normalizeRows(result);
+
       setRows(nextRows);
-      setHasDryRunResult(true);
+      setHasDryRunResult(nextRows.length > 0);
+      if (nextRows.length === 0) {
+        setPageError('Dry run completed, but no mappable columns were returned for this project/model scope.');
+      }
     } catch (error) {
       setPageError(error?.message || 'Dry run failed for this project.');
       setHasDryRunResult(false);
     } finally {
       setIsDryRunLoading(false);
     }
-  }, [selectedProjectId, targetModel.type]);
+  }, [activeModelName, selectedProjectId, targetModel.type]);
 
   const handleInlineTargetChange = useCallback((rowId, value) => {
     setRows((prev) => prev.map((row) => {
@@ -606,7 +678,36 @@ export default function ModelMappingPage() {
       await api.syncProject(selectedProjectId);
       await loadProjectMappings(selectedProjectId);
     } catch (error) {
-      setPageError(error?.message || 'Deploy failed. Resolve issues and retry.');
+      const blocked = extractDryRunBlockers(error);
+      if (blocked) {
+        const blockerById = new Map(
+          blocked.blockers
+            .map((item) => [String(item?.id || '').trim(), item])
+            .filter(([id]) => Boolean(id)),
+        );
+        const blockerByPath = new Map(
+          blocked.blockers
+            .map((item) => [String(item?.source_path || '').trim(), item])
+            .filter(([path]) => Boolean(path)),
+        );
+        setRows((prev) => prev.map((row) => {
+          const byId = blockerById.get(String(row.id || '').trim());
+          const byPath = blockerByPath.get(String(row.source_path || '').trim());
+          const blocker = byId || byPath;
+          if (!blocker) return row;
+          return {
+            ...row,
+            status: 'collision',
+            validation_status: String(blocker.validation_status || 'invalid').toLowerCase(),
+            validation_code: String(blocker.validation_code || 'INVALID_IDENTIFIER_REFERENCE').toUpperCase(),
+            validation_message: String(blocker.validation_message || 'Dry-run deploy blocker detected.'),
+          };
+        }));
+        setHasDryRunResult(true);
+        setPageError(blocked.message || 'Deploy blocked by dry-run mapping issues. Resolve blockers and retry.');
+      } else {
+        setPageError(error?.message || 'Deploy failed. Resolve issues and retry.');
+      }
     } finally {
       setDeployLoading(false);
     }
@@ -617,7 +718,7 @@ export default function ModelMappingPage() {
       <PageHeader
         breadcrumb={['Projects', 'Model Mapping']}
         title="Model Mapping Workspace"
-        description="Run auto-map as a dry-run validation, resolve collisions, then deploy validated mappings."
+        description="Select a project YAML from Config/projects, run auto-map as a dry-run validation, resolve collisions, then deploy validated mappings."
         action={{
           label: isDryRunLoading ? 'Running Auto-Map...' : 'Run Auto-Map',
           icon: isDryRunLoading ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />,
@@ -625,14 +726,58 @@ export default function ModelMappingPage() {
         }}
       />
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+        <div style={{ minWidth: 320, maxWidth: 520, flex: '1 1 320px' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: 6 }}>
+            Project YAML
+          </div>
+          <SearchableSelect
+            items={projectFiles}
+            displayKey="name"
+            valueKey="id"
+            searchFields={['display_name', 'name', 'file_name', 'file_path']}
+            value={selectedProjectId}
+            placeholder="Select a YAML file from Config/projects..."
+            onChange={(item) => setSelectedProjectId(String(item?.id || item?.project_id || '').trim())}
+            loading={projectFiles.length === 0 && loading}
+            clearable={false}
+            renderItem={renderProjectYamlOption}
+          />
+        </div>
+
         <div style={{ border: '1px solid var(--border-main)', borderRadius: 999, background: 'var(--bg-surface-raised)', padding: '7px 12px', fontSize: 12, color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>Active Project</span>
+          <FileCode2 size={14} style={{ color: 'var(--accent-blue)' }} />
+          <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>Active YAML</span>
           <span>{activeProjectLabel}</span>
         </div>
-        <div style={{ border: '1px solid var(--border-main)', borderRadius: 999, background: 'var(--bg-surface-raised)', padding: '7px 12px', fontSize: 12, color: 'var(--text-secondary)' }}>
-          semabridge.yaml is the single source of truth for this workspace.
-        </div>
+        {activeProjectPath && (
+          <div style={{ border: '1px solid var(--border-main)', borderRadius: 999, background: 'var(--bg-surface-raised)', padding: '7px 12px', fontSize: 12, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 560 }} title={activeProjectPath}>
+            {activeProjectPath.replace(/\\/g, '/')}
+          </div>
+        )}
+        {availableModels.length > 0 && (
+          <div style={{ display: 'grid', gap: 6, minWidth: 240 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-tertiary)' }}>
+              Active Model Scope
+            </div>
+            <select
+              value={activeModelName}
+              onChange={(e) => setActiveModelName(String(e.target.value || ''))}
+              style={{
+                background: 'var(--bg-input)',
+                border: '1px solid var(--border-main)',
+                color: 'var(--text-primary)',
+                borderRadius: 8,
+                padding: '7px 10px',
+                fontSize: 12,
+              }}
+            >
+              {availableModels.map((modelName) => (
+                <option key={modelName} value={modelName}>{modelName}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>

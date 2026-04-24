@@ -299,28 +299,47 @@ def get_config(project_id: str) -> Dict[str, Any]:
     """
     Load a modular project configuration and its mapping profile.
     """
-    # 1. Load the Project file
-    project_path = Path("config/projects") / f"{project_id}.yaml"
-    if not project_path.exists():
-        raise ConfigLoadError(f"Project config not found: {project_path}")
-    
+    # 1. Load the Project file (support both config/ and Config/ path casings).
+    project_candidates = [
+        Path("config/projects") / f"{project_id}.yaml",
+        Path("config/projects") / f"{project_id}.yml",
+        Path("Config/projects") / f"{project_id}.yaml",
+        Path("Config/projects") / f"{project_id}.yml",
+    ]
+    project_path = next((p for p in project_candidates if p.exists()), None)
+    if project_path is None:
+        raise ConfigLoadError(
+            f"Project config not found for '{project_id}' in config/projects or Config/projects"
+        )
+
     with open(project_path, "r", encoding="utf-8") as f:
         project_cfg = yaml.safe_load(f) or {}
-    
-    # 2. Find the profile name from the project file
+    if not isinstance(project_cfg, dict):
+        raise ConfigLoadError(f"Invalid project config format: {project_path}")
+
+    # Self-contained project YAMLs are valid without mapping_profile.
+    # In that case, return the project config as-is.
     profile_name = project_cfg.get("mapping_profile")
     if not profile_name:
-        raise ConfigLoadError(f"No mapping_profile specified in {project_path}")
-    
-    # 3. Load the Mapping Profile
-    profile_path = Path("config/profiles") / f"{profile_name}.yaml"
-    if not profile_path.exists():
-        raise ConfigLoadError(f"Profile config not found: {profile_path}")
-        
+        return project_cfg
+
+    # 2. Load the Mapping Profile (support both config/ and Config/ path casings).
+    profile_candidates = [
+        Path("config/profiles") / f"{profile_name}.yaml",
+        Path("config/profiles") / f"{profile_name}.yml",
+        Path("Config/profiles") / f"{profile_name}.yaml",
+        Path("Config/profiles") / f"{profile_name}.yml",
+    ]
+    profile_path = next((p for p in profile_candidates if p.exists()), None)
+    if profile_path is None:
+        raise ConfigLoadError(
+            f"Profile config not found for '{profile_name}' in config/profiles or Config/profiles"
+        )
+
     with open(profile_path, "r", encoding="utf-8") as f:
         mapping_cfg = yaml.safe_load(f) or {}
-    
-    # 4. Merge them into one dictionary for the app to use
+
+    # 3. Merge into one dictionary for the app to use.
     full_config = {**project_cfg, "mappings": mapping_cfg}
     return full_config
 def get_default_config_path() -> Optional[Path]:

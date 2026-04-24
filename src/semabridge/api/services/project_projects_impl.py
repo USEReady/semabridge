@@ -1,33 +1,98 @@
 from semabridge.api.services.project_shared import *
 
+
+def _project_display_name_from_cfg(project_cfg: Dict[str, Any], fallback: str) -> str:
+    if not isinstance(project_cfg, dict):
+        return fallback
+    meta = project_cfg.get("project_metadata") if isinstance(project_cfg.get("project_metadata"), dict) else {}
+    return _compat_clean_project_name(
+        project_cfg.get("display_name") or meta.get("display_name") or meta.get("name") or project_cfg.get("project_name"),
+        fallback,
+    )
+
+
+def _normalize_project_config_yaml(project_id: str, yaml_text: str, default_name: str) -> str:
+    try:
+        parsed = yaml.safe_load(yaml_text) or {}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid YAML content: {exc}")
+
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=400, detail="Project YAML must be an object mapping")
+
+    parsed_project_id = str(parsed.get("project_id") or "").strip()
+    if parsed_project_id and parsed_project_id != project_id:
+        raise HTTPException(status_code=400, detail="project_id in YAML must match route project_id")
+
+    display_name = _project_display_name_from_cfg(parsed, default_name)
+    if not display_name:
+        display_name = default_name
+
+    parsed["project_id"] = project_id
+    parsed["display_name"] = display_name
+    if not str(parsed.get("project_name") or "").strip():
+        parsed["project_name"] = display_name or default_name
+    return yaml.safe_dump(parsed, sort_keys=False, allow_unicode=False)
+
+
+def _project_discovery_entry(project_id: str, file_path: Path, project_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    source = project_cfg.get("source") if isinstance(project_cfg.get("source"), dict) else {}
+    target = project_cfg.get("target") if isinstance(project_cfg.get("target"), dict) else {}
+    if not target and isinstance(project_cfg.get("targets"), list) and project_cfg.get("targets"):
+        first_target = project_cfg.get("targets")[0]
+        if isinstance(first_target, dict):
+            target = first_target
+
+    display_name = _project_display_name_from_cfg(project_cfg, project_id)
+    return {
+        "id": project_id,
+        "project_id": project_id,
+        "name": display_name,
+        "display_name": display_name,
+        "file_name": file_path.name,
+        "file_path": str(file_path.resolve()).replace('\\', '/'),
+        "source": source.get("type", "fabric"),
+        "target_type": target.get("type", "snowflake"),
+        "workspace_id": source.get("workspace_id", ""),
+    }
+
+
+async def list_project_discovery_compat():
+    _compat_ensure_loaded()
+    entries: List[Dict[str, Any]] = []
+    projects_dir = _compat_projects_dir()
+    if not projects_dir.exists() or not projects_dir.is_dir():
+        return entries
+
+    for file_path in sorted(projects_dir.glob("*.y*ml")):
+        project_id = file_path.stem.strip()
+        if not project_id:
+            continue
+        try:
+            project_cfg = yaml.safe_load(file_path.read_text(encoding="utf-8")) or {}
+            if not isinstance(project_cfg, dict):
+                continue
+            entries.append(_project_discovery_entry(project_id, file_path, project_cfg))
+        except Exception as exc:
+            logger.warning("Failed to load project discovery entry %s: %s", file_path, exc)
+    return entries
+
+
 async def list_projects_compat():
     """Compatibility: newfrontend expects a projects collection."""
     _compat_ensure_loaded()
     deduped: Dict[str, Dict[str, Any]] = {}
     
-    # Load modular projects from config/projects
-    from pathlib import Path
-    projects_dir = Path("config/projects")
+    # Load modular projects from Config/projects (or config/projects)
+    projects_dir = _compat_projects_dir()
     if projects_dir.exists() and projects_dir.is_dir():
-        for file_path in projects_dir.glob("*.yaml"):
+        for file_path in sorted(projects_dir.glob("*.y*ml")):
             pid = file_path.stem
             try:
-                import yaml
-                with open(file_path, "r", encoding="utf-8") as f:
-                    project_cfg = yaml.safe_load(f) or {}
-                
-                meta = project_cfg.get("project_metadata", {})
-                source = project_cfg.get("source", {})
-                target = project_cfg.get("target", {})
-                
-                deduped[pid] = {
-                    "id": pid,
-                    "project_id": pid,
-                    "name": meta.get("name") or pid,
-                    "source": source.get("type", "fabric"),
-                    "target_type": target.get("type", "snowflake"),
-                    "workspace_id": source.get("workspace_id", ""),
-                }
+                project_cfg = yaml.safe_load(file_path.read_text(encoding="utf-8")) or {}
+                if not isinstance(project_cfg, dict):
+                    continue
+                deduped[pid] = _project_discovery_entry(pid, file_path, project_cfg)
             except Exception as e:
                 logger.warning(f"Failed to load project config {file_path}: {e}")
 
@@ -79,20 +144,30 @@ async def create_project_compat(request: dict):
                 _compat_projects[str(existing.get("id") or existing.get("project_id"))] = existing
                 return existing
 
-    project_id = str(payload.get("id") or payload.get("project_id") or f"proj-{int(_time.time() * 1000)}")
+    safe_name = re.sub(r'[^a-zA-Z0-9_]+', '-', payload_name.lower()).strip('-')
+    default_id = f"proj-{safe_name}" if safe_name else f"proj-{int(_time.time() * 1000)}"
+    project_id = str(payload.get("id") or payload.get("project_id") or default_id)
     project = _compat_project_payload(project_id, payload)
     _compat_projects[project_id] = project
 
     config_yaml = payload.get("config_yaml")
     if isinstance(config_yaml, str) and config_yaml.strip():
-        _compat_project_configs[project_id] = config_yaml
+        normalized_yaml = _normalize_project_config_yaml(project_id, config_yaml, project.get("name") or project_id)
+        _compat_project_configs[project_id] = normalized_yaml
         try:
-            _compat_save_repo_yaml_text(config_yaml)
+            _compat_save_project_yaml_text(project_id, normalized_yaml)
         except Exception as exc:
-            logger.warning("Failed to persist project config to semabridge.yaml: %s", exc)
+            logger.warning("Failed to persist project config for %s: %s", project_id, exc)
     else:
+        project_yaml = _compat_load_project_yaml_text(project_id)
         repo_yaml = _compat_load_repo_yaml_text()
-        _compat_project_configs.setdefault(project_id, repo_yaml or _compat_default_project_yaml(project))
+        selected_yaml = project_yaml or repo_yaml or _compat_default_project_yaml(project)
+        normalized_yaml = _normalize_project_config_yaml(project_id, selected_yaml, project.get("name") or project_id)
+        _compat_project_configs.setdefault(project_id, normalized_yaml)
+        try:
+            _compat_save_project_yaml_text(project_id, normalized_yaml)
+        except Exception as exc:
+            logger.warning("Failed to initialize project config file for %s: %s", project_id, exc)
 
     _compat_project_runs.setdefault(project_id, [])
     _compat_save_store()
@@ -121,9 +196,15 @@ async def patch_project_compat(project_id: str, payload: dict):
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    for key in ("name", "description", "folder_id", "status"):
+    for key in ("name", "display_name", "description", "folder_id", "status"):
         if key in (payload or {}):
             project[key] = payload.get(key)
+
+    if payload.get("name") and not payload.get("display_name"):
+        project["display_name"] = payload.get("name")
+        project["name"] = payload.get("name")
+    elif payload.get("display_name") and not payload.get("name"):
+        project["name"] = payload.get("display_name")
 
     if isinstance(payload.get("source"), dict):
         project["source"] = payload["source"].get("type") or project.get("source")
@@ -178,13 +259,25 @@ async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(d
     # example Model Mapping) can opt into prefer_repo=True to reflect the
     # workspace semabridge.yaml as the single source of truth.
     repo_yaml = _compat_load_repo_yaml_text()
-    if prefer_repo and repo_yaml:
+    prefer_repo_flag = prefer_repo if isinstance(prefer_repo, bool) else False
+    project_yaml = _compat_load_project_yaml_text(project_id)
+    if prefer_repo_flag and repo_yaml:
         yaml_text = repo_yaml
         _compat_project_configs[project_id] = repo_yaml
     else:
-        yaml_text = _compat_project_configs.get(project_id) or repo_yaml or _compat_default_project_yaml(project)
+        yaml_text = project_yaml or _compat_project_configs.get(project_id) or repo_yaml or _compat_default_project_yaml(project)
+        yaml_text = _normalize_project_config_yaml(project_id, yaml_text, project.get("name") or project_id)
+        if not project_yaml and yaml_text:
+            try:
+                _compat_save_project_yaml_text(project_id, yaml_text)
+            except Exception as exc:
+                logger.warning("Failed to persist hydrated project config for %s: %s", project_id, exc)
     _compat_project_configs[project_id] = yaml_text
-    return {"project_id": project_id, "config_yaml": yaml_text, "yaml_path": str(_compat_repo_yaml_path().resolve()).replace('\\\\', '/')}
+    return {
+        "project_id": project_id,
+        "config_yaml": yaml_text,
+        "yaml_path": str(_compat_project_yaml_path(project_id).resolve()).replace('\\\\', '/'),
+    }
 
 
 async def save_project_config_compat(project_id: str, payload: dict):
@@ -202,17 +295,18 @@ async def save_project_config_compat(project_id: str, payload: dict):
     yaml_text = str((payload or {}).get("config_yaml") or "").strip()
     if not yaml_text:
         raise HTTPException(status_code=400, detail="config_yaml is required")
+    yaml_text = _normalize_project_config_yaml(project_id, yaml_text, project.get("name") or project_id)
     _compat_project_configs[project_id] = yaml_text
     try:
-        _compat_save_repo_yaml_text(yaml_text)
+        _compat_save_project_yaml_text(project_id, yaml_text)
     except Exception as exc:
-        logger.warning("Failed to persist project config to semabridge.yaml: %s", exc)
+        logger.warning("Failed to persist project config for %s: %s", project_id, exc)
     project["updated_at"] = _compat_now_iso()
     _compat_save_store()
     return {
         "status": "saved",
         "project_id": project_id,
-        "yaml_path": str(_compat_repo_yaml_path().resolve()).replace('\\\\', '/'),
+        "yaml_path": str(_compat_project_yaml_path(project_id).resolve()).replace('\\\\', '/'),
         "warnings": [],
     }
 

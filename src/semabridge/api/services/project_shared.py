@@ -606,6 +606,43 @@ def _compat_repo_yaml_path() -> Path:
     return get_project_file_path("semabridge.yaml")
 
 
+def _compat_project_yaml_path(project_id: str) -> Path:
+    file_name = f"{project_id}.yaml"
+    lower = Path("config") / "projects" / file_name
+    upper = Path("Config") / "projects" / file_name
+    if lower.exists():
+        return lower
+    if upper.exists():
+        return upper
+    return _compat_projects_dir() / file_name
+
+
+def _compat_load_project_yaml_text(project_id: str) -> str:
+    for p in [Path("config") / "projects" / f"{project_id}.yaml", Path("Config") / "projects" / f"{project_id}.yaml", _compat_project_yaml_path(project_id)]:
+        try:
+            if p.exists():
+                text = p.read_text(encoding="utf-8")
+                if text.strip():
+                    return text
+        except Exception:
+            continue
+    return ""
+
+
+def _compat_save_project_yaml_text(project_id: str, yaml_text: str) -> Path:
+    existing_lower = Path("config") / "projects" / f"{project_id}.yaml"
+    existing_upper = Path("Config") / "projects" / f"{project_id}.yaml"
+    if existing_lower.exists():
+        p = existing_lower
+    elif existing_upper.exists():
+        p = existing_upper
+    else:
+        p = _compat_project_yaml_path(project_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(yaml_text, encoding="utf-8")
+    return p
+
+
 def _compat_load_repo_yaml_text() -> str:
     try:
         p = _compat_repo_yaml_path()
@@ -636,10 +673,11 @@ def _compat_project_payload(project_id: str, payload: dict) -> Dict[str, Any]:
     target_obj = payload.get("target") if isinstance(payload.get("target"), dict) else {}
     targets_list = payload.get("targets") if isinstance(payload.get("targets"), list) else []
     first_target_obj = targets_list[0] if targets_list and isinstance(targets_list[0], dict) else {}
-    project_name = _compat_clean_project_name(payload.get("name"), f"Project {project_id[-6:]}")
+    project_name = _compat_clean_project_name(payload.get("display_name") or payload.get("name"), f"Project {project_id[-6:]}")
     return {
         "id": project_id,
         "project_id": project_id,
+        "display_name": project_name,
         "name": project_name,
         "description": payload.get("description") or "",
         "source": source_obj.get("type") or payload.get("source_type") or "fabric",
@@ -655,10 +693,13 @@ def _compat_project_payload(project_id: str, payload: dict) -> Dict[str, Any]:
 
 
 def _compat_default_project_yaml(project: Dict[str, Any]) -> str:
-    name = _compat_clean_project_name(project.get("name"), "Untitled Project").replace('"', '\\"')
+    name = _compat_clean_project_name(project.get("display_name") or project.get("name"), "Untitled Project").replace('"', '\\"')
+    project_id = str(project.get("project_id") or project.get("id") or f"proj-{int(_time.time() * 1000)}").strip()
     src = project.get("source") or "fabric"
     target = project.get("target_type") or "snowflake"
     lines = [
+        f'project_id: "{project_id}"',
+        f'display_name: "{name}"',
         f'project_name: "{name}"',
         "source:",
         f"  type: {src}",

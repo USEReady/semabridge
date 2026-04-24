@@ -218,7 +218,22 @@ async function handleResponse(res) {
     }
     if (!res.ok) {
         const text = await res.text();
-        throw new Error(`API Error ${res.status}: ${text}`);
+        let detail = text;
+        let parsed = null;
+        try {
+            parsed = JSON.parse(text);
+            if (typeof parsed?.detail === 'string' && parsed.detail.trim()) {
+                detail = parsed.detail;
+            } else if (typeof parsed?.detail?.message === 'string' && parsed.detail.message.trim()) {
+                detail = parsed.detail.message;
+            } else if (typeof parsed?.message === 'string' && parsed.message.trim()) {
+                detail = parsed.message;
+            }
+        } catch (e) {}
+        const error = new Error(`API Error ${res.status}: ${detail}`);
+        error.status = res.status;
+        error.payload = parsed;
+        throw error;
     }
     return res.json();
 }
@@ -782,6 +797,12 @@ export const api = {
         const res = await authFetch(`${API_BASE_URL}/projects`);
         const data = await handleResponse(res);
         return dedupeProjects(data || []);
+    },
+
+    async listProjectDiscovery() {
+        const res = await authFetch(`${API_BASE_URL}/projects/discovery`);
+        const data = await handleResponse(res);
+        return Array.isArray(data) ? data : [];
     },
 
     async getProject(projectId, options = {}) {

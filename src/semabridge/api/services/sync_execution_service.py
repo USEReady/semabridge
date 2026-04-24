@@ -106,28 +106,37 @@ def _load_config(payload: Dict[str, Any], normalize_yaml_windows_path_fields) ->
     import yaml
     
     project_id = payload.get("project_id")
-    if project_id:
-        try:
-            config = get_config(project_id)
-            return f"config/projects/{project_id}.yaml", config
-        except Exception as e:
-            logger.warning(f"Modular project config failed, falling back: {e}")
-
-    config_path = get_default_config_path() or ""
     content = payload.get("content")
 
     if content:
-        # In-memory config provided by the API request. 
-        # Parses config without writing to disk to prevent concurrency races.
+        # Explicit YAML payload should take precedence over project-id based
+        # modular loading. This avoids false modular warnings (e.g. missing
+        # mapping_profile) when callers intentionally provide concrete config.
         normalized_content = normalize_yaml_windows_path_fields(content)
         try:
             config = yaml.safe_load(normalized_content) or {}
         except Exception as parse_err:
             raise HTTPException(status_code=400, detail=f"Invalid YAML content: {parse_err}")
-        return str(config_path), config
+        return "(payload.content)", config
+
+    if project_id:
+        try:
+            config = get_config(project_id)
+            return f"config/projects/{project_id}.yaml", config
+        except Exception as e:
+            logger.warning(f"Project config load failed for %s: %s", project_id, e)
+            raise HTTPException(
+                status_code=404,
+                detail=f"Project config not found for project_id '{project_id}' in Config/projects.",
+            ) from e
+
+    config_path = get_default_config_path() or ""
 
     if not config_path:
-        raise HTTPException(status_code=404, detail="semabridge.yaml not found in project")
+        raise HTTPException(
+            status_code=400,
+            detail="Configuration is required. Provide project_id or content.",
+        )
 
     try:
         config = load_yaml_file(config_path)
@@ -351,7 +360,7 @@ def _run_single_job(
             project_name=model_label,
             tag=str(config.get("version_tag", "v1.0")),
             deploy=deploy_enabled,
-            dry_run=False,
+            dry_run=not deploy_enabled,
             account_id=account_id,
         )
         summary_data = summary.model_dump(mode="json")
@@ -577,6 +586,9 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
         or "default"
     )
     deploy_enabled = bool((target_cfg or {}).get("deploy", True))
+    dry_run = bool(payload.get("dry_run", False))
+    if dry_run:
+        deploy_enabled = False
 
     max_parallel_models = _resolve_requested_parallelism(payload)
     is_fabric_bound = source_type == "fabric" or target_type == "fabric"

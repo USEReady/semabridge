@@ -1,0 +1,43 @@
+project_name: comp_sf
+source:
+  type: fabric
+  identity_id: c8300381-c25e-4f2e-ab83-8d3673b0fd72
+  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
+  workspace: semabridge
+  models:
+  - Competitive Marketing Analysis orig
+targets:
+- type: snowflake
+  identity_id: 241347f2-70b3-4bb5-9586-85bc50b2bd7b
+mappings:
+- source: Competitive Marketing Analysis orig
+  target: COMPETITIVE_MARKETING_ANALYSIS_ORIG
+  type: table
+  columns:
+  - source: id
+    target: ID
+    type: integer
+    primary_key: true
+  - source: name
+    target: NAME
+    type: string
+  - source: created_at
+    target: CREATED_AT
+    type: timestamp
+  - source: updated_at
+    target: UPDATED_AT
+    type: timestamp
+ui:
+  intermediate_format: osi
+  editor_mode: form
+  output_format: osi
+selection:
+  model_ids:
+  - 6aa0a303-dc1f-4457-86b3-90888e995c0f
+options:
+  auto_relationships: true
+  generate_descriptions: true
+project_id: proj-comp_sf
+display_name: comp_sf
+target:
+  type: snowflake
