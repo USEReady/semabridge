@@ -776,7 +776,8 @@ function ConnectionManager({ type, title, subtitle, icon: Icon, color, FormCompo
             updateVaultAccountsInState(upToDateVaultAccounts);
             addLog('info', 'Connections', 'Account deleted');
         } catch (err) {
-            addLog('error', 'Connections', 'Failed to delete account');
+            console.error('Failed to delete account:', err);
+            addLog('error', 'Connections', `Failed to delete account${err?.message ? `: ${err.message}` : ''}`);
         }
     };
 

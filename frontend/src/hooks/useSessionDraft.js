@@ -5,8 +5,6 @@ import { useState, useCallback, useRef, useEffect } from 'react';
  *
  * Stores form data in localStorage under `key` so drafts survive across tabs
  * within the same localhost origin.
- * Auto-loads any existing draft on mount.
- *
  * Sets are serialized as arrays and reconstructed on resume.
  *
  * @param {string} key  localStorage key
@@ -24,15 +22,8 @@ export default function useSessionDraft(key, { debounceMs = 300 } = {}) {
     }
   });
 
-  // Auto-hydrate draft on mount so new tabs can recover in-progress forms.
-  const [draft, setDraft] = useState(() => {
-    try {
-      const raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
-  });
+  // Keep the active draft empty until the user explicitly resumes it.
+  const [draft, setDraft] = useState(null);
 
   // --- Save (debounced) ---------------------------------------------------
   const timerRef = useRef(null);
@@ -44,7 +35,6 @@ export default function useSessionDraft(key, { debounceMs = 300 } = {}) {
         try {
           localStorage.setItem(key, JSON.stringify(data));
           setHasDraft(true);
-          setDraft(data);
         } catch (e) {
           console.warn('[useSessionDraft] Failed to save draft:', e);
         }
@@ -63,6 +53,7 @@ export default function useSessionDraft(key, { debounceMs = 300 } = {}) {
     try {
       const raw = localStorage.getItem(key);
       if (raw) {
+        setHasDraft(true);
         setDraft(JSON.parse(raw));
       }
     } catch {
@@ -89,7 +80,6 @@ export default function useSessionDraft(key, { debounceMs = 300 } = {}) {
         return;
       }
       try {
-        setDraft(JSON.parse(event.newValue));
         setHasDraft(true);
       } catch {
         setDraft(null);

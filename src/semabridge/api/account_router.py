@@ -5,7 +5,7 @@ import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import delete, inspect, select, update
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
@@ -238,7 +238,27 @@ def delete_account(request: Request, account_id: str, db: Session = Depends(get_
         raise HTTPException(status_code=403, detail="Account not found or access denied")
 
     connector_type = account.connector_type
-    db.delete(account)
+
+    bind = db.get_bind()
+    has_project_account_link = False
+    if bind is not None:
+        inspector = inspect(bind)
+        has_project_account_link = (
+            inspector.has_table('projects')
+            and any(col.get('name') == 'account_id' for col in inspector.get_columns('projects'))
+        )
+
+    if has_project_account_link:
+        db.execute(
+            update(Project)
+            .where(Project.account_id == account.id)
+            .values(account_id=None)
+        )
+        db.flush()
+
+    # Use SQL-level delete to avoid ORM relationship lazy-loads against
+    # legacy projects schemas that may miss newer optional columns.
+    db.execute(delete(Account).where(Account.id == account.id))
     db.commit()
     logger.info(f"Deleted Account {account_id} ({account.tag})")
     
