@@ -86,6 +86,7 @@ from semabridge.api.services.project_runs_impl import (
     get_model_history_compat,
     get_project_stats_compat,
     get_snapshot_content_compat,
+    get_snapshot_report_compat,
     manual_deploy_compat,
 )
 

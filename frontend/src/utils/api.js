@@ -833,8 +833,13 @@ export const api = {
         return handleResponse(res);
     },
 
-    async getSnapshotContent(projectId, snapshotId) {
-        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots/${snapshotId}/content`);
+    async getSnapshotContent(projectId, snapshot_id) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots/${snapshot_id}/content`);
+        return handleResponse(res);
+    },
+
+    async getSnapshotReport(projectId, snapshot_id) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots/${snapshot_id}/report`);
         return handleResponse(res);
     },
 

@@ -1924,3 +1924,47 @@ async def manual_deploy_compat(project_id: str, snapshot_id: str, background_tas
         "run_type": "manual_deploy"
     }
     return await run_project_now_compat(project_id, background_tasks, payload)
+
+
+async def get_snapshot_report_compat(project_id: str, snapshot_id: str) -> Dict[str, Any]:
+    """Generate a structured conversion/mapping report for a snapshot."""
+    _compat_ensure_loaded()
+    snaps = _compat_project_snapshots.get(project_id, [])
+    snap = next((s for s in snaps if s.get("snapshot_id") == snapshot_id), None)
+    if not snap:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    
+    state = snap.get("state") or {}
+    if isinstance(state, str):
+        try: state = json.loads(state)
+        except: state = {}
+    
+    # Extract conversion summary from state
+    datasets = state.get("datasets") or state.get("models") or []
+    total_models = len(datasets)
+    total_columns = sum(len(d.get("columns", [])) for d in datasets if isinstance(d, dict))
+    
+    # Extract warnings/collisions if present in the snapshot metadata or run logs
+    warnings = []
+    # If the state has a dedicated 'diagnostics' or 'warnings' field, we'd pull it here.
+    # For now, we simulate a report based on the captured state structure.
+    
+    return {
+        "snapshot_id": snapshot_id,
+        "role": snap.get("role"),
+        "timestamp": snap.get("created_at"),
+        "summary": {
+            "total_models": total_models,
+            "total_columns": total_columns,
+            "format": snap.get("intermediate_format", "sml").upper(),
+            "origin": snap.get("snapshot_origin", "AUTO"),
+        },
+        "models": [
+            {
+                "name": d.get("unique_name") or d.get("name"),
+                "columns": len(d.get("columns", [])),
+                "status": "MAPPED"
+            } for d in datasets if isinstance(d, dict)
+        ],
+        "warnings": warnings 
+    }

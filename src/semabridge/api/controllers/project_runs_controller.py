@@ -14,6 +14,7 @@ from semabridge.api.services.project_runs_service import (
     get_model_history_compat,
     get_project_stats_compat,
     get_snapshot_content_compat,
+    get_snapshot_report_compat,
     manual_deploy_compat,
 )
 
@@ -27,6 +28,7 @@ router.put('/api/projects/{project_id}/snapshots/{snapshot_id}/pin')(toggle_snap
 router.get('/api/projects/{project_id}/models/{model_name}/history')(get_model_history_compat)
 router.get('/api/projects/{project_id}/stats')(get_project_stats_compat)
 router.get('/api/projects/{project_id}/snapshots/{snapshot_id}/content')(get_snapshot_content_compat)
+router.get('/api/projects/{project_id}/snapshots/{snapshot_id}/report')(get_snapshot_report_compat)
 router.post('/api/projects/{project_id}/snapshots/{snapshot_id}/deploy')(manual_deploy_compat)
 
 

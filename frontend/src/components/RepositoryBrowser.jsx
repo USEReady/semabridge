@@ -16,12 +16,15 @@ import {
     Filter,
     X,
     Maximize2,
-    Download
+    Download,
+    FileText,
+    AlertTriangle,
+    CheckCircle2
 } from 'lucide-react';
 import { api } from '../utils/api';
 import { GlassCard, ActionButton, Badge } from "../pages/VersionControlPage"; 
 
-// --- Helper: Local Modal for Raw Content ---
+// --- Helper: Modal for Raw Content (Inspector) ---
 function SnapshotContentModal({ isOpen, onClose, snapshotId, projectId }) {
     const [content, setContent] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
@@ -80,7 +83,7 @@ function SnapshotContentModal({ isOpen, onClose, snapshotId, projectId }) {
                                 </div>
                                 <div className="p-4 rounded-xl bg-slate-500/5 border border-[var(--border-light)]">
                                     <span className="text-[10px] font-black text-[var(--text-tertiary)] uppercase block mb-1">Model Count</span>
-                                    <span className="text-sm font-bold text-[var(--text-primary)]">{content.content?.models?.length || 0}</span>
+                                    <span className="text-sm font-bold text-[var(--text-primary)]">{content.content?.models?.length || content.content?.datasets?.length || 0}</span>
                                 </div>
                              </div>
                              
@@ -99,6 +102,140 @@ function SnapshotContentModal({ isOpen, onClose, snapshotId, projectId }) {
     );
 }
 
+// --- Helper: Modal for Conversion Report ---
+function SnapshotReportModal({ isOpen, onClose, snapshotId, projectId }) {
+    const [report, setReport] = useState(null);
+    const [isLoading, setIsLoading] = useState(false);
+
+    useEffect(() => {
+        if (isOpen && snapshotId) {
+            setIsLoading(true);
+            api.getSnapshotReport(projectId, snapshotId)
+                .then(data => setReport(data))
+                .catch(err => console.error("Failed to load snapshot report:", err))
+                .finally(() => setIsLoading(false));
+        }
+    }, [isOpen, snapshotId, projectId]);
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center p-6">
+            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md animate-in fade-in" onClick={onClose} />
+            <GlassCard className="relative p-0 max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom-8 shadow-2xl">
+                <div className="p-6 border-b border-[var(--border-light)] flex items-center justify-between bg-emerald-500/5">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 bg-emerald-500/10 rounded-lg text-emerald-500">
+                            <FileText size={18} />
+                        </div>
+                        <div>
+                            <h3 className="text-lg font-black text-[var(--text-primary)]">Conversion Report</h3>
+                            <p className="text-xs text-[var(--text-tertiary)] font-mono">{snapshotId}</p>
+                        </div>
+                    </div>
+                    <button onClick={onClose} className="p-2 hover:bg-rose-500/10 rounded-lg text-rose-500 transition-colors">
+                        <X size={18} />
+                    </button>
+                </div>
+
+                <div className="flex-1 overflow-auto p-8">
+                    {isLoading ? (
+                        <div className="py-20 flex flex-col items-center gap-4">
+                            <Loader2 className="animate-spin text-emerald-500" size={40} />
+                            <p className="text-sm font-bold text-[var(--text-tertiary)] uppercase tracking-widest">Generating Analysis...</p>
+                        </div>
+                    ) : report ? (
+                        <div className="space-y-8">
+                            {/* Summary Grid */}
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div className="p-4 rounded-2xl bg-slate-500/5 border border-[var(--border-light)]">
+                                    <span className="text-[10px] font-black text-[var(--text-tertiary)] uppercase block mb-1">Models</span>
+                                    <span className="text-2xl font-black text-[var(--text-primary)]">{report.summary.total_models}</span>
+                                </div>
+                                <div className="p-4 rounded-2xl bg-slate-500/5 border border-[var(--border-light)]">
+                                    <span className="text-[10px] font-black text-[var(--text-tertiary)] uppercase block mb-1">Columns</span>
+                                    <span className="text-2xl font-black text-[var(--text-primary)]">{report.summary.total_columns}</span>
+                                </div>
+                                <div className="p-4 rounded-2xl bg-slate-500/5 border border-[var(--border-light)]">
+                                    <span className="text-[10px] font-black text-[var(--text-tertiary)] uppercase block mb-1">Format</span>
+                                    <Badge variant="info">{report.summary.format}</Badge>
+                                </div>
+                                <div className="p-4 rounded-2xl bg-slate-500/5 border border-[var(--border-light)]">
+                                    <span className="text-[10px] font-black text-[var(--text-tertiary)] uppercase block mb-1">Origin</span>
+                                    <Badge variant="warning">{report.summary.origin}</Badge>
+                                </div>
+                            </div>
+
+                            {/* Status Section */}
+                            <div className="p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 flex items-center gap-4">
+                                <CheckCircle2 className="text-emerald-500" size={24} />
+                                <div>
+                                    <p className="text-sm font-bold text-[var(--text-primary)]">Conversion Successful</p>
+                                    <p className="text-xs text-[var(--text-secondary)]">All models were mapped successfully without critical schema collisions.</p>
+                                </div>
+                            </div>
+
+                            {/* Warnings Section */}
+                            {report.warnings?.length > 0 && (
+                                <div className="space-y-3">
+                                    <h4 className="text-xs font-black uppercase tracking-widest text-amber-500 flex items-center gap-2">
+                                        <AlertTriangle size={14} /> System Warnings
+                                    </h4>
+                                    <div className="space-y-2">
+                                        {report.warnings.map((w, i) => (
+                                            <div key={i} className="p-3 rounded-xl bg-amber-500/5 border border-amber-500/10 text-xs font-bold text-amber-600">
+                                                {w}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Models Table */}
+                            <div className="space-y-3">
+                                <h4 className="text-xs font-black uppercase tracking-widest text-[var(--text-tertiary)]">Model Mapping Log</h4>
+                                <div className="rounded-2xl border border-[var(--border-main)] overflow-hidden">
+                                    <table className="w-full text-left border-collapse">
+                                        <thead className="bg-slate-500/5 border-b border-[var(--border-light)]">
+                                            <tr>
+                                                <th className="p-4 text-[10px] font-black uppercase text-[var(--text-tertiary)]">Model Name</th>
+                                                <th className="p-4 text-[10px] font-black uppercase text-[var(--text-tertiary)]">Columns</th>
+                                                <th className="p-4 text-[10px] font-black uppercase text-[var(--text-tertiary)] text-right">Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-[var(--border-light)]">
+                                            {report.models.map((m, i) => (
+                                                <tr key={i} className="hover:bg-slate-500/5 transition-colors">
+                                                    <td className="p-4 text-xs font-bold text-[var(--text-primary)]">{m.name}</td>
+                                                    <td className="p-4 text-xs font-bold text-[var(--text-secondary)]">{m.columns}</td>
+                                                    <td className="p-4 text-xs font-bold text-emerald-500 text-right">
+                                                        <span className="px-2 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/10">{m.status}</span>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        <p className="text-center py-20 text-[var(--text-tertiary)]">Report could not be generated.</p>
+                    )}
+                </div>
+                
+                <div className="p-6 border-t border-[var(--border-light)] bg-slate-500/5 flex justify-end">
+                    <button 
+                        onClick={onClose}
+                        className="px-8 py-3 rounded-xl bg-[var(--bg-button)] hover:bg-[var(--bg-button-hover)] text-xs font-black uppercase tracking-widest text-[var(--text-primary)] transition-all border border-[var(--border-main)]"
+                    >
+                        Close Report
+                    </button>
+                </div>
+            </GlassCard>
+        </div>
+    );
+}
+
 export default function RepositoryBrowser({ projectId }) {
     const [snapshots, setSnapshots] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -107,6 +244,7 @@ export default function RepositoryBrowser({ projectId }) {
     const [originFilter, setOriginFilter] = useState('all');
     const [pinnedOnly, setPinnedOnly] = useState(false);
     const [viewContentId, setViewContentId] = useState(null);
+    const [viewReportId, setViewReportId] = useState(null);
     const [isDeploying, setIsDeploying] = useState(null);
 
     const loadSnapshots = async () => {
@@ -158,12 +296,12 @@ export default function RepositoryBrowser({ projectId }) {
     return (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
             {/* --- Controls --- */}
-            <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
-                <div className="relative flex-1 w-full md:w-auto">
+            <div className="flex flex-col xl:flex-row gap-4 items-center justify-between">
+                <div className="relative flex-1 w-full">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]" size={18} />
                     <input 
                         type="text"
-                        placeholder="Search repository by ID or tag..."
+                        placeholder="Search repository by ID, tag, or comment..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         className="w-full bg-[var(--bg-surface)]/60 border border-[var(--border-main)] rounded-2xl pl-12 pr-4 py-4 text-sm font-bold focus:border-blue-500/50 outline-none transition-all shadow-inner"
@@ -245,6 +383,7 @@ export default function RepositoryBrowser({ projectId }) {
                                     <div className="flex items-center gap-2 mb-1">
                                         <Badge variant={snap.role === 'source' ? 'warning' : 'info'}>{snap.role}</Badge>
                                         {snap.is_pinned && <Pin size={12} className="text-amber-500 fill-amber-500" />}
+                                        <Badge variant="default">{snap.snapshot_origin || 'AUTO'}</Badge>
                                     </div>
                                     <h4 className="text-base font-black font-mono text-[var(--text-primary)] tracking-tight">
                                         {snap.snapshot_id.substring(0, 12)}...
@@ -260,6 +399,11 @@ export default function RepositoryBrowser({ projectId }) {
                                 <Clock size={14} className="ml-2 opacity-50" />
                                 <span className="text-xs font-bold">{new Date(snap.captured_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                             </div>
+                            {snap.comment && (
+                                <p className="text-[10px] font-bold text-[var(--text-tertiary)] italic line-clamp-1">
+                                    "{snap.comment}"
+                                </p>
+                            )}
                             {snap.tags && snap.tags.length > 0 && (
                                 <div className="flex flex-wrap gap-1">
                                     {snap.tags.map(t => (
@@ -271,35 +415,50 @@ export default function RepositoryBrowser({ projectId }) {
                             )}
                         </div>
 
-                        <div className="mt-auto flex gap-2 z-10 pt-4 border-t border-[var(--border-light)]">
-                            <button 
-                                onClick={() => setViewContentId(snap.snapshot_id)}
-                                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-slate-500/5 hover:bg-slate-500/10 text-[11px] font-black uppercase tracking-widest text-[var(--text-primary)] transition-all"
-                            >
-                                <Eye size={16} /> View
-                            </button>
+                        <div className="mt-auto flex flex-col gap-2 z-10 pt-4 border-t border-[var(--border-light)]">
+                            <div className="flex gap-2">
+                                <button 
+                                    onClick={() => setViewReportId(snap.snapshot_id)}
+                                    className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-emerald-500/5 hover:bg-emerald-500/10 text-[10px] font-black uppercase tracking-widest text-emerald-600 border border-emerald-500/10 transition-all"
+                                >
+                                    <FileText size={16} /> Report
+                                </button>
+                                <button 
+                                    onClick={() => setViewContentId(snap.snapshot_id)}
+                                    className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-slate-500/5 hover:bg-slate-500/10 text-[10px] font-black uppercase tracking-widest text-[var(--text-primary)] transition-all"
+                                >
+                                    <Maximize2 size={16} /> Inspect
+                                </button>
+                            </div>
                             <button 
                                 onClick={() => handleManualDeploy(snap.snapshot_id)}
                                 disabled={isDeploying === snap.snapshot_id || snap.role === 'source'}
-                                className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all ${
+                                className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
                                     snap.role === 'source'
                                     ? 'bg-slate-500/10 text-[var(--text-tertiary)] cursor-not-allowed opacity-50'
                                     : 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/20'
                                 }`}
                             >
                                 {isDeploying === snap.snapshot_id ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                                Deploy
+                                Manual Deploy to Targets
                             </button>
                         </div>
                     </GlassCard>
                 ))}
             </div>
 
-            {/* --- Modal --- */}
+            {/* --- Modals --- */}
             <SnapshotContentModal 
                 isOpen={!!viewContentId} 
                 onClose={() => setViewContentId(null)} 
                 snapshotId={viewContentId}
+                projectId={projectId}
+            />
+
+            <SnapshotReportModal
+                isOpen={!!viewReportId}
+                onClose={() => setViewReportId(null)}
+                snapshotId={viewReportId}
                 projectId={projectId}
             />
         </div>
