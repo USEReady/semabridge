@@ -61,12 +61,14 @@ export default function ProjectConfigPage() {
     // --- Scheduler State (must be at top-level of component) ---
     const [schedulerOpen, setSchedulerOpen] = useState(false);
     const [scheduleType, setScheduleType] = useState('manual');
-    const [cronValue, setCronValue] = useState('0 0 * * *');
-  const [scheduleDate, setScheduleDate] = useState(() => toDateInputValue(new Date()));
+    const [recurrence, setRecurrence] = useState('once'); // once | daily | monthly
+    const [cronValue, setCronValue] = useState('0 0 0 * * ?'); // Quartz default 6 fields
+    const [scheduleDate, setScheduleDate] = useState(() => toDateInputValue(new Date()));
     const [timeValue, setTimeValue] = useState('12:00');
     const [timezoneValue, setTimezoneValue] = useState('UTC');
-  const scheduleDateInputRef = useRef(null);
-  const scheduleTimeInputRef = useRef(null);
+    const [isManualCron, setIsManualCron] = useState(false);
+    const scheduleDateInputRef = useRef(null);
+    const scheduleTimeInputRef = useRef(null);
   const navigate = useNavigate();
   const { id } = useParams();
   const [searchParams] = useSearchParams();
@@ -319,6 +321,29 @@ export default function ProjectConfigPage() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasHydrated, id, isInvalidProjectId, navigate, setActiveProjectId]);
+
+  // Dynamic Cron Generation Sync
+  useEffect(() => {
+    if (scheduleType === 'manual' || (scheduleType === 'cron' && isManualCron)) return;
+
+    const [hh, mm] = (timeValue || '00:00').split(':');
+    const h = parseInt(hh || 0);
+    const m = parseInt(mm || 0);
+    
+    let generated = '';
+    if (recurrence === 'daily') {
+      generated = `0 ${m} ${h} * * ?`;
+    } else if (recurrence === 'monthly') {
+      const d = (scheduleDate ? new Date(scheduleDate).getDate() : 1) || 1;
+      generated = `0 ${m} ${h} ${d} * ?`;
+    } else {
+      generated = `0 ${m} ${h} * * ?`;
+    }
+
+    if (generated && generated !== cronValue) {
+      setCronValue(generated);
+    }
+  }, [scheduleType, recurrence, timeValue, scheduleDate, cronValue, isManualCron]);
 
   useEffect(() => {
     if (!id || isInvalidProjectId || loading) return;
@@ -1232,25 +1257,55 @@ export default function ProjectConfigPage() {
   };
 
   const handleScheduleSave = async () => {
-    const scheduledTime = scheduleType === 'time' ? utcIsoFromLocalInputs(scheduleDate, timeValue) : '';
+    let finalCron = '';
+    
+    if (scheduleType === 'cron') {
+      finalCron = (cronValue || '').trim();
+      const parts = finalCron.split(/\s+/).filter(Boolean);
+      // Basic normalization to 6 fields if 5 are provided, though we should enforce 6
+      if (parts.length === 5) {
+        finalCron += ' ?';
+      }
+    } else if (scheduleType === 'time') {
+      if (recurrence === 'daily') {
+        const [hh, mm] = (timeValue || '00:00').split(':');
+        finalCron = `0 ${parseInt(mm || 0)} ${parseInt(hh || 0)} * * ?`;
+      } else if (recurrence === 'monthly') {
+        const [hh, mm] = (timeValue || '00:00').split(':');
+        const day = new Date(scheduleDate).getDate() || 1;
+        finalCron = `0 ${parseInt(mm || 0)} ${parseInt(hh || 0)} ${day} * ?`;
+      }
+      // If recurrence === 'once', finalCron remains empty string
+    }
+
+    const scheduledTime = (scheduleType === 'time' || scheduleType === 'manual') ? utcIsoFromLocalInputs(scheduleDate, timeValue) : '';
+    
     const payload = {
       schedule_type: scheduleType,
-      cron: scheduleType === 'cron' ? cronValue : '',
+      cron: finalCron,
       date: scheduleType === 'time' ? scheduleDate || '' : '',
       time: scheduleType === 'time' ? timeValue || '' : '',
       scheduled_time: scheduledTime,
       timezone: timezoneValue,
+      recurrence: scheduleType === 'time' ? recurrence : undefined,
     };
 
     try {
       const response = await api.saveProjectSchedule(id, payload);
-      setSaveInfo(
-        scheduleType === 'manual'
-          ? (response?.message || 'Schedule cleared. Trigger remains on-demand.')
-          : scheduleType === 'cron'
-            ? `Schedule saved with cron "${cronValue}" (${timezoneValue}).`
-            : `Schedule saved for ${scheduleDate || 'selected date'} at ${timeValue} (${timezoneValue}).`
-      );
+      let successMsg = '';
+      if (scheduleType === 'manual') {
+        successMsg = response?.message || 'Schedule cleared. Trigger remains on-demand.';
+      } else if (scheduleType === 'cron') {
+        successMsg = `Schedule saved with cron "${finalCron}" (${timezoneValue}).`;
+      } else if (scheduleType === 'time') {
+        if (recurrence === 'once') {
+          successMsg = `One-time schedule saved for ${scheduleDate} at ${timeValue}.`;
+        } else {
+          successMsg = `Recurring ${recurrence} schedule saved (Cron: ${finalCron}).`;
+        }
+      }
+
+      setSaveInfo(successMsg);
       setSchedulerOpen(false);
     } catch (err) {
       setSaveInfo(`Failed to save schedule: ${err?.message || 'Unknown error'}`);
@@ -1329,7 +1384,7 @@ export default function ProjectConfigPage() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', minHeight: 0 }}>
+    <div style={{ padding: '28px 16px', minHeight: '100%', maxWidth: 1400, margin: '0 auto', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} className="md:px-10">
       <div style={{ padding: '18px 28px', borderBottom: '1px solid var(--border-main)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <button
           onClick={() => navigate('/projects')}
@@ -1347,9 +1402,9 @@ export default function ProjectConfigPage() {
           <Settings2 size={13} /> Global Config
         </button>
 
-        <div style={{ display: 'flex', border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden' }}>
-          <ModeButton active={viewMode === 'form'} onClick={() => handleViewModeChange('form')} icon={<SlidersHorizontal size={13} />} label="Form" />
-          <ModeButton active={viewMode === 'yaml'} onClick={() => handleViewModeChange('yaml')} icon={<FileCode2 size={13} />} label="YAML" />
+        <div style={{ display: 'inline-flex', border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden' }}>
+          <ModeButton active={viewMode === 'form'} onClick={() => handleViewModeChange('form')} icon={<SlidersHorizontal size={13} />} ariaLabel="Form view" />
+          <ModeButton active={viewMode === 'yaml'} onClick={() => handleViewModeChange('yaml')} icon={<FileCode2 size={13} />} ariaLabel="YAML view" />
         </div>
       </div>
 
@@ -1488,7 +1543,10 @@ export default function ProjectConfigPage() {
                 active={scheduleType === 'cron'}
                 title="Cron Expression"
                 description="Use cron syntax for recurring runs."
-                onClick={() => setScheduleType('cron')}
+                onClick={() => {
+                  setScheduleType('cron');
+                  setIsManualCron(false); // Reset on switch to allow dynamic sync
+                }}
               />
               <ScheduleOptionCard
                 active={scheduleType === 'time'}
@@ -1516,21 +1574,53 @@ export default function ProjectConfigPage() {
 
           {scheduleType === 'cron' && (
             <div>
-              <label style={{ fontWeight: 500, fontSize: 12 }}>Cron Expression</label>
-              <input value={cronValue} onChange={e => setCronValue(e.target.value)} style={modalInputStyle} placeholder="0 0 * * *" />
-              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>e.g. 0 0 * * * (every day at midnight)</div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <label style={{ fontWeight: 500, fontSize: 12 }}>Cron Expression</label>
+                {isManualCron && (
+                  <button 
+                    onClick={() => setIsManualCron(false)}
+                    style={{ background: 'none', border: 'none', color: 'var(--accent-blue)', fontSize: 10, cursor: 'pointer', fontWeight: 600 }}
+                  >
+                    Resync with pickers
+                  </button>
+                )}
+              </div>
+              <input 
+                value={cronValue} 
+                onChange={e => {
+                  setIsManualCron(true);
+                  setCronValue(e.target.value);
+                }} 
+                style={modalInputStyle} 
+                placeholder="0 0 0 * * ?" 
+              />
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                Quartz/Oracle format (6 fields): <strong>sec min hour dom month dow</strong>. 
+                Use <strong>?</strong> in dom or dow.
+              </div>
             </div>
           )}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {scheduleType === 'time' && (
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', padding: 12, borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
-                Schedule regularly using the calendar below. This is frontend-only for now and does not create a backend scheduler yet.
-              </div>
-            )}
 
+          {scheduleType === 'time' && (
+            <div>
+              <label style={{ fontWeight: 500, fontSize: 12, display: 'block', marginBottom: 6 }}>Recurrence</label>
+              <select 
+                value={recurrence} 
+                onChange={e => setRecurrence(e.target.value)} 
+                style={modalInputStyle}
+              >
+                <option value="once">Once (One-time run)</option>
+                <option value="daily">Daily Schedule</option>
+                <option value="monthly">Monthly Schedule</option>
+              </select>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <div>
-                <label style={{ fontWeight: 500, fontSize: 12, display: 'block', marginBottom: 6 }}>Schedule Date</label>
+              {(scheduleType !== 'time' || recurrence !== 'daily') && (
+                <div>
+                  <label style={{ fontWeight: 500, fontSize: 12, display: 'block', marginBottom: 6 }}>Schedule Date</label>
                 <div style={{ position: 'relative' }}>
                   <input
                     ref={scheduleDateInputRef}
@@ -1573,7 +1663,8 @@ export default function ProjectConfigPage() {
                   Click the calendar icon to pick a date.
                 </div>
               </div>
-              <div>
+            )}
+            <div>
                 <label style={{ fontWeight: 500, fontSize: 12, display: 'block', marginBottom: 6 }}>{scheduleTimingLabel}</label>
                 <div style={{ position: 'relative' }}>
                   <input
@@ -2370,19 +2461,23 @@ function FormEditor({
   );
 }
 
-function ModeButton({ active, onClick, icon, label }) {
+function ModeButton({ active, onClick, icon, ariaLabel }) {
   return (
     <button
+      type="button"
       onClick={onClick}
+      aria-label={ariaLabel}
+      title={ariaLabel}
       style={{
-        display: 'inline-flex', alignItems: 'center', gap: 5,
-        padding: '7px 12px', border: 'none', cursor: 'pointer',
+        width: 38, height: 34,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        padding: 0, border: 'none', cursor: 'pointer',
         background: active ? 'var(--accent-blue)' : 'transparent',
         color: active ? '#fff' : 'var(--text-secondary)',
         fontSize: 12, fontWeight: 600,
       }}
     >
-      {icon} {label}
+      {icon}
     </button>
   );
 }

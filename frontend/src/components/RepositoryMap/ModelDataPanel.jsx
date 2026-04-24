@@ -108,178 +108,373 @@ import { Copy, Search } from 'lucide-react';
           try { await navigator.clipboard.writeText(text || ''); } catch { /* ignore */ }
       };
 
-      return (
-          <div style={{
-              borderTop: compact ? 'none' : '1px solid var(--border-color)',
-              background: 'var(--bg-surface)',
-              display: 'flex',
-              flexDirection: 'column',
-              minHeight: 0,
-              maxHeight: '100%',
-              height: '100%',
-          }}>
-              {showTabHeader && (
-              <div style={{ display: 'flex', gap: 6, padding: '8px 12px', borderBottom: '1px solid var(--border-color)' }}>
-                  {[{ id: 'model-data', label: 'Schema Explorer' }].map(t => (
-                      <button key={t.id} onClick={() => setActiveTab(t.id)} style={{ border: '1px solid var(--border-color)', background: activeTab === t.id ? 'rgba(129,140,248,.14)' : 'var(--bg-app)', color: activeTab === t.id ? '#818CF8' : 'var(--text-secondary)', borderRadius: 6, fontSize: 11, fontWeight: 600, padding: '4px 9px', cursor: 'pointer' }}>
-                          {t.label}
-                      </button>
-                  ))}
-              </div>
-              )}
+    return (
+        <div style={{
+            borderTop: compact ? 'none' : '1px solid var(--border-color)',
+            background: 'var(--bg-surface)',
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
+            maxHeight: '100%',
+            height: '100%',
+        }}>
+            {showTabHeader && (
+            <div style={{ display: 'flex', gap: 6, padding: '12px 16px', borderBottom: '1px solid var(--border-color)' }}>
+                {[{ id: 'model-data', label: 'Schema Explorer' }].map(t => (
+                    <button 
+                        key={t.id} 
+                        onClick={() => setActiveTab(t.id)} 
+                        style={{ 
+                            border: '1px solid var(--border-color)', 
+                            background: activeTab === t.id ? 'rgba(37, 99, 235, 0.10)' : 'var(--bg-app)', 
+                            color: activeTab === t.id ? '#2563EB' : 'var(--text-secondary)', 
+                            borderRadius: 8, 
+                            fontSize: 13, 
+                            fontWeight: 600, 
+                            padding: '6px 14px', 
+                            cursor: 'pointer',
+                            transition: 'all 0.2s'
+                        }}
+                    >
+                        {t.label}
+                    </button>
+                ))}
+            </div>
+            )}
 
-              {activeTab === 'model-data' && (
-                  <div style={{ padding: '8px 12px', overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minHeight: 0 }}>
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0, flexWrap: 'wrap' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1px solid var(--border-color)', borderRadius: 6, padding: '2px 8px', background: 'var(--bg-app)', flex: 1 }}>
-                              <Search size={12} style={{ color: 'var(--text-tertiary)' }} />
-                              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tables/metrics/relationships" style={{ border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-primary)', width: '100%', fontSize: 11 }} />
-                          </div>
-                          <select value={filter} onChange={(e) => setFilter(e.target.value)} style={{ border: '1px solid var(--border-color)', borderRadius: 6, padding: '4px 6px', fontSize: 11, background: 'var(--bg-app)', color: 'var(--text-secondary)' }}>
-                              <option value="all">All</option>
-                              <option value="table">Tables</option>
-                              <option value="measure">Metrics</option>
-                              <option value="relationship">Relationships</option>
-                          </select>
-                          <select value={selectedSchema} onChange={(e) => setSelectedSchema(e.target.value)} style={{ border: '1px solid var(--border-color)', borderRadius: 6, padding: '4px 6px', fontSize: 11, background: 'var(--bg-app)', color: 'var(--text-secondary)' }}>
-                              <option value="all">All Schemas</option>
-                              {schemaStats.map(([schema, count]) => (
-                                  <option key={schema} value={schema}>{schema} ({count})</option>
-                              ))}
-                          </select>
-                          <button onClick={copySelected} style={btnMini}><Copy size={12} /> Copy Selected</button>
-                      </div>
+            {activeTab === 'model-data' && (
+                <div style={{ padding: '16px', overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 12, flex: 1, minHeight: 0 }}>
+                    {/* Controls Row */}
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexShrink: 0, flexWrap: 'wrap' }}>
+                        <div style={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: 10, 
+                            border: '1px solid var(--border-color)', 
+                            borderRadius: 8, 
+                            padding: '8px 12px', 
+                            background: 'var(--bg-app)', 
+                            flex: 2,
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                            transition: 'border-color 0.2s'
+                        }}>
+                            <Search size={16} style={{ color: 'var(--text-tertiary)' }} />
+                            <input 
+                                value={search} 
+                                onChange={(e) => setSearch(e.target.value)} 
+                                placeholder="Search tables, metrics, or relationships..." 
+                                style={{ 
+                                    border: 'none', 
+                                    outline: 'none', 
+                                    background: 'transparent', 
+                                    color: 'var(--text-primary)', 
+                                    width: '100%', 
+                                    fontSize: 14 
+                                }} 
+                            />
+                        </div>
+                        <select 
+                            value={filter} 
+                            onChange={(e) => setFilter(e.target.value)} 
+                            style={selectStyle}
+                        >
+                            <option value="all">All Types</option>
+                            <option value="table">Tables</option>
+                            <option value="measure">Metrics</option>
+                            <option value="relationship">Relationships</option>
+                        </select>
+                        <select 
+                            value={selectedSchema} 
+                            onChange={(e) => setSelectedSchema(e.target.value)} 
+                            style={selectStyle}
+                        >
+                            <option value="all">All Schemas</option>
+                            {schemaStats.map(([schema, count]) => (
+                                <option key={schema} value={schema}>{schema} ({count})</option>
+                            ))}
+                        </select>
+                        <button 
+                            onClick={copySelected} 
+                            style={{...btnPrimary, background: 'var(--bg-app)', color: 'var(--text-primary)'}}
+                        >
+                            <Copy size={14} /> Copy Selected
+                        </button>
+                    </div>
 
-                      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 340px) minmax(0, 1fr)', gap: 10, flex: 1, minHeight: 0 }}>
-                          <div style={{ border: '1px solid var(--border-color)', borderRadius: 8, overflowY: 'auto', overflowX: 'hidden', background: 'var(--bg-app)' }}>
-                              <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border-color)', fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', fontWeight: 700 }}>
-                                  Schema Explorer
-                              </div>
-                              {modelRows.map((r) => {
-                                  const active = activeEntity?.key === r.key;
-                                  return (
-                                      <div
-                                          key={r.key}
-                                          onClick={() => {
-                                              setSelectedEntityKey(r.key);
-                                              if (r.type === 'table' && r.raw?.id) {
-                                                  onSelectTable?.(String(r.raw.id));
-                                              }
-                                          }}
-                                          style={{
-                                              padding: '8px 10px',
-                                              borderBottom: '1px solid var(--border-color)',
-                                              cursor: 'pointer',
-                                              background: active ? 'rgba(129,140,248,.12)' : 'transparent',
-                                          }}
-                                      >
-                                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                                              <span style={{ fontSize: 11, fontWeight: 700, color: active ? '#818CF8' : 'var(--text-secondary)' }}>{r.name}</span>
-                                              <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>{r.type}</span>
-                                          </div>
-                                          <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.schema ? `${r.schema} • ` : ''}{r.details}</div>
-                                          <div style={{ marginTop: 4 }}>
-                                              <input type="checkbox" checked={selectedKeys.has(r.key)} onChange={(e) => { const next = new Set(selectedKeys); if (e.target.checked) next.add(r.key); else next.delete(r.key); setSelectedKeys(next); }} />
-                                          </div>
-                                      </div>
-                                  );
-                              })}
-                              {!modelRows.length && <div style={{ padding: 14, fontSize: 11, color: 'var(--text-tertiary)' }}>No rows found.</div>}
-                          </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '320px minmax(0, 1fr)', gap: 16, flex: 1, minHeight: 0 }}>
+                        {/* List Column */}
+                        <div style={{ 
+                            border: '1px solid var(--border-color)', 
+                            borderRadius: 10, 
+                            overflowY: 'auto', 
+                            overflowX: 'hidden', 
+                            background: 'var(--bg-app)',
+                            display: 'flex',
+                            flexDirection: 'column'
+                        }}>
+                            <div style={{ 
+                                padding: '12px 14px', 
+                                borderBottom: '1px solid var(--border-color)', 
+                                fontSize: 11, 
+                                color: 'var(--text-tertiary)', 
+                                textTransform: 'uppercase', 
+                                letterSpacing: '.08em', 
+                                fontWeight: 700,
+                                background: 'var(--bg-surface)'
+                            }}>
+                                Schema Explorer
+                            </div>
+                            <div style={{ flex: 1, overflowY: 'auto' }}>
+                                {modelRows.map((r) => {
+                                    const active = activeEntity?.key === r.key;
+                                    return (
+                                        <div
+                                            key={r.key}
+                                            onClick={() => {
+                                                setSelectedEntityKey(r.key);
+                                                if (r.type === 'table' && r.raw?.id) {
+                                                    onSelectTable?.(String(r.raw.id));
+                                                }
+                                            }}
+                                            style={{
+                                                padding: '12px 14px',
+                                                borderBottom: '1px solid var(--border-color)',
+                                                cursor: 'pointer',
+                                                background: active ? 'rgba(37, 99, 235, 0.08)' : 'transparent',
+                                                transition: 'background 0.15s'
+                                            }}
+                                            className="hover:bg-surface-hover"
+                                        >
+                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                                                <span style={{ 
+                                                    fontSize: 13, 
+                                                    fontWeight: 600, 
+                                                    color: active ? '#2563EB' : 'var(--text-primary)',
+                                                    lineHeight: 1.4
+                                                }}>
+                                                    {r.name}
+                                                </span>
+                                                <span style={{ 
+                                                    fontSize: 10, 
+                                                    color: 'var(--text-tertiary)', 
+                                                    background: 'var(--bg-surface)', 
+                                                    padding: '2px 6px', 
+                                                    borderRadius: 4,
+                                                    border: '1px solid var(--border-color)',
+                                                    textTransform: 'uppercase'
+                                                }}>
+                                                    {r.type}
+                                                </span>
+                                            </div>
+                                            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                {r.schema && <span style={{ opacity: 0.8 }}>{r.schema}</span>}
+                                                {r.schema && <span style={{ opacity: 0.4 }}>•</span>}
+                                                <span>{r.details}</span>
+                                            </div>
+                                            <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                                                <input 
+                                                    type="checkbox" 
+                                                    checked={selectedKeys.has(r.key)} 
+                                                    onClick={(e) => e.stopPropagation()}
+                                                    onChange={(e) => { 
+                                                        const next = new Set(selectedKeys); 
+                                                        if (e.target.checked) next.add(r.key); 
+                                                        else next.delete(r.key); 
+                                                        setSelectedKeys(next); 
+                                                    }} 
+                                                    style={{ cursor: 'pointer' }}
+                                                />
+                                                <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>Select to Copy</span>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                                {!modelRows.length && (
+                                    <div style={{ padding: 24, textAlign: 'center', fontSize: 13, color: 'var(--text-tertiary)' }}>
+                                        No entities found matching your search.
+                                    </div>
+                                )}
+                            </div>
+                        </div>
 
-                          <div style={{ border: '1px solid var(--border-color)', borderRadius: 8, overflow: 'auto', background: 'var(--bg-app)', minWidth: 0 }}>
-                              <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
-                                      {activeEntity ? activeEntity.name : 'Select entity'}
-                                  </span>
-                                  {activeEntity?.schema && <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>{activeEntity.schema}</span>}
-                              </div>
+                        {/* Detail Column */}
+                        <div style={{ 
+                            border: '1px solid var(--border-color)', 
+                            borderRadius: 10, 
+                            overflow: 'auto', 
+                            background: 'var(--bg-app)', 
+                            minWidth: 0,
+                            display: 'flex',
+                            flexDirection: 'column'
+                        }}>
+                            <div style={{ 
+                                padding: '14px 16px', 
+                                borderBottom: '1px solid var(--border-color)', 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                justifyContent: 'space-between',
+                                background: 'var(--bg-surface)'
+                            }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                    <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
+                                        {activeEntity ? activeEntity.name : 'Entity Details'}
+                                    </span>
+                                    {activeEntity?.schema && (
+                                        <span style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                                            Schema: {activeEntity.schema}
+                                        </span>
+                                    )}
+                                </div>
+                                {activeEntity?.type === 'table' && (
+                                    <div style={{ display: 'flex', gap: 8 }}>
+                                        <button
+                                            onClick={() => activeTableId && onSelectTable?.(activeTableId)}
+                                            style={btnPrimary}
+                                        >
+                                            Focus in Graph
+                                        </button>
+                                        <button
+                                            onClick={() => activeTableId && onOpenTableER?.(activeTableId)}
+                                            style={{ ...btnPrimary, background: 'rgba(37, 99, 235, 0.1)', color: '#2563EB', border: '1px solid rgba(37,99,235,0.2)' }}
+                                        >
+                                            Open Table ER
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
 
-                              {activeEntity ? (
-                                  <div style={{ padding: 10 }}>
-                                      {activeEntity.type === 'table' && (
-                                          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                                              <button
-                                                  onClick={() => activeTableId && onSelectTable?.(activeTableId)}
-                                                  style={btnMini}
-                                              >
-                                                  Focus Table
-                                              </button>
-                                              <button
-                                                  onClick={() => activeTableId && onOpenTableER?.(activeTableId)}
-                                                  style={{ ...btnMini, border: '1px solid rgba(129,140,248,.55)', color: '#A5B4FC' }}
-                                              >
-                                                  Open Table ER
-                                              </button>
-                                              {selectedTableId !== '__all__' && activeTableId === String(selectedTableId) && (
-                                                  <span style={{ fontSize: 11, color: '#818CF8', display: 'inline-flex', alignItems: 'center' }}>Focused</span>
-                                              )}
-                                          </div>
-                                      )}
-                                      <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 8 }}>
-                                          {activeEntity.details}
-                                      </div>
-                                      {activeEntity.type === 'table' && (
-                                          <div style={{ border: '1px solid var(--border-color)', borderRadius: 6, overflow: 'hidden' }}>
-                                              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                                                  <thead>
-                                                      <tr>
-                                                          <th style={th}>Column</th>
-                                                          <th style={th}>Type</th>
-                                                      </tr>
-                                                  </thead>
-                                                  <tbody>
-                                                      {activeEntityColumns.map((c, idx) => (
-                                                          <tr key={`ac-${idx}`}>
-                                                              <td style={td}>{c?.name || c?.unique_name || 'column'}</td>
-                                                              <td style={td}>{c?.data_type || c?.type || ''}</td>
-                                                          </tr>
-                                                      ))}
-                                                      {!activeEntityColumns.length && (
-                                                          <tr><td colSpan={2} style={{ ...td, color: 'var(--text-tertiary)' }}>No columns available.</td></tr>
-                                                      )}
-                                                  </tbody>
-                                              </table>
-                                          </div>
-                                      )}
-                                  </div>
-                              ) : (
-                                  <div style={{ padding: 14, fontSize: 11, color: 'var(--text-tertiary)' }}>Select any entity from left list.</div>
-                              )}
-                          </div>
-                      </div>
-                  </div>
-              )}
-          </div>
-      );
-  }
+                            {activeEntity ? (
+                                <div style={{ padding: 20, flex: 1 }}>
+                                    <div style={{ 
+                                        display: 'grid', 
+                                        gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', 
+                                        gap: 16, 
+                                        marginBottom: 24 
+                                    }}>
+                                        <DetailCard label="Type" value={activeEntity.type} />
+                                        <DetailCard label="Details" value={activeEntity.details} />
+                                    </div>
 
-  const btnMini = {
-      border: '1px solid var(--border-color)',
-      borderRadius: 6,
-      background: 'var(--bg-app)',
-      color: 'var(--text-secondary)',
-      padding: '4px 8px',
-      fontSize: 11,
-      cursor: 'pointer',
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 6,
-  };
+                                    {activeEntity.type === 'table' && (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '.05em' }}>
+                                                Columns ({activeEntityColumns.length})
+                                            </div>
+                                            <div style={{ border: '1px solid var(--border-color)', borderRadius: 8, overflow: 'hidden' }}>
+                                                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                                    <thead>
+                                                        <tr style={{ background: 'var(--bg-surface)' }}>
+                                                            <th style={thStyle}>Column Name</th>
+                                                            <th style={thStyle}>Data Type</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {activeEntityColumns.map((c, idx) => (
+                                                            <tr key={`ac-${idx}`} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                                                <td style={tdStyle}>{c?.name || c?.unique_name || 'column'}</td>
+                                                                <td style={tdStyle}>
+                                                                    <code style={{ fontSize: 11, background: 'var(--bg-app)', padding: '2px 4px', borderRadius: 4, color: 'var(--text-secondary)' }}>
+                                                                        {c?.data_type || c?.type || 'unknown'}
+                                                                    </code>
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                        {!activeEntityColumns.length && (
+                                                            <tr>
+                                                                <td colSpan={2} style={{ ...tdStyle, textAlign: 'center', color: 'var(--text-tertiary)', padding: 30 }}>
+                                                                    No columns found for this table.
+                                                                </td>
+                                                            </tr>
+                                                        )}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
+                                <div style={{ 
+                                    flex: 1, 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    justifyContent: 'center', 
+                                    color: 'var(--text-tertiary)',
+                                    fontSize: 14,
+                                    flexDirection: 'column',
+                                    gap: 12
+                                }}>
+                                    <Search size={32} style={{ opacity: 0.2 }} />
+                                    Select an entity from the sidebar to view details.
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
 
-  const th = {
-      textAlign: 'left',
-      padding: '6px 8px',
-      borderBottom: '1px solid var(--border-color)',
-      color: 'var(--text-tertiary)',
-      textTransform: 'uppercase',
-      letterSpacing: '.04em',
-      fontSize: 10,
-  };
+function DetailCard({ label, value }) {
+    return (
+        <div style={{ 
+            padding: '12px 16px', 
+            borderRadius: 8, 
+            background: 'var(--bg-surface)', 
+            border: '1px solid var(--border-color)' 
+        }}>
+            <div style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 4 }}>
+                {label}
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', textTransform: 'capitalize' }}>
+                {value}
+            </div>
+        </div>
+    );
+}
 
-  const td = {
-      textAlign: 'left',
-      padding: '6px 8px',
-      borderBottom: '1px solid var(--border-color)',
-      color: 'var(--text-secondary)',
-  };
+const selectStyle = {
+    border: '1px solid var(--border-color)',
+    borderRadius: 8,
+    padding: '8px 12px',
+    fontSize: 13,
+    background: 'var(--bg-app)',
+    color: 'var(--text-secondary)',
+    cursor: 'pointer',
+    outline: 'none',
+    minWidth: 140
+};
+
+const btnPrimary = {
+    border: '1px solid var(--border-color)',
+    borderRadius: 8,
+    background: '#2563EB',
+    color: '#fff',
+    padding: '8px 16px',
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 8,
+    transition: 'all 0.2s',
+    whiteSpace: 'nowrap'
+};
+
+const thStyle = {
+    textAlign: 'left',
+    padding: '12px 16px',
+    borderBottom: '1px solid var(--border-color)',
+    color: 'var(--text-tertiary)',
+    textTransform: 'uppercase',
+    letterSpacing: '.06em',
+    fontSize: 11,
+    fontWeight: 700
+};
+
+const tdStyle = {
+    textAlign: 'left',
+    padding: '12px 16px',
+    color: 'var(--text-primary)',
+    fontSize: 13
+};

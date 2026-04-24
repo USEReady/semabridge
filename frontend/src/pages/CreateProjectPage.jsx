@@ -1103,7 +1103,7 @@ export default function CreateProjectPage() {
 
   /* ─── Render ─── */
   return (
-    <div style={{ minHeight: '100%', background: 'var(--bg-main)', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ padding: '28px 16px', minHeight: '100%', maxWidth: 1400, margin: '0 auto', display: 'flex', flexDirection: 'column' }} className="md:px-10">
       {/* Top bar */}
       <div style={{
         padding: '16px 32px', borderBottom: '1px solid var(--border-main)',

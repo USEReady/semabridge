@@ -155,6 +155,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     const [layout, setLayout] = useState('hierarchical');           // hierarchical | force
     const [erMode, setErMode] = useState(uiPrefs?.erMode ?? true);                     // Power BI-like relationship view
     const [selectedModelId, setSelectedModelId] = useState(uiPrefs?.selectedModelId || '__all__');
+    const [selectedConnector, setSelectedConnector] = useState(uiPrefs?.selectedConnector || '__all__');
     const [searchQuery, setSearchQuery] = useState('');
     const [filterType, setFilterType] = useState('all');            // all | models | tables | broken
     const [selectedTableId, setSelectedTableId] = useState(uiPrefs?.selectedTableId || '__all__');
@@ -287,13 +288,14 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                 showExplorer,
                 erMode,
                 selectedModelId,
+                selectedConnector,
                 selectedTableId,
                 includeSystemTables,
             }));
         } catch {
             // ignore persistence failures
         }
-    }, [workbenchOpen, showExplorer, erMode, selectedModelId, selectedTableId, includeSystemTables]);
+    }, [workbenchOpen, showExplorer, erMode, selectedModelId, selectedConnector, selectedTableId, includeSystemTables]);
 
     useEffect(() => {
         let active = true;
@@ -393,9 +395,6 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     // ── filter chips ────────────────────────────────
     const chips = [
         { id: 'all', label: 'All' },
-        { id: 'models', label: 'Models' },
-        { id: 'tables', label: 'Tables' },
-        { id: 'metrics', label: 'Metrics' },
         { id: 'broken', label: 'Broken Refs' },
     ];
 
@@ -488,6 +487,23 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         return baseGraph;
     }, [diffMode, diffReport, graphData, erMode]);
 
+    const connectorOptions = useMemo(() => {
+        const nodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
+        const connectors = new Set();
+        nodes.forEach(n => {
+            if (n.data?.nodeType === 'model') {
+                const connector = n.data?.source_type || n.data?.target_type || 'Generic';
+                connectors.add(connector);
+            }
+        });
+        return Array.from(connectors)
+            .map(c => ({ 
+                id: c, 
+                label: c.charAt(0).toUpperCase() + c.slice(1).toLowerCase() 
+            }))
+            .sort((a,b) => a.label.localeCompare(b.label));
+    }, [graphData]);
+
     const modelOptions = useMemo(() => {
         const nodes = Array.isArray(renderedGraphData?.nodes) ? renderedGraphData.nodes : [];
         const explicitModels = nodes
@@ -513,17 +529,14 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             if (!dedup.has(m.id)) dedup.set(m.id, m);
         });
 
-        const byId = [...dedup.values()];
-
-        // If multiple models share same display label (e.g., many "FabricModel"),
-        // append a short id suffix so dropdown entries are distinguishable.
+        const dedupValues = [...dedup.values()];
         const counts = {};
-        byId.forEach(m => {
+        dedupValues.forEach(m => {
             const key = String(m.label || '').trim().toLowerCase();
             counts[key] = (counts[key] || 0) + 1;
         });
 
-        return byId.map(m => {
+        const byId = dedupValues.map(m => {
             const rawLabel = String(m.label || '').trim() || 'Model';
             const key = rawLabel.toLowerCase();
             const shortId = String(m.id).slice(0, 8);
@@ -531,9 +544,17 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             const label = (counts[key] > 1 || isGeneric)
                 ? `${rawLabel} (${shortId})`
                 : rawLabel;
-            return { ...m, label };
+                
+            // Find connector for this model
+            const node = nodes.find(n => n.id === m.id || n.data?.model_id === m.id);
+            const connector = node?.data?.source_type || node?.data?.target_type || 'Generic';
+            
+            return { ...m, label, connector };
         });
-    }, [renderedGraphData]);
+
+        if (selectedConnector === '__all__') return byId;
+        return byId.filter(m => m.connector === selectedConnector);
+    }, [renderedGraphData, selectedConnector]);
 
     const tableOptions = useMemo(() => {
         const nodes = Array.isArray(renderedGraphData?.nodes) ? renderedGraphData.nodes : [];
@@ -594,6 +615,17 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         }
     }, [filterType, erMode]);
 
+    const dropdownStyle = {
+        border: '1px solid var(--border-color)',
+        borderRadius: 6,
+        background: 'var(--bg-app)',
+        color: 'var(--text-secondary)',
+        fontSize: 11,
+        padding: '4px 8px',
+        maxWidth: 220,
+        minWidth: 120,
+    };
+
     return (
         <div style={{
             display: 'flex', flexDirection: 'column',
@@ -612,39 +644,12 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             }}>
                 {/* Title */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <MapIcon size={16} style={{ color: '#818CF8' }} />
+                    <MapIcon size={16} style={{ color: '#2563EB' }} />
                     <span style={{ fontWeight: 700, fontSize: 13 }}>Repository Map</span>
                 </div>
 
                 <div style={{ width: 1, height: 20, background: 'var(--border-color)' }} />
 
-                {/* Search */}
-                <div style={{
-                    display: 'flex', alignItems: 'center', gap: 6,
-                    padding: '4px 10px',
-                    borderRadius: 6,
-                    background: 'var(--bg-app)',
-                    border: '1px solid var(--border-color)',
-                    flex: '0 1 280px',
-                }}>
-                    <Search size={13} style={{ color: 'var(--text-tertiary)' }} />
-                    <input
-                        type="text"
-                        placeholder="Search models, tables, measures..."
-                        value={searchQuery}
-                        onChange={e => setSearchQuery(e.target.value)}
-                        style={{
-                            border: 'none', outline: 'none', background: 'transparent',
-                            color: 'var(--text-primary)', fontSize: 12, flex: 1,
-                        }}
-                    />
-                    {searchQuery && (
-                        <button onClick={() => setSearchQuery('')}
-                            style={iconBtnStyle}>
-                            <X size={12} />
-                        </button>
-                    )}
-                </div>
 
                 {/* Filter chips */}
                 <div style={{ display: 'flex', gap: 4 }}>
@@ -666,7 +671,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     title="Open model/data inspector"
                     style={{
                         ...toolBtnStyle,
-                        color: workbenchOpen ? '#818CF8' : 'var(--text-tertiary)',
+                        color: workbenchOpen ? '#2563EB' : 'var(--text-tertiary)',
                         marginLeft: 4,
                     }}
                 >
@@ -679,16 +684,35 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     title="Toggle snapshot/files explorer"
                     style={{
                         ...toolBtnStyle,
-                        color: showExplorer ? '#818CF8' : 'var(--text-tertiary)',
+                        color: showExplorer ? '#2563EB' : 'var(--text-tertiary)',
                     }}
                 >
                     <Files size={15} />
                     <span style={{ fontSize: 11 }}>Explorer</span>
                 </button>
 
-                {modelOptions.length > 0 && (
+                {connectorOptions.length > 0 && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 8, flexShrink: 0 }}>
                         <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap' }}>
+                            Connector
+                        </span>
+                        <select
+                            value={selectedConnector}
+                            onChange={(e) => {
+                                setSelectedConnector(e.target.value);
+                                setSelectedModelId('__all__');
+                                setSelectedTableId('__all__');
+                            }}
+                            style={dropdownStyle}
+                            title="Choose connector filter"
+                        >
+                            <option value="__all__">Select connector</option>
+                            {connectorOptions.map(c => (
+                                <option key={c.id} value={c.id}>{c.label}</option>
+                            ))}
+                        </select>
+
+                        <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap', marginLeft: 8 }}>
                             Model
                         </span>
                         <select
@@ -697,57 +721,29 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                                 setSelectedModelId(e.target.value);
                                 setSelectedTableId('__all__');
                             }}
-                            style={{
-                                border: '1px solid var(--border-color)',
-                                borderRadius: 6,
-                                background: 'var(--bg-app)',
-                                color: 'var(--text-secondary)',
-                                fontSize: 11,
-                                padding: '4px 8px',
-                                maxWidth: 220,
-                                minWidth: 120,
-                            }}
-                            title="Choose model filter"
+                            style={dropdownStyle}
+                            title="Choose model"
                         >
-                            <option value="__all__">Select model</option>
+                            <option value="__all__">
+                                {selectedConnector === '__all__' ? 'Select connector first' : 'Select model'}
+                            </option>
                             {modelOptions.map(m => (
                                 <option key={m.id} value={m.id}>{m.label}</option>
                             ))}
                         </select>
 
-                        {filterType === 'metrics' ? null : (
-                            <select
-                                value={selectedTableId}
-                                onChange={(e) => setSelectedTableId(e.target.value)}
-                                style={{
-                                    border: '1px solid var(--border-color)',
-                                    borderRadius: 6,
-                                    background: 'var(--bg-app)',
-                                    color: 'var(--text-secondary)',
-                                    fontSize: 11,
-                                    padding: '4px 8px',
-                                    maxWidth: 220,
-                                    minWidth: 120,
-                                }}
-                                title="Choose table"
-                            >
-                                <option value="__all__">{selectedModelId === '__all__' ? 'Select model first' : 'Select table'}</option>
-                                {tableOptions.map(t => (
-                                    <option key={t.id} value={t.id}>{t.schema}.{t.name} · {t.model}</option>
-                                ))}
-                            </select>
-                        )}
                         {selectedModelId !== '__all__' && (
                             <span style={{
                                 fontSize: 10,
-                                color: '#818CF8',
-                                border: '1px solid rgba(129,140,248,.35)',
-                                background: 'rgba(129,140,248,.10)',
+                                color: '#2563EB',
+                                border: '1px solid rgba(37, 99, 235, 0.35)',
+                                background: 'rgba(37, 99, 235, 0.10)',
                                 padding: '4px 8px',
                                 borderRadius: 999,
                                 whiteSpace: 'nowrap',
+                                marginLeft: 4,
                             }}>
-                                {selectedTableId !== '__all__' ? 'Model + table filtered' : 'Model filtered'}
+                                Model filtered
                             </span>
                         )}
                     </div>
@@ -762,7 +758,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                         title="Toggle version history badges"
                         style={{
                             ...toolBtnStyle,
-                            color: showVersionBadges ? '#818CF8' : 'var(--text-tertiary)',
+                            color: showVersionBadges ? '#2563EB' : 'var(--text-tertiary)',
                         }}
                     >
                         {showVersionBadges ? <Eye size={15} /> : <EyeOff size={15} />}
@@ -776,7 +772,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                         title="Include system-generated tables in snapshot"
                         style={{
                             ...toolBtnStyle,
-                            color: includeSystemTables ? '#818CF8' : 'var(--text-tertiary)',
+                            color: includeSystemTables ? '#2563EB' : 'var(--text-tertiary)',
                         }}
                     >
                         <Filter size={15} />
@@ -795,7 +791,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     title="Toggle ER relationship view"
                     style={{
                         ...toolBtnStyle,
-                        color: erMode ? '#818CF8' : 'var(--text-tertiary)',
+                        color: erMode ? '#2563EB' : 'var(--text-tertiary)',
                     }}
                 >
                     <Database size={15} />
@@ -809,7 +805,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                             title="Hierarchical layout"
                             style={{
                                 ...toolBtnStyle,
-                                color: layout === 'hierarchical' ? '#818CF8' : 'var(--text-tertiary)',
+                                color: layout === 'hierarchical' ? '#2563EB' : 'var(--text-tertiary)',
                             }}
                         >
                             <LayoutGrid size={15} />
@@ -819,7 +815,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                             title="Force-directed layout"
                             style={{
                                 ...toolBtnStyle,
-                                color: layout === 'force' ? '#818CF8' : 'var(--text-tertiary)',
+                                color: layout === 'force' ? '#2563EB' : 'var(--text-tertiary)',
                             }}
                         >
                             <Waypoints size={15} />
@@ -834,7 +830,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     title="Refresh Map"
                     style={{
                         ...toolBtnStyle,
-                        background: '#818CF8',
+                        background: '#2563EB',
                         color: '#fff',
                         padding: '4px 10px',
                         borderRadius: 6,

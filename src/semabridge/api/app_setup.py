@@ -83,6 +83,18 @@ def _apply_schema_compatibility_fixes() -> None:
     if "owner_id" not in existing_columns:
         pending_alters.append("ALTER TABLE accounts ADD COLUMN owner_id INTEGER")
 
+    if "projects" in set(inspector.get_table_names()):
+        project_columns = {col["name"] for col in inspector.get_columns("projects")}
+        if "account_id" not in project_columns:
+            if dialect == "postgresql":
+                pending_alters.append("ALTER TABLE projects ADD COLUMN account_id VARCHAR(36)")
+            elif dialect == "duckdb":
+                pending_alters.append("ALTER TABLE projects ADD COLUMN account_id VARCHAR")
+            else:
+                pending_alters.append("ALTER TABLE projects ADD COLUMN account_id TEXT")
+        if "connection_tag" not in project_columns:
+            pending_alters.append("ALTER TABLE projects ADD COLUMN connection_tag VARCHAR(255)")
+
     if not pending_alters and dialect != "postgresql":
         return
 

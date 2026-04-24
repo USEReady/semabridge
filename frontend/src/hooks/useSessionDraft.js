@@ -3,13 +3,11 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 /**
  * useSessionDraft — reusable hook for intent-aware draft persistence.
  *
- * Stores form data in sessionStorage under `key`.
- * Does NOT auto-load the draft into state — the consumer must call
- * `resumeDraft()` explicitly (e.g. from a banner button).
- *
+ * Stores form data in localStorage under `key` so drafts survive across tabs
+ * within the same localhost origin.
  * Sets are serialized as arrays and reconstructed on resume.
  *
- * @param {string} key  sessionStorage key
+ * @param {string} key  localStorage key
  * @param {object} opts
  * @param {number} opts.debounceMs  debounce interval for saveDraft (default 300)
  * @returns {{ hasDraft, draft, saveDraft, resumeDraft, discardDraft, clearDraft }}
@@ -18,13 +16,13 @@ export default function useSessionDraft(key, { debounceMs = 300 } = {}) {
   // Check once on mount whether a draft exists.
   const [hasDraft, setHasDraft] = useState(() => {
     try {
-      return sessionStorage.getItem(key) !== null;
+      return localStorage.getItem(key) !== null;
     } catch {
       return false;
     }
   });
 
-  // `draft` is null until the user explicitly calls resumeDraft().
+  // Keep the active draft empty until the user explicitly resumes it.
   const [draft, setDraft] = useState(null);
 
   // --- Save (debounced) ---------------------------------------------------
@@ -35,7 +33,8 @@ export default function useSessionDraft(key, { debounceMs = 300 } = {}) {
       if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => {
         try {
-          sessionStorage.setItem(key, JSON.stringify(data));
+          localStorage.setItem(key, JSON.stringify(data));
+          setHasDraft(true);
         } catch (e) {
           console.warn('[useSessionDraft] Failed to save draft:', e);
         }
@@ -52,8 +51,9 @@ export default function useSessionDraft(key, { debounceMs = 300 } = {}) {
   // --- Resume -------------------------------------------------------------
   const resumeDraft = useCallback(() => {
     try {
-      const raw = sessionStorage.getItem(key);
+      const raw = localStorage.getItem(key);
       if (raw) {
+        setHasDraft(true);
         setDraft(JSON.parse(raw));
       }
     } catch {
@@ -64,10 +64,31 @@ export default function useSessionDraft(key, { debounceMs = 300 } = {}) {
   // --- Discard / Clear ----------------------------------------------------
   const discardDraft = useCallback(() => {
     try {
-      sessionStorage.removeItem(key);
+      localStorage.removeItem(key);
     } catch { /* noop */ }
     setHasDraft(false);
     setDraft(null);
+  }, [key]);
+
+  // Keep hook state in sync when another tab updates or clears this draft key.
+  useEffect(() => {
+    const onStorage = (event) => {
+      if (event.key !== key) return;
+      if (event.newValue == null) {
+        setHasDraft(false);
+        setDraft(null);
+        return;
+      }
+      try {
+        setHasDraft(true);
+      } catch {
+        setDraft(null);
+        setHasDraft(false);
+      }
+    };
+
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
   }, [key]);
 
   // clearDraft is semantically the same but called after successful submit.

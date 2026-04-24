@@ -1,16 +1,17 @@
-project_name: innm
+project_name: comp_sf
 source:
   type: fabric
-  identity_id: 5096772f-349b-4954-9d28-47e373bc33d2
-  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
-  workspace: semabridge
+  identity_id: 33393640-df14-49d8-9460-306461ea4555
+  workspace_id: 459a30fc-2ca3-45bf-8783-5dc1f65f6656
+  workspace: My workspace
   models:
-    - Inventory Semantic Model
+    - Competitive Marketing Analysis
 targets:
-  - type: databricks
+  - type: snowflake
+    identity_id: 241347f2-70b3-4bb5-9586-85bc50b2bd7b
 mappings:
-  - source: Inventory Semantic Model
-    target: INVENTORY_SEMANTIC_MODEL
+  - source: Competitive Marketing Analysis
+    target: COMPETITIVE_MARKETING_ANALYSIS
     type: table
     columns:
       - source: id
@@ -32,9 +33,9 @@ ui:
   output_format: osi
 selection:
   model_ids:
-    - 6c73961a-00c4-4610-b035-232a434e5d50
+    - 7bc60ba1-5824-458a-a992-6fe8164604e8
 options:
   auto_relationships: true
   generate_descriptions: true
 target:
-  type: databricks
+  type: snowflake

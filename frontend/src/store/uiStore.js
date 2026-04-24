@@ -3,11 +3,18 @@ import { create } from 'zustand';
 const DEFAULT_FILTER_OPTIONS = {
   selectedFolder: null,
   sourceFilter: 'all',
+  targetFilters: [],
   targetFilter: 'all',
   tagFilters: [],
   viewMode: 'folder',
   useRegexSearch: false,
 };
+
+function normalizeViewMode(raw) {
+  const value = String(raw || '').toLowerCase().trim();
+  if (value === 'system' || value === 'adapter') return 'adapter';
+  return 'folder';
+}
 
 const DEFAULT_UI_STATE = {
   activeProjectId: null,
@@ -18,7 +25,6 @@ const DEFAULT_UI_STATE = {
   projectListScrollTop: 0,
   createProjectDraft: null,
   projectConfigDrafts: {},
-  isAdvancedMode: false,
 };
 
 function sanitizeFilterOptions(raw) {
@@ -26,13 +32,23 @@ function sanitizeFilterOptions(raw) {
   const tagFilters = Array.isArray(next.tagFilters)
     ? next.tagFilters.map(String).filter(Boolean)
     : [];
+  const targetFilters = Array.isArray(next.targetFilters)
+    ? [...new Set(next.targetFilters.map(String).filter((value) => value && value !== 'all'))]
+    : [];
+  const targetFilter = (typeof next.targetFilter === 'string' && next.targetFilter.trim() && next.targetFilter !== 'all')
+    ? next.targetFilter
+    : '';
+  const normalizedTargetFilters = targetFilters.length > 0
+    ? targetFilters
+    : (targetFilter ? [targetFilter] : []);
 
   return {
     selectedFolder: next.selectedFolder ?? null,
     sourceFilter: typeof next.sourceFilter === 'string' && next.sourceFilter.trim() ? next.sourceFilter : 'all',
-    targetFilter: typeof next.targetFilter === 'string' && next.targetFilter.trim() ? next.targetFilter : 'all',
+    targetFilters: normalizedTargetFilters,
+    targetFilter: normalizedTargetFilters[0] || 'all',
     tagFilters,
-    viewMode: next.viewMode === 'adapter' ? 'adapter' : 'folder',
+    viewMode: normalizeViewMode(next.viewMode),
     useRegexSearch: Boolean(next.useRegexSearch),
   };
 }
@@ -54,6 +70,7 @@ function areFilterOptionsEqual(a, b) {
   return (
     a.selectedFolder === b.selectedFolder
     && a.sourceFilter === b.sourceFilter
+    && areShallowArraysEqual(a.targetFilters, b.targetFilters)
     && a.targetFilter === b.targetFilter
     && a.viewMode === b.viewMode
     && a.useRegexSearch === b.useRegexSearch
@@ -98,9 +115,6 @@ export const useUIStore = create(
     )),
     setProjectListScrollTop: (projectListScrollTop) => set((state) => (
       state.projectListScrollTop === projectListScrollTop ? state : { projectListScrollTop }
-    )),
-    setIsAdvancedMode: (isAdvancedMode) => set((state) => (
-      state.isAdvancedMode === isAdvancedMode ? state : { isAdvancedMode }
     )),
 
     setCreateProjectDraft: (createProjectDraft) =>

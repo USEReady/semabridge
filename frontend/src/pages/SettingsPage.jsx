@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   PlugZap, RefreshCw, CheckCircle2, AlertCircle, Clock,
   Settings2, Cloud, Snowflake, Plus, ExternalLink, Database, ChevronDown, FolderOpen,
+  Search, Check, Globe
 } from 'lucide-react';
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
@@ -62,8 +64,19 @@ function renderConnectorIcon(connectorId, size = 18) {
 }
 
 export default function SettingsPage() {
+<<<<<<< HEAD
 
+=======
+  const navigate = useNavigate();
+>>>>>>> dev
   const [env, setEnv] = useState('Dev');
+  
+  // Timezone state
+  const [timezone, setTimezone] = useState(() => {
+    return localStorage.getItem('semabridge-timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  });
+  const [timezoneModalOpen, setTimezoneModalOpen] = useState(false);
+  const [timezoneSearch, setTimezoneSearch] = useState('');
   const [connectors, setConnectors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [manageOpen, setManageOpen] = useState(false);
@@ -323,16 +336,44 @@ export default function SettingsPage() {
   
   return (
     <ConfigurationProvider>
-      <div style={{ padding: '28px 32px', minHeight: '100%' }}>
+      <div style={{ padding: '28px 16px', minHeight: '100%', maxWidth: 1400, margin: '0 auto' }} className="md:px-10">
         <PageHeader
-        title="Settings"
-        description="Manage connectors, integrations, and environment configuration."
-        action={{
-          label: 'Add Connector',
-          icon: <Plus size={14} />,
-          onClick: () => openManage(null),
-        }}
-      />
+          title="Settings"
+          description="Manage connectors, integrations, and environment configuration."
+          action={(
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setTimezoneModalOpen(true)}
+                className="flex items-center gap-2 rounded-lg font-semibold text-sm px-4 py-2 theme-transition"
+                style={{
+                  background: 'var(--bg-surface)',
+                  color: 'var(--text-secondary)',
+                  border: '1px solid var(--border-main)',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <Clock size={14} />
+                {timezone}
+              </button>
+              <button
+                onClick={() => navigate('/global-config')}
+                className="flex items-center gap-2 rounded-lg font-semibold text-sm px-4 py-2 theme-transition"
+                style={{
+                  background: 'var(--accent-blue)',
+                  color: '#fff',
+                  border: 'none',
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 8px rgba(99,102,241,0.25)',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <Settings2 size={14} />
+                Global Config
+              </button>
+            </div>
+          )}
+        />
 
 
       {/* Configuration Syncing Dual-View */}
@@ -341,7 +382,11 @@ export default function SettingsPage() {
         <ConfigEditor />
       </div>
 
+<<<<<<< HEAD
 
+=======
+      {/* Local Folder Management */}
+>>>>>>> dev
       <div className="mb-8">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
           <div>
@@ -674,6 +719,73 @@ export default function SettingsPage() {
               {directoryError}
             </div>
           )}
+        </div>
+      </Modal>
+      {/* Timezone Selection Modal */}
+      <Modal 
+        isOpen={timezoneModalOpen} 
+        onClose={() => setTimezoneModalOpen(false)}
+        title="Set Preferred Timezone"
+      >
+        <div className="p-1">
+          <p className="text-xs text-secondary mb-4">
+            Choose your preferred timezone for displaying run history and scheduling jobs.
+          </p>
+          
+          <div className="relative mb-4">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-tertiary" size={14} />
+            <input 
+              type="text" 
+              placeholder="Search timezones..."
+              className="w-full pl-9 pr-4 py-2 rounded-lg text-sm border outline-none"
+              style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)' }}
+              value={timezoneSearch}
+              onChange={e => setTimezoneSearch(e.target.value)}
+            />
+          </div>
+
+          <div className="max-h-[300px] overflow-y-auto custom-scrollbar border rounded-lg" style={{ borderColor: 'var(--border-main)' }}>
+            {[
+              'UTC',
+              'Asia/Kolkata',
+              'Asia/Dubai',
+              'Asia/Singapore',
+              'Asia/Tokyo',
+              'Europe/London',
+              'Europe/Paris',
+              'Europe/Berlin',
+              'America/New_York',
+              'America/Chicago',
+              'America/Denver',
+              'America/Los_Angeles',
+              'America/Sao_Paulo',
+              'Australia/Sydney'
+            ].filter(tz => tz.toLowerCase().includes(timezoneSearch.toLowerCase()))
+             .map(tz => (
+              <button
+                key={tz}
+                onClick={() => {
+                  setTimezone(tz);
+                  localStorage.setItem('semabridge-timezone', tz);
+                  setTimezoneModalOpen(false);
+                }}
+                className="w-full flex items-center justify-between px-4 py-3 text-sm hover:bg-surface-hover transition-colors text-left"
+                style={{ color: 'var(--text-primary)', borderBottom: '1px solid var(--border-main)' }}
+              >
+                <div className="flex items-center gap-3">
+                  <Globe size={14} className="text-tertiary" />
+                  <span>{tz}</span>
+                </div>
+                {timezone === tz && <Check size={14} className="text-blue-500" />}
+              </button>
+            ))}
+          </div>
+          
+          <div className="mt-4 pt-4 border-t" style={{ borderColor: 'var(--border-main)' }}>
+             <p className="text-[10px] text-tertiary text-center">
+               System detected: {Intl.DateTimeFormat().resolvedOptions().timeZone}
+             </p>
+          </div>
         </div>
       </Modal>
       </div>

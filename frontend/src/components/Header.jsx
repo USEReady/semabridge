@@ -18,7 +18,8 @@ import {
     Eye,
     PanelBottom,
     LogOut,
-    Code2,
+    FileCode2,
+    SlidersHorizontal,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import ThemeToggle from './ThemeToggle';
@@ -145,17 +146,21 @@ export default function Header({ onToggleLogs, onToggleVersionControl, onToggleR
                         )}
                     </button>
 
-                    <ThemeToggle />
-                    {onToggleYamlView && (
-                        <button
-                            onClick={onToggleYamlView}
-                            className={`p-2 rounded-md hover:bg-surface-hover ${isYamlView ? 'text-accent-blue' : 'text-secondary'}`}
-                            title={isYamlView ? 'Switch to UI view' : 'Switch to YAML view'}
-                            style={isYamlView ? { background: 'rgba(99,102,241,.15)' } : {}}
-                        >
-                            <Code2 size={16} />
-                        </button>
-                    )}
+                    <div className="flex flex-col items-center gap-1">
+                        <ThemeToggle />
+                        {onToggleYamlView && (
+                            <button
+                                type="button"
+                                onClick={onToggleYamlView}
+                                aria-label={isYamlView ? 'Switch to form view' : 'Switch to YAML view'}
+                                title={isYamlView ? 'Switch to form view' : 'Switch to YAML view'}
+                                className={`w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer border-none outline-none transition-none shadow-none ${isYamlView ? 'text-accent-blue' : 'text-secondary'}`}
+                                style={isYamlView ? { background: 'rgba(99,102,241,.15)' } : { background: 'var(--bg-surface-hover)' }}
+                            >
+                                {isYamlView ? <SlidersHorizontal size={17} /> : <FileCode2 size={17} />}
+                            </button>
+                        )}
+                    </div>
                     <button onClick={onToggleConnections} className="p-2 rounded-md hover:bg-surface-hover text-secondary" title="Connections & Settings">
                         <Settings size={16} />
                     </button>

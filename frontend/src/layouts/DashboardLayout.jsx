@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   Map, FolderOpen, PlayCircle, Settings, GitBranch,
-  Hexagon, LogOut, ChevronLeft, ChevronRight, Bell, Split,
+  Hexagon, LogOut, ChevronLeft, ChevronRight, Bell,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import ThemeToggle from '../components/ThemeToggle';
@@ -17,7 +17,14 @@ import { useLogs } from '../context/LogsContext';
 import { useNavigate } from 'react-router-dom';
 import { useUIStore } from '../store/uiStore';
 
-// Nav items are now generated dynamically based on state
+const NAV_ITEMS = [
+
+  { to: '/projects',      label: 'Projects',        icon: FolderOpen },
+  { to: '/jobs',          label: 'Runs',            icon: PlayCircle },
+    { to: '/explore',       label: 'Explore',         icon: Map },
+  { to: '/model-mapping', label: 'Model Mapping',   icon: GitBranch },
+  { to: '/settings',      label: 'Settings',        icon: Settings },
+];
 
 function SidebarNavIcon({ icon: Icon, active }) {
   return (
@@ -51,6 +58,7 @@ export default function DashboardLayout() {
   const [search, setSearch] = useState('');
   const [searchUseRegex, setSearchUseRegex] = useState(false);
 
+<<<<<<< HEAD
   const NAV_ITEMS = [
     { to: '/projects',      label: 'Projects',        icon: FolderOpen },
     { to: '/jobs',          label: 'Runs',            icon: PlayCircle },
@@ -60,6 +68,8 @@ export default function DashboardLayout() {
     { to: '/settings',      label: 'Settings',        icon: Settings },
   ];
 
+=======
+>>>>>>> dev
   // Overlay panel toggles
   const [showLogs, setShowLogs] = useState(false);
   const [showVersionControl, setShowVersionControl] = useState(false);
@@ -121,7 +131,7 @@ export default function DashboardLayout() {
               overflow: 'hidden',
             }}
           >
-            <Hexagon size={22} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} strokeWidth={2.5} />
+            <Hexagon size={26} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} strokeWidth={2.5} />
             {!collapsed && (
               <span
                 className="font-bold text-primary"
@@ -297,10 +307,10 @@ export default function DashboardLayout() {
               onToggleRegex={setSearchUseRegex}
               allowRegex
               placeholder="Search… (Ctrl+K)"
-              width={240}
+              width="100%"
+              className="flex-1"
               onFocus={() => setShowCommandPalette(true)}
             />
-            <div className="flex-1" />
             <ThemeToggle />
 
             {/* Version Control */}
@@ -309,8 +319,8 @@ export default function DashboardLayout() {
               onClick={() => setShowVersionControl(true)}
               className="flex items-center justify-center rounded-lg theme-transition"
               style={{
-                width: 34,
-                height: 34,
+                width: 40,
+                height: 40,
                 color: 'var(--text-tertiary)',
                 background: 'transparent',
                 border: '1px solid var(--border-main)',
@@ -319,7 +329,7 @@ export default function DashboardLayout() {
               onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent-blue)'; e.currentTarget.style.color = 'var(--accent-blue)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-main)'; e.currentTarget.style.color = 'var(--text-tertiary)'; }}
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/>
                 <path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/>
               </svg>
@@ -331,8 +341,8 @@ export default function DashboardLayout() {
               onClick={() => setShowLogs(true)}
               className="flex items-center justify-center rounded-lg theme-transition"
               style={{
-                width: 34,
-                height: 34,
+                width: 40,
+                height: 40,
                 color: 'var(--text-tertiary)',
                 background: 'transparent',
                 border: '1px solid var(--border-main)',
@@ -342,7 +352,7 @@ export default function DashboardLayout() {
               onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent-blue)'; e.currentTarget.style.color = 'var(--accent-blue)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-main)'; e.currentTarget.style.color = 'var(--text-tertiary)'; }}
             >
-              <Bell size={15} />
+              <Bell size={19} />
               {unreadCount > 0 && (
                 <span
                   style={{

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Save, AlertCircle } from 'lucide-react';
+import { Save, AlertCircle, FileCode2, SlidersHorizontal } from 'lucide-react';
 import { useConfiguration } from '../context/ConfigurationContext';
 
 export default function ConfigEditor() {
@@ -103,9 +103,48 @@ export default function ConfigEditor() {
   return (
     <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: 12, padding: 24, fontSize: 13 }}>
        
-       <div style={{ display: 'flex', gap: 12, marginBottom: 24, borderBottom: '1px solid var(--border-color)', paddingBottom: 12 }}>
-          <button onClick={() => setActiveTab('project')} style={{ background: 'transparent', border: 'none', fontWeight: activeTab === 'project' ? 'bold' : 'normal', color: activeTab === 'project' ? 'var(--accent-blue)' : 'var(--text-primary)', cursor: 'pointer' }}>Project Overrides</button>
-          <button onClick={() => setActiveTab('yaml')} style={{ background: 'transparent', border: 'none', fontWeight: activeTab === 'yaml' ? 'bold' : 'normal', color: activeTab === 'yaml' ? 'var(--accent-blue)' : 'var(--text-primary)', cursor: 'pointer' }}>Raw YAML View</button>
+       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 24, borderBottom: '1px solid var(--border-color)', paddingBottom: 12 }}>
+          <div style={{ display: 'inline-flex', border: '1px solid var(--border-color)', borderRadius: 10, overflow: 'hidden' }}>
+            <button
+              type="button"
+              onClick={() => setActiveTab('project')}
+              aria-label="Switch to form view"
+              title="Form view"
+              style={{
+                width: 38,
+                height: 34,
+                background: activeTab === 'project' ? 'var(--accent-blue)' : 'transparent',
+                border: 'none',
+                color: activeTab === 'project' ? '#fff' : 'var(--text-primary)',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <SlidersHorizontal size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('yaml')}
+              aria-label="Switch to YAML view"
+              title="YAML view"
+              style={{
+                width: 38,
+                height: 34,
+                background: activeTab === 'yaml' ? 'var(--accent-blue)' : 'transparent',
+                border: 'none',
+                color: activeTab === 'yaml' ? '#fff' : 'var(--text-primary)',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderLeft: '1px solid var(--border-color)',
+              }}
+            >
+              <FileCode2 size={14} />
+            </button>
+          </div>
        </div>
 
        {activeTab === 'project' && (

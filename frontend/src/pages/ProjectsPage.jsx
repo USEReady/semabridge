@@ -81,6 +81,14 @@ const FOLDER_COLORS = [
   'var(--accent-orange)',
 ];
 
+const SOURCE_TARGET_OPTIONS = [
+  { value: 'fabric', label: 'MS Fabric' },
+  { value: 'snowflake', label: 'Snowflake' },
+  { value: 'databricks', label: 'Databricks' },
+  { value: 'postgresql', label: 'PostgreSQL' },
+  { value: 'salesforce', label: 'Salesforce' },
+];
+
 /* ─── Main Page ─── */
 export default function ProjectsPage() {
   const navigate = useNavigate();
@@ -107,10 +115,13 @@ export default function ProjectsPage() {
   const setActiveProjectId = useUIStore(state => state.setActiveProjectId);
   const selectedFolder = filterOptions?.selectedFolder ?? DEFAULT_FILTER_OPTIONS.selectedFolder;
   const sourceFilter = filterOptions?.sourceFilter ?? DEFAULT_FILTER_OPTIONS.sourceFilter;
-  const targetFilter = filterOptions?.targetFilter ?? DEFAULT_FILTER_OPTIONS.targetFilter;
+  const targetFilters = Array.isArray(filterOptions?.targetFilters)
+    ? filterOptions.targetFilters
+    : (filterOptions?.targetFilter && filterOptions.targetFilter !== 'all' ? [filterOptions.targetFilter] : []);
   const tagFilters = new Set(filterOptions?.tagFilters ?? DEFAULT_FILTER_OPTIONS.tagFilters);
   const viewMode = filterOptions?.viewMode ?? DEFAULT_FILTER_OPTIONS.viewMode;
   const useRegexSearch = filterOptions?.useRegexSearch ?? DEFAULT_FILTER_OPTIONS.useRegexSearch;
+  const isAnyFilterActive = sourceFilter !== 'all' || targetFilters.length > 0 || tagFilters.size > 0;
 
   const {
     data: projects = [],
@@ -183,6 +194,17 @@ export default function ProjectsPage() {
     setFilterOptions({ [key]: value });
   }, [setFilterOptions]);
 
+  const toggleTargetFilter = useCallback((targetType) => {
+    const next = new Set(targetFilters);
+    if (next.has(targetType)) next.delete(targetType);
+    else next.add(targetType);
+
+    setFilterOptions({
+      targetFilters: [...next],
+      targetFilter: next.size > 0 ? [...next][0] : 'all',
+    });
+  }, [setFilterOptions, targetFilters]);
+
   const allProjectTags = [...new Set(projects.flatMap(p => p.tags || []))];
 
   const folderFiltered = projects.filter(p => {
@@ -197,7 +219,7 @@ export default function ProjectsPage() {
       }
     }
     if (sourceFilter !== 'all' && sourceKeyOf(p) !== sourceFilter) return false;
-    if (targetFilter !== 'all' && p.target_type !== targetFilter) return false;
+    if (targetFilters.length > 0 && !targetFilters.includes(String(p.target_type || '').toLowerCase())) return false;
     
     // Tag filtering - if tags are selected, project must have ALL selected tags
     if (tagFilters.size > 0) {
@@ -387,13 +409,47 @@ export default function ProjectsPage() {
           className={isResizing ? 'bg-accent' : 'hover:bg-accent/40'}
         />
         <div style={{ padding: '0 12px', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-            {viewMode === 'folder' ? 'Folders' : 'Sources'}
-          </span>
-          <div style={{ display: 'flex', gap: 4 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+              Group Projects
+            </span>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+              <button
+                onClick={() => updateFilterOption('viewMode', 'folder')}
+                style={{
+                  border: '1px solid var(--border-main)',
+                  borderRadius: 6,
+                  padding: '5px 6px',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  background: viewMode === 'folder' ? 'var(--accent-blue)18' : 'var(--bg-surface)',
+                  color: viewMode === 'folder' ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                }}
+              >
+                Group by Folder
+              </button>
+              <button
+                onClick={() => updateFilterOption('viewMode', 'adapter')}
+                style={{
+                  border: '1px solid var(--border-main)',
+                  borderRadius: 6,
+                  padding: '5px 6px',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  background: viewMode === 'adapter' ? 'var(--accent-blue)18' : 'var(--bg-surface)',
+                  color: viewMode === 'adapter' ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                }}
+              >
+                Group by System
+              </button>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 4, marginLeft: 8 }}>
             <button
               onClick={() => updateFilterOption('viewMode', viewMode === 'folder' ? 'adapter' : 'folder')}
-              title={viewMode === 'folder' ? 'View by source' : 'View by folder'}
+              title={viewMode === 'folder' ? 'View by system' : 'View by folder'}
               style={{
                 background: 'none', border: 'none', cursor: 'pointer',
                 color: 'var(--text-tertiary)', padding: 2,
@@ -532,14 +588,14 @@ export default function ProjectsPage() {
             setDragOverFolder(null);
           }}
         >
-          {dragOverFolder === 'root' ? 'Release to remove' : 'Drop here to remove from folder'}
+          {dragOverFolder === 'root' ? 'Release to remove' : ''}
         </div>
       </aside>
 
       {/* ── Main content ── */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', maxWidth: 1400, margin: '0 auto', padding: '28px 16px' }} className="md:px-10">
         {/* Header */}
-        <div style={{ padding: '20px 28px 0', flexShrink: 0 }}>
+        <div style={{ padding: '0 0 16px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
             <div>
               <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
@@ -550,22 +606,6 @@ export default function ProjectsPage() {
               </p>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button
-                onClick={() => updateFilterOption('viewMode', viewMode === 'folder' ? 'adapter' : 'folder')}
-                title={viewMode === 'folder' ? 'View by source' : 'View by folder'}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '8px 14px', borderRadius: 6, cursor: 'pointer',
-                  background: 'var(--accent-blue)12', border: '1.5px solid var(--accent-blue)40',
-                  color: 'var(--accent-blue)', fontSize: 12, fontWeight: 500,
-                  transition: 'all 0.2s',
-                }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-blue)20'; e.currentTarget.style.borderColor = 'var(--accent-blue)60'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'var(--accent-blue)12'; e.currentTarget.style.borderColor = 'var(--accent-blue)40'; }}
-              >
-                <Layers size={13} />
-                {viewMode === 'folder' ? 'By Source' : 'By Folder'}
-              </button>
               <button onClick={() => setImportOpen(true)} style={btnStyle('secondary')}>
                 <Upload size={13} /> Import
               </button>
@@ -596,9 +636,9 @@ export default function ProjectsPage() {
               style={{
                 display: 'flex', alignItems: 'center', gap: 6,
                 padding: '8px 14px', borderRadius: 6,
-                background: (sourceFilter !== 'all' || targetFilter !== 'all' || tagFilters.size > 0) ? 'var(--accent-blue)' : 'var(--bg-surface)',
-                border: (sourceFilter !== 'all' || targetFilter !== 'all' || tagFilters.size > 0) ? 'none' : '1px solid var(--border-main)',
-                color: (sourceFilter !== 'all' || targetFilter !== 'all' || tagFilters.size > 0) ? '#fff' : 'var(--text-secondary)',
+                background: isAnyFilterActive ? 'var(--accent-blue)' : 'var(--bg-surface)',
+                border: isAnyFilterActive ? 'none' : '1px solid var(--border-main)',
+                color: isAnyFilterActive ? '#fff' : 'var(--text-secondary)',
                 cursor: 'pointer', fontSize: 12, fontWeight: 600, outline: 'none',
                 transition: 'all 0.2s',
               }}
@@ -607,7 +647,7 @@ export default function ProjectsPage() {
             >
               <Layers size={13} />
               Filters
-              {(sourceFilter !== 'all' || targetFilter !== 'all' || tagFilters.size > 0) && (
+              {isAnyFilterActive && (
                 <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#fff', animation: 'pulse 2s infinite' }} />
               )}
             </button>
@@ -626,45 +666,80 @@ export default function ProjectsPage() {
                 {/* Source Filter */}
                 <div>
                   <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Source</label>
-                  <select
-                    value={sourceFilter}
-                    onChange={e => updateFilterOption('sourceFilter', e.target.value)}
-                    style={{
-                      width: '100%', padding: '8px 10px', fontSize: 12, fontWeight: 500,
-                      background: 'var(--bg-input)', border: '1px solid var(--border-main)',
-                      borderRadius: 6, color: 'var(--text-primary)', outline: 'none',
-                      cursor: 'pointer', transition: 'all 0.2s',
-                    }}
-                  >
-                    <option value="all">All Sources</option>
-                     <option value="fabric">MS Fabric</option>
-                     <option value="snowflake">Snowflake</option>
-                     <option value="databricks">Databricks</option>
-                     <option value="postgresql">PostgreSQL</option>
-                     <option value="salesforce">Salesforce</option>
-                  </select>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <button
+                      onClick={() => updateFilterOption('sourceFilter', 'all')}
+                      style={{
+                        textAlign: 'left',
+                        padding: '8px 10px',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        borderRadius: 6,
+                        border: sourceFilter === 'all' ? '1px solid var(--accent-blue)' : '1px solid var(--border-main)',
+                        background: sourceFilter === 'all' ? 'var(--accent-blue)14' : 'var(--bg-input)',
+                        color: sourceFilter === 'all' ? 'var(--accent-blue)' : 'var(--text-primary)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      All Sources
+                    </button>
+                    {SOURCE_TARGET_OPTIONS.map((option) => {
+                      const isSelected = sourceFilter === option.value;
+                      const shouldDim = sourceFilter !== 'all' && !isSelected;
+                      return (
+                        <button
+                          key={`source-${option.value}`}
+                          onClick={() => updateFilterOption('sourceFilter', option.value)}
+                          style={{
+                            textAlign: 'left',
+                            padding: '8px 10px',
+                            fontSize: 12,
+                            fontWeight: isSelected ? 600 : 500,
+                            borderRadius: 6,
+                            border: isSelected ? '1px solid var(--accent-blue)' : '1px solid var(--border-main)',
+                            background: isSelected ? 'var(--accent-blue)14' : 'var(--bg-input)',
+                            color: isSelected ? 'var(--accent-blue)' : shouldDim ? 'var(--text-tertiary)' : 'var(--text-primary)',
+                            opacity: shouldDim ? 0.45 : 1,
+                            filter: shouldDim ? 'grayscale(100%)' : 'none',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 {/* Target Filter */}
                 <div>
-                  <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Target</label>
-                  <select
-                    value={targetFilter}
-                    onChange={e => updateFilterOption('targetFilter', e.target.value)}
-                    style={{
-                      width: '100%', padding: '8px 10px', fontSize: 12, fontWeight: 500,
-                      background: 'var(--bg-input)', border: '1px solid var(--border-main)',
-                      borderRadius: 6, color: 'var(--text-primary)', outline: 'none',
-                      cursor: 'pointer', transition: 'all 0.2s',
-                    }}
-                  >
-                    <option value="all">All Targets</option>
-                     <option value="fabric">MS Fabric</option>
-                     <option value="snowflake">Snowflake</option>
-                     <option value="databricks">Databricks</option>
-                     <option value="postgresql">PostgreSQL</option>
-                     <option value="salesforce">Salesforce</option>
-                  </select>
+                  <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>
+                    Target (multi-select)
+                  </label>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {SOURCE_TARGET_OPTIONS.map((option) => {
+                      const active = targetFilters.includes(option.value);
+                      return (
+                        <button
+                          key={`target-${option.value}`}
+                          onClick={() => toggleTargetFilter(option.value)}
+                          style={{
+                            padding: '6px 10px',
+                            borderRadius: 999,
+                            fontSize: 11,
+                            fontWeight: 600,
+                            border: active ? '1px solid var(--accent-blue)' : '1px solid var(--border-main)',
+                            background: active ? 'var(--accent-blue)14' : 'var(--bg-main)',
+                            color: active ? 'var(--accent-blue)' : 'var(--text-primary)',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s',
+                          }}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 {/* Tag Filter */}
@@ -700,13 +775,14 @@ export default function ProjectsPage() {
                 )}
 
                 {/* Clear Filters */}
-                {(sourceFilter !== 'all' || targetFilter !== 'all' || tagFilters.size > 0) && (
+                {isAnyFilterActive && (
                   <div style={{ display: 'flex', alignItems: 'flex-end' }}>
                     <button
                       onClick={() => {
                         setFilterOptions({
                           sourceFilter: 'all',
                           targetFilter: 'all',
+                          targetFilters: [],
                           tagFilters: [],
                         });
                       }}
@@ -732,7 +808,7 @@ export default function ProjectsPage() {
         <div
           id="projects-grid-scroll"
           onScroll={(e) => setProjectListScrollTop(e.currentTarget.scrollTop)}
-          style={{ flex: 1, overflowY: 'auto', padding: '4px 28px 28px' }}
+          style={{ flex: 1, overflowY: 'auto', padding: '4px 0 28px' }}
         >
           {loading ? (
             <div style={{ padding: '80px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>

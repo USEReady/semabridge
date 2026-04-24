@@ -23,26 +23,26 @@ const SEVERITY_META = {
     info: {
         label: 'Info',
         icon: Info,
-        text: '#00d1ff',
-        dot: '#00d1ff',
-        bg: 'rgba(0, 209, 255, 0.12)',
-        border: 'rgba(0, 209, 255, 0.35)',
+        text: 'var(--accent-blue)',
+        dot: 'var(--accent-blue)',
+        bg: 'var(--color-accent-faint)',
+        border: 'var(--border-main)',
     },
     warning: {
         label: 'Warning',
         icon: AlertTriangle,
-        text: '#ffb800',
-        dot: '#ffb800',
-        bg: 'rgba(255, 184, 0, 0.12)',
-        border: 'rgba(255, 184, 0, 0.35)',
+        text: 'var(--color-warning)',
+        dot: 'var(--color-warning)',
+        bg: 'var(--color-warning-bg)',
+        border: 'var(--color-warning)',
     },
     error: {
         label: 'Error',
         icon: AlertCircle,
-        text: '#ff4d4d',
-        dot: '#ff4d4d',
-        bg: 'rgba(255, 77, 77, 0.12)',
-        border: 'rgba(255, 77, 77, 0.35)',
+        text: 'var(--color-error)',
+        dot: 'var(--color-error)',
+        bg: 'var(--color-error-bg)',
+        border: 'var(--color-error)',
     },
 };
 
@@ -244,8 +244,8 @@ export default function LogsPanel({ isOpen, onClose }) {
                             <Terminal size={22} color="#2563EB" />
                         </div>
                         <div>
-                            <h2 className="text-xl font-black leading-none" style={{ color: '#e1e1e6' }}>Logs & Activity</h2>
-                            <p className="text-[10px] font-bold uppercase tracking-widest mt-1" style={{ color: '#9497ad' }}>
+                            <h2 className="text-xl font-black leading-none text-primary">Logs & Activity</h2>
+                            <p className="text-[10px] font-bold uppercase tracking-widest mt-1 text-tertiary">
                                 Live System Feed
                             </p>
                         </div>
@@ -253,7 +253,7 @@ export default function LogsPanel({ isOpen, onClose }) {
 
                     <div className="flex items-center gap-3">
                         <div className="relative">
-                            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" color="#9497ad" />
+                            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-tertiary" />
                             <input
                                 type="text"
                                 value={searchQuery}
@@ -270,7 +270,7 @@ export default function LogsPanel({ isOpen, onClose }) {
                                 }}
                             />
                         </div>
-                        <button className="p-2 rounded-lg" onClick={onClose} style={{ color: '#9497ad' }} aria-label="Close logs panel">
+                        <button className="p-2 rounded-lg text-tertiary hover:text-primary transition-colors" onClick={onClose} aria-label="Close logs panel">
                             <X size={18} />
                         </button>
                     </div>
@@ -314,7 +314,7 @@ export default function LogsPanel({ isOpen, onClose }) {
 
                 <div className="flex-1 overflow-y-auto custom-scrollbar">
                     {pagedLogs.length === 0 ? (
-                        <div className="h-full min-h-[260px] grid place-items-center text-sm" style={{ color: '#9497ad' }}>
+                        <div className="h-full min-h-[260px] grid place-items-center text-sm text-tertiary">
                             No logs for current filter.
                         </div>
                     ) : (
@@ -324,10 +324,10 @@ export default function LogsPanel({ isOpen, onClose }) {
                                 style={{ background: 'var(--bg-surface-raised)', borderBottom: '1px solid var(--border-main)' }}
                             >
                                 <tr>
-                                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest" style={{ color: '#9497ad' }}>Timestamp</th>
-                                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest" style={{ color: '#9497ad' }}>Severity</th>
-                                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest" style={{ color: '#9497ad' }}>Origin</th>
-                                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest" style={{ color: '#9497ad' }}>Message</th>
+                                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-tertiary">Timestamp</th>
+                                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-tertiary">Severity</th>
+                                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-tertiary">Origin</th>
+                                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-tertiary">Message</th>
                                     <th className="px-6 py-4 w-10" />
                                 </tr>
                             </thead>
@@ -348,11 +348,11 @@ export default function LogsPanel({ isOpen, onClose }) {
                                                 }}
                                                 onClick={() => setExpandedId(isExpanded ? null : entry.id)}
                                             >
-                                                <td className="px-6 py-4 text-xs font-mono font-bold" style={{ color: '#a9acc2' }}>{entry.timestamp}</td>
+                                                <td className="px-6 py-4 text-xs font-mono font-bold text-tertiary">{entry.timestamp}</td>
                                                 <td className="px-6 py-4"><GeometricSeverityPill severity={severity} /></td>
-                                                <td className="px-6 py-4 text-xs font-mono font-bold" style={{ color: '#2563EB' }} title={sourceText}>{sourceBreadcrumb}</td>
-                                                <td className="px-6 py-4 text-sm font-medium" style={{ color: '#e1e1e6' }}>{String(entry.message || '')}</td>
-                                                <td className="px-6 py-4" style={{ color: '#9497ad' }}>
+                                                <td className="px-6 py-4 text-xs font-mono font-bold text-accent-blue" title={sourceText}>{sourceBreadcrumb}</td>
+                                                <td className="px-6 py-4 text-sm font-medium text-primary">{String(entry.message || '')}</td>
+                                                <td className="px-6 py-4 text-tertiary">
                                                     {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                                                 </td>
                                             </tr>
@@ -362,7 +362,7 @@ export default function LogsPanel({ isOpen, onClose }) {
                                                     <td colSpan={5} className="px-6 pb-5">
                                                         <div className="rounded-lg p-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-main)' }}>
                                                             <div className="flex items-center justify-between pb-3 mb-3" style={{ borderBottom: '1px solid var(--border-main)' }}>
-                                                                <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: '#9497ad' }}>
+                                                                <span className="text-[10px] font-black uppercase tracking-widest text-tertiary">
                                                                     Extended Metadata
                                                                 </span>
                                                                 <div className="flex items-center gap-2">
@@ -413,7 +413,7 @@ export default function LogsPanel({ isOpen, onClose }) {
                     className="px-6 py-4 flex items-center justify-between border-t"
                     style={{ borderColor: 'var(--border-main)', background: 'var(--bg-surface-raised)' }}
                 >
-                    <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: '#9497ad' }}>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-tertiary">
                         Entry Range: {filteredLogs.length === 0 ? '0-0' : `${pageStart + 1}-${Math.min(pageStart + PAGE_SIZE, filteredLogs.length)}`} / {filteredLogs.length}
                     </p>
 
@@ -436,7 +436,7 @@ export default function LogsPanel({ isOpen, onClose }) {
                         >
                             <ChevronLeft size={16} />
                         </button>
-                        <span className="text-xs font-bold px-2" style={{ color: '#e1e1e6' }}>
+                        <span className="text-xs font-bold px-2 text-primary">
                             {clampedPage} / {totalPages}
                         </span>
                         <button
