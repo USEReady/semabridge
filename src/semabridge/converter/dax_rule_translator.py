@@ -298,11 +298,14 @@ def translate_direct_agg(dax: str, table_alias: str, match: re.Match) -> Optiona
         # Build column reference - use table alias and uppercase column name
         col_ref = f"{table_alias}.{_quote_identifier(col_name)}"
         
+        # Snowflake: cast to FLOAT for SUM/AVG to handle BOOLEAN columns safely
+        cast = "::FLOAT" if func_name in ("SUM", "AVERAGE", "AVERAGEX", "AVG") else ""
+        
         # Handle DISTINCTCOUNT specially
         if sql_func == 'COUNT(DISTINCT':
             return f"COUNT(DISTINCT {col_ref})"
         else:
-            return f"{sql_func}({col_ref})"
+            return f"{sql_func}({col_ref}{cast})"
     
     except Exception as e:
         logger.error(f"Error translating direct aggregation: {e}")

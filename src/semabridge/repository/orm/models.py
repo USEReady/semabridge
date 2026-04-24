@@ -359,6 +359,7 @@ class SnapshotRow(Base):
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     initiated_by: Mapped[str] = mapped_column(String(20), nullable=False, default="cli")
     run_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
 
     # Relationships
     project: Mapped["Project"] = relationship(back_populates="snapshots")
@@ -421,6 +422,11 @@ class Run(Base):
     target_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    run_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    before_src_snapshot_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    restore_snapshot_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    before_target_snapshot_ids: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    after_target_snapshot_ids: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relationships
     project: Mapped["Project"] = relationship(back_populates="runs")
@@ -484,6 +490,7 @@ class ModelVersion(Base):
     rollback_from_version: Mapped[Optional[str]] = mapped_column(
         String(36), nullable=True
     )
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
 
     def __repr__(self) -> str:
         return (

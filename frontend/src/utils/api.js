@@ -1005,7 +1005,12 @@ export const api = {
 
     async getProjectRuns(projectId) {
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/runs`);
-        return handleResponse(res);
+        const runs = await handleResponse(res);
+        return (Array.isArray(runs) ? runs : []).map(run => ({
+            ...run,
+            before_tgt_snapshots: run.before_target_snapshot_ids || [],
+            after_tgt_snapshots: run.after_target_snapshot_ids || run.after_tgt_snapshots || [],
+        }));
     },
 
     async runProjectNow(projectId, payload = null) {
@@ -1072,6 +1077,15 @@ export const api = {
         if (options.max_changes) params.set('max_changes', String(options.max_changes));
         if (options.include_states) params.set('include_states', 'true');
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots/compare?${params.toString()}`);
+        return handleResponse(res);
+    },
+
+    async deleteModelVersions(projectId, snapshotIds) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(snapshotIds),
+        });
         return handleResponse(res);
     },
 

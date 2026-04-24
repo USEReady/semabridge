@@ -57,12 +57,7 @@ def _apply_schema_compatibility_fixes() -> None:
     engine = get_engine()
     inspector = inspect(engine)
 
-    if "accounts" not in set(inspector.get_table_names()):
-        return
-
-    existing_columns = {col["name"] for col in inspector.get_columns("accounts")}
     dialect = engine.dialect.name
-
     if dialect == "postgresql":
         expires_type = "TIMESTAMP WITH TIME ZONE"
     elif dialect == "duckdb":
@@ -72,16 +67,19 @@ def _apply_schema_compatibility_fixes() -> None:
         expires_type = "TIMESTAMP"
 
     pending_alters: list[str] = []
-    if "refresh_token" not in existing_columns:
-        pending_alters.append("ALTER TABLE accounts ADD COLUMN refresh_token TEXT")
-    if "token_expires_at" not in existing_columns:
-        pending_alters.append(
-            f"ALTER TABLE accounts ADD COLUMN token_expires_at {expires_type}"
-        )
-    if "auth_type" not in existing_columns:
-        pending_alters.append("ALTER TABLE accounts ADD COLUMN auth_type VARCHAR(50)")
-    if "owner_id" not in existing_columns:
-        pending_alters.append("ALTER TABLE accounts ADD COLUMN owner_id INTEGER")
+
+    if "accounts" in set(inspector.get_table_names()):
+        existing_columns = {col["name"] for col in inspector.get_columns("accounts")}
+        if "refresh_token" not in existing_columns:
+            pending_alters.append("ALTER TABLE accounts ADD COLUMN refresh_token TEXT")
+        if "token_expires_at" not in existing_columns:
+            pending_alters.append(
+                f"ALTER TABLE accounts ADD COLUMN token_expires_at {expires_type}"
+            )
+        if "auth_type" not in existing_columns:
+            pending_alters.append("ALTER TABLE accounts ADD COLUMN auth_type VARCHAR(50)")
+        if "owner_id" not in existing_columns:
+            pending_alters.append("ALTER TABLE accounts ADD COLUMN owner_id INTEGER")
 
     if "projects" in set(inspector.get_table_names()):
         project_columns = {col["name"] for col in inspector.get_columns("projects")}
@@ -94,6 +92,24 @@ def _apply_schema_compatibility_fixes() -> None:
                 pending_alters.append("ALTER TABLE projects ADD COLUMN account_id TEXT")
         if "connection_tag" not in project_columns:
             pending_alters.append("ALTER TABLE projects ADD COLUMN connection_tag VARCHAR(255)")
+
+    if "snapshots" in set(inspector.get_table_names()):
+        snapshot_columns = {col["name"] for col in inspector.get_columns("snapshots")}
+        if "deleted_at" not in snapshot_columns:
+            pending_alters.append(f"ALTER TABLE snapshots ADD COLUMN deleted_at {expires_type}")
+
+    if "runs" in set(inspector.get_table_names()):
+        run_columns = {col["name"] for col in inspector.get_columns("runs")}
+        if "run_type" not in run_columns:
+            pending_alters.append("ALTER TABLE runs ADD COLUMN run_type VARCHAR(50)")
+        if "before_src_snapshot_id" not in run_columns:
+            pending_alters.append("ALTER TABLE runs ADD COLUMN before_src_snapshot_id VARCHAR(36)")
+        if "restore_snapshot_id" not in run_columns:
+            pending_alters.append("ALTER TABLE runs ADD COLUMN restore_snapshot_id VARCHAR(36)")
+        if "before_target_snapshot_ids" not in run_columns:
+            pending_alters.append("ALTER TABLE runs ADD COLUMN before_target_snapshot_ids TEXT")
+        if "after_target_snapshot_ids" not in run_columns:
+            pending_alters.append("ALTER TABLE runs ADD COLUMN after_target_snapshot_ids TEXT")
 
     if not pending_alters and dialect != "postgresql":
         return

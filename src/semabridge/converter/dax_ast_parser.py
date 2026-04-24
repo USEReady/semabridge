@@ -715,9 +715,13 @@ class DaxSqlRenderer:
     def _render_aggregation(self, func: str, arg: DaxNode) -> str:
         col_sql = self._render_node(arg)
         template = self._AGG_MAP[func]
+        
+        # Snowflake: cast to FLOAT for SUM/AVG to handle BOOLEAN columns safely
+        cast = "::FLOAT" if func in ("SUM", "AVERAGE", "AVERAGEX", "AVG") else ""
+        
         if "{col}" in template:
-            return template.format(col=col_sql)
-        return f"{template}({col_sql})"
+            return template.format(col=f"{col_sql}{cast}")
+        return f"{template}({col_sql}{cast})"
 
     def _render_divide(self, args: List[DaxNode]) -> str:
         if len(args) < 2:

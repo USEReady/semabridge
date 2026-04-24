@@ -75,6 +75,7 @@ from semabridge.api.services.project_runs_impl import (
     trigger_job_compat,
     update_jobs_config_compat,
     update_mapping_compat,
+    delete_project_snapshots_compat,
 )
 from semabridge.api.services.project_versioning_impl import (
     compare_model_versions,

@@ -215,10 +215,13 @@ class DeterministicSQLGenerator:
         sql_func = self.FUNCTION_MAP[func]
         col_ref = f"{table_alias}.{schema_col}"
         
+        # Snowflake: cast to FLOAT for SUM/AVG to handle BOOLEAN columns safely
+        cast = "::FLOAT" if func in ("SUM", "AVERAGE", "AVERAGEX", "AVG") else ""
+        
         if sql_func == 'COUNT(DISTINCT':
             sql = f"COUNT(DISTINCT {col_ref})"
         else:
-            sql = f"{sql_func}({col_ref})"
+            sql = f"{sql_func}({col_ref}{cast})"
         
         logger.debug(f"Generated aggregation SQL: {sql}")
         return sql
@@ -409,10 +412,13 @@ class DeterministicSQLGenerator:
         sql_func = self.FUNCTION_MAP.get(func, func)
         col_ref = f"{table_alias}.{schema_col}"
         
+        # Snowflake: cast to FLOAT for SUM/AVG to handle BOOLEAN columns safely
+        cast = "::FLOAT" if func in ("SUM", "AVERAGE", "AVERAGEX", "AVG") else ""
+        
         if sql_func == 'COUNT(DISTINCT':
             return f"COUNT(DISTINCT {col_ref})"
         else:
-            return f"{sql_func}({col_ref})"
+            return f"{sql_func}({col_ref}{cast})"
     
     def _translate_filter(self, filter_expr: str, context: ColumnMappingContext,
                          table_alias: str) -> Optional[str]:

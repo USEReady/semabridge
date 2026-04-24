@@ -409,8 +409,10 @@ class SnowflakeEmitter(BaseEmitter):
             if known_cols and col_name not in known_cols:
                 return None
 
+            if agg == "SUM":
+                return f'SUM({table_alias}."{col_name}"::FLOAT)'
             if agg == "AVERAGE":
-                return f'AVG({table_alias}."{col_name}")'
+                return f'AVG({table_alias}."{col_name}"::FLOAT)'
             if agg == "DISTINCTCOUNT":
                 return f'COUNT(DISTINCT {table_alias}."{col_name}")'
             return f'{agg}({table_alias}."{col_name}")'
@@ -440,7 +442,7 @@ class SnowflakeEmitter(BaseEmitter):
                     order_col = self._resolve_ytd_order_column(known_cols)
                     if year_col and order_col:
                         return (
-                            f'SUM({table_alias}."{ref_metric_name}") OVER '
+                            f'SUM({table_alias}."{ref_metric_name}"::FLOAT) OVER '
                             f'(PARTITION BY {table_alias}."{year_col}" '
                             f'ORDER BY {table_alias}."{order_col}")'
                         )
@@ -456,7 +458,15 @@ class SnowflakeEmitter(BaseEmitter):
                     metrics_context=list(model.metrics),
                 )
                 if translated.is_success and translated.sql:
-                    return translated.sql
+                    # Snowflake: ensure SUM/AVG are cast to ::FLOAT for boolean column safety.
+                    # This acts as a safety net for any translator (AST, LLM) that might have missed it.
+                    final_sql = re.sub(
+                        r'\b(SUM|AVG)\s*\(([^)]+?)\)(?!\s*::FLOAT)',
+                        r'\1(\2::FLOAT)',
+                        translated.sql,
+                        flags=re.IGNORECASE
+                    )
+                    return final_sql
             except Exception as exc:
                 logger.debug(
                     "Deterministic DAX translation fallback failed for metric '%s': %s",
@@ -503,8 +513,12 @@ class SnowflakeEmitter(BaseEmitter):
             if year_col:
                 date_ref = f'{table_alias}."{date_col}"'
                 partition_expr = f'{table_alias}."{year_col}"'
+                
+                # Snowflake: cast to FLOAT for SUM/AVG to handle BOOLEAN columns safely
+                cast = "::FLOAT" if agg in ("SUM", "AVERAGE") else ""
+                
                 return (
-                    f'{sql_agg}({table_alias}."{value_col}") OVER ('
+                    f'{sql_agg}({table_alias}."{value_col}"{cast}) OVER ('
                     f'PARTITION BY {partition_expr} '
                     f'ORDER BY {date_ref} '
                     'ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)'
@@ -581,8 +595,11 @@ class SnowflakeEmitter(BaseEmitter):
             month_ref = f'{table_alias}."{month_col}"'
             year_ref = f'{table_alias}."{year_col}"'
             
+            # Snowflake: cast to FLOAT for SUM/AVG to handle BOOLEAN columns safely
+            cast = "::FLOAT" if agg in ("SUM", "AVERAGE") else ""
+            
             return (
-                f'LAG({sql_agg}({table_alias}."{value_col}"), 12) OVER ('
+                f'LAG({sql_agg}({table_alias}."{value_col}"{cast}), 12) OVER ('
                 f'PARTITION BY {month_ref} '
                 f'ORDER BY {year_ref}, {month_ref}'
                 ')'
