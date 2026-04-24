@@ -512,7 +512,14 @@ def _create_project_run(
 
     started = _time.time()
     run_id = f"run-{int(_time.time() * 1000)}"
-    project_cfg = project_cfg_override or _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(_compat_projects[project_id])
+    modular_bundle = _compat_load_modular_project(project_id)
+    project_cfg = (
+        project_cfg_override
+        or (str(modular_bundle.get("config_yaml") or "") if modular_bundle else "")
+        or _compat_project_configs.get(project_id)
+        or _compat_load_repo_yaml_text()
+        or _compat_default_project_yaml(_compat_projects[project_id])
+    )
     run = {
         "run_id": run_id,
         "id": run_id,
@@ -612,6 +619,7 @@ async def restore_project_version_compat(project_id: str, payload: Dict[str, Any
 
 
 async def run_project_now_compat(project_id: str, background_tasks: BackgroundTasks, payload: Optional[Dict[str, Any]] = None):
+    _compat_ensure_loaded()
     if bool((payload or {}).get("dry_run", False)):
         preview_payload = dict(payload or {})
         preview_payload["project_id"] = project_id
@@ -630,7 +638,13 @@ async def run_project_now_compat(project_id: str, background_tasks: BackgroundTa
     restore_snapshot_id = str((payload or {}).get("restore_snapshot_id") or "").strip() or None
     config_override = None
     if run_type == "SYNC":
-        base_cfg = _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(_compat_projects.get(project_id, {}))
+        modular_bundle = _compat_load_modular_project(project_id)
+        base_cfg = (
+            (str(modular_bundle.get("config_yaml") or "") if modular_bundle else "")
+            or _compat_project_configs.get(project_id)
+            or _compat_load_repo_yaml_text()
+            or _compat_default_project_yaml(_compat_projects.get(project_id, {}))
+        )
         config_override = _compat_apply_manual_mapping_overrides_to_cfg(base_cfg, project_id)
         _compat_project_configs[project_id] = config_override
     run, project_cfg, started = _create_project_run(

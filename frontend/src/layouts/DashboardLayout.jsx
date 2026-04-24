@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   Map, FolderOpen, PlayCircle, Settings, GitBranch,
-  Hexagon, LogOut, ChevronLeft, ChevronRight, Bell,
+  Hexagon, LogOut, ChevronLeft, ChevronRight, Bell, Split,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import ThemeToggle from '../components/ThemeToggle';
@@ -58,7 +58,6 @@ export default function DashboardLayout() {
   const [search, setSearch] = useState('');
   const [searchUseRegex, setSearchUseRegex] = useState(false);
 
-<<<<<<< HEAD
   const NAV_ITEMS = [
     { to: '/projects',      label: 'Projects',        icon: FolderOpen },
     { to: '/jobs',          label: 'Runs',            icon: PlayCircle },
@@ -68,8 +67,6 @@ export default function DashboardLayout() {
     { to: '/settings',      label: 'Settings',        icon: Settings },
   ];
 
-=======
->>>>>>> dev
   // Overlay panel toggles
   const [showLogs, setShowLogs] = useState(false);
   const [showVersionControl, setShowVersionControl] = useState(false);

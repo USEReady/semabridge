@@ -102,8 +102,16 @@ def _log_model_console_trace(result: Dict[str, Any]) -> None:
 
 
 def _load_config(payload: Dict[str, Any], normalize_yaml_windows_path_fields) -> tuple[str, Dict[str, Any]]:
-    from semabridge.core.config_loader import get_default_config_path, load_yaml_file
+    from semabridge.core.config_loader import get_default_config_path, load_yaml_file, get_config
     import yaml
+    
+    project_id = payload.get("project_id")
+    if project_id:
+        try:
+            config = get_config(project_id)
+            return f"config/projects/{project_id}.yaml", config
+        except Exception as e:
+            logger.warning(f"Modular project config failed, falling back: {e}")
 
     config_path = get_default_config_path() or ""
     content = payload.get("content")

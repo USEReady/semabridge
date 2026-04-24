@@ -64,11 +64,7 @@ function renderConnectorIcon(connectorId, size = 18) {
 }
 
 export default function SettingsPage() {
-<<<<<<< HEAD
-
-=======
   const navigate = useNavigate();
->>>>>>> dev
   const [env, setEnv] = useState('Dev');
   
   // Timezone state
@@ -382,11 +378,7 @@ export default function SettingsPage() {
         <ConfigEditor />
       </div>
 
-<<<<<<< HEAD
-
-=======
       {/* Local Folder Management */}
->>>>>>> dev
       <div className="mb-8">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
           <div>

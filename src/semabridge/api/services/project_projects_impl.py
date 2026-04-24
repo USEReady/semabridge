@@ -4,9 +4,36 @@ async def list_projects_compat():
     """Compatibility: newfrontend expects a projects collection."""
     _compat_ensure_loaded()
     deduped: Dict[str, Dict[str, Any]] = {}
+    
+    # Load modular projects from config/projects
+    from pathlib import Path
+    projects_dir = Path("config/projects")
+    if projects_dir.exists() and projects_dir.is_dir():
+        for file_path in projects_dir.glob("*.yaml"):
+            pid = file_path.stem
+            try:
+                import yaml
+                with open(file_path, "r", encoding="utf-8") as f:
+                    project_cfg = yaml.safe_load(f) or {}
+                
+                meta = project_cfg.get("project_metadata", {})
+                source = project_cfg.get("source", {})
+                target = project_cfg.get("target", {})
+                
+                deduped[pid] = {
+                    "id": pid,
+                    "project_id": pid,
+                    "name": meta.get("name") or pid,
+                    "source": source.get("type", "fabric"),
+                    "target_type": target.get("type", "snowflake"),
+                    "workspace_id": source.get("workspace_id", ""),
+                }
+            except Exception as e:
+                logger.warning(f"Failed to load project config {file_path}: {e}")
+
     for p in _compat_projects.values():
         pid = str(p.get("id") or p.get("project_id") or "").strip()
-        if not pid:
+        if not pid or pid in deduped:
             continue
         
         # Filter out auto-generated test projects

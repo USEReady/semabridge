@@ -21,6 +21,7 @@ import ModelMappingPage from './pages/ModelMappingPage';
 import SettingsPage    from './pages/SettingsPage';
 import GlobalConfigPage from './pages/GlobalConfigPage';
 import ProjectDetailPage from './pages/ProjectDetailPage';
+import ComparatorPage from './pages/ComparatorPage';
 
 /**
  * Auth gate — shows loading spinner while auth bootstrap resolves.
@@ -123,6 +124,7 @@ export default function App() {
           <Route path="/projects/:id/config" element={<ProjectConfigPage />} />
           <Route path="/jobs"          element={<ProjectJobsPage />} />
           <Route path="/model-mapping" element={<ModelMappingPage />} />
+          <Route path="/comparator"    element={<ComparatorPage />} />
           <Route path="/settings"      element={<SettingsPage />} />
           <Route path="/global-config" element={<GlobalConfigPage />} />
         </Route>

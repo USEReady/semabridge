@@ -295,6 +295,34 @@ def load_and_merge_configs(
     return merged, loaded_paths
 
 
+def get_config(project_id: str) -> Dict[str, Any]:
+    """
+    Load a modular project configuration and its mapping profile.
+    """
+    # 1. Load the Project file
+    project_path = Path("config/projects") / f"{project_id}.yaml"
+    if not project_path.exists():
+        raise ConfigLoadError(f"Project config not found: {project_path}")
+    
+    with open(project_path, "r", encoding="utf-8") as f:
+        project_cfg = yaml.safe_load(f) or {}
+    
+    # 2. Find the profile name from the project file
+    profile_name = project_cfg.get("mapping_profile")
+    if not profile_name:
+        raise ConfigLoadError(f"No mapping_profile specified in {project_path}")
+    
+    # 3. Load the Mapping Profile
+    profile_path = Path("config/profiles") / f"{profile_name}.yaml"
+    if not profile_path.exists():
+        raise ConfigLoadError(f"Profile config not found: {profile_path}")
+        
+    with open(profile_path, "r", encoding="utf-8") as f:
+        mapping_cfg = yaml.safe_load(f) or {}
+    
+    # 4. Merge them into one dictionary for the app to use
+    full_config = {**project_cfg, "mappings": mapping_cfg}
+    return full_config
 def get_default_config_path() -> Optional[Path]:
     """
     Get the default configuration file path.

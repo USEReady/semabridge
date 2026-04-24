@@ -255,6 +255,197 @@ def _compat_store_path() -> Path:
     return p
 
 
+def _compat_config_root() -> Path:
+    """
+    Resolve repository config root while staying compatible with both
+    `config/` and `Config/` casing used across environments.
+    """
+    lower = Path("config")
+    upper = Path("Config")
+    if lower.exists():
+        return lower
+    if upper.exists():
+        return upper
+    return upper
+
+
+def _compat_projects_dir() -> Path:
+    return _compat_config_root() / "projects"
+
+
+def _compat_profiles_dir() -> Path:
+    return _compat_config_root() / "profiles"
+
+
+def _compat_profile_to_mappings(profile_cfg: Dict[str, Any]) -> tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
+    mappings: List[Dict[str, Any]] = []
+    overrides: List[Dict[str, str]] = []
+    tables = profile_cfg.get("tables") if isinstance(profile_cfg.get("tables"), list) else []
+    for table in tables:
+        if not isinstance(table, dict):
+            continue
+        source_name = str(table.get("source_name") or table.get("src") or "").strip()
+        target_name = str(table.get("target_name") or table.get("tgt") or "").strip()
+        if not source_name:
+            continue
+        row = {
+            "source": source_name,
+            "target": target_name or source_name,
+            "type": "table",
+            "columns": [],
+        }
+        row_columns: List[Dict[str, Any]] = []
+        for col in table.get("columns") if isinstance(table.get("columns"), list) else []:
+            if not isinstance(col, dict):
+                continue
+            src = str(col.get("source") or col.get("src") or "").strip()
+            if not src:
+                continue
+            mapped_col: Dict[str, Any] = {
+                "source": src,
+                "target": str(col.get("target") or col.get("tgt") or src).strip() or src,
+            }
+            col_type = str(col.get("type") or "").strip()
+            if col_type:
+                mapped_col["type"] = col_type
+            if bool(col.get("primary_key") or col.get("pk")):
+                mapped_col["primary_key"] = True
+            row_columns.append(mapped_col)
+            overrides.append({
+                "source_path": f"datasets.{source_name}.columns.{src}",
+                "target_name": mapped_col["target"],
+                "entity_kind": "column",
+                "source_name": src,
+            })
+        row["columns"] = row_columns
+        mappings.append(row)
+        overrides.append({
+            "source_path": f"datasets.{source_name}",
+            "target_name": row["target"],
+            "entity_kind": "table",
+            "source_name": source_name,
+        })
+    return mappings, overrides
+
+
+def _compat_assembled_project_config(project_id: str, project_cfg: Dict[str, Any], profile_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    source_cfg = project_cfg.get("source") if isinstance(project_cfg.get("source"), dict) else {}
+    target_cfg = project_cfg.get("target") if isinstance(project_cfg.get("target"), dict) else {}
+    metadata = project_cfg.get("project_metadata") if isinstance(project_cfg.get("project_metadata"), dict) else {}
+    mappings, overrides = _compat_profile_to_mappings(profile_cfg)
+    model_names = source_cfg.get("models") if isinstance(source_cfg.get("models"), list) else []
+
+    assembled: Dict[str, Any] = {
+        "project_name": str(metadata.get("name") or project_cfg.get("project_name") or project_id),
+        "source": source_cfg,
+        "target": target_cfg,
+        "targets": [target_cfg] if target_cfg else [],
+        "mappings": mappings,
+        "mappings_overrides": overrides,
+        "project_metadata": metadata,
+        "mapping_profile": str(project_cfg.get("mapping_profile") or profile_cfg.get("profile_name") or ""),
+        "ui": {
+            "intermediate_format": "osi",
+            "editor_mode": "form",
+            "output_format": "osi",
+        },
+        "options": {
+            "auto_relationships": True,
+            "generate_descriptions": True,
+        },
+    }
+    if model_names:
+        assembled["source"]["models"] = model_names
+    return assembled
+
+
+def _compat_load_modular_project(project_id: str) -> Optional[Dict[str, Any]]:
+    project_file = _compat_projects_dir() / f"{project_id}.yaml"
+    if not project_file.exists():
+        yml_variant = _compat_projects_dir() / f"{project_id}.yml"
+        if yml_variant.exists():
+            project_file = yml_variant
+        else:
+            return None
+
+    try:
+        project_cfg = yaml.safe_load(project_file.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        logger.warning("Failed to parse modular project %s: %s", project_file, exc)
+        return None
+    if not isinstance(project_cfg, dict):
+        return None
+
+    profile_name = str(project_cfg.get("mapping_profile") or "").strip()
+    profile_cfg: Dict[str, Any] = {"profile_name": profile_name, "tables": []}
+    profile_file: Optional[Path] = None
+    if profile_name:
+        candidate_yaml = _compat_profiles_dir() / f"{profile_name}.yaml"
+        candidate_yml = _compat_profiles_dir() / f"{profile_name}.yml"
+        profile_file = candidate_yaml if candidate_yaml.exists() else candidate_yml if candidate_yml.exists() else None
+        if profile_file and profile_file.exists():
+            try:
+                parsed_profile = yaml.safe_load(profile_file.read_text(encoding="utf-8")) or {}
+                if isinstance(parsed_profile, dict):
+                    profile_cfg = parsed_profile
+            except Exception as exc:
+                logger.warning("Failed to parse mapping profile %s: %s", profile_file, exc)
+
+    assembled = _compat_assembled_project_config(project_id, project_cfg, profile_cfg)
+    config_yaml = yaml.safe_dump(assembled, sort_keys=False, allow_unicode=False)
+    return {
+        "project_id": project_id,
+        "project_file": project_file,
+        "profile_file": profile_file,
+        "project_cfg": project_cfg,
+        "profile_cfg": profile_cfg,
+        "assembled": assembled,
+        "config_yaml": config_yaml,
+    }
+
+
+def _compat_bootstrap_projects_from_modular_configs() -> None:
+    projects_dir = _compat_projects_dir()
+    if not projects_dir.exists():
+        return
+
+    for path in sorted(projects_dir.glob("*.y*ml")):
+        project_id = path.stem.strip()
+        if not project_id:
+            continue
+        bundle = _compat_load_modular_project(project_id)
+        if not bundle:
+            continue
+
+        assembled = bundle["assembled"]
+        source_cfg = assembled.get("source") if isinstance(assembled.get("source"), dict) else {}
+        target_cfg = assembled.get("target") if isinstance(assembled.get("target"), dict) else {}
+        metadata = assembled.get("project_metadata") if isinstance(assembled.get("project_metadata"), dict) else {}
+
+        existing = _compat_projects.get(project_id) if isinstance(_compat_projects.get(project_id), dict) else {}
+        project = {
+            "id": project_id,
+            "project_id": project_id,
+            "name": _compat_clean_project_name(metadata.get("name") or assembled.get("project_name"), f"Project {project_id[-6:]}"),
+            "description": str(metadata.get("description") or existing.get("description") or ""),
+            "source": source_cfg.get("type") or existing.get("source") or "fabric",
+            "adapter": source_cfg.get("type") or existing.get("adapter") or "fabric",
+            "workspace_id": str(source_cfg.get("workspace_id") or existing.get("workspace_id") or ""),
+            "target_type": target_cfg.get("type") or existing.get("target_type") or "snowflake",
+            "folder_id": existing.get("folder_id"),
+            "status": existing.get("status") or "draft",
+            "mapping_profile": assembled.get("mapping_profile") or "",
+            "config_source": "modular",
+            "created_at": existing.get("created_at") or _compat_now_iso(),
+            "updated_at": _compat_now_iso(),
+        }
+        _compat_projects[project_id] = project
+        _compat_project_configs[project_id] = str(bundle.get("config_yaml") or "").strip()
+        _compat_project_runs.setdefault(project_id, [])
+        _compat_project_snapshots.setdefault(project_id, [])
+        _compat_snapshot_groups.setdefault(project_id, [])
+
+
 def _compat_save_store() -> None:
     payload = {
         "projects": _compat_projects,
@@ -405,6 +596,7 @@ def _compat_bootstrap_project_from_repo_yaml() -> None:
 
 def _compat_ensure_loaded() -> None:
     _compat_load_store()
+    _compat_bootstrap_projects_from_modular_configs()
     _compat_bootstrap_projects_from_orm()
     _compat_bootstrap_project_from_repo_yaml()
 
