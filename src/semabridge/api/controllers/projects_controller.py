@@ -18,6 +18,8 @@ from semabridge.api.services.project_runs_service import (
     restore_project_version_compat,
     get_project_runs_compat,
     delete_project_snapshots_compat,
+    apply_project_retention_policy,
+    get_project_storage_stats,
 )
 
 router = APIRouter()
@@ -37,3 +39,11 @@ router.post('/api/projects/{project_id}/snapshots/capture')(capture_manual_snaps
 router.get('/api/projects/{project_id}/snapshots/compare')(compare_project_snapshots_compat)
 router.post('/api/projects/{project_id}/restore-version')(restore_project_version_compat)
 router.get('/api/projects/{project_id}/runs')(get_project_runs_compat)
+
+@router.get('/api/projects/{project_id}/vc/stats')
+async def get_project_vc_stats(project_id: str):
+    return await get_project_storage_stats(project_id)
+
+@router.post('/api/projects/{project_id}/vc/retention')
+async def run_project_retention(project_id: str, days: int = 30):
+    return await apply_project_retention_policy(project_id, days)

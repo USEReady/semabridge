@@ -1,6 +1,8 @@
+import json
+import yaml
+from typing import Dict, List, Any, Optional
 import time as _time
 import uuid
-import json
 
 from semabridge.api.services.project_shared import *
 from semabridge.api.services.project_shared import (
@@ -122,27 +124,43 @@ def _compat_connector_descriptors(project_cfg: str) -> Dict[str, Any]:
 
 def _compat_latest_sml_state(project_id: str, preferred_snapshot_id: str = "") -> Dict[str, Any]:
     sid = str(preferred_snapshot_id or "").strip()
+    logger.debug("VC: Resolving latest state for %s (pref: %s)", project_id, sid)
+    
     if sid:
         try:
             snap = db_manager.get_snapshot(sid)
-            if snap and isinstance(getattr(snap, "sml_blob", None), dict):
-                return snap.sml_blob
-        except Exception:
-            pass
+            if snap:
+                # Some snapshots use .sml_blob, others .content or .blob
+                blob = getattr(snap, "sml_blob", None) or getattr(snap, "content", None) or getattr(snap, "blob", None)
+                if isinstance(blob, dict):
+                    return blob
+                elif isinstance(blob, str):
+                    try:
+                        return json.loads(blob)
+                    except:
+                        pass
+        except Exception as exc:
+            logger.debug("VC: Failed to get snapshot %s: %s", sid, exc)
 
+    # Fallback to scanning project runs for ANY snapshot ID
     for run in _compat_project_runs.get(project_id, []):
         if not isinstance(run, dict):
             continue
-        summary = run.get("summary") if isinstance(run.get("summary"), dict) else {}
-        sid = str(summary.get("sml_snapshot_id") or "").strip()
+        summary = run.get("summary") or {}
+        # Try multiple potential keys for snapshot ID
+        sid = str(summary.get("sml_snapshot_id") or summary.get("snapshot_id") or run.get("after_src_snapshot_id") or "").strip()
         if not sid:
             continue
         try:
             snap = db_manager.get_snapshot(sid)
-            if snap and isinstance(getattr(snap, "sml_blob", None), dict):
-                return snap.sml_blob
+            if snap:
+                blob = getattr(snap, "sml_blob", None) or getattr(snap, "content", None) or getattr(snap, "blob", None)
+                if isinstance(blob, dict):
+                    return blob
         except Exception:
             continue
+            
+    logger.warning("VC: Could not find any valid state blob for project %s", project_id)
     return {}
 
 
@@ -189,40 +207,37 @@ def _compat_capture_snapshots_for_run(
     selected_format = _compat_selected_intermediate_format(project_cfg)
     connector_descriptors = _compat_connector_descriptors(project_cfg)
     state_blob = _compat_state_in_selected_format(_compat_latest_sml_state(project_id, preferred_snapshot_id), selected_format)
+    logger.info("VC: Captured state for %s (%s format), size: %d keys", project_id, selected_format, len(state_blob.get("datasets") or state_blob.get("models") or []))
     run_id = str(run.get("run_id") or run.get("id") or "")
     origin = "RUN_BEFORE" if stage == "before" else "RUN_AFTER"
     timing = "before" if stage == "before" else "after"
     group_id = _compat_create_snapshot_group(project_id, "system", f"{origin.lower()}-{run_id[:8]}", origin, run_id)
 
-    if timing == "before":
-        source_row = {
-            "snapshot_id": f"psnap-{uuid.uuid4().hex}",
-            "project_id": project_id,
-            "run_id": run_id,
-            "stage": stage,
-            "role": "source",
-            "timing": timing,
-            "target_index": None,
-            "target_id": None,
-            "connector": connector_descriptors["source"].get("connector_type"),
-            "intermediate_format": selected_format,
-            "state": state_blob,
-            "snapshot_origin": origin,
-            "snapshot_group_id": group_id,
-            "system_role": "SOURCE",
-            "connector_type": connector_descriptors["source"].get("connector_type"),
-            "connector_identifier": connector_descriptors["source"].get("connector_identifier"),
-            "format_type": selected_format.upper(),
-            "artifact": state_blob,
-            "version_metadata": _compat_version_metadata(),
-            "project_config_yaml": project_cfg,
-            "created_at": _compat_now_iso(),
-        }
-        _compat_project_snapshots[project_id].insert(0, source_row)
-        run[f"{stage}_src_snapshot_id"] = source_row["snapshot_id"]
-    else:
-        # Source is read-only after sync. No after_src_snapshot_id.
-        pass
+    source_row = {
+        "snapshot_id": f"psnap-{uuid.uuid4().hex}",
+        "project_id": project_id,
+        "run_id": run_id,
+        "stage": stage,
+        "role": "source",
+        "timing": timing,
+        "target_index": None,
+        "target_id": None,
+        "connector": connector_descriptors["source"].get("connector_type"),
+        "intermediate_format": selected_format,
+        "state": state_blob,
+        "snapshot_origin": origin,
+        "snapshot_group_id": group_id,
+        "system_role": "SOURCE",
+        "connector_type": connector_descriptors["source"].get("connector_type"),
+        "connector_identifier": connector_descriptors["source"].get("connector_identifier"),
+        "format_type": selected_format.upper(),
+        "artifact": state_blob,
+        "version_metadata": _compat_version_metadata(),
+        "project_config_yaml": project_cfg,
+        "created_at": _compat_now_iso(),
+    }
+    _compat_project_snapshots[project_id].insert(0, source_row)
+    run[f"{stage}_src_snapshot_id"] = source_row["snapshot_id"]
 
     target_ids: List[str] = []
     for idx, target_descriptor in enumerate(connector_descriptors.get("targets") or []):
@@ -270,32 +285,96 @@ def _compat_apply_restore_overrides(config_yaml: str, overrides: Dict[str, Any])
 
 
 def _compat_diff_states(left: Any, right: Any, *, max_changes: int = 200) -> Dict[str, Any]:
-    models: List[Dict[str, Any]] = []
+    # Legacy generic diff kept for internal use if needed
+    changes: List[Dict[str, Any]] = []
+    summary = {"added": 0, "removed": 0, "modified": 0}
+
+    def record(change_type: str, path: str) -> None:
+        summary[change_type] += 1
+        if len(changes) < max_changes:
+            changes.append({"type": change_type, "path": path or "$"})
+
+    def walk(a: Any, b: Any, path: str) -> None:
+        if isinstance(a, dict) and isinstance(b, dict):
+            for key in sorted(set(a.keys()) - set(b.keys())):
+                record("removed", f"{path}.{key}" if path else str(key))
+            for key in sorted(set(b.keys()) - set(a.keys())):
+                record("added", f"{path}.{key}" if path else str(key))
+            for key in sorted(set(a.keys()) & set(b.keys())):
+                walk(a.get(key), b.get(key), f"{path}.{key}" if path else str(key))
+            return
+        if isinstance(a, list) and isinstance(b, list):
+            min_len = min(len(a), len(b))
+            for idx in range(min_len):
+                walk(a[idx], b[idx], f"{path}[{idx}]" if path else f"[{idx}]")
+            for idx in range(min_len, len(a)):
+                record("removed", f"{path}[{idx}]" if path else f"[{idx}]")
+            for idx in range(min_len, len(b)):
+                record("added", f"{path}[{idx}]" if path else f"[{idx}]")
+            return
+        if a != b:
+            record("modified", path)
+
+    walk(left, right, "")
+    total = summary["added"] + summary["removed"] + summary["modified"]
+    return {"exact_match": total == 0, "summary": {**summary, "total_changes": total}, "changes": changes}
+
+
+def _diff_models(left_state: Dict[str, Any], right_state: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Compare models/datasets between two states and return status for each."""
+    # Handle both list and dict formats for datasets/models
+    def _extract_models(state: Dict[str, Any]) -> Dict[str, Any]:
+        raw = state.get("datasets") or state.get("models") or []
+        if isinstance(raw, dict):
+            # If it's a dict, use keys as names
+            return {str(k): (v if isinstance(v, dict) else {"name": k}) for k, v in raw.items()}
+        elif isinstance(raw, list):
+            # If it's a list, look for 'name' or use string itself
+            res = {}
+            for m in raw:
+                if isinstance(m, dict) and m.get("name"):
+                    res[str(m["name"])] = m
+                elif isinstance(m, str):
+                    res[m] = {"name": m}
+            return res
+        return {}
+
+    left_models = _extract_models(left_state)
+    right_models = _extract_models(right_state)
     
-    # We assume 'left' and 'right' are the 'artifact' or 'state' which is the semantic model blob.
-    # In our project structure, this usually contains a list of 'models' or datasets.
-    
-    left_models = left.get("models") or left.get("datasets") or []
-    right_models = right.get("models") or right.get("datasets") or []
-    
-    left_map = {m.get("name"): m for m in (left_models if isinstance(left_models, list) else []) if m.get("name")}
-    right_map = {m.get("name"): m for m in (right_models if isinstance(right_models, list) else []) if m.get("name")}
-    
-    all_names = sorted(set(left_map.keys()) | set(right_map.keys()))
+    all_names = sorted(set(left_models.keys()) | set(right_models.keys()))
+    results = []
     
     for name in all_names:
-        if name not in right_map:
-            models.append({"name": name, "status": "REMOVED", "details": "Model present in snapshot A but missing in B"})
-        elif name not in left_map:
-            models.append({"name": name, "status": "ADDED", "details": "Model newly added in snapshot B"})
+        l_m = left_models.get(name)
+        r_m = right_models.get(name)
+        
+        if not l_m:
+            status = "ADDED"
+            details = {"message": "New model detected in target snapshot"}
+        elif not r_m:
+            status = "REMOVED"
+            details = {"message": "Model removed in target snapshot"}
         else:
-            # Check for changes (simplified hash check or deep diff)
-            if left_map[name] != right_map[name]:
-                models.append({"name": name, "status": "MODIFIED", "details": "Structural or metadata changes detected"})
-            else:
-                models.append({"name": name, "status": "UNCHANGED", "details": "Identical model state"})
-                
-    return {"models": models}
+            # Safer comparison for potentially large or complex dicts
+            try:
+                if json.dumps(l_m, sort_keys=True) == json.dumps(r_m, sort_keys=True):
+                    status = "UNCHANGED"
+                    details = {}
+                else:
+                    status = "MODIFIED"
+                    details = {"message": "Structural or metadata changes detected"}
+            except Exception:
+                status = "MODIFIED"
+                details = {"message": "Changes detected (failed to hash)"}
+        
+        results.append({
+            "name": name,
+            "status": status,
+            "details": details
+        })
+        
+    return results
 
 
 def _collect_step_logs(summary: Dict[str, Any], prefix: str = "") -> List[str]:
@@ -363,8 +442,6 @@ async def list_project_snapshots_compat(
     rows: List[Dict[str, Any]] = []
     for row in _compat_project_snapshots.get(project_id, []):
         if not isinstance(row, dict):
-            continue
-        if row.get("deleted_at"):
             continue
         if role and str(row.get("role") or row.get("system_role") or "").lower() != str(role).lower():
             continue
@@ -446,85 +523,38 @@ async def compare_project_snapshots_compat(
         raise HTTPException(status_code=404, detail="to_snapshot_id not found")
     left_state = from_row.get("state") if isinstance(from_row.get("state"), dict) else {}
     right_state = to_row.get("state") if isinstance(to_row.get("state"), dict) else {}
-    diff_results = _compat_diff_states(left_state, right_state, max_changes=max_changes)
+    models_diff = _diff_models(left_state, right_state)
     
     payload: Dict[str, Any] = {
         "metadata_diff": {
             "snapshot_a": {
                 "id": from_snapshot_id,
                 "format": from_row.get("intermediate_format"),
-                "model_count": len(left_state.get("models") or left_state.get("datasets") or []),
+                "model_count": len(left_state.get("datasets") or left_state.get("models") or []),
                 "taken_at": from_row.get("created_at"),
                 "connector_id": from_row.get("connector_identifier"),
-                "trigger": from_row.get("snapshot_origin"),
+                "trigger": from_row.get("snapshot_origin", "").lower()
             },
             "snapshot_b": {
                 "id": to_snapshot_id,
                 "format": to_row.get("intermediate_format"),
-                "model_count": len(right_state.get("models") or right_state.get("datasets") or []),
+                "model_count": len(right_state.get("datasets") or right_state.get("models") or []),
                 "taken_at": to_row.get("created_at"),
                 "connector_id": to_row.get("connector_identifier"),
-                "trigger": to_row.get("snapshot_origin"),
+                "trigger": to_row.get("snapshot_origin", "").lower()
             }
         },
-        "models": diff_results.get("models", [])
+        "models": models_diff
     }
+    if include_states:
+        payload["from_state"] = left_state
+        payload["to_state"] = right_state
     return payload
 
 
 async def get_project_runs_compat(project_id: str):
     _compat_ensure_loaded()
-    runs = _compat_project_runs.get(project_id, [])
-    
-    # Fallback to ORM if empty or to augment
-    try:
-        from semabridge.repository.orm.models import Run
-        from semabridge.repository.orm.session_factory import get_session_factory
-        
-        SessionLocal = get_session_factory()
-        with SessionLocal() as session:
-            db_runs = session.query(Run).filter(Run.project_id == project_id).order_by(Run.started_at.desc()).all()
-            
-            # Map DB runs to the expected dict format if they aren't already represented
-            existing_ids = {str(r.get("run_id") or "") for r in runs if isinstance(r, dict)}
-            for db_r in db_runs:
-                if db_r.run_id not in existing_ids:
-                    runs.append({
-                        "run_id": db_r.run_id,
-                        "run_type": db_r.run_type or "SYNC",
-                        "status": db_r.status,
-                        "started_at": db_r.started_at.isoformat() if db_r.started_at else None,
-                        "duration_ms": db_r.duration_ms,
-                        "error": db_r.error_message,
-                        "before_src_snapshot_id": db_r.before_src_snapshot_id,
-                        "before_target_snapshot_ids": json.loads(db_r.before_target_snapshot_ids) if db_r.before_target_snapshot_ids else [],
-                        "after_target_snapshot_ids": json.loads(db_r.after_target_snapshot_ids) if db_r.after_target_snapshot_ids else [],
-                        "restore_snapshot_id": db_r.restore_snapshot_id
-                    })
-    except Exception as e:
-        logger.debug(f"DB run history fallback failed: {e}")
-
-    results = []
-    for r in runs:
-        if not isinstance(r, dict): continue
-        out = {
-            "run_id": r.get("run_id"),
-            "run_type": r.get("run_type"),
-            "sync_mode": r.get("sync_mode") or "Full",
-            "status": r.get("status"),
-            "started_at": r.get("started_at"),
-            "before_src_snapshot_id": r.get("before_src_snapshot_id"),
-            "before_tgt_snapshots": r.get("before_target_snapshot_ids") or [],
-            "after_tgt_snapshots": r.get("after_target_snapshot_ids") or [],
-            "completed": bool(r.get("after_target_snapshot_ids") or r.get("completed_at")),
-        }
-        if r.get("run_type") == "RESTORE":
-            out["restored_from_snapshot_id"] = r.get("restore_snapshot_id")
-        if r.get("status") == "failed":
-            out["error_message"] = r.get("message") or r.get("error")
-        results.append(out)
-        
-    return results
+    return _compat_project_runs.get(project_id, [])
 
 
 def _create_project_run(
@@ -540,14 +570,7 @@ def _create_project_run(
 
     started = _time.time()
     run_id = f"run-{int(_time.time() * 1000)}"
-    modular_bundle = _compat_load_modular_project(project_id)
-    project_cfg = (
-        project_cfg_override
-        or (str(modular_bundle.get("config_yaml") or "") if modular_bundle else "")
-        or _compat_project_configs.get(project_id)
-        or _compat_load_repo_yaml_text()
-        or _compat_default_project_yaml(_compat_projects[project_id])
-    )
+    project_cfg = project_cfg_override or _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(_compat_projects[project_id])
     run = {
         "run_id": run_id,
         "id": run_id,
@@ -629,32 +652,24 @@ async def restore_project_version_compat(project_id: str, payload: Dict[str, Any
     snapshot_id = str((payload or {}).get("snapshot_id") or "").strip()
     if not snapshot_id:
         raise HTTPException(status_code=400, detail="snapshot_id is required")
-        
-    # Never modify existing. Always create new run.
-    restore_run, restore_cfg, restore_started = _create_project_run(
-        project_id, 
-        "Manual", 
-        run_type="RESTORE", 
-        restore_snapshot_id=snapshot_id
-    )
-    
-    # Set status to pending_mapping as per design
-    restore_run["status"] = "pending_mapping"
-    
-    # Pre-populate mappings from the snapshot (simplified implementation)
-    # Return requires_mapping_confirmation: true
-    return {
-        "status": "pending_confirmation",
-        "project_id": project_id,
-        "run_id": restore_run.get("id"),
-        "requires_mapping_confirmation": True,
-        "restored_from_snapshot_id": snapshot_id,
-        "message": "Restore run initialized. Please confirm mappings to proceed."
-    }
+    matches = [row for row in _compat_project_snapshots.get(project_id, []) if isinstance(row, dict) and str(row.get("snapshot_id") or "") == snapshot_id]
+    if not matches:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+
+    snapshot_row = matches[0]
+    config_yaml = str(snapshot_row.get("project_config_yaml") or _compat_project_configs.get(project_id) or _compat_default_project_yaml(_compat_projects[project_id]))
+    overrides = (payload or {}).get("overrides")
+    if isinstance(overrides, dict) and overrides:
+        config_yaml = _compat_apply_restore_overrides(config_yaml, overrides)
+    _compat_project_configs[project_id] = config_yaml
+    _compat_projects[project_id]["updated_at"] = _compat_now_iso()
+    restore_run, restore_cfg, restore_started = _create_project_run(project_id, "Manual", run_type="RESTORE", project_cfg_override=config_yaml, restore_snapshot_id=snapshot_id)
+    background_tasks.add_task(_run_project_background, restore_run, restore_cfg, restore_started)
+    _compat_save_store()
+    return {"status": "restored", "project_id": project_id, "snapshot_id": snapshot_id, "run_id": restore_run.get("id"), "run_type": "RESTORE", "intermediate_format": snapshot_row.get("intermediate_format") or "sml", "message": "Project configuration restored and restore run started.", "config_yaml": config_yaml}
 
 
 async def run_project_now_compat(project_id: str, background_tasks: BackgroundTasks, payload: Optional[Dict[str, Any]] = None):
-    _compat_ensure_loaded()
     if bool((payload or {}).get("dry_run", False)):
         preview_payload = dict(payload or {})
         preview_payload["project_id"] = project_id
@@ -673,13 +688,7 @@ async def run_project_now_compat(project_id: str, background_tasks: BackgroundTa
     restore_snapshot_id = str((payload or {}).get("restore_snapshot_id") or "").strip() or None
     config_override = None
     if run_type == "SYNC":
-        modular_bundle = _compat_load_modular_project(project_id)
-        base_cfg = (
-            (str(modular_bundle.get("config_yaml") or "") if modular_bundle else "")
-            or _compat_project_configs.get(project_id)
-            or _compat_load_repo_yaml_text()
-            or _compat_default_project_yaml(_compat_projects.get(project_id, {}))
-        )
+        base_cfg = _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(_compat_projects.get(project_id, {}))
         config_override = _compat_apply_manual_mapping_overrides_to_cfg(base_cfg, project_id)
         _compat_project_configs[project_id] = config_override
     run, project_cfg, started = _create_project_run(
@@ -832,88 +841,6 @@ async def update_jobs_config_compat(payload: dict):
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     _compat_save_store()
     return {"status": "saved", **merged}
-
-# --- NEW VC LOGIC ---
-
-def _get_referenced_snapshot_ids(project_id: str) -> set[str]:
-    referenced = set()
-    runs = _compat_project_runs.get(project_id, [])
-    for r in runs:
-        if not isinstance(r, dict): continue
-        if r.get("before_src_snapshot_id"): referenced.add(r["before_src_snapshot_id"])
-        if r.get("restore_snapshot_id"): referenced.add(r["restore_snapshot_id"])
-        if r.get("restored_from_snapshot_id"): referenced.add(r["restored_from_snapshot_id"])
-        
-        # Arrays
-        for sid in (r.get("before_target_snapshot_ids") or []):
-            if sid: referenced.add(sid)
-        for sid in (r.get("after_target_snapshot_ids") or []):
-            if sid: referenced.add(sid)
-            
-    return referenced
-
-async def delete_model_versions(project_id: str, snapshot_ids: List[str]):
-    _compat_ensure_loaded()
-    referenced = _get_referenced_snapshot_ids(project_id)
-    
-    blocked = []
-    deleted_count = 0
-    now = _compat_now_iso()
-    
-    snaps = _compat_project_snapshots.get(project_id, [])
-    for sid in snapshot_ids:
-        if sid in referenced:
-            blocked.append(sid)
-            continue
-            
-        # Soft delete
-        for row in snaps:
-            if row.get("snapshot_id") == sid:
-                row["deleted_at"] = now
-                deleted_count += 1
-                break
-                
-    _compat_save_store()
-    
-    return {
-        "deleted_count": deleted_count,
-        "blocked_ids": blocked,
-        "message": f"Soft-deleted {deleted_count} snapshots. {len(blocked)} were blocked due to references."
-    }
-
-async def apply_retention_policy(project_id: str):
-    """
-    Retention policy background job.
-    Fetches policy, sorts by taken_at, soft-deletes unreferenced old snapshots.
-    """
-    _compat_ensure_loaded()
-    # Mocking policy fetch - default to 50 versions
-    policy_limit = 50 
-    
-    snaps = [s for s in _compat_project_snapshots.get(project_id, []) if not s.get("deleted_at")]
-    if len(snaps) <= policy_limit:
-        return {"status": "skipped", "reason": "under_limit"}
-        
-    referenced = _get_referenced_snapshot_ids(project_id)
-    
-    # Sort by created_at ascending (oldest first)
-    snaps.sort(key=lambda x: x.get("created_at") or "")
-    
-    excess_count = len(snaps) - policy_limit
-    deleted_count = 0
-    now = _compat_now_iso()
-    
-    for i in range(excess_count):
-        s = snaps[i]
-        sid = s.get("snapshot_id")
-        if sid and sid not in referenced:
-            s["deleted_at"] = now
-            deleted_count += 1
-            
-    if deleted_count > 0:
-        _compat_save_store()
-        
-    return {"status": "pruned", "deleted_count": deleted_count}
 
 
 async def trigger_job_compat(payload: dict, background_tasks: BackgroundTasks):
@@ -1419,12 +1346,13 @@ async def get_project_runs_compat(project_id: str):
 
     # Fallback to persistent ORM database
     try:
-        from semabridge.repository.orm.models import Run, SnapshotRow
+        from semabridge.repository.orm.models import Run
         from sqlalchemy import select
+        from semabridge.repository.orm.session_factory import db_manager
 
         session = db_manager._session()
         try:
-            # Query runs for this project, including snapshot associations
+            # Query runs for this project
             stmt = (
                 select(Run)
                 .where(Run.project_id == pid)
@@ -1434,7 +1362,6 @@ async def get_project_runs_compat(project_id: str):
             rows = session.execute(stmt).scalars().all()
 
             results = []
-            import json
             for r in rows:
                 def _parse_list(attr_name):
                     val = getattr(r, attr_name, None)
@@ -1478,6 +1405,7 @@ async def delete_project_snapshots_compat(project_id: str, snapshot_ids: List[st
     _compat_ensure_loaded()
     from semabridge.repository.orm.models import SnapshotRow, Run
     from sqlalchemy import select, update, or_
+    from semabridge.repository.orm.session_factory import db_manager
 
     session = db_manager._session()
     try:
@@ -1489,14 +1417,11 @@ async def delete_project_snapshots_compat(project_id: str, snapshot_ids: List[st
                 or_(
                     Run.before_src_snapshot_id.in_(snapshot_ids),
                     Run.restore_snapshot_id.in_(snapshot_ids),
-                    Run.before_target_snapshot_ids.like(f"%{snapshot_ids[0]}%") if snapshot_ids else False
                 )
             )
         )
         active_runs = session.execute(stmt).scalars().all()
         
-        # Simple heuristic: if any run references these, block them
-        # (In a real system we'd parse the JSON lists properly)
         blocked_ids = []
         for r in active_runs:
             for sid in snapshot_ids:
@@ -1520,4 +1445,4 @@ async def delete_project_snapshots_compat(project_id: str, snapshot_ids: List[st
             "status": "success" if not blocked_ids else "partial"
         }
     finally:
-        session.close()
+        session.close()

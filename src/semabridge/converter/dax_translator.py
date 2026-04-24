@@ -530,14 +530,12 @@ class DAXTranslator:
                         f"COUNT(DISTINCT {value_expr}) OVER "
                         "(PARTITION BY CALENDAR.YEAR ORDER BY CALENDAR.PERIOD)"
                     )
-                # Snowflake: cast to FLOAT for SUM/AVG to handle BOOLEAN columns safely
-                cast = "::FLOAT" if agg_func in ("SUM", "AVG") else ""
                 return (
-                    f"{sql_agg}({value_expr}{cast}) OVER "
+                    f"{sql_agg}({value_expr}) OVER "
                     "(PARTITION BY CALENDAR.YEAR ORDER BY CALENDAR.PERIOD)"
                 )
 
-            return f"SUM(({base_sql})::FLOAT) OVER (PARTITION BY CALENDAR.YEAR ORDER BY CALENDAR.PERIOD)"
+            return f"SUM({base_sql}) OVER (PARTITION BY CALENDAR.YEAR ORDER BY CALENDAR.PERIOD)"
 
         if upper_dax.startswith("CALCULATE(") and clean_dax.endswith(")"):
             args = self._split_dax_arguments(clean_dax[len("CALCULATE("):-1])
@@ -594,13 +592,13 @@ class DAXTranslator:
             condition_sql = f"{lhs_table}.{lhs_column} = {literal}"
 
             if agg_func == "SUM":
-                return f"SUM(CASE WHEN {condition_sql} THEN {value_expr} ELSE 0 END::FLOAT)"
+                return f"SUM(CASE WHEN {condition_sql} THEN {value_expr} ELSE 0 END)"
             if agg_func == "COUNT":
                 return f"COUNT(CASE WHEN {condition_sql} THEN {value_expr} END)"
             if agg_func == "COUNT_DISTINCT":
                 return f"COUNT(DISTINCT CASE WHEN {condition_sql} THEN {value_expr} END)"
             if agg_func == "AVG":
-                return f"AVG(CASE WHEN {condition_sql} THEN {value_expr} END::FLOAT)"
+                return f"AVG(CASE WHEN {condition_sql} THEN {value_expr} END)"
             if agg_func in {"MIN", "MAX"}:
                 return f"{agg_func}(CASE WHEN {condition_sql} THEN {value_expr} END)"
 
@@ -852,15 +850,9 @@ class DAXTranslator:
             return None
             
         if "{col}" in sql_template:
-            # Snowflake: cast to FLOAT for SUM/AVG to handle BOOLEAN columns safely
-            cast = "::FLOAT" if func in ("SUM", "AVERAGE") else ""
-            if func == "DISTINCTCOUNT":
-                return f"COUNT(DISTINCT {col_ref}{cast})"
-            return sql_template.format(col=f"{col_ref}{cast}")
+            return sql_template.format(col=col_ref)
         else:
-            # Snowflake: cast to FLOAT for SUM/AVG to handle BOOLEAN columns safely
-            cast = "::FLOAT" if func in ("SUM", "AVERAGE") else ""
-            return f"{sql_template}({col_ref}{cast})"
+            return f"{sql_template}({col_ref})"
     
     def _try_branching(self, dax: str, metrics: List[Any]) -> Optional[str]:
         """
@@ -1232,4 +1224,3 @@ class DAXTranslator:
                     dimensions.append(dim_ref)
         
         return dimensions
-

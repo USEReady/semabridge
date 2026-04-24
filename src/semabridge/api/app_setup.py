@@ -98,6 +98,11 @@ def _apply_schema_compatibility_fixes() -> None:
         if "deleted_at" not in snapshot_columns:
             pending_alters.append(f"ALTER TABLE snapshots ADD COLUMN deleted_at {expires_type}")
 
+    if "model_versions" in set(inspector.get_table_names()):
+        mv_columns = {col["name"] for col in inspector.get_columns("model_versions")}
+        if "deleted_at" not in mv_columns:
+            pending_alters.append(f"ALTER TABLE model_versions ADD COLUMN deleted_at {expires_type}")
+
     if "runs" in set(inspector.get_table_names()):
         run_columns = {col["name"] for col in inspector.get_columns("runs")}
         if "run_type" not in run_columns:

@@ -50,6 +50,11 @@ def try_basic_dax_metric_fallback_expression(
             return f'AVG({table_alias}."{col_name}")'
         if agg == "DISTINCTCOUNT":
             return f'COUNT(DISTINCT {table_alias}."{col_name}")'
+        if agg == "SUM":
+            is_bool = any(k in col_name.lower() for k in ("is_", "has_", "flag", "active", "enabled", "deleted", "valid", "bool", "boolean"))
+            if is_bool:
+                return f'SUM(IFF({table_alias}."{col_name}", 1, 0))'
+            return f'SUM({table_alias}."{col_name}"::FLOAT)'
         return f'{agg}({table_alias}."{col_name}")'
 
     return None

@@ -4,7 +4,7 @@ import {
     GitCommit,
     GitCompare,
     Clock,
-    History,
+    History as HistoryIcon,
     Activity,
     ShieldCheck,
     Loader2,
@@ -85,10 +85,10 @@ function DiffView({ diffData }) {
                             <Database size={14} className={key === 'snapshot_a' ? 'text-[var(--accent-blue)]' : 'text-[var(--color-success)]'} />
                         </div>
                         <div className="grid grid-cols-2 gap-y-3 text-[11px] relative z-10">
-                            <div className="flex flex-col"><span className="text-[var(--text-quaternary)] text-[8px] uppercase font-bold">ID</span> <span className="text-[var(--text-primary)] font-mono">{metadata_diff[key].id?.substring(0, 8)}</span></div>
-                            <div className="flex flex-col"><span className="text-[var(--text-quaternary)] text-[8px] uppercase font-bold">Format</span> <span className="text-[var(--text-primary)] uppercase font-bold">{metadata_diff[key].format}</span></div>
-                            <div className="flex flex-col"><span className="text-[var(--text-quaternary)] text-[8px] uppercase font-bold">Models</span> <span className="text-[var(--text-primary)] font-bold">{metadata_diff[key].model_count}</span></div>
-                            <div className="flex flex-col"><span className="text-[var(--text-quaternary)] text-[8px] uppercase font-bold">Captured</span> <span className="text-[var(--text-primary)]">{new Date(metadata_diff[key].taken_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span></div>
+                            <div className="flex flex-col"><span className="text-[var(--text-quaternary)] text-[8px] uppercase font-bold">ID</span> <span className="text-[var(--text-primary)] font-mono">{metadata_diff?.[key]?.id?.substring(0, 8) || 'N/A'}</span></div>
+                            <div className="flex flex-col"><span className="text-[var(--text-quaternary)] text-[8px] uppercase font-bold">Format</span> <span className="text-[var(--text-primary)] uppercase font-bold">{metadata_diff?.[key]?.format || 'N/A'}</span></div>
+                            <div className="flex flex-col"><span className="text-[var(--text-quaternary)] text-[8px] uppercase font-bold">Models</span> <span className="text-[var(--text-primary)] font-bold">{metadata_diff?.[key]?.model_count || 0}</span></div>
+                            <div className="flex flex-col"><span className="text-[var(--text-quaternary)] text-[8px] uppercase font-bold">Captured</span> <span className="text-[var(--text-primary)]">{metadata_diff?.[key]?.taken_at ? new Date(metadata_diff[key].taken_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '—'}</span></div>
                         </div>
                     </GlassCard>
                 ))}
@@ -101,8 +101,8 @@ function DiffView({ diffData }) {
                         <h3 className="text-[10px] font-black text-[var(--text-primary)] uppercase tracking-widest">Structural Evolution Log</h3>
                     </div>
                     <div className="flex gap-2">
-                        <Badge variant="success">+{models?.filter(m => m.status === 'ADDED').length}</Badge>
-                        <Badge variant="error">-{models?.filter(m => m.status === 'REMOVED').length}</Badge>
+                        <Badge variant="success">+{ (models || []).filter(m => m.status === 'ADDED').length }</Badge>
+                        <Badge variant="error">-{ (models || []).filter(m => m.status === 'REMOVED').length }</Badge>
                     </div>
                 </div>
                 <div className="flex-1 overflow-auto custom-scrollbar">
@@ -263,7 +263,7 @@ export default function VersionControlPanel({ isOpen, onClose }) {
                                 onClick={() => setViewMode('history')}
                                 className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all flex items-center gap-2 ${viewMode === 'history' ? 'bg-[var(--bg-surface-raised)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'}`}
                             >
-                                <History size={14} /> History
+                                <HistoryIcon size={14} /> History
                             </button>
                             <button 
                                 onClick={() => viewMode === 'diff' ? setViewMode('history') : handleCompare()}

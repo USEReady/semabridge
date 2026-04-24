@@ -3,6 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom';
 import {
   Map, FolderOpen, PlayCircle, Settings, GitBranch,
   Hexagon, LogOut, ChevronLeft, ChevronRight, Bell, Split,
+  History as HistoryIcon,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import ThemeToggle from '../components/ThemeToggle';
@@ -17,14 +18,6 @@ import { useLogs } from '../context/LogsContext';
 import { useNavigate } from 'react-router-dom';
 import { useUIStore } from '../store/uiStore';
 
-const NAV_ITEMS = [
-
-  { to: '/projects',      label: 'Projects',        icon: FolderOpen },
-  { to: '/jobs',          label: 'Runs',            icon: PlayCircle },
-    { to: '/explore',       label: 'Explore',         icon: Map },
-  { to: '/model-mapping', label: 'Model Mapping',   icon: GitBranch },
-  { to: '/settings',      label: 'Settings',        icon: Settings },
-];
 
 function SidebarNavIcon({ icon: Icon, active }) {
   return (
@@ -63,6 +56,7 @@ export default function DashboardLayout() {
     { to: '/jobs',          label: 'Runs',            icon: PlayCircle },
     { to: '/explore',       label: 'Explore',         icon: Map },
     { to: '/model-mapping', label: 'Model Mapping',   icon: GitBranch },
+    { to: '/version-control', label: 'Version Control', icon: HistoryIcon },
     { to: '/comparator',    label: 'Comparator',      icon: Split },
     { to: '/settings',      label: 'Settings',        icon: Settings },
   ];

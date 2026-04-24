@@ -409,12 +409,12 @@ class SnowflakeEmitter(BaseEmitter):
             if known_cols and col_name not in known_cols:
                 return None
 
-            if agg == "SUM":
-                return f'SUM({table_alias}."{col_name}"::FLOAT)'
             if agg == "AVERAGE":
-                return f'AVG({table_alias}."{col_name}"::FLOAT)'
+                return f'AVG({table_alias}."{col_name}")'
             if agg == "DISTINCTCOUNT":
                 return f'COUNT(DISTINCT {table_alias}."{col_name}")'
+            if agg == "SUM":
+                return f'SUM({table_alias}."{col_name}"::FLOAT)'
             return f'{agg}({table_alias}."{col_name}")'
 
         # Deterministic DAX translation for safe dependency chains, static filters,
@@ -442,7 +442,7 @@ class SnowflakeEmitter(BaseEmitter):
                     order_col = self._resolve_ytd_order_column(known_cols)
                     if year_col and order_col:
                         return (
-                            f'SUM({table_alias}."{ref_metric_name}"::FLOAT) OVER '
+                            f'SUM({table_alias}."{ref_metric_name}") OVER '
                             f'(PARTITION BY {table_alias}."{year_col}" '
                             f'ORDER BY {table_alias}."{order_col}")'
                         )
@@ -458,15 +458,7 @@ class SnowflakeEmitter(BaseEmitter):
                     metrics_context=list(model.metrics),
                 )
                 if translated.is_success and translated.sql:
-                    # Snowflake: ensure SUM/AVG are cast to ::FLOAT for boolean column safety.
-                    # This acts as a safety net for any translator (AST, LLM) that might have missed it.
-                    final_sql = re.sub(
-                        r'\b(SUM|AVG)\s*\(([^)]+?)\)(?!\s*::FLOAT)',
-                        r'\1(\2::FLOAT)',
-                        translated.sql,
-                        flags=re.IGNORECASE
-                    )
-                    return final_sql
+                    return translated.sql
             except Exception as exc:
                 logger.debug(
                     "Deterministic DAX translation fallback failed for metric '%s': %s",
@@ -513,12 +505,13 @@ class SnowflakeEmitter(BaseEmitter):
             if year_col:
                 date_ref = f'{table_alias}."{date_col}"'
                 partition_expr = f'{table_alias}."{year_col}"'
-                
-                # Snowflake: cast to FLOAT for SUM/AVG to handle BOOLEAN columns safely
-                cast = "::FLOAT" if agg in ("SUM", "AVERAGE") else ""
+                # Ensure SUM is cast to FLOAT for boolean columns
+                agg_sql = f'{sql_agg}({table_alias}."{value_col}")'
+                if sql_agg == "SUM":
+                    agg_sql = f'SUM({table_alias}."{value_col}"::FLOAT)'
                 
                 return (
-                    f'{sql_agg}({table_alias}."{value_col}"{cast}) OVER ('
+                    f'{agg_sql} OVER ('
                     f'PARTITION BY {partition_expr} '
                     f'ORDER BY {date_ref} '
                     'ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)'
@@ -595,11 +588,13 @@ class SnowflakeEmitter(BaseEmitter):
             month_ref = f'{table_alias}."{month_col}"'
             year_ref = f'{table_alias}."{year_col}"'
             
-            # Snowflake: cast to FLOAT for SUM/AVG to handle BOOLEAN columns safely
-            cast = "::FLOAT" if agg in ("SUM", "AVERAGE") else ""
+            # Ensure SUM is cast to FLOAT for boolean columns
+            agg_sql = f'{sql_agg}({table_alias}."{value_col}")'
+            if sql_agg == "SUM":
+                agg_sql = f'SUM({table_alias}."{value_col}"::FLOAT)'
             
             return (
-                f'LAG({sql_agg}({table_alias}."{value_col}"{cast}), 12) OVER ('
+                f'LAG({agg_sql}, 12) OVER ('
                 f'PARTITION BY {month_ref} '
                 f'ORDER BY {year_ref}, {month_ref}'
                 ')'
@@ -1454,7 +1449,10 @@ class SnowflakeEmitter(BaseEmitter):
             denominator = match.group("den").strip()
             if numerator.upper() != denominator.upper():
                 return "NULL"
-            return f"SUM({numerator})"
+            is_bool = any(k in numerator.lower() for k in ("is_", "has_", "flag", "active", "enabled", "deleted", "valid", "bool", "boolean"))
+            if is_bool:
+                return f"SUM(IFF({numerator}, 1, 0))"
+            return f"SUM({numerator}::FLOAT)"
 
         # Preserve common period-to-date aggregate windows, e.g.
         # SUM(x) OVER (PARTITION BY year ORDER BY date ...)
@@ -1608,6 +1606,13 @@ class SnowflakeEmitter(BaseEmitter):
 
             if agg_fn == "DISTINCTCOUNT":
                 return f'COUNT(DISTINCT {dataset_alias}.{preferred_col})'
+            if agg_fn == "SUM":
+                # Detect boolean columns by name (e.g. DELETED, IS_..., FLAG)
+                # Snowflake rejects SUM(BOOLEAN::FLOAT). Use IFF for booleans.
+                is_bool = any(k in preferred_col.lower() for k in ("is_", "has_", "flag", "active", "enabled", "deleted", "valid", "bool", "boolean"))
+                if is_bool:
+                    return f'SUM(IFF({dataset_alias}.{preferred_col}, 1, 0))'
+                return f'SUM({dataset_alias}.{preferred_col}::FLOAT)'
             return f'{agg_fn}({dataset_alias}.{preferred_col})'
 
         return agg_pattern.sub(_replace, metric_sql)
@@ -4730,7 +4735,31 @@ class SnowflakeEmitter(BaseEmitter):
         if metrics_lines:
             definitions.append("METRICS (\n" + ",\n".join(metrics_lines) + "\n)")
         
-        return lines[0] + "\n" + "\n".join(definitions) + ";"
+        final_ddl = lines[0] + "\n" + "\n".join(definitions) + ";"
+        
+        # Mandate 5: Global Aggregation Safety (Snowflake Boolean Fix)
+        # Ensure all SUM() arguments are explicitly cast to FLOAT to prevent 
+        # "Invalid argument types for function 'SUM': (BOOLEAN)" errors.
+        # For likely boolean columns, use IFF instead of casting to FLOAT.
+        import re
+        def _ensure_sum_float(match: re.Match) -> str:
+            expr = match.group(1).strip()
+            # Skip if already casted or handled
+            expr_upper = expr.upper()
+            if "::FLOAT" in expr_upper or "IFF(" in expr_upper or "CASE " in expr_upper or "CAST(" in expr_upper:
+                return match.group(0)
+            
+            # Heuristic: if expression is likely a simple boolean column, use IFF
+            is_bool = any(k in expr.lower() for k in ("is_", "has_", "flag", "active", "enabled", "deleted", "valid", "bool", "boolean"))
+            if is_bool and re.match(r'^[a-zA-Z0-9_\"\.]+$', expr):
+                 return f"SUM(IFF({expr}, 1, 0))"
+
+            return f"SUM({expr}::FLOAT)"
+
+        # Apply to the final DDL string
+        final_ddl = re.sub(r"(?i)SUM\(([^)]+)\)", _ensure_sum_float, final_ddl)
+        
+        return final_ddl
 
     def _migrate_numeric_leading_identifiers(self, sml: SMLModel) -> None:
         """Prefix metric/dimension identifiers that begin with numeric tokens.

@@ -3,6 +3,7 @@
 The actual implementations now live in smaller modules so project work can be
 split across multiple files without changing the public import surface.
 """
+from semabridge.api.services.version_control_impl import version_backend
 
 from semabridge.api.services.project_shared import (
     _compat_clear_project_schedule,
@@ -77,6 +78,15 @@ from semabridge.api.services.project_runs_impl import (
     update_mapping_compat,
     delete_project_snapshots_compat,
 )
+
+
+async def apply_project_retention_policy(project_id: str, days: int = 30):
+    return await version_backend.apply_retention_policy(project_id, days_to_keep=days)
+
+
+async def get_project_storage_stats(project_id: str):
+    return await version_backend.get_storage_stats(project_id)
+
 from semabridge.api.services.project_versioning_impl import (
     compare_model_versions,
     compare_versions,

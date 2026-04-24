@@ -22,6 +22,7 @@ import SettingsPage    from './pages/SettingsPage';
 import GlobalConfigPage from './pages/GlobalConfigPage';
 import ProjectDetailPage from './pages/ProjectDetailPage';
 import ComparatorPage from './pages/ComparatorPage';
+import VersionControlPage from './pages/VersionControlPage';
 
 /**
  * Auth gate — shows loading spinner while auth bootstrap resolves.
@@ -127,6 +128,7 @@ export default function App() {
           <Route path="/comparator"    element={<ComparatorPage />} />
           <Route path="/settings"      element={<SettingsPage />} />
           <Route path="/global-config" element={<GlobalConfigPage />} />
+          <Route path="/version-control" element={<VersionControlPage />} />
         </Route>
 
         {/* Fallback */}

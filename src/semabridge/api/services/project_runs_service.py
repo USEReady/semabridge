@@ -7,4 +7,6 @@ from semabridge.api.services.project_domain_service import (
     restore_project_version_compat,
     run_project_now_compat,
     delete_project_snapshots_compat,
+    apply_project_retention_policy,
+    get_project_storage_stats,
 )
