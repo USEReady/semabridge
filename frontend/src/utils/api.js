@@ -833,6 +833,18 @@ export const api = {
         return handleResponse(res);
     },
 
+    async getSnapshotContent(projectId, snapshotId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots/${snapshotId}/content`);
+        return handleResponse(res);
+    },
+
+    async manualDeploy(projectId, snapshotId, comment = '') {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots/${snapshotId}/deploy?comment=${encodeURIComponent(comment)}`, {
+            method: 'POST'
+        });
+        return handleResponse(res);
+    },
+
     async restoreProjectVersion(projectId, payload) {
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
             method: 'POST',

@@ -1890,3 +1890,37 @@ async def get_project_stats_compat(project_id: str) -> Dict[str, Any]:
         "avg_models_per_snapshot": int(avg_models),
         "health_score": int(95 if len([r for r in runs if r.get("status") == "success"]) / (len(runs) or 1) > 0.8 else 70)
     }
+
+
+async def get_snapshot_content_compat(project_id: str, snapshot_id: str) -> Dict[str, Any]:
+    """Retrieve raw content/state for a specific snapshot."""
+    _compat_ensure_loaded()
+    snaps = _compat_project_snapshots.get(project_id, [])
+    snap = next((s for s in snaps if s.get("snapshot_id") == snapshot_id), None)
+    if not snap:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    
+    state = snap.get("state") or {}
+    if isinstance(state, str):
+        try: state = json.loads(state)
+        except: state = {}
+        
+    return {
+        "snapshot_id": snapshot_id,
+        "project_id": project_id,
+        "captured_at": snap.get("captured_at"),
+        "role": snap.get("role"),
+        "content": state
+    }
+
+
+async def manual_deploy_compat(project_id: str, snapshot_id: str, background_tasks: BackgroundTasks, comment: str = "") -> Dict[str, Any]:
+    """Manually deploy a specific snapshot to target connectors."""
+    _compat_ensure_loaded()
+    # Logic is similar to restore but with explicit manual_deploy type
+    payload = {
+        "restore_snapshot_id": snapshot_id,
+        "comment": comment or f"Manual deploy of {snapshot_id[:8]}",
+        "run_type": "manual_deploy"
+    }
+    return await run_project_now_compat(project_id, background_tasks, payload)

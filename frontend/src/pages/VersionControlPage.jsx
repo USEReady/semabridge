@@ -38,10 +38,13 @@ import { api } from '../utils/api';
 import { useUIStore } from '../store/uiStore';
 import { useLogs } from '../context/LogsContext';
 import PageHeader from '../components/common/PageHeader';
+import RepositoryBrowser from '../components/RepositoryBrowser';
+import { Archive } from 'lucide-react';
+
 
 // --- STYLED COMPONENTS ---
 
-const GlassCard = ({ children, className = "", style = {} }) => (
+export const GlassCard = ({ children, className = "", style = {} }) => (
     <div 
         className={`bg-[var(--bg-surface)]/40 backdrop-blur-md border border-[var(--border-main)] rounded-2xl shadow-sm hover:shadow-md transition-all duration-300 ${className}`}
         style={style}
@@ -50,7 +53,7 @@ const GlassCard = ({ children, className = "", style = {} }) => (
     </div>
 );
 
-const Badge = ({ children, variant = "default" }) => {
+export const Badge = ({ children, variant = "default" }) => {
     const variants = {
         success: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
         error: "bg-rose-500/10 text-rose-500 border-rose-500/20",
@@ -65,7 +68,7 @@ const Badge = ({ children, variant = "default" }) => {
     );
 };
 
-const ActionButton = ({ onClick, children, variant = "default", disabled = false, className = "", style = {} }) => {
+export const ActionButton = ({ onClick, children, variant = "default", disabled = false, className = "", style = {} }) => {
     const variants = {
         primary: "bg-[var(--accent-blue)] hover:bg-[var(--accent-blue-hover)] text-white border-none shadow-sm shadow-blue-500/20",
         danger: "bg-rose-600 hover:bg-rose-500 text-white border-none shadow-sm shadow-rose-500/20",
@@ -994,6 +997,7 @@ export default function VersionControlPage() {
                     <div className="flex items-center gap-1 p-1 bg-[var(--bg-surface)]/40 border border-[var(--border-light)] rounded-2xl w-fit">
                         {[
                             { id: 'history', label: 'History Log', icon: HistoryIcon },
+                            { id: 'repository', label: 'Repository', icon: Archive },
                             { id: 'diff', label: 'Structural Diff', icon: GitCompare, disabled: !diffData },
                             { id: 'mappings', label: 'Mappings', icon: ListTree, disabled: !selectedRun },
                             { id: 'lineage', label: 'Lineage Graph', icon: GitBranch },
@@ -1263,6 +1267,12 @@ export default function VersionControlPage() {
 
                     {viewMode === 'stats' && (
                         <ProjectStatsView 
+                            projectId={selectedProjectId} 
+                        />
+                    )}
+
+                    {viewMode === 'repository' && (
+                        <RepositoryBrowser 
                             projectId={selectedProjectId} 
                         />
                     )}
