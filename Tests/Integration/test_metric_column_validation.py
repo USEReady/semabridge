@@ -150,6 +150,58 @@ class TestMetricColumnValidation:
         # Should pass because there are no TABLE.COLUMN refs to validate
         assert is_valid is True
         assert error is None
+
+    def test_normalize_metric_column_references_quotes_reserved_word_value(self, emitter):
+        """Test that _normalize_metric_column_references quotes the 'VALUE' reserved word."""
+        metric_sql = 'sf."VALUE"'
+        metric_name = "value_metric"
+        dataset_col_lookup = {"salesfact": {"VALUE"}}
+        dataset_aliases = {"salesfact": "sf"}
+        
+        normalized = emitter._normalize_metric_column_references(
+            metric_sql, metric_name, dataset_col_lookup, dataset_aliases
+        )
+        
+        # Should stay quoted because VALUE is a reserved word
+        assert normalized == 'sf."VALUE"'
+
+    def test_normalize_metric_column_references_quotes_unquoted_reserved_word_value(self, emitter):
+        """Test that _normalize_metric_column_references quotes an unquoted 'VALUE' reserved word."""
+        metric_sql = 'SUM(sf.VALUE)'
+        metric_name = "value_metric"
+        dataset_col_lookup = {"salesfact": {"VALUE"}}
+        dataset_aliases = {"salesfact": "sf"}
+        
+        normalized = emitter._normalize_metric_column_references(
+            metric_sql, metric_name, dataset_col_lookup, dataset_aliases
+        )
+        print(f"DEBUG: normalized='{normalized}'")
+        
+        # Should be quoted because VALUE is a reserved word
+        assert normalized == 'SUM(sf."VALUE")'
+
+    def test_sanitize_alias_reserved_word_value(self, emitter):
+        """Test that sanitize_alias handles the 'VALUE' reserved word."""
+        # By default suppress_reserved is True
+        assert emitter._sanitize_alias("VALUE") == "COL_VALUE"
+        
+        # If we disable suppression, it should remain VALUE (but we should probably quote it in DDL)
+        emitter._id.suppress_reserved = False
+        assert emitter._sanitize_alias("VALUE") == "VALUE"
+
+    def test_normalize_metric_column_references_unquotes_non_reserved_word(self, emitter):
+        """Test that _normalize_metric_column_references unquotes non-reserved words."""
+        metric_sql = 'sf."REVENUE"'
+        metric_name = "revenue_metric"
+        dataset_col_lookup = {"salesfact": {"REVENUE"}}
+        dataset_aliases = {"salesfact": "sf"}
+        
+        normalized = emitter._normalize_metric_column_references(
+            metric_sql, metric_name, dataset_col_lookup, dataset_aliases
+        )
+        
+        # Should be unquoted because REVENUE is not a reserved word
+        assert normalized == 'sf.REVENUE'
     
     def test_multiple_valid_references(self, emitter):
         """Test multiple valid column references in one metric."""
@@ -186,7 +238,7 @@ class TestMetricColumnValidation:
         )
 
         assert translated is not None
-        assert 'SUM(sf."REVENUE") OVER (' in translated
+        assert 'SUM(sf."REVENUE"::FLOAT) OVER (' in translated
         assert 'PARTITION BY sf."YEAR"' in translated
         assert 'ORDER BY sf."DATE"' in translated
 
@@ -217,7 +269,7 @@ class TestMetricColumnValidation:
         )
 
         assert translated is not None
-        assert 'LAG(SUM(sf."REVENUE"), 12) OVER (' in translated
+        assert 'LAG(SUM(sf."REVENUE"::FLOAT), 12) OVER (' in translated
         # Fixed: Now uses actual MONTH and YEAR dimension columns instead of scalar functions
         # (required for Snowflake semantic model compliance)
         assert 'PARTITION BY sf."MONTH"' in translated
@@ -362,8 +414,8 @@ class TestMetricColumnValidation:
             dataset_aliases,
             metric_names={"SPEND_OF_TOTAL", "TOTAL_SPEND"},
         )
-
-        assert 'SUM(SPEND_FACT.TRANSACTION_USD_AMOUNT)' in repaired
+        # Note: Now produces ::FLOAT as required for Snowflake numeric metrics.
+        assert 'SUM(SPEND_FACT.TRANSACTION_USD_AMOUNT::FLOAT)' in repaired
         assert 'SUM("SPEND_FACT")' not in repaired
 
     def test_repair_preserves_real_metric_aggregate_wrappers(self, emitter):
@@ -387,7 +439,7 @@ class TestMetricColumnValidation:
         # Existing metric wrapper is handled by wrapper rewrite to direct metric ref,
         # while the invalid table-name wrapper is repaired to a physical column.
         assert '"TOTAL_SPEND"' in repaired
-        assert 'SUM(SPEND_FACT.TRANSACTION_USD_AMOUNT)' in repaired
+        assert 'SUM(SPEND_FACT.TRANSACTION_USD_AMOUNT::FLOAT)' in repaired
 
     def test_partition_identifier_prefers_metric_entity_alias(self, emitter):
         """Qualify partition key within metric entity when resolvable there."""
@@ -412,8 +464,8 @@ class TestMetricColumnValidation:
             metric_names={"SPEND_WITHIN_FUNCTION", "SPEND_OF_TOTAL", "TOTAL_SPEND"},
             preferred_table_alias="SPEND_FACT",
         )
-
-        assert repaired == 'SUM(SPEND_FACT.TRANSACTION_USD_AMOUNT)'
+        # Note: produces ::FLOAT as required for Snowflake numeric metrics.
+        assert repaired == 'SUM(SPEND_FACT.TRANSACTION_USD_AMOUNT::FLOAT)'
 
     def test_window_metric_expression_rewritten_for_semantic_metrics(self, emitter):
         """Rewrite DIV0(SUM(x), SUM(x) OVER(...)) to SUM(x) for semantic safety."""
@@ -423,7 +475,7 @@ class TestMetricColumnValidation:
         )
 
         rewritten = emitter._rewrite_window_metric_expression(raw_expr)
-        assert rewritten == 'SUM(SPEND_FACT."TRANSACTION_USD_AMOUNT")'
+        assert rewritten == 'SUM(SPEND_FACT."TRANSACTION_USD_AMOUNT"::FLOAT)'
 
     def test_lag_window_metric_expression_preserved_for_sply(self, emitter):
         """SPLY LAG/OVER metrics should be preserved for Snowflake sync."""
@@ -671,6 +723,152 @@ class TestBuildSchemaValidationMap:
         # Calculated column should not be in map
         assert "REVENUE" in schema_map["salesfact"]
         assert len(schema_map["salesfact"]) == 1  # Only revenue
+
+
+class TestBooleanSumHandling:
+    """Regression tests for Snowflake SUM(BOOLEAN) compilation failures."""
+
+    @pytest.fixture
+    def emitter(self):
+        config = SnowflakeConfig(
+            account="test.local",
+            user="test_user",
+            password="test_password",  # noqa: S106
+            warehouse="test_wh",
+            database="test_db",
+            schema_name="test_schema",
+            role="test_role"
+        )
+        behavior = ConnectorBehavior()
+        return SnowflakeEmitter(config, behavior)
+
+    def test_build_safe_sum_sql_boolean_uses_iff(self, emitter):
+        sql = emitter._build_safe_sum_sql('base."IS_ACTIVE"', "IS_ACTIVE")
+        assert sql == 'SUM(IFF(base."IS_ACTIVE" = 1 OR base."IS_ACTIVE" = TRUE, 1, 0))'
+
+    def test_build_safe_sum_sql_numeric_casts_float(self, emitter):
+        sql = emitter._build_safe_sum_sql('base."REVENUE"', "REVENUE")
+        assert sql == 'SUM(base."REVENUE"::FLOAT)'
+
+    def test_build_safe_sum_sql_prefixed_flag_uses_iff(self, emitter):
+        # Regression test for prefixed identifiers like TABLE.DELETED
+        sql = emitter._build_safe_sum_sql('REP_SFDC.DELETED', "REP_SFDC.DELETED")
+        assert sql == 'SUM(IFF(REP_SFDC.DELETED = 1 OR REP_SFDC.DELETED = TRUE, 1, 0))'
+
+    def test_generate_semantic_view_tiered_avoids_sum_boolean(self, emitter):
+        triage = MagicMock()
+        triage.strategy.value = "passthrough"
+        triage_results = {"IS_ACTIVE": triage}
+
+        ddl = emitter.generate_semantic_view_tiered(
+            model_name="Client Data",
+            shadow_table='test_db.test_schema."MEASURES_CLIENT_DATA"',
+            triage_results=triage_results,
+            grain_dimensions=["ID"],
+        )
+
+        assert 'SUM(IFF(base."IS_ACTIVE" = 1 OR base."IS_ACTIVE" = TRUE, 1, 0)) AS "IS_ACTIVE"' in ddl
+        assert 'SUM(base."IS_ACTIVE") AS "IS_ACTIVE"' not in ddl
+
+
+class TestHistorySnapshotDDL:
+    """Regression tests for automatic history-table fan-out mitigation."""
+
+    @pytest.fixture
+    def emitter(self):
+        config = SnowflakeConfig(
+            account="test.local",
+            user="test_user",
+            password="test_password",  # noqa: S106
+            warehouse="test_wh",
+            database="test_db",
+            schema_name="test_schema",
+            role="test_role",
+        )
+        behavior = ConnectorBehavior()
+        return SnowflakeEmitter(config, behavior)
+
+    def test_generate_ddls_adds_latest_snapshot_view_for_history_dataset(self, emitter):
+        from semabridge.formats.sml.models import (
+            SMLColumn,
+            SMLDataset,
+            SMLModel,
+            SMLRelationship,
+            Cardinality,
+            DataType,
+        )
+
+        quote = SMLDataset(
+            unique_name="REP_SFDC_SBQQ_QUOTE",
+            source_table="REP_SFDC_SBQQ_QUOTE",
+            columns=[
+                SMLColumn(unique_name="ID", data_type=DataType.STRING, is_key=True),
+            ],
+            is_fact=True,
+        )
+        quote_history = SMLDataset(
+            unique_name="REP_SFDC_SBQQ_QUOTE_HISTORY",
+            source_table="REP_SFDC_SBQQ_QUOTE_HISTORY",
+            columns=[
+                SMLColumn(unique_name="PARENT_ID", data_type=DataType.STRING, is_key=False),
+                SMLColumn(unique_name="CREATED_DATE", data_type=DataType.DATETIME, is_key=False),
+                SMLColumn(unique_name="NEWVALUE", data_type=DataType.STRING, is_key=False),
+            ],
+            is_fact=False,
+        )
+
+        model = SMLModel(
+            unique_name="Client Data",
+            datasets=[quote, quote_history],
+            dimensions=[],
+            metrics=[],
+            relationships=[
+                SMLRelationship(
+                    unique_name="REL_QUOTE_HISTORY",
+                    from_dataset="REP_SFDC_SBQQ_QUOTE_HISTORY",
+                    from_columns=["PARENT_ID"],
+                    to_dataset="REP_SFDC_SBQQ_QUOTE",
+                    to_columns=["ID"],
+                    cardinality=Cardinality.MANY_TO_ONE,
+                    is_active=True,
+                )
+            ],
+        )
+
+        ddls = emitter.generate_ddls(model)
+
+        assert len(ddls) >= 2
+        assert "CREATE OR REPLACE VIEW" in ddls[0]
+        assert "REP_SFDC_SBQQ_QUOTE_HISTORY_LATEST" in ddls[0]
+        assert 'PARTITION BY "PARENT_ID"' in ddls[0]
+        assert 'ORDER BY "CREATED_DATE" DESC NULLS LAST' in ddls[0]
+        assert "REP_SFDC_SBQQ_QUOTE_HISTORY_LATEST" in ddls[-1]
+
+    def test_generate_ddls_skips_history_snapshot_when_timestamp_missing(self, emitter):
+        from semabridge.formats.sml.models import SMLColumn, SMLDataset, SMLModel, DataType
+
+        quote_history = SMLDataset(
+            unique_name="REP_SFDC_SBQQ_QUOTE_HISTORY",
+            source_table="REP_SFDC_SBQQ_QUOTE_HISTORY",
+            columns=[
+                SMLColumn(unique_name="PARENT_ID", data_type=DataType.STRING, is_key=False),
+                SMLColumn(unique_name="NEWVALUE", data_type=DataType.STRING, is_key=False),
+            ],
+            is_fact=False,
+        )
+        model = SMLModel(
+            unique_name="Client Data",
+            datasets=[quote_history],
+            dimensions=[],
+            metrics=[],
+            relationships=[],
+        )
+
+        ddls = emitter.generate_ddls(model)
+
+        assert len(ddls) == 1
+        assert "CREATE OR REPLACE SEMANTIC VIEW" in ddls[0]
+        assert "QUOTE_HISTORY_LATEST" not in ddls[0]
 
 
 if __name__ == "__main__":

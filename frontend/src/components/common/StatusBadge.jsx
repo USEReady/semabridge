@@ -12,7 +12,7 @@ const CONFIG = {
   error:   { bg: 'var(--color-error-muted)',    text: 'var(--color-error)',    dot: 'var(--color-error)',    label: 'Error' },
   failed:  { bg: 'var(--color-error-muted)',    text: 'var(--color-error)',    dot: 'var(--color-error)',    label: 'Failed' },
   draft:   { bg: 'var(--bg-surface-raised)',    text: 'var(--text-tertiary)',  dot: 'var(--text-tertiary)',  label: 'Draft' },
-  running: { bg: 'var(--color-warning-muted)',  text: 'var(--color-warning)',  dot: 'var(--color-warning)',  label: 'Running' },
+  running: { bg: 'rgba(59, 130, 246, 0.12)',  text: '#3B82F6',  dot: '#3B82F6',  label: 'Running' },
   connected: { bg: 'var(--color-success-muted)', text: 'var(--color-success)', dot: 'var(--color-success)', label: 'Connected' },
   configured: { bg: 'var(--color-warning-muted)', text: 'var(--color-warning)', dot: 'var(--color-warning)', label: 'Configured' },
   disconnected: { bg: 'var(--color-error-muted)', text: 'var(--color-error)', dot: 'var(--color-error)', label: 'Disconnected' },
@@ -43,16 +43,31 @@ export default function StatusBadge({ status = 'draft', label, size = 'md' }) {
         whiteSpace: 'nowrap',
       }}
     >
-      <span
-        className={key === 'running' ? 'animate-pulse' : ''}
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: '50%',
-          background: cfg.dot,
-          flexShrink: 0,
-        }}
-      />
+      {key === 'running' ? (
+        <span
+          className="relative inline-flex"
+          style={{ width: 6, height: 6, flexShrink: 0 }}
+        >
+          <span
+            className="absolute inline-flex h-full w-full rounded-full animate-ping"
+            style={{ background: cfg.dot, opacity: 0.5 }}
+          />
+          <span
+            className="relative inline-flex h-full w-full rounded-full"
+            style={{ background: cfg.dot }}
+          />
+        </span>
+      ) : (
+        <span
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: '50%',
+            background: cfg.dot,
+            flexShrink: 0,
+          }}
+        />
+      )}
       {display}
     </span>
   );

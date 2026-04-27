@@ -279,12 +279,23 @@ class TestSqlRenderer:
     
     def test_render_basic_agg(self):
         parser = DaxAstParser()
-        ast = parser.parse("SUM([Amount])")
+        ast = parser.parse("SUM('Sales'[Amount])")
         
         renderer = DaxSqlRenderer(table_alias="sales")
         sql = renderer.render(ast)
         assert sql is not None
         assert "SUM" in sql.upper()
+
+    def test_render_iferror_avoids_try_cast(self):
+        parser = DaxAstParser()
+        ast = parser.parse("IFERROR(SUM('Sales'[Amount]) / SUM('Sales'[Units]), 0)")
+
+        renderer = DaxSqlRenderer(table_alias="sales")
+        sql = renderer.render(ast)
+
+        assert sql is not None
+        assert "TRY_CAST" not in sql.upper()
+        assert "TRY_TO_NUMBER(TO_VARCHAR(" in sql.upper()
 
 
 def run_tests():
