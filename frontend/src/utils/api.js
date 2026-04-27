@@ -12,6 +12,23 @@ function extractSnapshotList(payload) {
     return [];
 }
 
+export function formatDate(dateString) {
+    if (!dateString) return '—';
+    const d = new Date(dateString);
+    // Handle invalid dates and epoch (1970-01-01)
+    if (isNaN(d.getTime()) || d.getTime() <= 86400000) { // 86400000 = 1 day in ms
+        return '—';
+    }
+    return d.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: 'numeric',
+        second: 'numeric'
+    });
+}
+
 function normalizeProject(project) {
     if (!project || typeof project !== 'object') return project;
 

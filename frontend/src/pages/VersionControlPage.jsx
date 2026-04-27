@@ -34,7 +34,7 @@ import {
     ListTree,
     Pin
 } from 'lucide-react';
-import { api } from '../utils/api';
+import { api, formatDate } from '../utils/api';
 import { useUIStore } from '../store/uiStore';
 import { useLogs } from '../context/LogsContext';
 import PageHeader from '../components/common/PageHeader';
@@ -132,7 +132,7 @@ function DiffView({ diffData, baseRun, targetRun, onBack }) {
                             <div className="flex flex-col">
                                 <span className="text-[var(--text-tertiary)] text-[10px] uppercase font-bold tracking-wider">Captured At</span> 
                                 <span className="text-[var(--text-primary)] font-bold mt-0.5">
-                                    {metadata_diff?.[key]?.taken_at ? new Date(metadata_diff[key].taken_at).toLocaleTimeString() : '—'}
+                                    {formatDate(metadata_diff?.[key]?.taken_at)}
                                 </span>
                             </div>
                         </div>
@@ -206,7 +206,7 @@ function DiffView({ diffData, baseRun, targetRun, onBack }) {
                                             <div className={`w-2 h-2 rounded-full ${
                                                 m.status === 'ADDED' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 
                                                 m.status === 'REMOVED' ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]' : 
-                                                m.status === 'MODIFIED' ? 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]' : 'bg-slate-400 opacity-30'
+                                                m.status === 'MODIFIED' ? 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]' : 'bg-slate-400 opacity-60'
                                             }`} />
                                             <span className="font-bold text-[var(--text-primary)] text-sm tracking-tight">{m.name}</span>
                                         </div>
@@ -294,7 +294,7 @@ function ModelHistoryDrawer({ projectId, modelName, onClose }) {
                                     <div className="p-5 rounded-2xl bg-[var(--bg-main)]/50 border border-[var(--border-light)] hover:border-blue-500/30 transition-all">
                                         <div className="flex justify-between items-start mb-3">
                                             <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Run #{item.run_id.substring(0,8)}</span>
-                                            <span className="text-[10px] font-bold text-[var(--text-tertiary)]">{new Date(item.timestamp).toLocaleString()}</span>
+                                            <span className="text-[10px] font-bold text-[var(--text-tertiary)]">{formatDate(item.timestamp)}</span>
                                         </div>
                                         <div className="flex items-center gap-3 mb-4">
                                             <Badge variant="ghost">Snapshot {item.snapshot_id.substring(0,8)}</Badge>
@@ -425,7 +425,10 @@ function MappingsView({ runId, projectId }) {
             setLoading(true);
             try {
                 const data = await api.listMappings(projectId);
-                setMappings(data || []);
+                // The backend returns an object { mappings: [...], collisions: [...] }
+                // or a direct array in some legacy paths.
+                const results = Array.isArray(data) ? data : (data?.mappings || []);
+                setMappings(results);
             } catch (e) {
                 console.error(e);
             } finally {
@@ -601,7 +604,7 @@ function LineageView({ projectId }) {
                                         </div>
                                         <div className={`mt-3 pt-3 border-t ${node.type === 'run' ? 'border-white/10' : 'border-[var(--border-light)]'}`}>
                                             <div className="flex justify-between items-center text-[9px] font-bold uppercase opacity-60">
-                                                <span>{new Date(node.metadata?.created_at || node.metadata?.started_at || 0).toLocaleDateString()}</span>
+                                                <span>{formatDate(node.metadata?.created_at || node.metadata?.started_at)}</span>
                                                 {node.metadata?.status && (
                                                     <span className={node.metadata.status === 'success' ? 'text-emerald-400' : 'text-rose-400'}>
                                                         {node.metadata.status}
@@ -977,7 +980,7 @@ export default function VersionControlPage() {
                             <div className="flex justify-between items-center">
                                 <span className="text-xs text-[var(--text-secondary)] font-medium">Oldest Snapshot</span>
                                 <span className="text-sm font-black text-[var(--text-primary)]">
-                                    {versions.length > 0 ? new Date(versions[versions.length-1].started_at).toLocaleDateString() : '—'}
+                                    {versions.length > 0 ? formatDate(versions[versions.length-1].started_at) : '—'}
                                 </span>
                             </div>
                             
@@ -1062,7 +1065,7 @@ export default function VersionControlPage() {
                                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                                             {[
                                                 { label: 'Run Type', val: selectedRun.run_type || 'Manual', icon: Zap, color: 'text-amber-500' },
-                                                { label: 'Executed', val: new Date(selectedRun.started_at).toLocaleTimeString(), icon: Clock, color: 'text-slate-500' },
+                                                { label: 'Executed', val: formatDate(selectedRun.started_at), icon: Clock, color: 'text-slate-500' },
                                                 { label: 'Audit Log', val: 'Verified', icon: ShieldCheck, color: 'text-emerald-500' },
                                                 { label: 'Snapshot', val: (selectedRun.after_tgt_snapshots?.[0] || 'N/A').substring(0, 8), icon: Database, color: 'text-blue-500' }
                                             ].map((stat, i) => (
@@ -1223,13 +1226,7 @@ export default function VersionControlPage() {
                                                 <div className="flex items-center gap-2">
                                                     <Calendar size={12} className="opacity-40" />
                                                     <span className={`text-[11px] font-bold ${selectedRun?.run_id === v.run_id ? 'text-blue-100' : 'text-[var(--text-secondary)]'}`}>
-                                                        {new Date(v.started_at).toLocaleDateString()}
-                                                    </span>
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    <Clock size={12} className="opacity-40" />
-                                                    <span className={`text-[11px] font-bold ${selectedRun?.run_id === v.run_id ? 'text-blue-100' : 'text-[var(--text-secondary)]'}`}>
-                                                        {new Date(v.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                        {formatDate(v.started_at)}
                                                     </span>
                                                 </div>
                                             </div>

@@ -315,15 +315,13 @@ def _diff_models(left_state: Dict[str, Any], right_state: Dict[str, Any]) -> Lis
     def _extract_models(state: Dict[str, Any]) -> Dict[str, Any]:
         raw = state.get("datasets") or state.get("models") or []
         if isinstance(raw, dict):
-            return {str(k): (v if isinstance(v, dict) else {"name": k}) for k, v in raw.items()}
+            return raw
         if isinstance(raw, list):
-            res = {}
-            for item in raw:
-                if isinstance(item, dict) and item.get("name"):
-                    res[str(item["name"])] = item
-                elif isinstance(item, str):
-                    res[item] = {"name": item}
-            return res
+            # Support both 'name' (legacy) and 'unique_name' (SML)
+            return {
+                (m.get("unique_name") or m.get("name") or f"model_{i}"): m 
+                for i, m in enumerate(raw) if isinstance(m, dict)
+            }
         return {}
 
     left_models = _extract_models(left_state)
@@ -522,7 +520,7 @@ async def compare_project_snapshots_compat(
                 "id": from_snapshot_id,
                 "format": from_row.get("intermediate_format"),
                 "model_count": len(left_state.get("datasets") or left_state.get("models") or []),
-                "taken_at": from_row.get("created_at"),
+                "taken_at": from_row.get("created_at") or from_row.get("timestamp"),
                 "connector_id": from_row.get("connector_identifier"),
                 "trigger": str(from_row.get("snapshot_origin") or "").lower(),
             },
@@ -530,7 +528,7 @@ async def compare_project_snapshots_compat(
                 "id": to_snapshot_id,
                 "format": to_row.get("intermediate_format"),
                 "model_count": len(right_state.get("datasets") or right_state.get("models") or []),
-                "taken_at": to_row.get("created_at"),
+                "taken_at": to_row.get("created_at") or to_row.get("timestamp"),
                 "connector_id": to_row.get("connector_identifier"),
                 "trigger": str(to_row.get("snapshot_origin") or "").lower(),
             },
