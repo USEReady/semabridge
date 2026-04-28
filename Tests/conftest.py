@@ -37,15 +37,18 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         pytest tests/ --db-url duckdb:///./test.db
         pytest tests/                     # defaults to SQLite in-memory
     """
-    parser.addoption(
-        "--db-url",
-        action="store",
-        default=None,
-        help=(
-            "SQLAlchemy connection URL for tests. "
-            "Defaults to sqlite:///file::memory:?cache=shared&uri=true"
-        ),
-    )
+    try:
+        parser.addoption(
+            "--db-url",
+            action="store",
+            default=None,
+            help=(
+                "SQLAlchemy connection URL for tests. "
+                "Defaults to sqlite:///file::memory:?cache=shared&uri=true"
+            ),
+        )
+    except ValueError:
+        pass  # already registered by another conftest
 
 # -----------------------------------------------------------------------------
 # Database environment — force in-memory SQLite for all tests
