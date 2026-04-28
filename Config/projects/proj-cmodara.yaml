@@ -1,0 +1,42 @@
+project_name: cmodara
+source:
+  type: fabric
+  identity_id: c505f63e-bb85-439a-be22-d7bcbde8a8cc
+  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
+  workspace: semabridge
+  models:
+  - Client Data
+targets:
+- type: snowflake
+mappings:
+- source: Client Data
+  target: CLIENT_DATA
+  type: table
+  columns:
+  - source: id
+    target: ID
+    type: integer
+    primary_key: true
+  - source: name
+    target: NAME
+    type: string
+  - source: created_at
+    target: CREATED_AT
+    type: timestamp
+  - source: updated_at
+    target: UPDATED_AT
+    type: timestamp
+ui:
+  intermediate_format: osi
+  editor_mode: form
+  output_format: osi
+selection:
+  model_ids:
+  - 0794fdcc-d85f-4d93-a42c-8bacaad04819
+options:
+  auto_relationships: true
+  generate_descriptions: true
+project_id: proj-cmodara
+display_name: cmodara
+target:
+  type: snowflake

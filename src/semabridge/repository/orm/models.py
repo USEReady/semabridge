@@ -36,6 +36,7 @@ All JSON payloads use ``Text`` columns for cross-dialect compatibility
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import List, Optional
 
@@ -345,6 +346,8 @@ class SnapshotRow(Base):
     __tablename__ = "snapshots"
     __table_args__ = (
         Index("ix_snapshots_project_ts", "project_id", "timestamp"),
+        Index("ix_snapshots_connector", "connector_id"),
+        Index("ix_snapshots_trigger", "trigger"),
     )
 
     snapshot_id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -360,6 +363,8 @@ class SnapshotRow(Base):
     initiated_by: Mapped[str] = mapped_column(String(20), nullable=False, default="cli")
     run_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
+    connector_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    trigger: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
     # Relationships
     project: Mapped["Project"] = relationship(back_populates="snapshots")
@@ -409,10 +414,32 @@ class Run(Base):
     """
 
     __tablename__ = "runs"
+    __table_args__ = (
+        Index("ix_runs_project", "project_id"),
+    )
 
     run_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     project_id: Mapped[str] = mapped_column(
         ForeignKey("projects.project_id"), nullable=False
+    )
+    started_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
+    final_step: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    source_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    target_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    run_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    before_src_snapshot_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    restore_snapshot_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    before_tgt_snapshots: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    after_tgt_snapshots: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Relationships
+    project: Mapped["Project"] = relationship(back_populates="runs")
+    source_artifacts: Mapped[List["SourceArtifact"]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
     )
     started_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
     completed_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
@@ -460,6 +487,37 @@ class SourceArtifact(Base):
             f"<SourceArtifact(artifact_id={self.artifact_id!r}, "
             f"source_type={self.source_type!r})>"
         )
+
+
+class RetentionPolicy(Base):
+    """User-configurable retention policy per project.
+
+    Supports strategies: 'count', 'days', 'unlimited'.
+    """
+
+    __tablename__ = "retention_policies"
+    __table_args__ = (
+        Index("ix_retention_project", "project_id", unique=True),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.project_id"), nullable=False, unique=True
+    )
+    strategy: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="unlimited"
+    )
+    max_snapshots_per_connector: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    max_age_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    prune_manual_snapshots: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        _UTC_DT, server_default=func.now(), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return f"<RetentionPolicy(project_id={self.project_id!r}, strategy={self.strategy!r})>"
 
 
 class ModelVersion(Base):

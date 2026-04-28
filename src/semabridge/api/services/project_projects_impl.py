@@ -569,13 +569,13 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
         cardinality = str(rel.get("cardinality") or rel.get("relationship_type") or rel.get("type") or "many-to-one")
         from_col = str(rel.get("from_column") or (rel.get("from_columns") or [""])[0] or rel.get("join_key") or "")
         to_col = str(rel.get("to_column") or (rel.get("to_columns") or [""])[0] or "")
-        join_label = f"{from_col} â†’ {to_col}" if from_col and to_col else from_col
+        join_label = f"{from_col} → {to_col}" if from_col and to_col else from_col
 
         edges.append({
             "id": f"rel-{ridx}-{table_nodes[from_key]}-{table_nodes[to_key]}",
             "source": table_nodes[from_key],
             "target": table_nodes[to_key],
-            "label": f"{_card_symbol(cardinality)}{f' â€¢ {join_label}' if join_label else ''}",
+            "label": f"{_card_symbol(cardinality)}{f' • {join_label}' if join_label else ''}",
             "type": "smoothstep",
             "style": {"stroke": "#818CF8", "strokeDasharray": "6 3"},
             "data": {
@@ -665,13 +665,14 @@ async def compare_graph_snapshots_compat(
     try:
         snap_from = db_manager.get_snapshot(from_snapshot_id)
         snap_to = db_manager.get_snapshot(to_snapshot_id)
-    if not snap_from or not snap_to:
-        return {
-            "summary": {"added": 0, "removed": 0, "modified": 0, "unchanged": 0},
-            "changes": [],
-            "relationships": [],
-            "styled_graph": {"nodes": [], "edges": []},
-        }
+        
+        if not snap_from or not snap_to:
+            return {
+                "summary": {"added": 0, "removed": 0, "modified": 0, "unchanged": 0},
+                "changes": [],
+                "relationships": [],
+                "styled_graph": {"nodes": [], "edges": []},
+            }
 
         from_graph = _snapshot_graph_payload(snap_from, model_name, include_system_tables)
         to_graph = _snapshot_graph_payload(snap_to, model_name, include_system_tables)
@@ -700,71 +701,71 @@ async def compare_graph_snapshots_compat(
         from_id_map = {str(n.get("id")): n for n in from_nodes}
         to_id_map = {str(n.get("id")): n for n in to_nodes}
 
-    changes: List[Dict[str, Any]] = []
+        changes: List[Dict[str, Any]] = []
 
-    added_keys = sorted(set(to_node_map.keys()) - set(from_node_map.keys()))
-    removed_keys = sorted(set(from_node_map.keys()) - set(to_node_map.keys()))
-    common_keys = sorted(set(from_node_map.keys()) & set(to_node_map.keys()))
+        added_keys = sorted(set(to_node_map.keys()) - set(from_node_map.keys()))
+        removed_keys = sorted(set(from_node_map.keys()) - set(to_node_map.keys()))
+        common_keys = sorted(set(from_node_map.keys()) & set(to_node_map.keys()))
 
-    for k in added_keys:
-        n = to_node_map[k]
-        d = n.get("data", {}) if isinstance(n.get("data"), dict) else {}
-        changes.append({
-            "change_type": "added",
-            "entity_type": d.get("nodeType") or "node",
-            "entity_name": d.get("label") or n.get("id"),
-            "details": "Entity added",
-            "from_value": None,
-            "to_value": d,
-        })
-
-    for k in removed_keys:
-        n = from_node_map[k]
-        d = n.get("data", {}) if isinstance(n.get("data"), dict) else {}
-        changes.append({
-            "change_type": "removed",
-            "entity_type": d.get("nodeType") or "node",
-            "entity_name": d.get("label") or n.get("id"),
-            "details": "Entity removed",
-            "from_value": d,
-            "to_value": None,
-        })
-
-    for k in common_keys:
-        n1 = from_node_map[k]
-        n2 = to_node_map[k]
-        d1 = n1.get("data", {}) if isinstance(n1.get("data"), dict) else {}
-        d2 = n2.get("data", {}) if isinstance(n2.get("data"), dict) else {}
-        left = {
-            "columns": d1.get("columns") or [],
-            "expression": d1.get("expression") or "",
-            "data_type": d1.get("data_type") or "",
-            "status": d1.get("status") or "",
-        }
-        right = {
-            "columns": d2.get("columns") or [],
-            "expression": d2.get("expression") or "",
-            "data_type": d2.get("data_type") or "",
-            "status": d2.get("status") or "",
-        }
-        if json.dumps(left, sort_keys=True, default=str) != json.dumps(right, sort_keys=True, default=str):
+        for k in added_keys:
+            n = to_node_map[k]
+            d = n.get("data", {}) if isinstance(n.get("data"), dict) else {}
             changes.append({
-                "change_type": "modified",
-                "entity_type": d2.get("nodeType") or d1.get("nodeType") or "node",
-                "entity_name": d2.get("label") or d1.get("label") or n2.get("id"),
-                "details": "Schema/metric definition changed",
-                "from_value": left,
-                "to_value": right,
+                "change_type": "added",
+                "entity_type": d.get("nodeType") or "node",
+                "entity_name": d.get("label") or n.get("id"),
+                "details": "Entity added",
+                "from_value": None,
+                "to_value": d,
             })
-        else:
+
+        for k in removed_keys:
+            n = from_node_map[k]
+            d = n.get("data", {}) if isinstance(n.get("data"), dict) else {}
             changes.append({
-                "change_type": "unchanged",
-                "entity_type": d2.get("nodeType") or d1.get("nodeType") or "node",
-                "entity_name": d2.get("label") or d1.get("label") or n2.get("id"),
-                "details": "No changes detected",
-                "from_value": left,
-                "to_value": right,
+                "change_type": "removed",
+                "entity_type": d.get("nodeType") or "node",
+                "entity_name": d.get("label") or n.get("id"),
+                "details": "Entity removed",
+                "from_value": d,
+                "to_value": None,
             })
+
+        for k in common_keys:
+            n1 = from_node_map[k]
+            n2 = to_node_map[k]
+            d1 = n1.get("data", {}) if isinstance(n1.get("data"), dict) else {}
+            d2 = n2.get("data", {}) if isinstance(n2.get("data"), dict) else {}
+            left = {
+                "columns": d1.get("columns") or [],
+                "expression": d1.get("expression") or "",
+                "data_type": d1.get("data_type") or "",
+                "status": d1.get("status") or "",
+            }
+            right = {
+                "columns": d2.get("columns") or [],
+                "expression": d2.get("expression") or "",
+                "data_type": d2.get("data_type") or "",
+                "status": d2.get("status") or "",
+            }
+            if json.dumps(left, sort_keys=True, default=str) != json.dumps(right, sort_keys=True, default=str):
+                changes.append({
+                    "change_type": "modified",
+                    "entity_type": d2.get("nodeType") or d1.get("nodeType") or "node",
+                    "entity_name": d2.get("label") or d1.get("label") or n2.get("id"),
+                    "details": "Schema/metric definition changed",
+                    "from_value": left,
+                    "to_value": right,
+                })
+            else:
+                changes.append({
+                    "change_type": "unchanged",
+                    "entity_type": d2.get("nodeType") or d1.get("nodeType") or "node",
+                    "entity_name": d2.get("label") or d1.get("label") or n2.get("id"),
+                    "details": "No changes detected",
+                    "from_value": left,
+                    "to_value": right,
+                })
 
         from_edge_map = {_edge_key(e, from_id_map): e for e in from_edges}
         to_edge_map = {_edge_key(e, to_id_map): e for e in to_edges}
@@ -815,14 +816,14 @@ async def compare_graph_snapshots_compat(
             e["data"] = {**(e.get("data") if isinstance(e.get("data"), dict) else {}), "diffStatus": "removed"}
             styled_edges.append(e)
 
-    summary = {
-        "added": len([c for c in changes if c.get("change_type") == "added"]),
-        "removed": len([c for c in changes if c.get("change_type") == "removed"]),
-        "modified": len([c for c in changes if c.get("change_type") == "modified"]),
-        "unchanged": len([c for c in changes if c.get("change_type") == "unchanged"]),
-        "relationships_added": len([r for r in rel_changes if r.get("change_type") == "added"]),
-        "relationships_removed": len([r for r in rel_changes if r.get("change_type") == "removed"]),
-    }
+        summary = {
+            "added": len([c for c in changes if c.get("change_type") == "added"]),
+            "removed": len([c for c in changes if c.get("change_type") == "removed"]),
+            "modified": len([c for c in changes if c.get("change_type") == "modified"]),
+            "unchanged": len([c for c in changes if c.get("change_type") == "unchanged"]),
+            "relationships_added": len([r for r in rel_changes if r.get("change_type") == "added"]),
+            "relationships_removed": len([r for r in rel_changes if r.get("change_type") == "removed"]),
+        }
 
         return {
             "summary": summary,
@@ -846,5 +847,3 @@ async def compare_graph_snapshots_compat(
             "relationships": [],
             "styled_graph": {"nodes": [], "edges": []},
         }
-
-

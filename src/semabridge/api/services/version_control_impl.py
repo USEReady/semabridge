@@ -4,65 +4,57 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
 from semabridge.repository.orm.session_factory import db_manager
-from semabridge.repository.orm.models import SnapshotRow, Run
-from sqlalchemy import select, delete, update, func, or_
+from semabridge.api.services.retention_service import (
+    apply_retention_policy as apply_retention_policy_impl,
+    set_retention_policy as set_retention_policy_impl,
+    get_retention_policy as get_retention_policy_impl,
+)
 
 logger = logging.getLogger("semabridge.version_control")
+
 
 class VersionControlBackend:
     """
     Advanced version control backend logic, isolated from core sync pipelines.
     Handles retention policies, snapshot pruning, and history analysis.
     """
-    
+
     @staticmethod
-    async def apply_retention_policy(project_id: str, days_to_keep: int = 30, min_versions_to_keep: int = 5):
+    async def apply_retention_policy(
+        project_id: str,
+        days_to_keep: int = 30,
+        min_versions_to_keep: int = 5,
+        strategy: Optional[str] = None,
+        max_snapshots: Optional[int] = None,
+        prune_manual: bool = False,
+    ):
         """
-        Prune old snapshots for a project while keeping a minimum number of recent versions.
-        Soft-deletes snapshots by setting deleted_at.
+        Prune old snapshots for a project while respecting retention policy.
+        
+        Args:
+            project_id: Project ID.
+            days_to_keep: Days to keep (for 'days' strategy).
+            min_versions_to_keep: Minimum versions to keep (for 'count' strategy).
+            strategy: Optional strategy override ('count', 'days', 'unlimited').
+            max_snapshots: Max snapshots per connector (for 'count' strategy).
+            prune_manual: Whether to prune manual snapshots.
         """
         session = db_manager._session()
         try:
-            # 1. Get all snapshots for project, ordered by timestamp
-            stmt = (
-                select(SnapshotRow)
-                .where(SnapshotRow.project_id == project_id)
-                .where(SnapshotRow.deleted_at == None)
-                .order_by(SnapshotRow.timestamp.desc())
-            )
-            snapshots = session.execute(stmt).scalars().all()
-            
-            if len(snapshots) <= min_versions_to_keep:
-                return {"pruned": 0, "kept": len(snapshots), "reason": "Below minimum count"}
-            
-            cutoff_date = datetime.utcnow() - timedelta(days=days_to_keep)
-            to_prune_ids = []
-            
-            # Keep the first N versions regardless of age
-            for idx, snap in enumerate(snapshots):
-                if idx < min_versions_to_keep:
-                    continue
-                
-                # Check if older than cutoff
-                if snap.timestamp < cutoff_date:
-                    # Double check it's not a "pinned" version or referenced by a recent run
-                    # (Simplified for now: just prune)
-                    to_prune_ids.append(snap.snapshot_id)
-            
-            if to_prune_ids:
-                stmt = (
-                    update(SnapshotRow)
-                    .where(SnapshotRow.snapshot_id.in_(to_prune_ids))
-                    .values(deleted_at=datetime.utcnow().isoformat())
+            # If strategy is provided, update the policy first
+            if strategy:
+                from semabridge.api.services.retention_service import set_retention_policy
+                set_retention_policy(
+                    session, project_id,
+                    strategy=strategy,
+                    max_snapshots_per_connector=max_snapshots,
+                    max_age_days=days_to_keep if strategy == "days" else None,
+                    prune_manual_snapshots=prune_manual,
                 )
-                session.execute(stmt)
-                session.commit()
-                
-            return {
-                "pruned": len(to_prune_ids),
-                "kept": len(snapshots) - len(to_prune_ids),
-                "status": "success"
-            }
+            
+            # Apply the policy
+            result = apply_retention_policy_impl(session, project_id)
+            return result
         except Exception as exc:
             logger.error("Failed to apply retention policy for %s: %s", project_id, exc)
             return {"error": str(exc), "status": "failed"}
@@ -74,13 +66,15 @@ class VersionControlBackend:
         """Calculate storage impact of snapshots for a project."""
         session = db_manager._session()
         try:
-            stmt = (
-                select(
-                    func.count(SnapshotRow.snapshot_id),
-                    func.sum(func.length(func.cast(SnapshotRow.sml_blob, SnapshotRow.sml_blob.type))) # Rough estimate
-                )
-                .where(SnapshotRow.project_id == project_id)
-                .where(SnapshotRow.deleted_at == None)
+            from sqlalchemy import func, select
+            from semabridge.repository.orm.models import SnapshotRow
+            
+            stmt = select(
+                func.count(SnapshotRow.snapshot_id),
+                func.sum(func.length(func.cast(SnapshotRow.sml_blob, SnapshotRow.sml_blob.type)))
+            ).where(
+                SnapshotRow.project_id == project_id,
+                SnapshotRow.deleted_at == None
             )
             count, size_bytes = session.execute(stmt).first() or (0, 0)
             return {
@@ -90,6 +84,63 @@ class VersionControlBackend:
             }
         finally:
             session.close()
+
+    @staticmethod
+    async def set_retention_policy(
+        project_id: str,
+        strategy: str = "unlimited",
+        max_snapshots: Optional[int] = None,
+        max_age_days: Optional[int] = None,
+        prune_manual: bool = False,
+    ):
+        """Set retention policy for a project."""
+        session = db_manager._session()
+        try:
+            policy = set_retention_policy_impl(
+                session, project_id,
+                strategy=strategy,
+                max_snapshots_per_connector=max_snapshots,
+                max_age_days=max_age_days,
+                prune_manual_snapshots=prune_manual,
+            )
+            return {
+                "status": "success",
+                "policy": {
+                    "project_id": policy.project_id,
+                    "strategy": policy.strategy,
+                    "max_snapshots_per_connector": policy.max_snapshots_per_connector,
+                    "max_age_days": policy.max_age_days,
+                    "prune_manual_snapshots": policy.prune_manual_snapshots,
+                }
+            }
+        except Exception as exc:
+            logger.error("Failed to set retention policy for %s: %s", project_id, exc)
+            return {"error": str(exc), "status": "failed"}
+        finally:
+            session.close()
+
+    @staticmethod
+    async def get_retention_policy(project_id: str):
+        """Get retention policy for a project."""
+        session = db_manager._session()
+        try:
+            policy = get_retention_policy_impl(session, project_id)
+            if not policy:
+                return {"status": "not_found", "project_id": project_id}
+            
+            return {
+                "status": "success",
+                "policy": {
+                    "project_id": policy.project_id,
+                    "strategy": policy.strategy,
+                    "max_snapshots_per_connector": policy.max_snapshots_per_connector,
+                    "max_age_days": policy.max_age_days,
+                    "prune_manual_snapshots": policy.prune_manual_snapshots,
+                }
+            }
+        finally:
+            session.close()
+
 
 # Singleton instance
 version_backend = VersionControlBackend()
