@@ -367,7 +367,7 @@ class ExecutionEngine:
 
 # ?? Method bindings ?? do not edit manually ??????????????????????????????????
 from semabridge.core.engine import config as _cfg
-ExecutionEngine._apply_mapping_overrides_from_config = _cfg._apply_mapping_overrides_from_config
+ExecutionEngine._apply_mapping_overrides_from_config = staticmethod(_cfg._apply_mapping_overrides_from_config)
 ExecutionEngine._step1_load_config                   = _cfg._step1_load_config
 ExecutionEngine._step2_init_identifiers              = _cfg._step2_init_identifiers
 
