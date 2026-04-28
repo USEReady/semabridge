@@ -201,22 +201,24 @@ def generate_semantic_view_tiered(
     # Measures
     for metric_name, triage in triage_results.items():
         safe = emitter._sanitize_col_name(metric_name)
+        safe_expr = f'base."{safe}"'
 
         if triage.strategy.value == "passthrough":
             # Tier 1: simple pass-through aggregation
             select_parts.append(
-                f'    SUM(base."{safe}") AS "{safe}"'
+                f'    {emitter._build_safe_sum_sql(safe_expr, safe)} AS "{safe}"'
             )
 
         elif triage.strategy.value == "aligned_history":
             # Tier 2: base value + companion columns
             select_parts.append(
-                f'    SUM(base."{safe}") AS "{safe}"'
+                f'    {emitter._build_safe_sum_sql(safe_expr, safe)} AS "{safe}"'
             )
             for suffix in triage.aligned_measures:
                 alias = emitter._sanitize_col_name(f"{metric_name}{suffix}")
+                alias_expr = f'base."{alias}"'
                 select_parts.append(
-                    f'    SUM(base."{alias}") AS "{alias}"'
+                    f'    {emitter._build_safe_sum_sql(alias_expr, alias)} AS "{alias}"'
                 )
 
         elif triage.strategy.value == "decomposition":
@@ -224,14 +226,16 @@ def generate_semantic_view_tiered(
                 # Tier 3: reconstruct ratio from components
                 num_col = emitter._sanitize_col_name(f"{metric_name}_Num")
                 den_col = emitter._sanitize_col_name(f"{metric_name}_Denom")
+                num_expr = f'base."{num_col}"'
+                den_expr = f'base."{den_col}"'
                 select_parts.append(
-                    f'    SUM(base."{num_col}") / '
-                    f'NULLIF(SUM(base."{den_col}"), 0) AS "{safe}"'
+                    f'    {emitter._build_safe_sum_sql(num_expr, num_col)} / '
+                    f'NULLIF({emitter._build_safe_sum_sql(den_expr, den_col)}, 0) AS "{safe}"'
                 )
             else:
                 # Tier 3 without decomposition — pass-through
                 select_parts.append(
-                    f'    SUM(base."{safe}") AS "{safe}"'
+                    f'    {emitter._build_safe_sum_sql(safe_expr, safe)} AS "{safe}"'
                 )
 
     select_block = ",\n".join(select_parts)

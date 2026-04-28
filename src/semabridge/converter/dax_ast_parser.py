@@ -744,7 +744,7 @@ class DaxSqlRenderer:
             raise self.DaxRenderError("IFERROR requires 2 arguments")
         expr = self._render_node(args[0])
         fallback = self._render_node(args[1])
-        return f"IFF(TRY_CAST({expr} AS FLOAT) IS NULL, {fallback}, {expr})"
+        return f"IFF(TRY_TO_NUMBER(TO_VARCHAR({expr})) IS NULL, {fallback}, {expr})"
 
     def _render_switch(self, args: List[DaxNode]) -> str:
         if len(args) < 3:

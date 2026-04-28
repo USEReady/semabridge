@@ -217,6 +217,10 @@ def build_cast_expression(
     if t in numeric_targets:
         if is_source_number:
             return quoted_name
+        # BOOLEAN -> numeric: TRY_TO_NUMBER(BOOLEAN) is invalid in Snowflake;
+        # use IFF to convert TRUE->1, FALSE->0 instead.
+        if is_source_boolean:
+            return f"IFF({quoted_name} IS NULL, NULL, IFF({quoted_name}, 1, 0))"
         return f"TRY_TO_NUMBER({quoted_name})"
     if t == "DATE":
         if is_source_timestamp:

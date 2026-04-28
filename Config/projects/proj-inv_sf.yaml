@@ -1,17 +1,17 @@
-project_name: core_sf
+project_name: inv_sf
 source:
   type: fabric
-  identity_id: 256fa356-a5f8-4356-b3a7-73ea2a2b2fe7
+  identity_id: 5e5e9d82-3030-459c-bbc4-0903098a568a
   workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
   workspace: semabridge
   models:
-  - Core_Finance_v1
+  - Inventory Semantic Model
 targets:
 - type: snowflake
   identity_id: 241347f2-70b3-4bb5-9586-85bc50b2bd7b
 mappings:
-- source: Core_Finance_v1
-  target: CORE_FINANCE_V1
+- source: Inventory Semantic Model
+  target: INVENTORY_SEMANTIC_MODEL
   type: table
   columns:
   - source: id
@@ -33,11 +33,11 @@ ui:
   output_format: osi
 selection:
   model_ids:
-  - bbe97d8c-bf99-457f-b322-6c5e7a948171
+  - 6c73961a-00c4-4610-b035-232a434e5d50
 options:
   auto_relationships: true
   generate_descriptions: true
-project_id: proj-core_sf
-display_name: core_sf
+project_id: proj-inv_sf
+display_name: inv_sf
 target:
   type: snowflake

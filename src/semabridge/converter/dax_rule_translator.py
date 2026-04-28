@@ -343,16 +343,19 @@ def translate_count_distinct(dax: str, table_alias: str, match: re.Match) -> Opt
 
 def _quote_identifier(name: str) -> str:
     """
-    Quote identifier if needed, converting to uppercase.
-    
-    Snowflake treats unquoted identifiers as uppercase and quoted identifiers
-    as case-sensitive. For simplicity, we use unquoted uppercase format.
+    Sanitize and quote identifier safely for Snowflake.
     """
-    # Remove existing quotes if present
     name = name.strip().strip('"').strip("'")
-    
-    # Convert to uppercase unquoted format for consistency
-    return name.upper()
+    try:
+        from semabridge.utils.identifiers import IdentifierSanitizer
+        sanitizer = IdentifierSanitizer()
+        safe_name = sanitizer.sanitize_column(name)
+        return f'"{safe_name}"'
+    except ImportError:
+        import re
+        safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', name).upper()
+        return f'"{safe_name}"'
+
 
 
 def extract_column_references(dax: str) -> List[str]:

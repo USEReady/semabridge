@@ -31,6 +31,7 @@ SNOWFLAKE_RESERVED_WORDS: Set[str] = {
     # Additional SQL clauses
     "having", "limit", "offset", "union", "except", "intersect", "into",
     "insert", "update", "delete", "create", "drop", "alter", "grant", "revoke",
+    "value",
     # Aggregate functions
     "count", "sum", "avg", "min", "max",
     # Snowflake-specific
