@@ -120,32 +120,6 @@ def safe_print(*args, **kwargs):
             pass
 
 
-def launch_ui():
-    """Launch PyQt6 Desktop UI."""
-    console.print("\n[bold cyan]🌉 Launching SemaBridge Desktop UI...[/bold cyan]\n")
-    
-    try:
-        from PyQt6.QtWidgets import QApplication
-        from semabridge.cli.ui.main_window import SemaBridgeMainWindow, get_stylesheet
-        
-        qt_app = QApplication(sys.argv)
-        qt_app.setApplicationName("SemaBridge")
-        qt_app.setStyleSheet(get_stylesheet())
-        
-        window = SemaBridgeMainWindow()
-        window.show()
-        
-        sys.exit(qt_app.exec())
-        
-    except ImportError as e:
-        console.print(f"[red]❌ Error: PyQt6 is not installed[/red]")
-        console.print(f"[dim]{e}[/dim]")
-        console.print("\n[yellow]Install with:[/yellow] pip install PyQt6")
-        raise typer.Exit(1)
-    except Exception as e:
-        console.print(f"[red]❌ Failed to launch UI: {e}[/red]")
-        raise typer.Exit(1)
-
 
 @app.callback(invoke_without_command=True)
 def main_callback(
@@ -156,18 +130,12 @@ def main_callback(
         "--log-level", 
         help="Override logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL). Takes precedence over YAML config."
     ),
-    ui: bool = typer.Option(False, "--ui", help="Launch graphical user interface"),
     parallel: bool = typer.Option(False, "--parallel", "-p", help="Enable parallel processing mode"),
 ):
     """Semabridge - Automate Fabric semantic model generation from Snowflake."""
     
-    # If UI flag is set, launch Streamlit and exit
-    if ui:
-        launch_ui()
-        raise typer.Exit(0)
-    
-    # If no subcommand and no --ui, show help
-    if ctx.invoked_subcommand is None and not ui:
+    # If no subcommand, show help
+    if ctx.invoked_subcommand is None:
         console.print(ctx.get_help())
         raise typer.Exit(0)
     

@@ -53,10 +53,6 @@ def get_pyinstaller_command() -> list:
         "--add-data", "src/semabridge/formats:semabridge/formats",
         
         # Hidden imports for dynamic loading
-        "--hidden-import", "PyQt6",
-        "--hidden-import", "PyQt6.QtCore",
-        "--hidden-import", "PyQt6.QtGui",
-        "--hidden-import", "PyQt6.QtWidgets",
         "--hidden-import", "snowflake.connector",
         "--hidden-import", "duckdb",
         "--hidden-import", "msal",
@@ -64,7 +60,6 @@ def get_pyinstaller_command() -> list:
         "--hidden-import", "tenacity",
         
         # Collect all files from these packages
-        "--collect-all", "PyQt6",
         "--collect-all", "duckdb",
         "--collect-all", "rich",  # Fix for Rich library unicode data
         
@@ -73,14 +68,6 @@ def get_pyinstaller_command() -> list:
         "--hidden-import", "semabridge.connectors.snowflake_extractor",
         "--hidden-import", "semabridge.connectors.fabric_deployer",
         "--hidden-import", "semabridge.connectors.snowflake_deployer",
-        
-        # Hidden imports for UI components
-        "--hidden-import", "semabridge.ui.main_window",
-        "--hidden-import", "semabridge.ui.source_browser",
-        "--hidden-import", "semabridge.ui.yaml_editor",
-        "--hidden-import", "semabridge.ui.diff_viewer",
-        "--hidden-import", "semabridge.ui.version_history",
-        "--hidden-import", "semabridge.ui.workers",
         
         # Hidden imports for repository
         "--hidden-import", "semabridge.repository.duckdb_manager",
@@ -131,7 +118,6 @@ def build_executable() -> bool:
         print(f"📊 Size: {size_mb:.1f} MB")
         print(f"\n💡 To run:")
         print(f"   ./dist/{exe_name} --help")
-        print(f"   ./dist/{exe_name} --ui")
         
         return True
         

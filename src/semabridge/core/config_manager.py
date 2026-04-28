@@ -1,4 +1,4 @@
-﻿"""
+"""
 Configuration Manager.
 
 Centralized state management for semabridge.yaml.
@@ -9,9 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Tuple
-
-from PyQt6.QtCore import QObject, pyqtSignal
+from typing import Optional, Dict, Any, List, Tuple, Callable
 
 from semabridge.utils.logger import get_logger
 from semabridge.core.project import ProjectConfig, load_project_config
@@ -28,7 +26,7 @@ except ImportError:
 logger = get_logger(__name__)
 
 
-class ConfigurationManager(QObject):
+class ConfigurationManager:
     """
     Manages the lifecycle of the semabridge.yaml configuration.
     
@@ -36,23 +34,50 @@ class ConfigurationManager(QObject):
     1. Load/Save YAML text
     2. Parse YAML into ProjectConfig (AST)
     3. Run Validation Pipeline
-    4. Emit signals on state changes
+    4. Execute callbacks on state changes
     """
     
-    # Signals
-    config_loaded = pyqtSignal(object)       # Emitted when valid config is loaded (ProjectConfig)
-    text_changed = pyqtSignal(str)           # Emitted when YAML text changes
-    validation_changed = pyqtSignal(bool, list)  # (is_valid, errors)
-    saved = pyqtSignal(str)                  # Emitted on save (path)
-    
     def __init__(self, config_path: Optional[Path] = None):
-        super().__init__()
         from semabridge.core.config_loader import get_default_config_path
         self.config_path = config_path or get_default_config_path() or Path("semabridge.yaml")
         self._current_text: str = ""
         self._current_config: Optional[ProjectConfig] = None
         self._is_valid: bool = False
         self._validation_errors: List[Dict[str, Any]] = []
+        
+        # Callback lists
+        self._on_config_loaded_callbacks: List[Callable[[ProjectConfig], None]] = []
+        self._on_text_changed_callbacks: List[Callable[[str], None]] = []
+        self._on_validation_changed_callbacks: List[Callable[[bool, list], None]] = []
+        self._on_saved_callbacks: List[Callable[[str], None]] = []
+        
+    def on_config_loaded(self, callback: Callable[[ProjectConfig], None]) -> None:
+        self._on_config_loaded_callbacks.append(callback)
+
+    def on_text_changed(self, callback: Callable[[str], None]) -> None:
+        self._on_text_changed_callbacks.append(callback)
+
+    def on_validation_changed(self, callback: Callable[[bool, list], None]) -> None:
+        self._on_validation_changed_callbacks.append(callback)
+
+    def on_saved(self, callback: Callable[[str], None]) -> None:
+        self._on_saved_callbacks.append(callback)
+
+    def _emit_config_loaded(self, config: ProjectConfig) -> None:
+        for cb in self._on_config_loaded_callbacks:
+            cb(config)
+
+    def _emit_text_changed(self, text: str) -> None:
+        for cb in self._on_text_changed_callbacks:
+            cb(text)
+
+    def _emit_validation_changed(self, is_valid: bool, errors: list) -> None:
+        for cb in self._on_validation_changed_callbacks:
+            cb(is_valid, errors)
+
+    def _emit_saved(self, path: str) -> None:
+        for cb in self._on_saved_callbacks:
+            cb(path)
         
     def load(self) -> bool:
         """Load configuration from disk."""
@@ -86,7 +111,7 @@ class ConfigurationManager(QObject):
         
         # Only emit if change didn't come from UI (to avoid loops)
         if source != "ui":
-            self.text_changed.emit(text)
+            self._emit_text_changed(text)
             
         # Trigger validation
         self._validate()
@@ -153,16 +178,16 @@ class ConfigurationManager(QObject):
         has_errors = any(e.get("severity", "error") == "error" for e in errors)
         
         self._is_valid = not has_errors
-        self._emit_validation(self._is_valid, errors)
+        self._emit_validation_changed(self._is_valid, errors)
         
         if self._is_valid and self._current_config:
-            self.config_loaded.emit(self._current_config)
+            self._emit_config_loaded(self._current_config)
 
     def _emit_validation(self, is_valid: bool, errors: List[Dict]):
         """Emit validation state change."""
         self._is_valid = is_valid
         self._validation_errors = errors
-        self.validation_changed.emit(is_valid, errors)
+        self._emit_validation_changed(is_valid, errors)
 
     def save(self) -> bool:
         """Save current text to disk."""
@@ -171,7 +196,7 @@ class ConfigurationManager(QObject):
                 f.write(self._current_text)
             
             logger.info(f"Saved configuration to {self.config_path}")
-            self.saved.emit(str(self.config_path))
+            self._emit_saved(str(self.config_path))
             return True
         except Exception as e:
             logger.error(f"Failed to save config: {e}")
