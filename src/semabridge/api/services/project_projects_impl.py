@@ -665,14 +665,13 @@ async def compare_graph_snapshots_compat(
     try:
         snap_from = db_manager.get_snapshot(from_snapshot_id)
         snap_to = db_manager.get_snapshot(to_snapshot_id)
-        
-        if not snap_from or not snap_to:
-            return {
-                "summary": {"added": 0, "removed": 0, "modified": 0, "unchanged": 0},
-                "changes": [],
-                "relationships": [],
-                "styled_graph": {"nodes": [], "edges": []},
-            }
+    if not snap_from or not snap_to:
+        return {
+            "summary": {"added": 0, "removed": 0, "modified": 0, "unchanged": 0},
+            "changes": [],
+            "relationships": [],
+            "styled_graph": {"nodes": [], "edges": []},
+        }
 
         from_graph = _snapshot_graph_payload(snap_from, model_name, include_system_tables)
         to_graph = _snapshot_graph_payload(snap_to, model_name, include_system_tables)
