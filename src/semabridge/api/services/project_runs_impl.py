@@ -1906,7 +1906,7 @@ async def get_snapshot_content_compat(project_id: str, snapshot_id: str) -> Dict
     return {
         "snapshot_id": snapshot_id,
         "project_id": project_id,
-        "captured_at": snap.get("captured_at"),
+        "captured_at": snap.get("created_at") or snap.get("captured_at"),
         "role": snap.get("role"),
         "content": state
     }
