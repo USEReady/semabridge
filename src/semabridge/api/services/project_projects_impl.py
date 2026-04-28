@@ -665,7 +665,7 @@ async def compare_graph_snapshots_compat(
     try:
         snap_from = db_manager.get_snapshot(from_snapshot_id)
         snap_to = db_manager.get_snapshot(to_snapshot_id)
-        
+
         if not snap_from or not snap_to:
             return {
                 "summary": {"added": 0, "removed": 0, "modified": 0, "unchanged": 0},
@@ -700,6 +700,14 @@ async def compare_graph_snapshots_compat(
         to_node_map = {_node_key(n): n for n in to_nodes}
         from_id_map = {str(n.get("id")): n for n in from_nodes}
         to_id_map = {str(n.get("id")): n for n in to_nodes}
+    except Exception as e:
+        logger.error(f"Error comparing snapshots: {str(e)}")
+        return {
+            "summary": {"added": 0, "removed": 0, "modified": 0, "unchanged": 0},
+            "changes": [],
+            "relationships": [],
+            "styled_graph": {"nodes": [], "edges": []},
+        }
 
         changes: List[Dict[str, Any]] = []
 
@@ -839,8 +847,8 @@ async def compare_graph_snapshots_compat(
                 },
             },
         }
-    except Exception as exc:
-        logger.debug("Failed to compare snapshots %s -> %s: %s", from_snapshot_id, to_snapshot_id, exc)
+    except Exception as e:
+        logger.debug(f"Error comparing snapshots: {str(e)}")
         return {
             "summary": {"added": 0, "removed": 0, "modified": 0, "unchanged": 0},
             "changes": [],

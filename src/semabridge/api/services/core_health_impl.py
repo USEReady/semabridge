@@ -1,7 +1,7 @@
 from semabridge.api.services.core_shared import *
 
 
-async def health_check():
+def health_check():
     """Return service status including database connectivity."""
     from sqlalchemy import text
     from semabridge.repository.orm.session_factory import db_manager as _orm_db_manager
