@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Optional
 import yaml
+from semabridge.core.behavior import ConnectorBehavior
 from semabridge.core.settings import Settings, get_settings
 from semabridge.core.config_loader import get_project_file_path
 from semabridge.core.run_summary import (
@@ -51,6 +52,7 @@ class ExecutionEngine:
         self._context: Optional[RunContext] = None
         self._summary: Optional[RunSummary] = None
 
+    @staticmethod
     def _safe_output_name(name: Optional[str]) -> str:
         raw = str(name or "model")
         safe = re.sub(r"[^A-Za-z0-9_.-]", "_", raw)
@@ -66,6 +68,7 @@ class ExecutionEngine:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    @classmethod
     def from_yaml(cls, config_path: "Path") -> "ExecutionEngine":
         """
         Factory that constructs an ExecutionEngine from a YAML config file.

@@ -9,6 +9,7 @@ from semabridge.core.source_format import SourceFormat
 from semabridge.intermediate.models import OSIModel
 from semabridge.sml.models import SMLModel
 
+@dataclass
 class RunContext:
     """
     Execution context propagated through all steps.
