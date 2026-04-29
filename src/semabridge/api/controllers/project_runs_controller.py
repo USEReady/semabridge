@@ -1,7 +1,7 @@
 import os
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Request
+from fastapi import APIRouter, BackgroundTasks, Request, Body
 
 from semabridge.api.services.project_runs_service import (
     get_project_runs_compat,
@@ -37,7 +37,7 @@ async def run_project_now_with_user_context(
     project_id: str,
     background_tasks: BackgroundTasks,
     request: Request,
-    payload: Optional[Dict[str, Any]] = None,
+    payload: Optional[Dict[str, Any]] = Body(None),
 ):
     body: Dict[str, Any] = dict(payload or {})
     if os.environ.get("AUTH_ENABLED", "").lower() == "true":

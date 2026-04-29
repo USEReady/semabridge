@@ -214,8 +214,8 @@ async function handleResponse(res) {
             if (data?.error === 'reauth_required' || data?.detail?.error === 'reauth_required') {
                 return data.detail || data;
             }
-        } catch(e) {}
-        
+        } catch (e) { }
+
         // Try refresh + auto-login before giving up
         const _retryFn = res._retryFn;
         if (_retryFn) {
@@ -246,7 +246,7 @@ async function handleResponse(res) {
             } else if (typeof parsed?.message === 'string' && parsed.message.trim()) {
                 detail = parsed.message;
             }
-        } catch (e) {}
+        } catch (e) { }
         const error = new Error(`API Error ${res.status}: ${detail}`);
         error.status = res.status;
         error.payload = parsed;
@@ -264,7 +264,7 @@ async function authFetch(url, options = {}) {
     let workspaceId = null;
     try {
         workspaceId = localStorage.getItem('FABRIC_WORKSPACE_ID');
-    } catch (e) {}
+    } catch (e) { }
     const headers = { ...getAuthHeaders(), ...options.headers };
     if (workspaceId) {
         headers['X-Fabric-Context'] = workspaceId;
@@ -949,7 +949,7 @@ export const api = {
         params.set('from_snapshot_id', fromSnapshotId);
         params.set('to_snapshot_id', toSnapshotId);
         params.set('include_states', 'false');
-        
+
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots/compare?${params.toString()}`);
         return handleResponse(res);
     },
