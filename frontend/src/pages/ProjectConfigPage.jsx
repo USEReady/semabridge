@@ -95,7 +95,9 @@ export default function ProjectConfigPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [syncMode, setSyncMode] = useState('copy');
+  const [syncMode, setSyncMode] = useState(() => {
+    return localStorage.getItem(`project_${id}_syncMode`) || 'copy';
+  });
   const [project, setProject] = useState(null);
   const [allProjects, setAllProjects] = useState([]);
   const [selectedPresetProjectId, setSelectedPresetProjectId] = useState(null);
@@ -1527,7 +1529,11 @@ export default function ProjectConfigPage() {
           <select
             id="sync-mode-select"
             value={syncMode}
-            onChange={e => setSyncMode(e.target.value)}
+            onChange={e => {
+              const val = e.target.value;
+              setSyncMode(val);
+              localStorage.setItem(`project_${id}_syncMode`, val);
+            }}
             disabled={saving || syncing || isProjectSyncing}
             title={syncMode === 'copy' ? 'COPY: target fully replaced by source' : 'UPSERT: source wins on conflict, target-only entities preserved'}
             style={{
