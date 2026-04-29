@@ -18,11 +18,11 @@ from dataclasses import dataclass
 import json
 import argparse
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from semabridge.core.settings import get_settings
 from semabridge.utils.logger import setup_logging, get_logger
-from tests.test_measure_pipeline_detailed import MeasurePipelineDebugger
+# from tests.test_measure_pipeline_detailed import MeasurePipelineDebugger
 
 logger = get_logger(__name__)
 

@@ -21,6 +21,14 @@ from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
 from semabridge.core.settings import SnowflakeConfig
 from semabridge.core.behavior import ConnectorBehavior
 from unittest.mock import MagicMock
+from semabridge.intermediate.models import (
+    OSIAggregationType,
+    OSIColumn,
+    OSIDataset,
+    OSIMetric,
+    OSIModel,
+    OSIDataType,
+)
 
 
 class TestMetricColumnValidation:
@@ -769,6 +777,47 @@ class TestBooleanSumHandling:
 
         assert 'SUM(IFF(base."IS_ACTIVE" = 1 OR base."IS_ACTIVE" = TRUE, 1, 0)) AS "IS_ACTIVE"' in ddl
         assert 'SUM(base."IS_ACTIVE") AS "IS_ACTIVE"' not in ddl
+
+    def test_generate_ddls_from_osi_keeps_metric_on_declared_dataset(self, emitter):
+        metric_owner = OSIDataset(
+            unique_name="FABRICMODEL_DATA",
+            source_table="FABRICMODEL_DATA",
+            columns=[
+                OSIColumn(unique_name="ID", data_type=OSIDataType.STRING, is_key=True),
+                OSIColumn(unique_name="QUANTITY", data_type=OSIDataType.FLOAT),
+            ],
+            is_fact=False,
+        )
+        fact_owner = OSIDataset(
+            unique_name="ORDERS",
+            source_table="ORDERS",
+            columns=[
+                OSIColumn(unique_name="ID", data_type=OSIDataType.STRING, is_key=True),
+                OSIColumn(unique_name="QUANTITY", data_type=OSIDataType.FLOAT),
+            ],
+            is_fact=True,
+        )
+        model = OSIModel(
+            unique_name="Shared Quantity Model",
+            label="Shared Quantity Model",
+            datasets=[metric_owner, fact_owner],
+            dimensions=[],
+            metrics=[
+                OSIMetric(
+                    unique_name="Fabricmodel Data - Sum of Quantity",
+                    label="Fabricmodel Data - Sum of Quantity",
+                    dataset="FABRICMODEL_DATA",
+                    source_column="QUANTITY",
+                    aggregation=OSIAggregationType.SUM,
+                ),
+            ],
+            relationships=[],
+        )
+
+        ddl = emitter.generate_ddls_from_osi(model)[0]
+
+        assert 'FABRICMODEL_DATA."FABRICMODEL_DATA_SUM_OF_QUANTITY" AS SUM(FABRICMODEL_DATA."QUANTITY")' in ddl
+        assert 'SUM(ORDERS."QUANTITY"::FLOAT)' not in ddl
 
 
 class TestHistorySnapshotDDL:

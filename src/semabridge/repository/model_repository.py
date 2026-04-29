@@ -26,7 +26,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import select, update, delete, and_
+from sqlalchemy import inspect, select, update, delete, and_
 from sqlalchemy.orm import Session, sessionmaker
 
 from semabridge.repository.orm.base import Base
@@ -213,6 +213,13 @@ class ModelRepository:
             try:
                 with engine.begin() as conn:
                     Base.metadata.create_all(bind=conn)
+                    inspector = inspect(conn)
+                    if "snapshots" in inspector.get_table_names():
+                        snapshot_columns = {col["name"] for col in inspector.get_columns("snapshots")}
+                        if "connector_id" not in snapshot_columns:
+                            conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN connector_id VARCHAR(36)")
+                        if "trigger" not in snapshot_columns:
+                            conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN trigger VARCHAR(50)")
                 cls._schema_initialized_urls.add(url_key)
             except NotImplementedError as e:
                 if "Snowflake" in str(e) or "index" in str(e).lower():
@@ -558,6 +565,10 @@ class ModelRepository:
         source_format: Any,
         raw_json: Optional[Dict[str, Any]] = None,
         artifact_type: Optional[str] = None,
+        project_id: Optional[str] = None,
+        source_type_hint: Optional[str] = None,
+        target_type_hint: Optional[str] = None,
+        sync_mode: str = "copy",
     ) -> Optional[str]:
         """Persist a source format artifact."""
         if source_format is None and raw_json is None:
@@ -578,6 +589,28 @@ class ModelRepository:
 
         try:
             with self._session() as session:
+                run = session.get(Run, run_id)
+                if run is None:
+                    if not project_id:
+                        logger.error(
+                            "Skipping source artifact %s because run %s does not exist and project_id was not provided",
+                            artifact_id[:12],
+                            run_id[:12],
+                        )
+                        return None
+                    session.add(
+                        Run(
+                            run_id=run_id,
+                            project_id=project_id,
+                            started_at=timestamp,
+                            status="running",
+                            source_type=source_type_hint or source_type,
+                            target_type=target_type_hint,
+                            sync_mode=sync_mode,
+                        )
+                    )
+                    session.commit()
+
                 session.add(
                     SourceArtifact(
                         artifact_id=artifact_id,
@@ -628,17 +661,28 @@ class ModelRepository:
         """Record the start of an execution run."""
         timestamp = datetime.utcnow()
         with self._session() as session:
-            session.add(
-                Run(
-                    run_id=run_id,
-                    project_id=project_id,
-                    started_at=timestamp,
-                    status="running",
-                    source_type=source_type,
-                    target_type=target_type,
-                    sync_mode=sync_mode,
+            existing = session.get(Run, run_id)
+            if existing:
+                existing.project_id = project_id
+                existing.source_type = source_type
+                existing.target_type = target_type
+                existing.sync_mode = sync_mode
+                if not existing.started_at:
+                    existing.started_at = timestamp
+                if not existing.status:
+                    existing.status = "running"
+            else:
+                session.add(
+                    Run(
+                        run_id=run_id,
+                        project_id=project_id,
+                        started_at=timestamp,
+                        status="running",
+                        source_type=source_type,
+                        target_type=target_type,
+                        sync_mode=sync_mode,
+                    )
                 )
-            )
             session.commit()
 
     def record_run_complete(

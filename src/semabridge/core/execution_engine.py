@@ -2207,6 +2207,10 @@ class ExecutionEngine:
                         source_format=None,  # type: ignore[arg-type]
                         raw_json=osi_dict,
                         artifact_type="osi_intermediate",
+                        project_id=context.project_id,
+                        source_type_hint=context.source_type,
+                        target_type_hint=context.target_type,
+                        sync_mode=context.sync_mode,
                     )
                 except Exception as osi_err:
                     logger.warning(f"OSI snapshot persist failed (non-fatal): {osi_err}")
@@ -2215,6 +2219,10 @@ class ExecutionEngine:
             source_artifact_id = self.db_manager.persist_source_artifact(
                 run_id=context.run_id,
                 source_format=context.source_format,
+                project_id=context.project_id,
+                source_type_hint=context.source_type,
+                target_type_hint=context.target_type,
+                sync_mode=context.sync_mode,
             )
             context.source_artifact_id = source_artifact_id
             
@@ -2283,6 +2291,7 @@ class ExecutionEngine:
     def _convert_to_snowflake_target(self, context: RunContext) -> None:
         """Generate Snowflake DDL."""
         from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+        from semabridge.connectors.snowflake_emitter_parts import renderers as _renderers
         
         config = context.config
         emitter = SnowflakeEmitter(config.snowflake, behavior=context.behavior)
@@ -2291,14 +2300,17 @@ class ExecutionEngine:
         
         ddls = emitter.generate_ddls(context.sml_model)
         full_ddl = "\n\n".join(ddls)
-        yaml_out = emitter.generate_cortex_yaml(context.sml_model)
+        try:
+            yaml_out = emitter.generate_cortex_yaml(context.sml_model)
+        except AttributeError:
+            yaml_out = _renderers.generate_cortex_yaml(emitter, context.sml_model)
         
         ddl_path = output_dir / "semantic_view.sql"
         yaml_path = output_dir / "cortex_analyst.yaml"
         
-        with open(ddl_path, "w") as f:
+        with open(ddl_path, "w", encoding="utf-8") as f:
             f.write(full_ddl)
-        with open(yaml_path, "w") as f:
+        with open(yaml_path, "w", encoding="utf-8") as f:
             f.write(yaml_out)
         
         context.target_artifact_path = str(ddl_path)
@@ -2547,7 +2559,18 @@ class ExecutionEngine:
 
         # ── DDL path ─────────────────────────────────────────────────────────
         if deployment_method in ("ddl", "both"):
-            emitter.deploy(context.sml_model)
+            success = emitter.deploy(context.sml_model)
+            if not success:
+                root_cause = getattr(emitter, "last_deployment_error", None)
+                message = (
+                    f"SnowflakeEmitter.deploy() returned False for model "
+                    f"'{context.project_id}'."
+                )
+                if root_cause:
+                    message = f"{message} Root cause: {root_cause}"
+                raise DeploymentError(
+                    message
+                )
             self._export_inferred_osi_artifacts(context)
 
         # ── Stored-procedure / Cortex YAML path ──────────────────────────────

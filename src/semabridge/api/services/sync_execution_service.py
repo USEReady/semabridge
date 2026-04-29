@@ -368,7 +368,7 @@ def _run_single_job(
         summary_data = summary.model_dump(mode="json")
         job_ok = str(summary_data.get("status", "")).upper() == "SUCCESS"
 
-        if job_ok:
+        if job_ok and deploy_enabled:
             try:
                 _persist_model_version(repository, config, summary_data, model_label, resolved_workspace_id)
             except Exception as version_error:
