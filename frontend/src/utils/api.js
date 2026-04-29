@@ -404,6 +404,11 @@ export const api = {
         return handleResponse(res);
     },
 
+    async getConflicts(runId) {
+        const res = await authFetch(`${API_BASE_URL}/runs/${encodeURIComponent(runId)}/conflicts`);
+        return handleResponse(res);
+    },
+
     async saveModel(modelId, content, message = 'Saved from UI', author = 'ui') {
         const res = await authFetch(`${API_BASE_URL}/models/${encodeURIComponent(modelId)}`, {
             method: 'PUT',

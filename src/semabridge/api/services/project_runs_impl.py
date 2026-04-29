@@ -693,6 +693,7 @@ def _create_project_run(
         "stage_states": _build_stage_states({}),
         "duration_ms": 0,
         "started_at": _compat_now_iso(),
+        "taken_at": _compat_now_iso(),  # Required for UI "Invalid Date" fix
         "completed_at": None,
     }
     if restore_snapshot_id:
@@ -715,11 +716,12 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
         user_id = run.get("user_id")
         if user_id is not None and str(user_id).strip():
             sync_payload["user_id"] = user_id
-        # Forward sync_mode so the execution engine applies the correct strategy
+        # Forward sync_mode and force so the execution engine applies the correct strategy
         sync_mode = str(run.get("sync_mode") or "copy").lower()
         if sync_mode not in {"copy", "upsert"}:
             sync_mode = "copy"
         sync_payload["sync_mode"] = sync_mode
+        sync_payload["force"] = bool(run.get("force", False))
         sync_result = await sync_models(sync_payload)
         run["duration_ms"] = int((_time.time() - started) * 1000)
         run["completed_at"] = _compat_now_iso()
@@ -732,11 +734,19 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
         run["logs"] = _build_run_logs(sync_result or {})
         run["stage_states"] = _build_stage_states(sync_result or {})
         run["message"] = "Execution completed successfully." if run["status"] == "success" else "Execution completed with warnings." if run["status"] == "warning" else str((((run["summary"].get("errors") or [{}])[0]).get("message")) or "Execution failed.")
+        
         try:
             preferred_snapshot_id = str((run.get("summary") or {}).get("sml_snapshot_id") or "")
             _compat_capture_snapshots_for_run(project_id=project_id, run=run, project_cfg=project_cfg, stage="after", preferred_snapshot_id=preferred_snapshot_id)
         except Exception as exc:
             logger.debug("Post-sync snapshot capture skipped for %s: %s", project_id, exc)
+        
+        # ── Apply Retention Policy (§2.3) ────────────────────────────────────
+        # We'll use a thread for now since we are inside _perform_project_run
+        # which can be called outside of a FastAPI request context.
+        import threading
+        threading.Thread(target=_run_retention_background, args=(project_id,), daemon=True).start()
+        # ─────────────────────────────────────────────────────────────────────
     except Exception as exc:
         run["status"] = "failed"
         run["error"] = str(exc)
@@ -747,7 +757,8 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
             _compat_capture_snapshots_for_run(project_id=project_id, run=run, project_cfg=project_cfg, stage="after")
         except Exception as snap_exc:
             logger.debug("Post-failure snapshot capture skipped for %s: %s", project_id, snap_exc)
-    _compat_save_store()
+    finally:
+        _compat_save_store()
     return run
 
 
@@ -757,9 +768,18 @@ async def _execute_project_run(project_id: str, schedule_label: str = "Manual") 
 
 
 def _run_project_background(run: dict, project_cfg: str, started: float) -> None:
-    import asyncio
-
-    asyncio.run(_perform_project_run(run, project_cfg, started))
+    """Run project execution in a dedicated background thread with its own event loop."""
+    import threading
+    def _run_loop():
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_perform_project_run(run, project_cfg, started))
+        finally:
+            loop.close()
+    
+    threading.Thread(target=_run_loop, daemon=True).start()
 
 
 async def restore_project_version_compat(project_id: str, payload: Dict[str, Any], background_tasks: BackgroundTasks):
@@ -781,7 +801,7 @@ async def restore_project_version_compat(project_id: str, payload: Dict[str, Any
     _compat_project_configs[project_id] = config_yaml
     _compat_projects[project_id]["updated_at"] = _compat_now_iso()
     restore_run, restore_cfg, restore_started = _create_project_run(project_id, "Manual", run_type="RESTORE", project_cfg_override=config_yaml, restore_snapshot_id=snapshot_id)
-    background_tasks.add_task(_run_project_background, restore_run, restore_cfg, restore_started)
+    background_tasks.add_task(_perform_project_run, restore_run, restore_cfg, restore_started)
     _compat_save_store()
     return {"status": "restored", "project_id": project_id, "snapshot_id": snapshot_id, "run_id": restore_run.get("id"), "run_type": "RESTORE", "intermediate_format": snapshot_row.get("intermediate_format") or "sml", "message": "Project configuration restored and restore run started.", "config_yaml": config_yaml}
 
@@ -846,12 +866,37 @@ async def run_project_now_compat(project_id: str, background_tasks: BackgroundTa
         sync_mode=str((payload or {}).get("sync_mode") or "copy").lower(),
     )
     user_id = (payload or {}).get("user_id")
+    force = bool((payload or {}).get("force", False))
     if user_id is not None and str(user_id).strip():
         run["user_id"] = user_id
-    background_tasks.add_task(_run_project_background, run, project_cfg, started)
+    run["force"] = force
+    background_tasks.add_task(_perform_project_run, run, project_cfg, started)
     return {"run_id": run["id"], "status": "running", "run_type": run_type, "message": "Sync started in background"}
 
 
+async def get_run_conflicts_compat(run_id: str):
+    """Retrieve sync conflicts for a specific run."""
+    try:
+        from semabridge.repository.model_repository import ModelRepository
+        repo = ModelRepository()
+        return repo.get_sync_conflicts(run_id)
+    except Exception as exc:
+        logger.error("Failed to fetch conflicts for run %s: %s", run_id, exc)
+        return []
+ 
+ 
+def _run_retention_background(project_id: str):
+    """Internal helper to run retention policy in a separate thread."""
+    try:
+        from semabridge.repository.orm.session_factory import db_manager
+        from semabridge.api.services.retention_service import apply_retention_policy
+        with db_manager.get_session() as session:
+            apply_retention_policy(session, project_id)
+            logger.info("Background retention policy completed for project %s", project_id)
+    except Exception as exc:
+        logger.error("Background retention policy failed for %s: %s", project_id, exc)
+ 
+ 
 async def list_folders_compat():
     return list(_compat_folders.values())
 

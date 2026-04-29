@@ -344,6 +344,7 @@ def _run_single_job(
     resolved_workspace_id: str,
     account_id: Optional[str] = None,
     sync_mode: str = "copy",
+    force: bool = False,
 ) -> Dict[str, Any]:
     model_label = job["model_label"]
     repository = ModelRepository()
@@ -364,6 +365,7 @@ def _run_single_job(
             dry_run=not deploy_enabled,
             account_id=account_id,
             sync_mode=sync_mode,
+            force=force,
         )
         summary_data = summary.model_dump(mode="json")
         job_ok = str(summary_data.get("status", "")).upper() == "SUCCESS"
@@ -396,11 +398,11 @@ def _run_single_job(
         }
         return {
             "model": model_label,
-            "status": "failed",
+            "status": "conflict" if "CONFLICT:" in str(exc) else "failed",
             "summary": summary_data,
             "routing_summary": None,
             "console": _build_console_details(summary_data),
-            "run_id": None,
+            "run_id": summary_data.get("run_id"),
         }
 
 
@@ -482,6 +484,7 @@ def _run_parallel_jobs(
     resolved_workspace_id: str,
     account_id: Optional[str] = None,
     sync_mode: str = "copy",
+    force: bool = False,
 ) -> List[Dict[str, Any]]:
     per_model_results: List[Dict[str, Any]] = []
 
@@ -497,6 +500,7 @@ def _run_parallel_jobs(
                 resolved_workspace_id=resolved_workspace_id,
                 account_id=account_id,
                 sync_mode=sync_mode,
+                force=force,
             )
             per_model_results.append(result)
             _log_model_console_trace(result)
@@ -526,6 +530,7 @@ def _run_parallel_jobs(
                     resolved_workspace_id=resolved_workspace_id,
                     account_id=account_id,
                     sync_mode=sync_mode,
+                    force=force,
                 )
                 future_to_job[future] = job
         else:
@@ -543,6 +548,7 @@ def _run_parallel_jobs(
                     resolved_workspace_id=resolved_workspace_id,
                     account_id=account_id,
                     sync_mode=sync_mode,
+                    force=force,
                 ): job
                 for job in sync_jobs
             }
@@ -580,7 +586,7 @@ def _run_parallel_jobs(
     return per_model_results
 
 
-def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fields, account_id: Optional[str] = None) -> Dict[str, Any]:
+def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fields, account_id: Optional[str] = None, force: bool = False) -> Dict[str, Any]:
     _config_path, config = _load_config(payload, normalize_yaml_windows_path_fields)
     config_path = str(Path(_config_path).resolve()) if _config_path else ""
     sync_jobs, source_type, target_type, source_cfg, target_cfg = _build_sync_jobs(config)
@@ -637,6 +643,7 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
             resolved_workspace_id=resolved_workspace_id,
             account_id=account_id,
             sync_mode=sync_mode,
+            force=force or bool(payload.get("force", False)),
         )
     except Exception as exc:  # noqa: BLE001
         if executor_kind == "process":
@@ -675,6 +682,8 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
         overall_status = "success"
     elif succeeded:
         overall_status = "partial"
+    elif any(result["status"] == "conflict" for result in per_model_results):
+        overall_status = "conflict"
     else:
         overall_status = "failed"
 

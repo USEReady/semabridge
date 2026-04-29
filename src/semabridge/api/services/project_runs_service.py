@@ -19,4 +19,5 @@ from semabridge.api.services.project_domain_service import (
     get_snapshot_content_compat,
     get_snapshot_report_compat,
     manual_deploy_compat,
+    get_run_conflicts_compat,
 )

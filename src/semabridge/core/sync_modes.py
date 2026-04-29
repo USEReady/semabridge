@@ -27,20 +27,31 @@ def apply_sync_mode(src_model: SMLModel, tgt_model: Optional[SMLModel], sync_mod
     # Start with a copy of the target model
     merged_model = tgt_model.model_copy(deep=True)
     
-    # 1. Merge Datasets
+    # 1. Merge Datasets (Tables + Columns)
     src_datasets_by_name = {ds.unique_name: ds for ds in src_model.datasets}
     tgt_datasets_by_name = {ds.unique_name: ds for ds in merged_model.datasets}
     
     for name, src_ds in src_datasets_by_name.items():
         if name in tgt_datasets_by_name:
-            # Overwrite existing dataset
-            # Find the index in merged_model.datasets
-            for i, ds in enumerate(merged_model.datasets):
-                if ds.unique_name == name:
-                    merged_model.datasets[i] = src_ds
+            # Granular merge of columns within the dataset
+            for i, tgt_ds in enumerate(merged_model.datasets):
+                if tgt_ds.unique_name == name:
+                    # Map existing columns
+                    tgt_cols_by_name = {c.unique_name: c for c in tgt_ds.columns}
+                    new_cols = list(src_ds.columns) # Start with all source columns
+                    src_col_names = {c.unique_name for c in src_ds.columns}
+                    
+                    # Add target-only columns
+                    for c_name, tgt_c in tgt_cols_by_name.items():
+                        if c_name not in src_col_names:
+                            new_cols.append(tgt_c)
+                    
+                    # Create merged dataset (source properties win, but columns are unioned)
+                    merged_ds = src_ds.model_copy(deep=True)
+                    merged_ds.columns = new_cols
+                    merged_model.datasets[i] = merged_ds
                     break
         else:
-            # Add new dataset
             merged_model.datasets.append(src_ds)
             
     # 2. Merge Metrics
@@ -51,20 +62,31 @@ def apply_sync_mode(src_model: SMLModel, tgt_model: Optional[SMLModel], sync_mod
         if name in tgt_metrics_by_name:
             for i, m in enumerate(merged_model.metrics):
                 if m.unique_name == name:
-                    merged_model.metrics[i] = src_m
+                    merged_model.metrics[i] = src_m # Source wins on same-named metrics
                     break
         else:
             merged_model.metrics.append(src_m)
             
-    # 3. Merge Dimensions
+    # 3. Merge Dimensions (Groups of Attributes)
     src_dims_by_name = {d.unique_name: d for d in src_model.dimensions}
     tgt_dims_by_name = {d.unique_name: d for d in merged_model.dimensions}
     
     for name, src_d in src_dims_by_name.items():
         if name in tgt_dims_by_name:
-            for i, d in enumerate(merged_model.dimensions):
-                if d.unique_name == name:
-                    merged_model.dimensions[i] = src_d
+            for i, tgt_d in enumerate(merged_model.dimensions):
+                if tgt_d.unique_name == name:
+                    # Granular merge of attributes within the dimension
+                    tgt_attrs_by_name = {a.unique_name: a for a in tgt_d.attributes}
+                    new_attrs = list(src_d.attributes)
+                    src_attr_names = {a.unique_name for a in src_d.attributes}
+                    
+                    for a_name, tgt_a in tgt_attrs_by_name.items():
+                        if a_name not in src_attr_names:
+                            new_attrs.append(tgt_a)
+                    
+                    merged_d = src_d.model_copy(deep=True)
+                    merged_d.attributes = new_attrs
+                    merged_model.dimensions[i] = merged_d
                     break
         else:
             merged_model.dimensions.append(src_d)

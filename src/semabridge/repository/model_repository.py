@@ -37,6 +37,7 @@ from semabridge.repository.orm.models import (
     Run,
     SnapshotRow,
     SourceArtifact,
+    SyncConflictRow,
 )
 from semabridge.utils.logger import get_logger
 
@@ -708,6 +709,67 @@ class ModelRepository:
                 )
             )
             session.commit()
+ 
+    # ------------------------------------------------------------------
+    # Conflicts
+    # ------------------------------------------------------------------
+ 
+    def record_sync_conflict(
+        self,
+        run_id: Optional[str],
+        model_name: str,
+        change_type: str,
+        severity: str,
+        description: str,
+        source_value: Optional[str] = None,
+        target_value: Optional[str] = None,
+        job_id: Optional[str] = None,
+        item_id: Optional[str] = None,
+    ) -> str:
+        """Record a sync conflict."""
+        conflict_id = str(uuid.uuid4())
+        with self._session() as session:
+            session.add(
+                SyncConflictRow(
+                    conflict_id=conflict_id,
+                    run_id=run_id,
+                    job_id=job_id,
+                    item_id=item_id,
+                    model_name=model_name,
+                    change_type=change_type,
+                    severity=severity,
+                    description=description,
+                    source_value=source_value,
+                    target_value=target_value,
+                )
+            )
+            session.commit()
+        return conflict_id
+ 
+    def get_sync_conflicts(self, run_id: str) -> List[Dict[str, Any]]:
+        """Get conflicts for a specific run."""
+        with self._session() as session:
+            rows = (
+                session.execute(
+                    select(SyncConflictRow)
+                    .where(SyncConflictRow.run_id == run_id)
+                )
+                .scalars()
+                .all()
+            )
+            return [
+                {
+                    "conflict_id": r.conflict_id,
+                    "model_name": r.model_name,
+                    "change_type": r.change_type,
+                    "severity": r.severity,
+                    "description": r.description,
+                    "source_value": r.source_value,
+                    "target_value": r.target_value,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                }
+                for r in rows
+            ]
 
     # ------------------------------------------------------------------
     # Per-Model Version Control  (REQ-VC-001 / REQ-VC-002 / REQ-VC-003)
