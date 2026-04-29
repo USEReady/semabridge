@@ -349,7 +349,8 @@ export default function ProjectsPage() {
     });
 
     try {
-      const result = await api.syncProject(projectId);
+      const savedSyncMode = localStorage.getItem(`project_${projectId}_syncMode`) || 'copy';
+      const result = await api.runProjectNow(projectId, { sync_mode: savedSyncMode });
       const updatedProject = result?.project;
       if (updatedProject?.id || updatedProject?.project_id) {
         const pid = updatedProject.id || updatedProject.project_id;

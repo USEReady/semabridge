@@ -1,0 +1,34 @@
+project_name: mm_snowflake_to_fabric
+source:
+  type: snowflake
+targets:
+- type: fabric
+mappings:
+- source: Competitive Marketing Analysis
+  target: COMPETITIVE_MARKETING_ANALYSIS
+  type: table
+  columns:
+  - source: id
+    target: ID
+    type: integer
+    primary_key: true
+  - source: name
+    target: NAME
+    type: string
+  - source: created_at
+    target: CREATED_AT
+    type: timestamp
+  - source: updated_at
+    target: UPDATED_AT
+    type: timestamp
+ui:
+  intermediate_format: osi
+  editor_mode: form
+selection:
+  model_ids:
+  - f65e2eeb-b9d8-4695-aaf8-504fc15aa936
+options:
+  auto_relationships: true
+  generate_descriptions: true
+project_id: proj-mm_snowflake_to_fabric
+display_name: mm_snowflake_to_fabric

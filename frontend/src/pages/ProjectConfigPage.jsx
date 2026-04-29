@@ -95,7 +95,9 @@ export default function ProjectConfigPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [syncMode, setSyncMode] = useState('copy');
+  const [syncMode, setSyncMode] = useState(() => {
+    return localStorage.getItem(`project_${id}_syncMode`) || 'copy';
+  });
   const [project, setProject] = useState(null);
   const [allProjects, setAllProjects] = useState([]);
   const [selectedPresetProjectId, setSelectedPresetProjectId] = useState(null);
@@ -159,6 +161,7 @@ export default function ProjectConfigPage() {
   const [compareToSnapshotId, setCompareToSnapshotId] = useState('');
   const [compareResult, setCompareResult] = useState(null);
   const [compareMaximized, setCompareMaximized] = useState(false);
+  const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
   const timezoneOptions = useMemo(() => ([
     'UTC',
     'Asia/Kolkata',
@@ -873,7 +876,11 @@ export default function ProjectConfigPage() {
       setSaveInfo(msg);
       return;
     }
+    setSyncConfirmOpen(true);
+  };
 
+  const executeRunNow = async () => {
+    setSyncConfirmOpen(false);
     setSyncing(true);
     try {
       const saved = await handleSave();
@@ -1522,7 +1529,11 @@ export default function ProjectConfigPage() {
           <select
             id="sync-mode-select"
             value={syncMode}
-            onChange={e => setSyncMode(e.target.value)}
+            onChange={e => {
+              const val = e.target.value;
+              setSyncMode(val);
+              localStorage.setItem(`project_${id}_syncMode`, val);
+            }}
             disabled={saving || syncing || isProjectSyncing}
             title={syncMode === 'copy' ? 'COPY: target fully replaced by source' : 'UPSERT: source wins on conflict, target-only entities preserved'}
             style={{
@@ -2067,8 +2078,39 @@ export default function ProjectConfigPage() {
         </div>
       </Modal>
 
-
-
+      <Modal open={syncConfirmOpen} onClose={() => setSyncConfirmOpen(false)} title="Confirm Sync Run" size="md">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {syncMode === 'upsert' ? (
+            <div style={{ padding: 12, borderRadius: 8, background: 'rgba(245, 158, 11, 0.1)', border: '1px solid var(--accent-orange)' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent-orange)', marginBottom: 6 }}>
+                Sync mode: UPSERT
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-primary)', lineHeight: 1.5 }}>
+                Source definition will overwrite conflicts on proceed. Target-only models will be preserved.
+              </div>
+            </div>
+          ) : (
+            <div style={{ padding: 12, borderRadius: 8, background: 'rgba(59, 130, 246, 0.1)', border: '1px solid var(--accent-blue)' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent-blue)', marginBottom: 6 }}>
+                Sync mode: COPY
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-primary)', lineHeight: 1.5 }}>
+                COPY mode will fully replace the target. Any target-only models not present in the source will be permanently removed.
+              </div>
+            </div>
+          )}
+          
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+            <button onClick={() => setSyncConfirmOpen(false)} style={secondaryBtn}>Cancel</button>
+            <button
+              onClick={executeRunNow}
+              style={{ ...primaryBtn, background: syncMode === 'upsert' ? 'var(--accent-orange)' : 'var(--accent-blue)' }}
+            >
+              {syncMode === 'upsert' ? 'Proceed (overwrite conflicts)' : 'Proceed (fully replace)'}
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       <GlobalConfigModal open={globalOpen} onClose={() => setGlobalOpen(false)} />
     </div>
@@ -2119,7 +2161,7 @@ function MappingPreviewPanel({ mappings = [], loading = false, error = '' }) {
         )}
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 300, overflowY: 'auto', paddingRight: 4 }}>
         {mappings.map((mapping) => (
           <div key={mapping.id || mapping.source_path || mapping.source} style={{ border: '1px solid var(--border-main)', borderRadius: 8, padding: 12, background: 'var(--bg-main)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
