@@ -944,6 +944,16 @@ export const api = {
         return handleResponse(res);
     },
 
+    async compareProjectSnapshots(projectId, fromSnapshotId, toSnapshotId) {
+        const params = new URLSearchParams();
+        params.set('from_snapshot_id', fromSnapshotId);
+        params.set('to_snapshot_id', toSnapshotId);
+        params.set('include_states', 'false');
+        
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots/compare?${params.toString()}`);
+        return handleResponse(res);
+    },
+
     // ── Job Runs ───────────────────────────────────────────────────────────
     async listJobRuns(filters = {}) {
         const params = new URLSearchParams();
@@ -958,6 +968,9 @@ export const api = {
             run_id: run?.run_id ?? run?.id,
             source_type: run?.source_type ?? run?.source ?? run?.adapter,
             message: run?.message ?? run?.error ?? run?.error_message ?? '',
+            before_target_snapshot_ids: Array.isArray(run?.before_target_snapshot_ids) ? run.before_target_snapshot_ids : (run?.before_target_snapshot_ids ? [run.before_target_snapshot_ids] : []),
+            after_target_snapshot_ids: Array.isArray(run?.after_target_snapshot_ids) ? run.after_target_snapshot_ids : (run?.after_target_snapshot_ids ? [run.after_target_snapshot_ids] : []),
+            after_tgt_snapshots: Array.isArray(run?.after_tgt_snapshots) ? run.after_tgt_snapshots : (run?.after_tgt_snapshots ? [run.after_tgt_snapshots] : []),
             error: run?.error ?? run?.error_message ?? '',
         }));
     },
