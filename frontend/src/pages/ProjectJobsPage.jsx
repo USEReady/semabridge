@@ -340,7 +340,7 @@ export default function ProjectJobsPage() {
                         cursor: 'pointer',
                         padding: '14px 16px',
                         display: 'grid',
-                        gridTemplateColumns: 'minmax(120px, 0.8fr) minmax(200px, 2.5fr) minmax(80px, 0.5fr) 110px 160px 80px',
+                        gridTemplateColumns: 'minmax(120px, 0.8fr) minmax(200px, 2.5fr) minmax(80px, 0.5fr) 80px 110px 160px 80px',
                         gap: 16,
                         alignItems: 'center',
                         textAlign: 'left',
@@ -383,6 +383,26 @@ export default function ProjectJobsPage() {
                       <div style={{ display: 'flex', justifyContent: 'center' }}>
                         <StatusBadge status={run.status || 'draft'} size="sm" />
                       </div>
+                      {/* Sync Mode Badge */}
+                      <div style={{ display: 'flex', justifyContent: 'center' }}>
+                        <span style={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          letterSpacing: '0.08em',
+                          padding: '2px 8px',
+                          borderRadius: 4,
+                          textTransform: 'uppercase',
+                          background: (run.sync_mode || 'copy') === 'upsert'
+                            ? 'rgba(245,158,11,0.15)'
+                            : 'rgba(59,130,246,0.12)',
+                          color: (run.sync_mode || 'copy') === 'upsert'
+                            ? '#f59e0b'
+                            : '#3b82f6',
+                          border: `1px solid ${(run.sync_mode || 'copy') === 'upsert' ? 'rgba(245,158,11,0.3)' : 'rgba(59,130,246,0.25)'}`,
+                        }}>
+                          {(run.sync_mode || 'copy').toUpperCase()}
+                        </span>
+                      </div>
                       <div style={{ fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'right', whiteSpace: 'nowrap' }}>
                         {formatDate(run.started_at)}
                       </div>
@@ -395,6 +415,7 @@ export default function ProjectJobsPage() {
                       <div style={{ padding: '0 16px 16px 16px', background: 'var(--bg-input)', borderTop: '1px solid var(--border-main)' }}>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, padding: '14px 0' }}>
                           <InfoCard label="Run ID" value={String(run.id ?? '-')} mono />
+                          <InfoCard label="Sync Mode" value={(run.sync_mode || 'copy').toUpperCase()} />
                           <InfoCard label="Started" value={formatDate(run.started_at)} />
                           <InfoCard label="Duration" value={formatDuration(run.duration_ms)} mono />
                           <InfoCard label="Status" value={String(run.status || 'draft')} />

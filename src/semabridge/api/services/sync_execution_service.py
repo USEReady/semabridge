@@ -343,6 +343,7 @@ def _run_single_job(
     deploy_enabled: bool,
     resolved_workspace_id: str,
     account_id: Optional[str] = None,
+    sync_mode: str = "copy",
 ) -> Dict[str, Any]:
     model_label = job["model_label"]
     repository = ModelRepository()
@@ -362,6 +363,7 @@ def _run_single_job(
             deploy=deploy_enabled,
             dry_run=not deploy_enabled,
             account_id=account_id,
+            sync_mode=sync_mode,
         )
         summary_data = summary.model_dump(mode="json")
         job_ok = str(summary_data.get("status", "")).upper() == "SUCCESS"
@@ -479,6 +481,7 @@ def _run_parallel_jobs(
     deploy_enabled: bool,
     resolved_workspace_id: str,
     account_id: Optional[str] = None,
+    sync_mode: str = "copy",
 ) -> List[Dict[str, Any]]:
     per_model_results: List[Dict[str, Any]] = []
 
@@ -493,6 +496,7 @@ def _run_parallel_jobs(
                 deploy_enabled=deploy_enabled,
                 resolved_workspace_id=resolved_workspace_id,
                 account_id=account_id,
+                sync_mode=sync_mode,
             )
             per_model_results.append(result)
             _log_model_console_trace(result)
@@ -521,6 +525,7 @@ def _run_parallel_jobs(
                     deploy_enabled=deploy_enabled,
                     resolved_workspace_id=resolved_workspace_id,
                     account_id=account_id,
+                    sync_mode=sync_mode,
                 )
                 future_to_job[future] = job
         else:
@@ -537,6 +542,7 @@ def _run_parallel_jobs(
                     deploy_enabled=deploy_enabled,
                     resolved_workspace_id=resolved_workspace_id,
                     account_id=account_id,
+                    sync_mode=sync_mode,
                 ): job
                 for job in sync_jobs
             }
@@ -602,6 +608,10 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
         is_fabric_bound=is_fabric_bound,
         executor_kind=executor_kind,
     )
+    
+    sync_mode = str(payload.get("sync_mode") or config.get("sync_mode") or "copy").lower()
+    if sync_mode not in {"copy", "upsert"}:
+        sync_mode = "copy"
 
     logger.info(
         "Batch sync start: source=%s target=%s models=%d executor=%s parallelism=%d workspace=%s deploy=%s",
@@ -626,6 +636,7 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
             deploy_enabled=deploy_enabled,
             resolved_workspace_id=resolved_workspace_id,
             account_id=account_id,
+            sync_mode=sync_mode,
         )
     except Exception as exc:  # noqa: BLE001
         if executor_kind == "process":

@@ -662,6 +662,7 @@ def _create_project_run(
     run_type: str = "SYNC",
     project_cfg_override: Optional[str] = None,
     restore_snapshot_id: Optional[str] = None,
+    sync_mode: str = "copy",
 ) -> tuple[dict, str, float]:
     _compat_ensure_loaded()
     if project_id not in _compat_projects:
@@ -685,6 +686,7 @@ def _create_project_run(
         "run_type": str(run_type or "SYNC").upper(),
         "schedule": schedule_label,
         "status": "running",
+        "sync_mode": sync_mode,
         "source_type": _extract_source_type_from_project_cfg(project_cfg, fallback=str(_compat_projects[project_id].get("source") or "fabric").lower()),
         "message": "Execution started.",
         "logs": ["LIVE Run queued. Waiting for execution engine..."],
@@ -713,6 +715,11 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
         user_id = run.get("user_id")
         if user_id is not None and str(user_id).strip():
             sync_payload["user_id"] = user_id
+        # Forward sync_mode so the execution engine applies the correct strategy
+        sync_mode = str(run.get("sync_mode") or "copy").lower()
+        if sync_mode not in {"copy", "upsert"}:
+            sync_mode = "copy"
+        sync_payload["sync_mode"] = sync_mode
         sync_result = await sync_models(sync_payload)
         run["duration_ms"] = int((_time.time() - started) * 1000)
         run["completed_at"] = _compat_now_iso()
@@ -836,6 +843,7 @@ async def run_project_now_compat(project_id: str, background_tasks: BackgroundTa
         run_type=run_type,
         project_cfg_override=config_override,
         restore_snapshot_id=restore_snapshot_id,
+        sync_mode=str((payload or {}).get("sync_mode") or "copy").lower(),
     )
     user_id = (payload or {}).get("user_id")
     if user_id is not None and str(user_id).strip():

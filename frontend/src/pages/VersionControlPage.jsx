@@ -1062,11 +1062,12 @@ export default function VersionControlPage() {
                                             </div>
                                         </div>
 
-                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                                             {[
                                                 { label: 'Run Type', val: selectedRun.run_type || 'Manual', icon: Zap, color: 'text-amber-500' },
+                                                { label: 'Sync Mode', val: selectedRun.sync_mode ? selectedRun.sync_mode.toUpperCase() : 'N/A', icon: GitCompare, color: 'text-blue-500' },
                                                 { label: 'Executed', val: formatDate(selectedRun.started_at), icon: Clock, color: 'text-slate-500' },
-                                                { label: 'Audit Log', val: 'Verified', icon: ShieldCheck, color: 'text-emerald-500' },
+                                                { label: 'Completed', val: selectedRun.completed ? 'Yes' : 'No', icon: selectedRun.completed ? CheckCircle2 : AlertTriangle, color: selectedRun.completed ? 'text-emerald-500' : 'text-amber-500' },
                                                 { label: 'Snapshot', val: (selectedRun.after_tgt_snapshots?.[0] || 'N/A').substring(0, 8), icon: Database, color: 'text-blue-500' }
                                             ].map((stat, i) => (
                                                 <div key={i} className="p-5 rounded-2xl bg-[var(--bg-surface-raised)]/50 border border-[var(--border-light)]">
@@ -1074,7 +1075,14 @@ export default function VersionControlPage() {
                                                         <stat.icon size={14} className={stat.color} />
                                                         <span className="text-[9px] font-black text-[var(--text-tertiary)] uppercase tracking-widest">{stat.label}</span>
                                                     </div>
-                                                    <p className="text-[var(--text-primary)] font-bold text-[14px]">{stat.val}</p>
+                                                    <p className="text-[var(--text-primary)] font-bold text-[14px] flex items-center gap-1">
+                                                        {stat.val}
+                                                        {stat.label === 'Completed' && !selectedRun.completed && (
+                                                            <span title="Run did not complete" className="ml-1">
+                                                                <AlertTriangle size={12} className="text-amber-500 inline" />
+                                                            </span>
+                                                        )}
+                                                    </p>
                                                 </div>
                                             ))}
                                         </div>
