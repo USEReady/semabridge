@@ -51,6 +51,7 @@ from semabridge.core.source_format import (
 from semabridge.intermediate.models import OSIModel
 from semabridge.sml.models import SMLModel, SMLRelationship
 from semabridge.repository.model_repository import ModelRepository
+from semabridge.core.sync_modes import apply_sync_mode
 from semabridge.utils.logger import get_logger
 from semabridge.utils.relationship_naming import generate_relationship_name
 
@@ -116,6 +117,7 @@ class RunContext:
     sml_snapshot_id: Optional[str] = None
     target_artifact_path: Optional[str] = None
     routing_summary: Optional[dict[str, Any]] = None
+    sync_mode: str = "copy"
 
 
 class ExecutionEngine:
@@ -322,6 +324,7 @@ class ExecutionEngine:
         # Multi-user: account-scoped credential injection
         account_id: Optional[str] = None,  # Linked Account ID for per-user credentials
         config_dict: Optional[Dict[str, Any]] = None, # In-memory configuration override
+        sync_mode: str = "copy",
     ) -> RunSummary:
         """
         Execute the full 10-step pipeline.
@@ -368,7 +371,7 @@ class ExecutionEngine:
             
             # Step 2: Initialize Identifiers
             context = self._step2_init_identifiers(
-                config, source, target, project_name, dataset_id, config_path
+                config, source, target, project_name, dataset_id, config_path, sync_mode=sync_mode
             )
             self._context = context
             self._summary = create_run_summary(
@@ -621,6 +624,7 @@ class ExecutionEngine:
         project_name: Optional[str],
         dataset_id: Optional[str],
         config_path: Optional[Path] = None,
+        sync_mode: str = "copy",
     ) -> RunContext:
         """
         Step 2: Initialize identifiers.
@@ -684,6 +688,7 @@ class ExecutionEngine:
             source_type=source,
             target_type=target,
             behavior=behavior,
+            sync_mode=sync_mode,
         )
 
         # Register the project + run row in the DB immediately.
@@ -710,6 +715,7 @@ class ExecutionEngine:
                 project_id=project_id,
                 source_type=source,
                 target_type=target,
+                sync_mode=sync_mode,
             )
             logger.debug("Run %s registered in DB", run_id[:8])
         except Exception as _reg_err:
@@ -1635,6 +1641,17 @@ class ExecutionEngine:
             else:
                 raise ConversionError(f"Unknown source type: {context.source_type}")
 
+            # Apply sync_mode logic (COPY vs UPSERT)
+            if context.sync_mode == "upsert":
+                try:
+                    head_snapshot = self.db_manager.get_head(context.project_id)
+                    if head_snapshot and head_snapshot.sml_blob:
+                        tgt_model = SMLModel.model_validate(head_snapshot.sml_blob)
+                        logger.info("Applying UPSERT sync mode: merging source with target HEAD")
+                        sml_model = apply_sync_mode(sml_model, tgt_model, "upsert")
+                except Exception as merge_err:
+                    logger.warning("Failed to fetch/merge target model for UPSERT: %s", merge_err)
+
             # Normalize relationship names/deduplication here so all downstream
             # target conversions and deployments operate on the same final model.
             self._normalize_relationships_for_target(sml_model)
@@ -2174,6 +2191,8 @@ class ExecutionEngine:
                 status="success",
                 duration_ms=int((time.time() - context.start_time) * 1000),
                 run_id=context.run_id,
+                connector_id=getattr(context.source_format, "dataset_id", None) if context.source_type == "fabric" else None,
+                trigger="cli",
             )
             
             context.sml_snapshot_id = snapshot_id
@@ -2721,6 +2740,31 @@ class ExecutionEngine:
         self._record_step(10, StepStatus.SUCCESS, f"Status: {status.value}")
 
         finalized = self._summary.finalize()
+
+        # ── Persist final run status to PostgreSQL DB ─────────────────────────
+        try:
+            duration_ms = int(finalized.duration_ms) if finalized.duration_ms else 0
+            db_status = status.value.lower()  # 'success', 'failed', 'partial'
+            error_msg = None
+            if db_status != "success":
+                # Collect first error from step results
+                for step in (finalized.steps or []):
+                    if getattr(step, "error", None):
+                        error_msg = str(step.error)[:1000]
+                        break
+                if not error_msg and finalized.error_message:
+                    error_msg = str(finalized.error_message)[:1000]
+
+            self.db_manager.record_run_complete(
+                run_id=context.run_id,
+                status=db_status,
+                final_step=self._current_step,
+                duration_ms=duration_ms,
+                error_message=error_msg,
+            )
+            logger.debug("Run %s marked %s in DB (duration=%dms)", context.run_id[:8], db_status, duration_ms)
+        except Exception as _db_exc:
+            logger.warning("Could not finalize run %s in DB: %s", context.run_id[:8], _db_exc)
 
         # ── Telemetry: record run counter + flush spans ───────────────────────
         try:

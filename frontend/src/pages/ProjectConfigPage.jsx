@@ -95,6 +95,7 @@ export default function ProjectConfigPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncMode, setSyncMode] = useState('copy');
   const [project, setProject] = useState(null);
   const [allProjects, setAllProjects] = useState([]);
   const [selectedPresetProjectId, setSelectedPresetProjectId] = useState(null);
@@ -881,7 +882,7 @@ export default function ProjectConfigPage() {
         return;
       }
 
-      const run = await api.runProjectNow(id);
+      const run = await api.runProjectNow(id, { sync_mode: syncMode });
       const status = String(run?.status || '').toLowerCase();
       if (run?.id) {
         saveRunLogs(run.id, buildMockRunLogs(run));
@@ -1516,15 +1517,56 @@ export default function ProjectConfigPage() {
           {saving ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Save size={13} />}
           Save Config
         </button>
-        <button onClick={handleRunNow} disabled={saving || syncing || isProjectSyncing} style={syncButtonStyle}>
-          {isProjectSyncing || syncing ? (
-            <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
-          ) : isProjectSynced ? (
-            <CheckCircle2 size={13} />
-          ) : (
-            <Play size={13} />
-          )} {syncButtonLabel}
-        </button>
+        {/* Sync Mode Selector */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 0, border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg-input)' }}>
+          <select
+            id="sync-mode-select"
+            value={syncMode}
+            onChange={e => setSyncMode(e.target.value)}
+            disabled={saving || syncing || isProjectSyncing}
+            title={syncMode === 'copy' ? 'COPY: target fully replaced by source' : 'UPSERT: source wins on conflict, target-only entities preserved'}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: syncMode === 'upsert' ? 'var(--color-warning, #f59e0b)' : 'var(--text-secondary)',
+              fontWeight: 700,
+              fontSize: 11,
+              padding: '0 10px',
+              height: 32,
+              cursor: saving || syncing || isProjectSyncing ? 'not-allowed' : 'pointer',
+              outline: 'none',
+              letterSpacing: '0.05em',
+              textTransform: 'uppercase',
+            }}
+          >
+            <option value="copy">COPY</option>
+            <option value="upsert">UPSERT</option>
+          </select>
+          <div style={{ width: 1, background: 'var(--border-main)', height: 20 }} />
+          <button
+            id="sync-now-btn"
+            onClick={handleRunNow}
+            disabled={saving || syncing || isProjectSyncing}
+            style={{
+              ...syncButtonStyle,
+              borderRadius: 0,
+              border: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '0 16px',
+              height: 32,
+            }}
+          >
+            {isProjectSyncing || syncing ? (
+              <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
+            ) : isProjectSynced ? (
+              <CheckCircle2 size={13} />
+            ) : (
+              <Play size={13} />
+            )} {syncButtonLabel}
+          </button>
+        </div>
       </div>
 
       {/* Scheduler Modal */}

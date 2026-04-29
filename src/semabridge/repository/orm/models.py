@@ -431,27 +431,9 @@ class Run(Base):
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     run_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    sync_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="copy")
     before_src_snapshot_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
-    restore_snapshot_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
-    before_tgt_snapshots: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    after_tgt_snapshots: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-
-    # Relationships
-    project: Mapped["Project"] = relationship(back_populates="runs")
-    source_artifacts: Mapped[List["SourceArtifact"]] = relationship(
-        back_populates="run", cascade="all, delete-orphan"
-    )
-    started_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
-    final_step: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    source_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    target_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    run_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    before_src_snapshot_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
-    restore_snapshot_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    restored_from_snapshot_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     before_target_snapshot_ids: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     after_target_snapshot_ids: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 

@@ -395,9 +395,10 @@ class ModelRepository:
         tag: Optional[str] = None,
         status: str = "success",
         duration_ms: Optional[int] = None,
-        error_message: Optional[str] = None,
         initiated_by: str = "cli",
         run_id: Optional[str] = None,
+        connector_id: Optional[str] = None,
+        trigger: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """Commit a new version of the model.
 
@@ -428,9 +429,11 @@ class ModelRepository:
                     sml_blob=_serialize_sml_blob(sml_json),
                     status=status,
                     duration_ms=duration_ms,
-                    error_message=error_message,
+                    error_message=None,
                     initiated_by=initiated_by,
                     run_id=run_id,
+                    connector_id=connector_id,
+                    trigger=trigger,
                 )
             )
 
@@ -620,6 +623,7 @@ class ModelRepository:
         project_id: str,
         source_type: str,
         target_type: Optional[str] = None,
+        sync_mode: str = "copy",
     ) -> None:
         """Record the start of an execution run."""
         timestamp = datetime.utcnow()
@@ -632,6 +636,7 @@ class ModelRepository:
                     status="running",
                     source_type=source_type,
                     target_type=target_type,
+                    sync_mode=sync_mode,
                 )
             )
             session.commit()

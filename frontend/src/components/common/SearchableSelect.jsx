@@ -45,10 +45,15 @@ export default function SearchableSelect({
   const containerRef = useRef(null);
 
   // Normalise items so every entry has a usable `id` field for MiniSearch
-  const normItems = items.map((item, i) => ({
-    ...item,
-    _sid: item[valueKey] != null ? String(item[valueKey]) : `__idx_${i}`,
-  }));
+  // MUST be memoised — inline .map() creates a new array ref every render,
+  // which causes useHPSearch's useEffect to fire infinitely.
+  const normItems = useMemo(
+    () => items.map((item, i) => ({
+      ...item,
+      _sid: item[valueKey] != null ? String(item[valueKey]) : `__idx_${i}`,
+    })),
+    [items, valueKey], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   const { results, query, setQuery } = useHPSearch(normItems, fields, {
     idField: '_sid',
