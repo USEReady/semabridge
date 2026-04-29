@@ -62,6 +62,119 @@ function sourceIcon(sourceType) {
   return <Link2 size={14} color="var(--text-tertiary)" />;
 }
 
+function RunDiffViewer({ run, projectId }) {
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const beforeId = run.before_target_snapshot_ids?.[0];
+    const afterId = run.after_target_snapshot_ids?.[0] || run.after_tgt_snapshots?.[0];
+
+    if (!beforeId || !afterId || !projectId) {
+      setStats({ total_after: 0, removed: 0, preserved: 0, source_mapped: 0 });
+      setLoading(false);
+      return;
+    }
+
+    let isMounted = true;
+    setLoading(true);
+    api.compareProjectSnapshots(projectId, beforeId, afterId)
+      .then(diff => {
+        if (!isMounted) return;
+        let removed = 0;
+        let added = 0;
+        let preserved = 0;
+        const totalAfter = diff.metadata_diff?.snapshot_b?.model_count || 0;
+        const totalBefore = diff.metadata_diff?.snapshot_a?.model_count || 0;
+
+        if (diff.models) {
+          for (const mInfo of Object.values(diff.models)) {
+             if (mInfo.status === 'removed') removed++;
+             else if (mInfo.status === 'added') added++;
+             else preserved++; // unchanged or preserved
+          }
+        }
+
+        const kept = totalBefore - removed;
+        setStats({
+          total_after: totalAfter,
+          removed: removed,
+          preserved: kept,
+          source_mapped: totalAfter - kept
+        });
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setStats({ total_after: 0, removed: 0, preserved: 0, source_mapped: 0 });
+      })
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
+
+    return () => { isMounted = false; };
+  }, [run, projectId]);
+
+  if (loading || !stats) {
+    return (
+      <div style={{ border: '1px solid var(--border-main)', borderRadius: 8, padding: 16, background: 'var(--bg-surface)', marginBottom: 16, fontSize: 13, color: 'var(--text-tertiary)' }}>
+        Loading backend stats...
+      </div>
+    );
+  }
+
+  const isUpsert = (run.sync_mode || 'copy') === 'upsert';
+
+  return (
+    <div style={{ border: '1px solid var(--border-main)', borderRadius: 8, padding: 16, background: 'var(--bg-surface)', marginBottom: 16 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>Run Summary & Diffs</div>
+      
+      <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', flexDirection: 'column' }}>
+        {isUpsert ? (
+          <div style={{ display: 'grid', gap: 6, fontSize: 12 }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Sync Mode:</span>
+              <span style={{ fontWeight: 700, color: '#10b981' }}>UPSERT</span>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Target-only models kept:</span>
+              <span style={{ fontWeight: 600 }}>{stats.preserved}</span>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Source models deployed:</span>
+              <span style={{ fontWeight: 600 }}>{stats.source_mapped}</span>
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Total after snapshot:</span>
+              <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{stats.total_after}</span>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: 6, fontSize: 12 }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Sync Mode:</span>
+              <span style={{ fontWeight: 700, color: '#64748b' }}>COPY</span>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Target replaced with source</span>
+              <span style={{ fontWeight: 600, color: 'var(--color-error)' }}>({stats.removed} target-only models removed)</span>
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Total after snapshot:</span>
+              <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{stats.total_after} (exact source copy)</span>
+            </div>
+          </div>
+        )}
+      </div>
+      
+      <div style={{ marginTop: 16, padding: 10, background: 'var(--bg-input)', borderRadius: 6, fontSize: 12, borderLeft: `3px solid ${isUpsert ? '#10b981' : '#64748b'}` }}>
+        {isUpsert 
+          ? `UPSERT mode preserved ${stats.preserved} target-only models.`
+          : `COPY mode removed ${stats.removed} models not present in source.`}
+      </div>
+    </div>
+  );
+}
+
 export default function ProjectJobsPage() {
   const [runs, setRuns] = useState([]);
   const [schedules, setSchedules] = useState([]);
@@ -423,54 +536,7 @@ export default function ProjectJobsPage() {
                         </div>
 
                         {run.status === 'success' && (
-                          <div style={{ border: '1px solid var(--border-main)', borderRadius: 8, padding: 16, background: 'var(--bg-surface)', marginBottom: 16 }}>
-                            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>Run Summary & Diffs</div>
-                            
-                            <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', flexDirection: 'column' }}>
-                              
-                              {(run.sync_mode || 'copy') === 'upsert' ? (
-                                <div style={{ display: 'grid', gap: 6, fontSize: 12 }}>
-                                  <div style={{ display: 'flex', gap: 8 }}>
-                                    <span style={{ color: 'var(--text-secondary)' }}>Sync Mode:</span>
-                                    <span style={{ fontWeight: 700, color: '#10b981' }}>UPSERT</span>
-                                  </div>
-                                  <div style={{ display: 'flex', gap: 8 }}>
-                                    <span style={{ color: 'var(--text-secondary)' }}>Target-only models kept:</span>
-                                    <span style={{ fontWeight: 600 }}>{run.stats?.preserved ?? Math.floor(Math.random() * 3 + 2)}</span>
-                                  </div>
-                                  <div style={{ display: 'flex', gap: 8 }}>
-                                    <span style={{ color: 'var(--text-secondary)' }}>Source models deployed:</span>
-                                    <span style={{ fontWeight: 600 }}>{run.stats?.source_mapped ?? Math.floor(Math.random() * 15 + 10)}</span>
-                                  </div>
-                                  <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                                    <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Total after snapshot:</span>
-                                    <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{run.stats?.total_after ?? Math.floor(Math.random() * 18 + 12)}</span>
-                                  </div>
-                                </div>
-                              ) : (
-                                <div style={{ display: 'grid', gap: 6, fontSize: 12 }}>
-                                  <div style={{ display: 'flex', gap: 8 }}>
-                                    <span style={{ color: 'var(--text-secondary)' }}>Sync Mode:</span>
-                                    <span style={{ fontWeight: 700, color: '#64748b' }}>COPY</span>
-                                  </div>
-                                  <div style={{ display: 'flex', gap: 8 }}>
-                                    <span style={{ color: 'var(--text-secondary)' }}>Target replaced with source</span>
-                                    <span style={{ fontWeight: 600, color: 'var(--color-error)' }}>({run.stats?.removed ?? Math.floor(Math.random() * 3 + 1)} target-only models removed)</span>
-                                  </div>
-                                  <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                                    <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Total after snapshot:</span>
-                                    <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{run.stats?.total_after ?? Math.floor(Math.random() * 15 + 10)} (exact source copy)</span>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                            
-                            <div style={{ marginTop: 16, padding: 10, background: 'var(--bg-input)', borderRadius: 6, fontSize: 12, borderLeft: `3px solid ${(run.sync_mode || 'copy') === 'upsert' ? '#10b981' : '#64748b'}` }}>
-                              {(run.sync_mode || 'copy') === 'upsert' 
-                                ? `UPSERT mode preserved ${run.stats?.preserved ?? 2} target-only models.`
-                                : `COPY mode removed ${run.stats?.removed ?? 1} models not present in source.`}
-                            </div>
-                          </div>
+                          <RunDiffViewer run={run} projectId={run.project_id} />
                         )}
 
                         <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>
