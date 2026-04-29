@@ -4,7 +4,8 @@ Please refer to the following files for agent rules and workflows:
 - `.github/copilot-instructions.md`
 - `.github/AGENTS.md`
 
-All AI coding assistants and agents should follow the workflow skills defined in `.github/skills/` and strictly adhere to the guidelines provided in these documents.
+Always refer to and follow the processes defined in the .agent/skills/ directory before proposing code changes.
+All AI coding assistants and agents should follow the workflow skills defined in `.agent/skills/` (and `.github/skills/` if applicable) and strictly adhere to the guidelines provided in these documents.
 
 ## Available Slash Commands
 

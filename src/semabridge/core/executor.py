@@ -779,6 +779,10 @@ class CLIExecutor:
             source_artifact_id = self._db_manager.persist_source_artifact(
                 run_id=self.run_id,
                 source_format=self._source_format,
+                project_id=self.project_id,
+                source_type_hint=self.config.source.type,
+                target_type_hint=self.config.target.type if self.config.target else None,
+                sync_mode=getattr(self, "sync_mode", "copy"),
             )
             if source_artifact_id:
                 artifact_ids.append(source_artifact_id)

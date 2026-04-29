@@ -1,0 +1,15 @@
+# Antigravity Rules
+
+Always refer to and follow the processes defined in the .agent/skills/ directory before proposing code changes.
+
+Please refer to the following for agent rules and workflows:
+- `.agent/skills/`
+- `.github/AGENTS.md`
+
+## Available Skills
+
+Follow the corresponding workflow in `.agent/skills/` for:
+- `spec-driven-development`
+- `test-driven-development`
+- `planning-and-task-breakdown`
+- `code-review-and-quality`

@@ -3,23 +3,10 @@ from __future__ import annotations
 import yaml
 
 from semabridge.connectors.snowflake_emitter_parts import metric_helpers as _metric_helpers
+from semabridge.connectors.snowflake_emitter_parts.yaml_utils import IndentDumper
 from semabridge.utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-
-class IndentDumper(yaml.SafeDumper):
-    def increase_indent(self, flow=False, indentless=False):
-        return super(IndentDumper, self).increase_indent(flow, False)
-
-
-def str_presenter(dumper, data):
-    if len(data.splitlines()) > 1 or len(data) > 80:
-        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
-    return dumper.represent_scalar("tag:yaml.org,2002:str", data)
-
-
-IndentDumper.add_representer(str, str_presenter)
 
 
 def generate_ddls(emitter, sml):

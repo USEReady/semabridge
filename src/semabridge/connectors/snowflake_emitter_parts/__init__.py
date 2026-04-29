@@ -63,6 +63,13 @@ Modules:
   - generate_cortex_yaml()
   - generate_cortex_yaml_from_osi()
 
+- **exceptions**: Snowflake emitter warnings and errors
+  - MissingSourceTableWarning
+
+- **yaml_utils**: YAML formatting helpers
+  - IndentDumper
+  - str_presenter
+
 Usage:
 ------
 
@@ -90,6 +97,8 @@ from . import identifier_utilities
 from . import schema_evolution
 from . import measure_sync
 from . import metric_helpers
+from . import exceptions
+from . import yaml_utils
 from . import renderers
 
 __all__ = [
@@ -99,6 +108,8 @@ __all__ = [
     "schema_evolution",
     "measure_sync",
     "metric_helpers",
+    "exceptions",
+    "yaml_utils",
     "renderers",
 ]
 

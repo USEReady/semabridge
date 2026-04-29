@@ -1,4 +1,31 @@
-from semabridge.api.services.project_shared import *
+import json
+import re
+import time as _time
+from pathlib import Path
+from typing import Any, Dict, List
+
+import yaml
+from fastapi import HTTPException, Query
+from starlette.responses import Response
+
+from semabridge.api.services.project_shared import (
+    _compat_clean_project_name,
+    _compat_default_project_yaml,
+    _compat_ensure_loaded,
+    _compat_load_project_yaml_text,
+    _compat_load_repo_yaml_text,
+    _compat_now_iso,
+    _compat_project_configs,
+    _compat_project_payload,
+    _compat_project_runs,
+    _compat_project_yaml_path,
+    _compat_projects,
+    _compat_projects_dir,
+    _compat_save_project_yaml_text,
+    _compat_save_store,
+    db_manager,
+    logger,
+)
 
 
 def _project_display_name_from_cfg(project_cfg: Dict[str, Any], fallback: str) -> str:
@@ -665,7 +692,7 @@ async def compare_graph_snapshots_compat(
     try:
         snap_from = db_manager.get_snapshot(from_snapshot_id)
         snap_to = db_manager.get_snapshot(to_snapshot_id)
-        
+
         if not snap_from or not snap_to:
             return {
                 "summary": {"added": 0, "removed": 0, "modified": 0, "unchanged": 0},
