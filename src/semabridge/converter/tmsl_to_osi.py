@@ -79,12 +79,14 @@ class TMSLToOSIConverter(BaseConverter):
             name = model_obj.get("name", "FabricModel")
             self._dump_measure_audit(model_obj, dataset_id, phase="tmsl_to_osi_pre")
 
+            # Use display name as unique_name to ensure Snowflake views use display names, not GUIDs.
+            # GUID (dataset_id) is still preserved in metadata for traceability.
             osi_model = OSIModel(
-                unique_name=dataset_id,
+                unique_name=name or dataset_id,
                 label=name,
                 description=model_obj.get("description", ""),
                 source_platform="fabric",
-                metadata={"workspace_id": workspace_id}
+                metadata={"workspace_id": workspace_id, "dataset_id": dataset_id}
             )
 
             # Process Datasets (Tables)

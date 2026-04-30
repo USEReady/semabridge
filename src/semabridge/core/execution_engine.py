@@ -54,6 +54,7 @@ from semabridge.repository.model_repository import ModelRepository
 from semabridge.core.sync_modes import apply_sync_mode
 from semabridge.utils.logger import get_logger
 from semabridge.utils.relationship_naming import generate_relationship_name
+from semabridge.utils.identifiers import IdentifierSanitizer
 
 logger = get_logger(__name__)
 
@@ -1496,6 +1497,7 @@ class ExecutionEngine:
             dataset_id=resolved_dataset_id,
             row_counts=row_counts,
         )
+        source_format.dataset_name = extractor.get_model_display_name(resolved_dataset_id)
         
         self._record_step(4, StepStatus.SUCCESS, f"Extracted TMSL definition")
         
@@ -1656,9 +1658,9 @@ class ExecutionEngine:
                             sync_mode=context.sync_mode,
                         )
                     else:
-                        logger.info("No live target state found; proceeding with full overwrite (first sync)")
+                        logger.info("No live target state found (view likely missing); proceeding with full overwrite (first sync)")
                 except Exception as upsert_exc:
-                    logger.warning("Failed to perform LIVE target merge for UPSERT: %s. Falling back to COPY mode.", upsert_exc)
+                    logger.warning("UPSERT: Failed to perform LIVE target merge: %s. Falling back to COPY mode.", upsert_exc)
             
             # Record SML in context
             context.sml_model = sml_model
@@ -2818,14 +2820,32 @@ class ExecutionEngine:
 
             def _do_extract(cfg):
                 extractor = SnowflakeExtractor(cfg)
-                # View name is usually project_id or from target config
-                view_name = context.project_id
+                # Resolve the actual semantic view name for DESCRIBE
+                # 1. Check target-specific config
+                # 2. Check SML model unique_name (which should be the display name)
+                # 3. Fall back to project_id (UUID)
                 target_cfg = getattr(context.config, "target", None)
+                view_name = ""
                 if target_cfg and getattr(target_cfg, "semantic_view_name", None):
                     view_name = target_cfg.semantic_view_name
                 
+                if not view_name and context.sml_model:
+                    sanitizer = IdentifierSanitizer(
+                        force_uppercase=context.behavior.compatibility.force_uppercase,
+                        suppress_reserved=context.behavior.compatibility.suppress_reserved_words,
+                    )
+                    raw_name = context.sml_model.unique_name or context.sml_model.label or context.project_id
+                    sanitized_name = sanitizer.sanitize_column(raw_name)
+                    
+                    suffix = getattr(context.behavior.semantic_model, "view_suffix", "_SEMANTIC") or "_SEMANTIC"
+                    view_name = sanitized_name if str(sanitized_name).upper().endswith(str(suffix).upper()) else f"{sanitized_name}{suffix}"
+                
+                if not view_name:
+                    view_name = context.project_id
+
+                logger.info("UPSERT: Attempting to fetch live state from view '%s'", view_name)
                 ddl = extractor.extract_semantic_view_ddl(view_name)
-                osi_model = SemanticViewToOSIConverter().to_osi({"ddl": ddl})
+                osi_model = SemanticViewToOSIConverter().to_osi({"ddl": ddl, "view_name": view_name})
                 return OSIToSMLConverter().from_osi(osi_model)
 
             if identity_id:
@@ -2841,7 +2861,7 @@ class ExecutionEngine:
             return _do_extract(context.config.snowflake)
 
         except Exception as exc:
-            logger.debug("Live target extraction failed (expected if view missing): %s", exc)
+            logger.warning("UPSERT: Live target extraction failed (expected if view missing): %s", exc)
             return None
     
     # =========================================================================
