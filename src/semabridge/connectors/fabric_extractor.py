@@ -204,6 +204,22 @@ class FabricExtractor:
             f"Semantic model '{dataset_id_or_name}' not found in workspace '{self.config.workspace_id}'. "
             f"Available models: {available}"
         )
+
+    def get_model_display_name(self, dataset_id: str) -> str:
+        """Resolve a model ID back to its display name using cache/discovery."""
+        if dataset_id in self._model_cache:
+            return self._model_cache[dataset_id].get("displayName", dataset_id)
+        
+        # If not in cache, try one list refresh
+        try:
+            models = self.list_semantic_models()
+            for m in models:
+                if str(m.get("id")) == str(dataset_id):
+                    return m.get("displayName", dataset_id)
+        except Exception:
+            pass
+            
+        return dataset_id
     
     def _get_access_token(self) -> str:
         """

@@ -76,15 +76,18 @@ class TMSLToOSIConverter(BaseConverter):
                 )
 
             model_obj = tmsl_json.get("model", {})
-            name = model_obj.get("name", "FabricModel")
+            # Prioritize display_name passed from source_data, then from model name, then default
+            display_name = source_data.get("display_name") or model_obj.get("name") or "FabricModel"
             self._dump_measure_audit(model_obj, dataset_id, phase="tmsl_to_osi_pre")
 
+            # Use display name as unique_name to ensure Snowflake views use display names, not GUIDs.
+            # GUID (dataset_id) is still preserved in metadata for traceability.
             osi_model = OSIModel(
-                unique_name=dataset_id,
-                label=name,
+                unique_name=display_name or dataset_id,
+                label=display_name,
                 description=model_obj.get("description", ""),
                 source_platform="fabric",
-                metadata={"workspace_id": workspace_id}
+                metadata={"workspace_id": workspace_id, "dataset_id": dataset_id}
             )
 
             # Process Datasets (Tables)
