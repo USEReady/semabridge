@@ -2,8 +2,19 @@ name: semabridge
 version: 1.0.0
 description: Semantic Model Bridge - Python CLI for Semantic Model Conversion via
   OSI
-author: Premasai
+author: Charan
 dependencies:
   apm: []
   mcp: []
 scripts: {}
+
+# Add pointers so APM clients know where your "brain" lives
+instructions:
+  system: "../.github/copilot-instructions.md"
+  
+agent_rules:
+  - "../.github/AGENTS.md"
+
+# Automatically expose your domain workflows to the agent
+capabilities:
+  skills_dir: "../.github/skills/"

@@ -1951,7 +1951,7 @@ async def get_snapshot_content_compat(project_id: str, snapshot_id: str) -> Dict
     if not snap:
         raise HTTPException(status_code=404, detail="Snapshot not found")
     
-    state = snap.get("state") or {}
+    state = snap.get("sml_blob") or snap.get("state") or {}
     if isinstance(state, str):
         try: state = json.loads(state)
         except: state = {}
@@ -1959,7 +1959,7 @@ async def get_snapshot_content_compat(project_id: str, snapshot_id: str) -> Dict
     return {
         "snapshot_id": snapshot_id,
         "project_id": project_id,
-        "captured_at": snap.get("captured_at"),
+        "captured_at": snap.get("timestamp") or snap.get("captured_at") or snap.get("created_at"),
         "role": snap.get("role"),
         "content": state
     }
@@ -1985,7 +1985,7 @@ async def get_snapshot_report_compat(project_id: str, snapshot_id: str) -> Dict[
     if not snap:
         raise HTTPException(status_code=404, detail="Snapshot not found")
     
-    state = snap.get("state") or {}
+    state = snap.get("sml_blob") or snap.get("state") or {}
     if isinstance(state, str):
         try: state = json.loads(state)
         except: state = {}
@@ -1997,18 +1997,16 @@ async def get_snapshot_report_compat(project_id: str, snapshot_id: str) -> Dict[
     
     # Extract warnings/collisions if present in the snapshot metadata or run logs
     warnings = []
-    # If the state has a dedicated 'diagnostics' or 'warnings' field, we'd pull it here.
-    # For now, we simulate a report based on the captured state structure.
     
     return {
         "snapshot_id": snapshot_id,
         "role": snap.get("role"),
-        "timestamp": snap.get("created_at"),
+        "timestamp": snap.get("timestamp") or snap.get("created_at"),
         "summary": {
             "total_models": total_models,
             "total_columns": total_columns,
-            "format": snap.get("intermediate_format", "sml").upper(),
-            "origin": snap.get("snapshot_origin", "AUTO"),
+            "format": snap.get("intermediate_format") or snap.get("format") or "SML",
+            "origin": snap.get("snapshot_origin") or snap.get("trigger") or "AUTO",
         },
         "models": [
             {
