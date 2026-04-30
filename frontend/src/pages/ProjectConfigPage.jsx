@@ -1,3 +1,4 @@
+import { ProjectWizard } from './CreateProjectPage';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Save, Play, CalendarClock, CalendarDays, Settings2, FileCode2, SlidersHorizontal, Loader2, CheckCircle2, RotateCcw, Camera } from 'lucide-react';
@@ -1438,18 +1439,23 @@ export default function ProjectConfigPage() {
               error={projectMappingsError}
             />
             {viewMode === 'form' ? (
-              <FormEditor
-                value={configForm}
-                onChange={setConfigForm}
-                fabricAccounts={fabricAccounts}
-                fabricWorkspaces={fabricWorkspaces}
-                fabricLoading={fabricLoading}
-                onRefreshFabricWorkspaces={() => refreshFabricWorkspaces()}
-                targetFabricAccounts={targetFabricAccounts}
-                targetFabricWorkspaces={targetFabricWorkspaces}
-                targetFabricLoading={targetFabricLoading}
-                onRefreshTargetFabricWorkspaces={() => refreshTargetFabricWorkspaces()}
-                databricksAccounts={databricksAccounts}
+              <ProjectWizard
+                editMode={true}
+                initialData={configForm}
+                onSaveConfig={async (payload) => {
+                  try {
+                    await api.saveProjectConfig(project.id, payload.config_yaml);
+                    addLog('success', 'Project config updated via wizard.');
+                    const res = await api.getProjectConfig(project.id);
+                    setConfigTree(res.tree);
+                    setConfigForm(res.form);
+                    setYamlText(res.yaml);
+                    return res;
+                  } catch (err) {
+                    addLog('error', \Wizard save failed: \\);
+                    throw err;
+                  }
+                }}
               />
             ) : (
               <div style={{ height: '100%', minHeight: 420 }}>
@@ -1487,6 +1493,20 @@ export default function ProjectConfigPage() {
                 </div>
               </div>
             )}
+
+            <div style={{ maxWidth: 1080, margin: '24px auto 0', padding: '18px 20px', border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)' }}>
+              <label style={LABEL}>Copy Presets from Another Project</label>
+              <SearchableSelect
+                items={allProjects}
+                displayKey="name"
+                valueKey="id"
+                searchFields={['name', 'description', 'source']}
+                value={selectedPresetProjectId}
+                placeholder="Search project presets..."
+                onChange={handleCopyPreset}
+                clearable
+              />
+            </div>
           </div>
         </div>
 
@@ -2119,422 +2139,5 @@ function MappingPreviewPanel({ mappings = [], loading = false, error = '' }) {
   );
 }
 
-function FormEditor({
-  value,
-  onChange,
-  fabricAccounts = [],
-  fabricWorkspaces = [],
-  fabricLoading = false,
-  onRefreshFabricWorkspaces,
-  targetFabricAccounts = [],
-  targetFabricWorkspaces = [],
-  targetFabricLoading = false,
-  onRefreshTargetFabricWorkspaces,
-  databricksAccounts = [],
-}) {
-  const patch = (k, v) => onChange(prev => ({ ...prev, [k]: v }));
-  const [overridePbixPath, setOverridePbixPath] = useState(false);
-  const uploadedPbixPath = String(value.pbix_uploaded_path || '').trim();
-  const pbixPathLocked = value.source_type === 'pbix' && Boolean(uploadedPbixPath) && !overridePbixPath;
 
-  useEffect(() => {
-    if (value.source_type !== 'pbix') {
-      setOverridePbixPath(false);
-    }
-  }, [value.source_type]);
 
-  return (
-    <div style={{ maxWidth: 1080, margin: '0 auto', padding: 4, paddingBottom: 320, display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-        <div>
-          <label style={LABEL}>Source Type</label>
-          <select value={value.source_type} onChange={e => patch('source_type', e.target.value)} style={{ ...INPUT, cursor: 'pointer' }}>
-            <option value="pbix">pbix</option>
-            <option value="fabric">fabric</option>
-            <option value="snowflake">snowflake</option>
-            <option value="databricks">databricks</option>
-          </select>
-        </div>
-        <div>
-          <label style={LABEL}>Target Connector</label>
-          <select value={value.target_type} onChange={e => patch('target_type', e.target.value)} style={{ ...INPUT, cursor: 'pointer' }}>
-            <option value="snowflake">snowflake</option>
-            <option value="fabric">fabric</option>
-            <option value="databricks">databricks</option>
-          </select>
-        </div>
-      </div>
-
-      <div>
-        <label style={LABEL}>Intermediate Format</label>
-        <select value={value.output_format} onChange={e => patch('output_format', e.target.value)} style={{ ...INPUT, cursor: 'pointer' }}>
-          <option value="osi">OSI (Open Semantic Interchange)</option>
-          <option value="sml">SML</option>
-        </select>
-      </div>
-
-      {/* ── Source Configuration ── */}
-      <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, padding: 16, background: 'var(--bg-surface)' }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>
-          1. Source Configuration
-          <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--accent-blue)', marginLeft: 8 }}>
-            {value.source_type === 'fabric' ? 'Microsoft Fabric' : value.source_type === 'snowflake' ? 'Snowflake' : value.source_type === 'databricks' ? 'Databricks' : 'PBIX File'}
-          </span>
-        </div>
-
-      {value.source_type === 'fabric' && (
-        <>
-          <div style={{ marginBottom: 12 }}>
-            <label style={LABEL}>Fabric Account</label>
-            <select
-              value={value.identity_id}
-              onChange={e => patch('identity_id', e.target.value)}
-              style={{ ...INPUT, cursor: 'pointer' }}
-            >
-              <option value="">Select account</option>
-              {fabricAccounts.map(acc => (
-                <option key={acc.id} value={acc.id}>
-                  {acc.tag} ({acc.identity_email || acc.id})
-                </option>
-              ))}
-            </select>
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
-              Select an authenticated identity to use for discovery and synchronization.
-            </div>
-          </div>
-
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <label style={{ ...LABEL, margin: 0 }}>Fabric Workspace</label>
-              <div style={{ flex: 1 }} />
-              <button
-                type="button"
-                onClick={onRefreshFabricWorkspaces}
-                disabled={fabricLoading || !value.identity_id}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'var(--text-tertiary)',
-                  cursor: fabricLoading || !value.identity_id ? 'not-allowed' : 'pointer',
-                  fontSize: 11,
-                  padding: 0,
-                }}
-              >
-                {fabricLoading ? 'Loading...' : 'Refresh'}
-              </button>
-            </div>
-            {fabricWorkspaces.length > 0 ? (
-              <SearchableSelect
-                items={fabricWorkspaces}
-                displayKey="name"
-                valueKey="id"
-                value={value.workspace_id}
-                placeholder="Choose a workspace"
-                onChange={(ws) => {
-                  const wsId = typeof ws === 'object' ? (ws?.id || ws?.workspace_id || '') : ws;
-                  patch('workspace_id', String(wsId));
-                }}
-              />
-            ) : (
-              <input value={value.workspace_id} onChange={e => patch('workspace_id', e.target.value)} style={INPUT} placeholder="fabric workspace id" />
-            )}
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
-              Pick one workspace here. Step 3 will show models from this workspace only.
-            </div>
-          </div>
-        </>
-      )}
-
-      {value.source_type === 'snowflake' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <div>
-            <label style={LABEL}>Database</label>
-            <input value={value.database} onChange={e => patch('database', e.target.value)} style={INPUT} placeholder="ANALYTICS_DB" />
-          </div>
-          <div>
-            <label style={LABEL}>Schema</label>
-            <input value={value.schema} onChange={e => patch('schema', e.target.value)} style={INPUT} placeholder="PUBLIC" />
-          </div>
-        </div>
-      )}
-
-      {value.source_type === 'pbix' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <label style={{ ...LABEL, margin: 0 }}>PBIX File Path</label>
-              {uploadedPbixPath && (
-                <button
-                  type="button"
-                  onClick={() => setOverridePbixPath(prev => !prev)}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: 'var(--accent-blue)',
-                    cursor: 'pointer',
-                    fontSize: 11,
-                    fontWeight: 600,
-                    padding: 0,
-                  }}
-                >
-                  {overridePbixPath ? 'Use uploaded path' : 'Edit manually'}
-                </button>
-              )}
-            </div>
-            <input
-              value={value.pbix_path || ''}
-              onChange={e => patch('pbix_path', e.target.value)}
-              style={INPUT}
-              readOnly={pbixPathLocked}
-              placeholder="C:/models/Finance.pbix"
-            />
-            {uploadedPbixPath && (
-              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
-                {pbixPathLocked
-                  ? 'Using uploaded file path from project creation. Click Edit manually to override.'
-                  : 'Manual override enabled. You can point this to a permanent local/network path.'}
-              </div>
-            )}
-          </div>
-          <div>
-            <label style={LABEL}>PBIX Folder (optional)</label>
-            <input
-              value={value.pbix_folder || ''}
-              onChange={e => patch('pbix_folder', e.target.value)}
-              style={INPUT}
-              placeholder="C:/models"
-            />
-          </div>
-        </div>
-      )}
-      </div>
-
-      {/* ── Target Configuration ── */}
-      <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, padding: 16, background: 'var(--bg-surface)', overflow: 'visible', position: 'relative', zIndex: 5 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>
-          2. Target Configuration
-          <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--accent-blue)', marginLeft: 8 }}>
-            {value.target_type === 'fabric' ? 'Microsoft Fabric' : value.target_type === 'snowflake' ? 'Snowflake' : 'Databricks'}
-          </span>
-        </div>
-
-      {value.target_type === 'snowflake' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <div>
-            <label style={LABEL}>Target Database</label>
-            <input value={value.target_database} onChange={e => patch('target_database', e.target.value)} style={INPUT} placeholder="ANALYTICS_DB" />
-          </div>
-          <div>
-            <label style={LABEL}>Target Schema</label>
-            <input value={value.target_schema} onChange={e => patch('target_schema', e.target.value)} style={INPUT} placeholder="PUBLIC" />
-          </div>
-        </div>
-      )}
-
-      {value.target_type === 'fabric' && (
-        <>
-          <div style={{ marginBottom: 12 }}>
-            <label style={LABEL}>Target Fabric Account</label>
-            <select
-              value={value.target_identity_id}
-              onChange={e => patch('target_identity_id', e.target.value)}
-              style={{ ...INPUT, cursor: 'pointer' }}
-            >
-              <option value="">Select target account</option>
-              {targetFabricAccounts.map(acc => (
-                <option key={acc.id} value={acc.id}>
-                  {acc.tag} ({acc.identity_email || acc.id})
-                </option>
-              ))}
-            </select>
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
-              Select the Fabric identity to use for deploying the semantic model.
-            </div>
-          </div>
-
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <label style={{ ...LABEL, margin: 0 }}>Target Workspace</label>
-              <div style={{ flex: 1 }} />
-              <button
-                type="button"
-                onClick={onRefreshTargetFabricWorkspaces}
-                disabled={targetFabricLoading || !value.target_identity_id}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'var(--text-tertiary)',
-                  cursor: targetFabricLoading || !value.target_identity_id ? 'not-allowed' : 'pointer',
-                  fontSize: 11,
-                  padding: 0,
-                }}
-              >
-                {targetFabricLoading ? 'Loading...' : 'Refresh'}
-              </button>
-            </div>
-            {targetFabricWorkspaces.length > 0 ? (
-              <SearchableSelect
-                items={targetFabricWorkspaces}
-                displayKey="name"
-                valueKey="id"
-                value={value.target_workspace_id}
-                placeholder="Choose target workspace"
-                onChange={(ws) => {
-                  const wsId = typeof ws === 'object' ? (ws?.id || ws?.workspace_id || '') : ws;
-                  patch('target_workspace_id', String(wsId));
-                }}
-              />
-            ) : (
-              <input value={value.target_workspace_id} onChange={e => patch('target_workspace_id', e.target.value)} style={INPUT} placeholder="target workspace id" />
-            )}
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
-              The workspace where the semantic model will be deployed.
-            </div>
-          </div>
-        </>
-      )}
-
-      {value.target_type === 'databricks' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {databricksAccounts.length > 0 && (
-            <div>
-              <label style={LABEL}>Target Databricks Account</label>
-              <select
-                value={value.target_identity_id || ''}
-                onChange={e => patch('target_identity_id', e.target.value)}
-                style={{ ...INPUT, cursor: 'pointer' }}
-              >
-                <option value="">Use global defaults</option>
-                {databricksAccounts.map(acc => (
-                  <option key={acc.id} value={acc.id}>
-                    {(acc.tag || acc.identity_email || acc.id)} ({acc.identity_email || 'N/A'})
-                  </option>
-                ))}
-              </select>
-              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
-                Select the Databricks identity to use for deployment.
-              </div>
-            </div>
-          )}
-          {databricksAccounts.length === 0 && (
-            <div style={{ fontSize: 12, color: 'var(--text-tertiary)', padding: 12, borderRadius: 8, background: 'var(--bg-input)', border: '1px solid var(--border-main)' }}>
-              This target will use global connection defaults from Settings.
-            </div>
-          )}
-        </div>
-      )}
-      </div>
-
-      <div>
-        <label style={LABEL}>Allow Models (comma-separated)</label>
-        <input value={value.allow_models} onChange={e => patch('allow_models', e.target.value)} style={INPUT} placeholder="SalesModel, FinanceModel" />
-      </div>
-      <div>
-        <label style={LABEL}>Block Models (comma-separated)</label>
-        <input value={value.block_models} onChange={e => patch('block_models', e.target.value)} style={INPUT} placeholder="LegacyModel, TestModel" />
-      </div>
-
-      <div style={{ border: '1px solid var(--border-main)', borderRadius: 8, padding: 12, background: 'var(--bg-surface)' }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>Mapping Options</div>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
-          <input
-            type="checkbox"
-            checked={Boolean(value.auto_relationships)}
-            onChange={e => patch('auto_relationships', e.target.checked)}
-          />
-          Auto-detect relationships
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
-          <input
-            type="checkbox"
-            checked={Boolean(value.generate_descriptions)}
-            onChange={e => patch('generate_descriptions', e.target.checked)}
-          />
-          Generate AI descriptions (tables and fields)
-        </label>
-      </div>
-
-      <div style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
-        Fields left blank inherit ghost defaults from global config where applicable.
-      </div>
-    </div>
-  );
-}
-
-function ModeButton({ active, onClick, icon, ariaLabel }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={ariaLabel}
-      title={ariaLabel}
-      style={{
-        width: 38, height: 34,
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        padding: 0, border: 'none', cursor: 'pointer',
-        background: active ? 'var(--accent-blue)' : 'transparent',
-        color: active ? '#fff' : 'var(--text-secondary)',
-        fontSize: 12, fontWeight: 600,
-      }}
-    >
-      {icon}
-    </button>
-  );
-}
-
-function ScheduleOptionCard({ active, title, description, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        border: `1px solid ${active ? 'var(--accent-blue)' : 'var(--border-main)'}`,
-        borderRadius: 10,
-        padding: 12,
-        background: active ? 'rgba(59, 130, 246, 0.1)' : 'var(--bg-surface)',
-        color: 'var(--text-primary)',
-        cursor: 'pointer',
-        textAlign: 'left',
-      }}
-    >
-      <div style={{ fontSize: 12, fontWeight: 700 }}>{title}</div>
-      <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4, lineHeight: 1.45 }}>{description}</div>
-    </button>
-  );
-}
-
-function InfoRow({ label, value, mono = false }) {
-  return (
-    <div>
-      <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>{label}</div>
-      <div style={{ fontSize: 12, color: 'var(--text-primary)', fontFamily: mono ? 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' : 'inherit', wordBreak: 'break-word' }}>
-        {value || '-'}
-      </div>
-    </div>
-  );
-}
-
-const modalInputStyle = {
-  width: '100%',
-  padding: 8,
-  borderRadius: 6,
-  border: '1px solid var(--border-main)',
-  fontSize: 13,
-  background: 'var(--bg-input)',
-  color: 'var(--text-primary)',
-  boxSizing: 'border-box',
-};
-
-const primaryBtn = {
-  display: 'inline-flex', alignItems: 'center', gap: 6,
-  padding: '8px 14px', borderRadius: 8, border: 'none',
-  background: 'var(--accent-blue)', color: '#fff',
-  fontSize: 13, fontWeight: 600, cursor: 'pointer',
-};
-
-const secondaryBtn = {
-  display: 'inline-flex', alignItems: 'center', gap: 6,
-  padding: '8px 14px', borderRadius: 8,
-  border: '1px solid var(--border-main)',
-  background: 'transparent', color: 'var(--text-secondary)',
-  fontSize: 13, fontWeight: 600, cursor: 'pointer',
-};

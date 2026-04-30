@@ -124,25 +124,8 @@ export default function StatusBar() {
         >
             {/* Left section */}
             <div className="flex items-center gap-4">
-                <div className="flex items-center gap-1.5">
-                    <div className="relative flex items-center justify-center w-4 h-4">
-                        <span
-                            className={`absolute w-2 h-2 rounded-full ${connected ? 'status-pulse status-pulse-success' : 'status-pulse status-pulse-danger'}`}
-                        />
-                        <span
-                            className="relative w-2 h-2 rounded-full"
-                            style={{ background: connected ? 'var(--color-success)' : 'var(--color-danger)' }}
-                        />
-                    </div>
-                    <span className="flex items-center gap-1 font-medium" style={{ color: connected ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                        {connected ? 'API Connected' : 'API Unreachable'}
-                    </span>
-                </div>
-
-
-
                 {isSyncing && (
-                    <div className="flex items-center gap-3 ml-4">
+                    <div className="flex items-center gap-3">
                         <span className="text-indigo-400 font-bold animate-pulse inline-flex items-center gap-1">
                             <RefreshCw size={11} className="animate-spin" />
                             Sync in progress

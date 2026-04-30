@@ -66,7 +66,7 @@ const INPUT = {
 
 const LABEL = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 };
 
-export default function CreateProjectPage() {
+export function ProjectWizard({ editMode = false, initialData = null, onSaveConfig = null }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { addLog } = useLogs();
@@ -86,6 +86,20 @@ export default function CreateProjectPage() {
   } = useSessionDraft('createProjectDraft');
 
   const [step, setStep] = useState(1);
+
+  const [globalStatus, setGlobalStatus] = useState(null);
+  useEffect(() => {
+    api.getGlobalStatus().then(status => setGlobalStatus(status)).catch(() => {});
+  }, []);
+
+  const isConfigured = (connectorValue) => {
+    if (connectorValue === 'pbix') return true;
+    if (!globalStatus) return true; // Assume true while loading to prevent jitter
+    if (connectorValue === 'fabric') return globalStatus?.fabric?.configured === true || globalStatus?.fabric?.fields_stored > 0 || !!globalStatus?.fabric?.credentials?.workspace_id;
+    if (connectorValue === 'snowflake') return globalStatus?.snowflake?.configured === true || globalStatus?.snowflake?.fields_stored > 0;
+    if (connectorValue === 'databricks') return globalStatus?.databricks?.configured === true;
+    return true;
+  };
   const [showStep1Validation, setShowStep1Validation] = useState(false);
   const [saving, setSaving] = useState(false);
   const [createError, setCreateError] = useState('');
@@ -175,6 +189,37 @@ export default function CreateProjectPage() {
   // Step 5
   const [createReverseProject, setCreateReverseProject] = useState(false);
   const [createdProject, setCreatedProject] = useState(null);
+
+  // --- Hydrate from edit mode initialData ---
+  useEffect(() => {
+    if (editMode && initialData) {
+      if (initialData.project_name) setName(initialData.project_name);
+      if (initialData.source_type) setSourceConnector(initialData.source_type);
+      if (initialData.target_type) setTargetConnectors(new Set([initialData.target_type]));
+      if (initialData.intermediate_format) setIntermediateFormat(initialData.intermediate_format);
+      
+      if (initialData.source_type === 'fabric') {
+         setFabricAccountId(initialData.source_identity_id || '');
+         setFabricWorkspaceId(initialData.source_workspace_id || '');
+      } else if (initialData.source_type === 'snowflake') {
+         setSnowflakeAccountId(initialData.source_identity_id || '');
+         setSnowflakeDatabase(initialData.source_database || '');
+         setSnowflakeSchema(initialData.source_schema || '');
+      }
+
+      if (initialData.target_type === 'snowflake') {
+         setTargetAccount(initialData.target_account || '');
+         setTargetDatabase(initialData.target_database || '');
+         setTargetSchema(initialData.target_schema || '');
+         setTargetWarehouse(initialData.target_warehouse || '');
+      }
+
+      if (initialData.allow_models) {
+         const models = initialData.allow_models.split(',').map(m => m.trim()).filter(Boolean);
+         setSelectedModels(new Set(models));
+      }
+    }
+  }, [editMode, initialData]);
 
   // --- Hydrate form when user clicks "Resume" on the draft banner ---
   useEffect(() => {
@@ -698,7 +743,12 @@ export default function CreateProjectPage() {
         payload.account_id = selectedWorkspace.account_id || selectedWorkspace.accountId;
       }
 
-      let project = await api.createProject(payload);
+      let project;
+      if (editMode && typeof onSaveConfig === 'function') {
+        project = await onSaveConfig(payload);
+      } else {
+        project = await api.createProject(payload);
+      }
 
       // Compatibility fallback: some backend modes return create responses
       // without a concrete project id. Resolve by matching latest project name.
@@ -1317,7 +1367,7 @@ export default function CreateProjectPage() {
             }}
           >
             {(saving || mappingLoading) && <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />}
-            {step === 5 ? (saving ? 'Creating…' : 'Create Project') : <>Continue <ArrowRight size={13} /></>}
+            {step === 5 ? (saving ? (editMode ? 'Saving...' : 'Creating...') : (editMode ? 'Save Changes' : 'Create Project')) : <>Continue <ArrowRight size={13} /></>}
           </button>
         </div>
       )}
@@ -1463,30 +1513,33 @@ function StepBasicInfo({
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {CONNECTOR_TYPES.map(c => {
+              const configured = isConfigured(c.value);
               const isSelected = sourceConnector === c.value;
-              const shouldDim = Boolean(sourceConnector) && !isSelected;
+              const shouldDim = !configured || (Boolean(sourceConnector) && !isSelected);
               return (
                 <button
                   key={c.value}
                   type="button"
+                  title={!configured ? 'Connector not configured in Global Settings' : ''}
+                  disabled={!configured}
                   onClick={() => setSourceConnector(c.value)}
                   className={`transition-all duration-300 ${shouldDim ? 'text-slate-500' : ''}`}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-                    padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
+                    padding: '10px 14px', borderRadius: 8, cursor: configured ? 'pointer' : 'not-allowed',
                     background: isSelected ? 'var(--accent-blue)14' : 'var(--bg-surface)',
                     border: isSelected ? '1.5px solid var(--accent-blue)' : '1px solid var(--border-main)',
                     color: isSelected ? 'var(--accent-blue)' : shouldDim ? 'var(--text-tertiary)' : 'var(--text-secondary)',
                     fontSize: 12, fontWeight: isSelected ? 600 : 400,
                     textAlign: 'left', transition: 'all 0.2s ease',
                     opacity: shouldDim ? 0.4 : 1,
-                    filter: shouldDim ? 'grayscale(100%)' : 'none',
+                    filter: !configured ? 'grayscale(100%)' : 'none',
                   }}
                   onMouseEnter={e => {
-                    if (!isSelected) e.target.style.borderColor = 'var(--accent-blue)40';
+                    if (!isSelected && configured) e.target.style.borderColor = 'var(--accent-blue)40';
                   }}
                   onMouseLeave={e => {
-                    if (!isSelected) e.target.style.borderColor = 'var(--border-main)';
+                    if (!isSelected && configured) e.target.style.borderColor = 'var(--border-main)';
                   }}
                 >
                   {/* Radio button indicator */}
@@ -1526,10 +1579,12 @@ function StepBasicInfo({
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {TARGET_CONNECTOR_TYPES.map(t => {
+              const configured = isConfigured(t.value);
               const isSelected = targetConnectors.has(t.value);
               const isDisabledBySource = Boolean(sourceConnector) && t.value === sourceConnector;
+              const isDisabled = !configured || isDisabledBySource;
               const handleTargetClick = () => {
-                if (isDisabledBySource) return;
+                if (isDisabled) return;
                 const newTargets = new Set(targetConnectors);
                 if (newTargets.has(t.value)) {
                   newTargets.delete(t.value);
@@ -1542,27 +1597,28 @@ function StepBasicInfo({
                 <button
                   key={t.value}
                   type="button"
+                  title={!configured ? 'Connector not configured in Global Settings' : isDisabledBySource ? 'Cannot use source as target' : ''}
                   onClick={handleTargetClick}
-                  disabled={isDisabledBySource}
-                  className={`transition-all duration-300 ${isDisabledBySource ? 'text-slate-500' : ''}`}
+                  disabled={isDisabled}
+                  className={`transition-all duration-300 ${isDisabled ? 'text-slate-500' : ''}`}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 10,
                     padding: '10px 14px', borderRadius: 8,
-                    cursor: isDisabledBySource ? 'not-allowed' : 'pointer',
+                    cursor: isDisabled ? 'not-allowed' : 'pointer',
                     background: isSelected ? 'var(--accent-blue)14' : 'var(--bg-surface)',
                     border: isSelected ? '1.5px solid var(--accent-blue)' : '1px solid var(--border-main)',
-                    color: isSelected ? 'var(--accent-blue)' : isDisabledBySource ? 'var(--text-tertiary)' : 'var(--text-secondary)',
+                    color: isSelected ? 'var(--accent-blue)' : isDisabled ? 'var(--text-tertiary)' : 'var(--text-secondary)',
                     fontSize: 12, fontWeight: isSelected ? 600 : 400,
                     textAlign: 'left', transition: 'all 0.2s ease',
-                    opacity: isDisabledBySource ? 0.2 : 1,
-                    filter: isDisabledBySource ? 'grayscale(100%)' : 'none',
-                    pointerEvents: isDisabledBySource ? 'none' : 'auto',
+                    opacity: isDisabled ? 0.4 : 1,
+                    filter: isDisabled ? 'grayscale(100%)' : 'none',
+                    pointerEvents: isDisabled ? 'none' : 'auto',
                   }}
                   onMouseEnter={e => {
-                    if (!isSelected && !isDisabledBySource) e.target.style.borderColor = 'var(--accent-blue)40';
+                    if (!isSelected && !isDisabled) e.target.style.borderColor = 'var(--accent-blue)40';
                   }}
                   onMouseLeave={e => {
-                    if (!isSelected && !isDisabledBySource) e.target.style.borderColor = 'var(--border-main)';
+                    if (!isSelected && !isDisabled) e.target.style.borderColor = 'var(--border-main)';
                   }}
                 >
                   {/* Checkbox indicator */}
@@ -3409,9 +3465,9 @@ function StepFinish({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div>
-        <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Ready to Create</h2>
+        <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>{editMode ? 'Review Changes' : 'Ready to Create'}</h2>
         <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
-          Review your choices and create the project.
+          {editMode ? 'Review your changes and save the project configuration.' : 'Review your choices and create the project.'}
         </p>
       </div>
 
@@ -3453,4 +3509,9 @@ function footerBtn(variant) {
 
 function escapeYamlString(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+
+export default function CreateProjectPage() {
+  return <ProjectWizard />;
 }

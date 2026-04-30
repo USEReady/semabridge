@@ -9,7 +9,6 @@ import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
 
 import ConnectionsPanel from '../components/ConnectionsPanel';
-import ConfigEditor from '../components/ConfigEditor';
 import Modal from '../components/common/Modal';
 import { ConfigurationProvider } from '../context/ConfigurationContext';
 import { api } from '../utils/api';
@@ -371,10 +370,82 @@ export default function SettingsPage() {
         />
 
 
-      {/* Configuration Syncing Dual-View */}
+      {/* Connector Configuration (Flattened) */}
       <div className="mb-8">
-        <h2 className="text-primary font-semibold mb-4" style={{ fontSize: 15, margin: '0 0 16px' }}>Project Configuration</h2>
-        <ConfigEditor />
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}>
+          <h2 className="text-primary font-semibold mb-4" style={{ fontSize: 15, margin: 0 }}>Connector Configuration</h2>
+          <button
+            aria-label="Refresh Connectors"
+            onClick={refreshConnectors}
+            style={{ marginLeft: 10, background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center' }}
+            disabled={loading}
+          >
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} style={{ color: 'var(--accent-blue)' }} />
+          </button>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {connectors.filter(c => c.id !== 'semabridge_api').map(conn => (
+            <div key={conn.id} style={{ padding: '16px', background: 'var(--bg-surface)', border: '1px solid var(--border-main)', borderRadius: 10 }}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div
+                    style={{
+                      width: 36, height: 36,
+                      background: 'var(--color-accent-faint)',
+                      borderRadius: 9,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    {renderConnectorIcon(conn.id, 18)}
+                  </div>
+                  <div style={{ textAlign: 'left' }}>
+                    <p className="text-primary" style={{ fontWeight: 600, fontSize: 13, margin: 0 }}>{conn.name}</p>
+                    <p className="text-secondary" style={{ fontSize: 11, margin: 0, marginTop: 2 }}>{conn.detail}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <StatusBadge status={conn.status} label={conn.status === 'connected' ? 'Connected' : conn.status === 'configured' ? 'Configured' : 'Disconnected'} />
+                  <button
+                    onClick={() => openManage(conn.id)}
+                    className="flex items-center gap-1.5 rounded-lg text-xs font-semibold px-3 py-1.5 theme-transition"
+                    style={{
+                      background: conn.status === 'disconnected' ? 'var(--accent-blue)' : 'transparent',
+                      color: conn.status === 'disconnected' ? '#fff' : 'var(--accent-blue)',
+                      border: conn.status !== 'disconnected' ? '1px solid var(--accent-blue)' : 'none',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {conn.status === 'disconnected' ? <PlugZap size={12} /> : <Settings2 size={12} />}
+                    {conn.status === 'disconnected' ? 'Connect' : 'Configure'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {/* Backend Service inline */}
+          {(() => {
+            const apiConn = connectors.find(c => c.id === 'semabridge_api');
+            return apiConn ? (
+              <div style={{ padding: '16px', background: 'var(--bg-surface)', border: '1px solid var(--border-main)', borderRadius: 10, opacity: 0.85 }}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div style={{ width: 36, height: 36, background: 'var(--color-accent-faint)', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      {renderConnectorIcon(apiConn.id, 18)}
+                    </div>
+                    <div>
+                      <p className="text-primary" style={{ fontWeight: 600, fontSize: 13, margin: 0 }}>{apiConn.name}</p>
+                      <p className="text-secondary" style={{ fontSize: 11, margin: 0, marginTop: 2 }}>{apiConn.detail}</p>
+                    </div>
+                  </div>
+                  <StatusBadge status={apiConn.status === 'connected' ? 'connected' : 'error'} label={apiConn.status === 'connected' ? 'Healthy' : 'Error'} />
+                </div>
+              </div>
+            ) : null;
+          })()}
+        </div>
       </div>
 
       {/* Local Folder Management */}
@@ -444,99 +515,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Connector Configuration (Flattened) */}
-      <div className="mb-8">
-        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}>
-          <h2 className="text-primary font-semibold mb-4" style={{ fontSize: 15, margin: 0 }}>Connector Configuration</h2>
-          <button
-            aria-label="Refresh Connectors"
-            onClick={refreshConnectors}
-            style={{ marginLeft: 10, background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center' }}
-            disabled={loading}
-          >
-            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} style={{ color: 'var(--accent-blue)' }} />
-          </button>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {connectors.filter(c => c.id !== 'semabridge_api').map(conn => (
-            <div key={conn.id} style={{ padding: '16px', background: 'var(--bg-surface)', border: '1px solid var(--border-main)', borderRadius: 8 }}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div
-                    style={{
-                      width: 34, height: 34,
-                      background: 'var(--color-accent-faint)',
-                      borderRadius: 8,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 18,
-                    }}
-                  >
-                    {renderConnectorIcon(conn.id, 18)}
-                  </div>
-                  <div style={{ textAlign: 'left' }}>
-                    <p className="text-primary" style={{ fontWeight: 600, fontSize: 13, margin: 0 }}>{conn.name}</p>
-                    <p className="text-secondary" style={{ fontSize: 11, margin: 0, marginTop: 2 }}>{conn.detail}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <StatusBadge status={conn.status} label={conn.status === 'connected' ? 'Connected' : conn.status === 'configured' ? 'Configured' : 'Disconnected'} />
-                  <button
-                    onClick={() => openManage(conn.id)}
-                    className="flex items-center gap-1.5 rounded-lg text-xs font-semibold px-3 py-1.5 theme-transition"
-                    style={{
-                      background: conn.status === 'disconnected' ? 'var(--accent-blue)' : 'transparent',
-                      color: conn.status === 'disconnected' ? '#fff' : 'var(--accent-blue)',
-                      border: conn.status !== 'disconnected' ? '1px solid var(--accent-blue)' : 'none',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {conn.status === 'disconnected' ? <PlugZap size={12} /> : <Settings2 size={12} />}
-                    {conn.status === 'disconnected' ? 'Connect' : 'Configure'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* API Health / Backend Service */}
-      <div className="mb-8">
-        <h2 className="text-primary font-semibold mb-4" style={{ fontSize: 15, margin: '0 0 16px' }}>Backend Service</h2>
-        {(() => {
-          const apiConn = connectors.find(c => c.id === 'semabridge_api');
-          return apiConn ? (
-            <div style={{ padding: '16px', background: 'var(--bg-surface)', borderRadius: 8, border: '1px solid var(--border-main)' }}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div
-                    style={{
-                      width: 34, height: 34,
-                      background: 'var(--color-accent-faint)',
-                      borderRadius: 8,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 18,
-                    }}
-                  >
-                    {renderConnectorIcon(apiConn.id, 18)}
-                  </div>
-                  <div>
-                    <p className="text-primary" style={{ fontWeight: 500, fontSize: 12, margin: 0 }}>{apiConn.name}</p>
-                    <p className="text-secondary" style={{ fontSize: 11, margin: 0, marginTop: 2 }}>{apiConn.detail}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <StatusBadge status={apiConn.status === 'connected' ? 'connected' : apiConn.status === 'error' ? 'error' : 'disconnected'} label={apiConn.status === 'connected' ? 'Healthy' : apiConn.status === 'error' ? 'Error' : 'Unavailable'} />
-                </div>
-              </div>
-            </div>
-          ) : null;
-        })()}
-      </div>
+      {/* intentionally empty — connector + backend now rendered above */
 
       <ConnectionsPanel
         isOpen={manageOpen}
@@ -711,7 +690,7 @@ export default function SettingsPage() {
       </Modal>
       {/* Timezone Selection Modal */}
       <Modal 
-        isOpen={timezoneModalOpen} 
+        open={timezoneModalOpen} 
         onClose={() => setTimezoneModalOpen(false)}
         title="Set Preferred Timezone"
       >

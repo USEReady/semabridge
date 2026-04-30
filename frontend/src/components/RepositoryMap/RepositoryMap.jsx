@@ -1065,13 +1065,20 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                             }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                                     <button
-                                        onClick={() => setInspectorResetToken(v => v + 1)}
+                                        onClick={() => {
+                                            setSelectedTableId('__all__');
+                                            setInspectorResetToken(v => v + 1);
+                                        }}
                                         style={{
-                                            ...iconBtnStyle,
+                                            display: 'flex',
+                                            alignItems: 'center',
                                             border: '1px solid var(--border-color)',
                                             borderRadius: 6,
                                             padding: '4px 8px',
                                             gap: 6,
+                                            background: 'transparent',
+                                            color: 'var(--text-secondary)',
+                                            cursor: 'pointer'
                                         }}
                                         title="Back one step inside inspector"
                                     >
