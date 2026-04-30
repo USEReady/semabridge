@@ -783,7 +783,8 @@ function ConnectionManager({ type, title, subtitle, icon: Icon, color, FormCompo
     };
 
     const filteredAccounts = accounts.filter(acc => 
-        (acc.tag || '').toLowerCase().includes(searchQuery.toLowerCase())
+        (acc.tag || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (acc.identity || '').toLowerCase().includes(searchQuery.toLowerCase())
     );
 
     return (
@@ -797,13 +798,19 @@ function ConnectionManager({ type, title, subtitle, icon: Icon, color, FormCompo
             </div>
 
             {/* Search Bar */}
-            <div className="mb-3">
+            <div className="mb-3 relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-500">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                </div>
                 <input 
                     type="text"
-                    placeholder="Search by tag..."
+                    placeholder="Search by tag or identity..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full bg-[#131620] border border-gray-700/50 px-3 py-2 rounded-lg text-xs outline-none focus:border-indigo-500/50 text-gray-300 transition-colors"
+                    className="w-full bg-[#131620] border border-gray-700/50 pl-9 pr-3 py-2 rounded-lg text-xs outline-none focus:border-indigo-500/50 text-gray-300 transition-colors"
                 />
             </div>
 

@@ -10,7 +10,7 @@ export default function GlobalConfigPage() {
         <div style={{ padding: '28px 16px', minHeight: '100%', maxWidth: 1400, margin: '0 auto' }} className="md:px-10">
             <div style={{ marginBottom: 20 }}>
                 <button
-                    onClick={() => navigate('/settings')}
+                    onClick={() => navigate(-1)}
                     style={{ 
                         background: 'none', 
                         border: 'none', 
@@ -23,7 +23,7 @@ export default function GlobalConfigPage() {
                         padding: 0
                     }}
                 >
-                    <ArrowLeft size={14} /> Back to Settings
+                    <ArrowLeft size={14} /> Back
                 </button>
             </div>
 

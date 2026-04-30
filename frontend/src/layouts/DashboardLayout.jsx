@@ -294,7 +294,7 @@ export default function DashboardLayout() {
               useRegex={searchUseRegex}
               onToggleRegex={setSearchUseRegex}
               allowRegex
-              placeholder="Search… (Ctrl+K)"
+              placeholder="Search… (Ctrl+K or /)"
               width="100%"
               className="flex-1"
               onFocus={() => setShowCommandPalette(true)}

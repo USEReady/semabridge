@@ -77,7 +77,43 @@ export default function ConfigEditor() {
   };
 
   const handleExport = async () => {
-    window.open('/api/project/export', '_blank');
+    try {
+      const { api } = await import('../utils/api');
+      const { stringify } = await import('yaml');
+      
+      const status = await api.getConnectionsStatus();
+      const exportData = { connections: {} };
+      
+      for (const [key, conn] of Object.entries(status)) {
+        if (conn.configured || (conn.credentials && Object.keys(conn.credentials).length > 0)) {
+          const safeConn = { type: key };
+          if (conn.credentials) {
+            const safeCreds = { ...conn.credentials };
+            const secretKeys = ['password', 'private_key', 'oauth_client_secret', 'token', 'access_token', 'refresh_token'];
+            secretKeys.forEach(k => {
+              if (safeCreds[k]) {
+                delete safeCreds[k];
+              }
+            });
+            safeConn.credentials = safeCreds;
+          }
+          exportData.connections[key] = safeConn;
+        }
+      }
+      
+      const yamlStr = stringify(exportData);
+      const blob = new Blob([yamlStr], { type: 'text/yaml' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'connections_export.yaml';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert("Failed to export connections: " + err.message);
+    }
   };
 
   const handleImport = async (e) => {

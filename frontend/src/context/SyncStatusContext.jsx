@@ -30,8 +30,8 @@ function deriveProgressFromRun(run) {
   if (!Number.isNaN(explicit) && explicit >= 0) {
     return Math.max(0, Math.min(100, Math.round(explicit)));
   }
-  const total = Number(run?.total_models || 0);
-  const synced = Number(run?.models_synced || 0);
+  const total = Number(run?.total_items ?? run?.total_models ?? 0);
+  const synced = Number(run?.completed_items ?? run?.models_synced ?? 0);
   if (total > 0) {
     return Math.round(Math.max(0, Math.min(1, synced / total)) * 100);
   }
@@ -268,20 +268,7 @@ export function SyncStatusProvider({ children }) {
     }
   }, [currentProgress]);
 
-  useEffect(() => {
-    if (currentSyncStatus !== 'running') return undefined;
-
-    const crawl = setInterval(() => {
-      setCurrentProgress(prev => {
-        const floor = realProgressRef.current;
-        if (prev < floor) return floor;
-        if (prev >= 90) return prev;
-        return prev + 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(crawl);
-  }, [currentSyncStatus]);
+  // Fake crawl logic removed to allow real completion metrics from backend polling.
 
   const value = useMemo(() => ({
     runs,

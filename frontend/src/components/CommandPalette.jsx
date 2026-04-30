@@ -66,14 +66,29 @@ export default function CommandPalette({
         }
     }, [queryText, regexEnabled]);
 
-    // Global Ctrl+K shortcut
+    // Global Ctrl+K and '/' shortcut
     useEffect(() => {
         const handler = (e) => {
+            // Ctrl+K to toggle
             if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
                 e.preventDefault();
                 if (isOpen) onClose();
                 else onAction?.('openPalette');
             }
+            // '/' to open
+            if (e.key === '/' && !isOpen) {
+                // Ignore if user is already typing in an input or textarea
+                if (
+                    e.target.tagName === 'INPUT' ||
+                    e.target.tagName === 'TEXTAREA' ||
+                    e.target.isContentEditable
+                ) {
+                    return;
+                }
+                e.preventDefault();
+                onAction?.('openPalette');
+            }
+            // Escape to close
             if (e.key === 'Escape' && isOpen) {
                 onClose();
             }
@@ -174,8 +189,8 @@ export default function CommandPalette({
                 onClick={e => e.stopPropagation()}
             >
                 {/* Search Input */}
-                <div className="flex items-center gap-4 px-6 py-6 border-b border-main" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                    <Search size={22} className="shrink-0" style={{ color: 'var(--accent-blue)' }} />
+                <div className="flex items-center gap-4 px-6 py-5 border-b border-main" style={{ background: 'rgba(255,255,255,0.02)' }}>
+                    <Search size={22} className="shrink-0" style={{ color: 'var(--text-tertiary)' }} />
                     <div className="flex-1 relative flex items-center">
                         <input
                             ref={inputRef}
@@ -184,12 +199,12 @@ export default function CommandPalette({
                             onChange={e => setQueryText(e.target.value)}
                             onKeyDown={handleKeyDown}
                             placeholder="Search models, commands..."
-                            className="w-full outline-none px-5 py-3 rounded-xl transition-all font-medium"
+                            className="w-full outline-none px-4 py-2.5 rounded-xl transition-all font-medium"
                             style={{
                                 background: 'color-mix(in srgb, var(--bg-surface-raised) 70%, transparent)',
                                 border: '1px solid var(--border-main)',
                                 color: 'var(--text-primary)',
-                                fontSize: 18,
+                                fontSize: 17,
                             }}
                         />
                     </div>
@@ -197,26 +212,22 @@ export default function CommandPalette({
                         type="button"
                         onClick={() => setRegexEnabled(!regexEnabled)}
                         title={regexEnabled ? 'Regex enabled' : 'Regex disabled'}
-                        className="hover:opacity-80 transition-opacity"
+                        className="hover:opacity-80 transition-opacity flex items-center justify-center shrink-0"
                         style={{
-                            width: 24,
-                            height: 24,
+                            width: 28,
+                            height: 28,
                             borderRadius: 6,
                             border: '1px solid var(--border-main)',
-                            background: regexEnabled ? 'var(--accent-blue)18' : 'var(--bg-surface)',
+                            background: regexEnabled ? 'var(--color-accent-faint)' : 'var(--bg-surface)',
                             color: regexEnabled ? 'var(--accent-blue)' : 'var(--text-tertiary)',
                             cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            flexShrink: 0,
                         }}
                     >
-                        <Regex size={14} />
+                        <Regex size={15} />
                     </button>
                     <button 
                         onClick={onClose}
-                        className="px-1.5 py-0.5 rounded border border-main text-[9px] font-mono text-tertiary cursor-pointer hover:text-white transition-colors"
+                        className="px-2 py-1 rounded border border-main text-[10px] font-bold font-mono text-tertiary cursor-pointer hover:text-white transition-colors shrink-0"
                         style={{ background: 'var(--bg-surface-raised)' }}
                         title="Close (ESC)"
                     >
@@ -224,7 +235,7 @@ export default function CommandPalette({
                     </button>
                 </div>
                 {regexError && (
-                    <div className="px-4 py-1 text-[10px]" style={{ color: 'var(--color-error)', borderBottom: '1px solid var(--border-main)' }}>
+                    <div className="px-6 py-1.5 text-[11px] font-medium" style={{ color: 'var(--color-error)', borderBottom: '1px solid var(--border-main)', background: 'var(--color-error-bg)' }}>
                         Regex error: {regexError}
                     </div>
                 )}
@@ -232,11 +243,11 @@ export default function CommandPalette({
                 {/* Results */}
                 <div className="max-h-[450px] overflow-y-auto custom-scrollbar py-2">
                     {results.length === 0 ? (
-                        <div className="px-4 py-6 text-center text-sm text-tertiary">No results found</div>
+                        <div className="px-6 py-10 text-center text-sm text-tertiary">No results found</div>
                     ) : (
                         Object.entries(grouped).map(([category, items]) => (
                             <div key={category}>
-                                <div className="px-4 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-tertiary">{category}</div>
+                                <div className="px-6 pt-3 pb-2 text-[11px] font-bold uppercase tracking-wider text-tertiary">{category}</div>
                                 {items.map((item) => {
                                     const idx = flatIndex++;
                                     const Icon = item.icon;
@@ -252,9 +263,9 @@ export default function CommandPalette({
                                             onMouseEnter={() => setSelectedIndex(idx)}
                                             onClick={() => handleSelect(item)}
                                         >
-                                            <Icon size={16} className="shrink-0" style={{ opacity: idx === selectedIndex ? 1 : 0.6, color: idx === selectedIndex ? 'var(--accent-blue)' : undefined }} />
+                                            <Icon size={16} className="shrink-0" style={{ color: idx === selectedIndex ? 'var(--accent-blue)' : 'var(--text-tertiary)' }} />
                                             <span className="font-medium flex-1" style={{ transform: idx === selectedIndex ? 'translateX(4px)' : 'none', transition: 'transform 0.15s ease' }}>{item.label}</span>
-                                            {item.category && <span className="text-[10px] text-tertiary">{item.category}</span>}
+                                            {item.category && <span className="text-[11px] text-tertiary">{item.category}</span>}
                                         </button>
                                     );
                                 })}
@@ -263,12 +274,7 @@ export default function CommandPalette({
                     )}
                 </div>
 
-                {/* Footer Hint */}
-                <div className="flex items-center gap-4 px-4 py-2 border-t border-main text-[10px] text-tertiary">
-                    <span>↑↓ Navigate</span>
-                    <span>↵ Select</span>
-                    <span>ESC Close</span>
-                </div>
+
             </div>
         </div>
     );

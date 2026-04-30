@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   FolderOpen, Plus, MoreVertical, Layers, Trash2, Edit3,
   Upload, Download, Play, Settings, Copy, Folder, FolderPlus,
-  X, Check, BarChart3, Cloud, Snowflake, Database,
+  X, Check, BarChart3, Cloud, Snowflake, Database, Tag,
 } from 'lucide-react';
 
 import StatusBadge from '../components/common/StatusBadge';
@@ -1082,12 +1082,13 @@ function ProjectCard({
             <div
               key={idx}
               style={{
-                display: 'inline-block',
-                padding: '2px 8px', borderRadius: 3,
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '2px 8px', borderRadius: 4,
                 background: 'var(--accent-blue)15', color: 'var(--accent-blue)',
-                fontSize: 10, fontWeight: 500, whiteSpace: 'nowrap',
+                fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap',
               }}
             >
+              <Tag size={10} />
               {tag}
             </div>
           ))}

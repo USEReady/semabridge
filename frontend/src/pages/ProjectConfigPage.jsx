@@ -1383,8 +1383,8 @@ export default function ProjectConfigPage() {
     return (
       <div style={{ padding: 36 }}>
         <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Project not found</div>
-        <button onClick={() => navigate('/projects')} style={{ marginTop: 12, ...secondaryBtn }}>
-          <ArrowLeft size={13} /> Back to Projects
+        <button onClick={() => navigate(-1)} style={{ marginTop: 12, ...secondaryBtn }}>
+          <ArrowLeft size={13} /> Back
         </button>
       </div>
     );
@@ -1394,10 +1394,10 @@ export default function ProjectConfigPage() {
     <div style={{ padding: '28px 16px', minHeight: '100%', maxWidth: 1400, margin: '0 auto', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} className="md:px-10">
       <div style={{ padding: '18px 28px', borderBottom: '1px solid var(--border-main)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <button
-          onClick={() => navigate('/projects')}
+          onClick={() => navigate(-1)}
           style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}
         >
-          <ArrowLeft size={14} /> Projects
+          <ArrowLeft size={14} /> Back
         </button>
         <span style={{ color: 'var(--border-main)' }}>|</span>
         <div style={{ flex: 1 }}>

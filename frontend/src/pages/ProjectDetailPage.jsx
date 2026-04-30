@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { 
   ArrowLeft, Edit3, Trash2, Play, Calendar, 
   Clock, Tag, Info, Layers, ExternalLink,
-  ChevronRight, BarChart3, Cloud, Snowflake, Database
+  ChevronRight, BarChart3, Cloud, Snowflake, Database, X
 } from 'lucide-react';
 import { api } from '../utils/api';
 import StatusBadge from '../components/common/StatusBadge';
@@ -38,6 +38,7 @@ export default function ProjectDetailPage() {
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [tagInput, setTagInput] = useState('');
 
   useEffect(() => {
     const fetchProject = async () => {
@@ -75,6 +76,36 @@ export default function ProjectDetailPage() {
     }
   };
 
+  const handleAddTag = async () => {
+    const newTag = tagInput.trim();
+    if (!newTag) return;
+    
+    const currentTags = project.tags || [];
+    if (currentTags.includes(newTag)) {
+      setTagInput('');
+      return;
+    }
+    
+    const updatedTags = [...currentTags, newTag];
+    try {
+      await api.updateProject(id, { tags: updatedTags });
+      setProject({ ...project, tags: updatedTags });
+      setTagInput('');
+    } catch (err) {
+      alert(`Failed to add tag: ${err.message}`);
+    }
+  };
+
+  const handleRemoveTag = async (tagToRemove) => {
+    const updatedTags = (project.tags || []).filter(tag => tag !== tagToRemove);
+    try {
+      await api.updateProject(id, { tags: updatedTags });
+      setProject({ ...project, tags: updatedTags });
+    } catch (err) {
+      alert(`Failed to remove tag: ${err.message}`);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -87,8 +118,8 @@ export default function ProjectDetailPage() {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4">
         <div className="text-secondary text-lg">Project not found</div>
-        <button onClick={() => navigate('/projects')} className="text-accent hover:underline flex items-center gap-2">
-          <ArrowLeft size={16} /> Back to Projects
+        <button onClick={() => navigate(-1)} className="text-accent hover:underline flex items-center gap-2">
+          <ArrowLeft size={16} /> Back
         </button>
       </div>
     );
@@ -163,25 +194,46 @@ export default function ProjectDetailPage() {
           
           {/* Tags Section */}
           <div className="bg-surface rounded-xl border border-main p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Tag size={16} className="text-accent" />
-              <h2 className="text-primary font-semibold text-sm m-0">Labels & Tags</h2>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Tag size={16} className="text-accent" />
+                <h2 className="text-primary font-semibold text-sm m-0">Labels & Tags</h2>
+              </div>
             </div>
-            <div className="flex flex-wrap gap-2">
+            
+            <div className="flex flex-wrap items-center gap-2 mb-3">
               {project.tags && project.tags.length > 0 ? (
                 project.tags.map((tag, idx) => (
                   <span 
                     key={idx} 
-                    className="px-3 py-1.5 rounded-lg text-xs font-semibold"
+                    className="pl-3 pr-2 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 group"
                     style={{ background: 'var(--accent-blue)15', color: 'var(--accent-blue)' }}
                   >
                     {tag}
+                    <button
+                      onClick={() => handleRemoveTag(tag)}
+                      className="opacity-50 hover:opacity-100 hover:bg-black/10 rounded-full p-0.5 transition-all"
+                      title="Remove tag"
+                    >
+                      <X size={12} />
+                    </button>
                   </span>
                 ))
               ) : (
                 <span className="text-tertiary text-xs italic">No tags assigned</span>
               )}
             </div>
+            
+            <input
+              type="text"
+              value={tagInput}
+              onChange={(e) => setTagInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleAddTag();
+              }}
+              placeholder="Add tag..."
+              className="text-xs bg-input border border-main rounded-lg px-3 py-2 w-full max-w-[200px] outline-none focus:border-accent-blue transition-colors text-primary"
+            />
           </div>
 
           {/* Details Section */}

@@ -1,3 +1,4 @@
+import { useRef, useEffect } from 'react';
 import { Search, Regex, X } from 'lucide-react';
 
 export function matchesSmartQuery(value, query, useRegex) {
@@ -14,11 +15,24 @@ export function matchesSmartQuery(value, query, useRegex) {
     }
   }
 
+  // Handle glob-style queries (* or ?)
+  if (q.includes('*') || q.includes('?')) {
+    try {
+      const escaped = q.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+      const globRegexStr = escaped.replace(/\*/g, '.*').replace(/\?/g, '.');
+      return new RegExp(`^${globRegexStr}$`, 'i').test(haystack);
+    } catch {
+      return false;
+    }
+  }
+
+  // Standard substring / prefix matching
   const lowerHaystack = haystack.toLowerCase();
   const lowerQuery = q.toLowerCase();
-  if (lowerHaystack.startsWith(lowerQuery)) return true;
 
-  const words = lowerHaystack.split(/\s+/).filter(Boolean);
+  if (lowerHaystack.includes(lowerQuery)) return true;
+
+  const words = lowerHaystack.split(/[\s_.-]+/).filter(Boolean);
   return words.some(word => word.startsWith(lowerQuery));
 }
 
@@ -33,6 +47,38 @@ export default function SmartSearchBar({
 }) {
   const query = String(value || '');
   let regexError = '';
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    const handleGlobalKeyDown = (e) => {
+      if (
+        e.target.tagName === 'INPUT' ||
+        e.target.tagName === 'TEXTAREA' ||
+        e.target.isContentEditable
+      ) {
+        return;
+      }
+
+      if (e.key === '/') {
+        e.preventDefault();
+        inputRef.current?.focus();
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      if (query) {
+        onChange?.('');
+        e.stopPropagation();
+      } else {
+        inputRef.current?.blur();
+      }
+    }
+  };
 
   if (allowRegex && useRegex && query.trim()) {
     try {
@@ -55,8 +101,10 @@ export default function SmartSearchBar({
           style={{ pointerEvents: 'none' }}
         />
         <input
+          ref={inputRef}
           value={query}
           onChange={e => onChange?.(e.target.value)}
+          onKeyDown={handleKeyDown}
           placeholder={placeholder}
           className="w-full text-[13px] rounded-lg theme-transition"
           style={{

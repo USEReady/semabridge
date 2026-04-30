@@ -1159,8 +1159,8 @@ export function ProjectWizard({ editMode = false, initialData = null, onSaveConf
         padding: '16px 32px', borderBottom: '1px solid var(--border-main)',
         display: 'flex', alignItems: 'center', gap: 16,
       }}>
-        <button onClick={() => navigate('/projects')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 5, fontSize: 13 }}>
-          <ArrowLeft size={14} /> Projects
+        <button onClick={() => navigate(-1)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 5, fontSize: 13 }}>
+          <ArrowLeft size={14} /> Back
         </button>
         <span style={{ color: 'var(--border-main)' }}>|</span>
         <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>

@@ -16,8 +16,8 @@ function deriveProgressFromRun(run) {
     return Math.max(0, Math.min(100, Math.round(explicit)));
   }
 
-  const total = Number(run?.total_models || 0);
-  const synced = Number(run?.models_synced || 0);
+  const total = Number(run?.total_items ?? run?.total_models ?? 0);
+  const synced = Number(run?.completed_items ?? run?.models_synced ?? 0);
   if (total > 0) {
     const ratio = Math.max(0, Math.min(1, synced / total));
     return Math.round(ratio * 100);
