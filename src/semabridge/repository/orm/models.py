@@ -685,7 +685,8 @@ class SyncConflictRow(Base):
     __tablename__ = "sync_conflicts"
 
     conflict_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    job_id: Mapped[str] = mapped_column(ForeignKey("sync_jobs.job_id"), nullable=False)
+    job_id: Mapped[Optional[str]] = mapped_column(ForeignKey("sync_jobs.job_id"), nullable=True)
+    run_id: Mapped[Optional[str]] = mapped_column(ForeignKey("runs.run_id"), nullable=True)
     item_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     model_name: Mapped[str] = mapped_column(String(255), nullable=False)
     change_type: Mapped[str] = mapped_column(String(50), nullable=False)

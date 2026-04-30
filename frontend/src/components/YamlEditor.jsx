@@ -34,22 +34,20 @@ const DeploySummaryModal = ({ isOpen, onClose, summary, status, results }) => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200" style={{ background: 'var(--bg-backdrop)' }}>
             <div className="bg-surface border border-main rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-200">
                 {/* Header */}
-                <div className={`px-6 py-4 flex items-center justify-between border-b border-main ${
-                    isSuccess ? 'bg-emerald-500/10' : isPartial ? 'bg-amber-500/10' : 'bg-red-500/10'
-                }`}>
+                <div className={`px-6 py-4 flex items-center justify-between border-b border-main ${isSuccess ? 'bg-emerald-500/10' : isPartial ? 'bg-amber-500/10' : 'bg-red-500/10'
+                    }`}>
                     <div className="flex items-center gap-3">
-                        <div className={`p-2 rounded-lg ${
-                            isSuccess ? 'bg-emerald-500/20 text-emerald-400'
-                            : isPartial ? 'bg-amber-500/20 text-amber-400'
-                            : 'bg-red-500/20 text-red-400'
-                        }`}>
+                        <div className={`p-2 rounded-lg ${isSuccess ? 'bg-emerald-500/20 text-emerald-400'
+                                : isPartial ? 'bg-amber-500/20 text-amber-400'
+                                    : 'bg-red-500/20 text-red-400'
+                            }`}>
                             {isSuccess ? <CheckCircle2 size={24} /> : <AlertTriangle size={24} />}
                         </div>
                         <div>
                             <h2 className="text-lg font-bold text-primary">
                                 {isSuccess ? 'Deployment Successful'
-                                 : isPartial ? 'Partial Deployment'
-                                 : 'Deployment Failed'}
+                                    : isPartial ? 'Partial Deployment'
+                                        : 'Deployment Failed'}
                             </h2>
                             {multiModel ? (
                                 <p className="text-xs text-tertiary">
@@ -87,11 +85,10 @@ const DeploySummaryModal = ({ isOpen, onClose, summary, status, results }) => {
                                             <tr key={i} className="border-b border-main last:border-0 hover:bg-surface-hover">
                                                 <td className="px-3 py-2 font-mono font-bold text-primary">{r.model}</td>
                                                 <td className="px-3 py-2">
-                                                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
-                                                        r.status === 'success'
+                                                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${r.status === 'success'
                                                             ? 'bg-emerald-500/15 text-emerald-400'
                                                             : 'bg-red-500/15 text-red-400'
-                                                    }`}>{r.status}</span>
+                                                        }`}>{r.status}</span>
                                                 </td>
                                                 <td className="px-3 py-2 text-secondary">{r.summary?.duration_ms ?? '—'}ms</td>
                                                 <td className="px-3 py-2 text-secondary">
@@ -116,87 +113,87 @@ const DeploySummaryModal = ({ isOpen, onClose, summary, status, results }) => {
 
                     {/* Single-model stats (original layout) */}
                     {!multiModel && (
-                    <>
-                    <div className="grid grid-cols-3 gap-4">
-                        <div className="bg-surface-raised border border-main p-4 rounded-xl">
-                            <div className="flex items-center gap-2 text-tertiary mb-2">
-                                <Activity size={14} />
-                                <span className="text-[11px] font-bold uppercase tracking-wider">Status</span>
-                            </div>
-                            <div className={`text-xl font-bold ${isSuccess ? 'text-emerald-400' : 'text-red-400'}`}>
-                                {summary?.status || 'UNKNOWN'}
-                            </div>
-                        </div>
-                        <div className="bg-surface-raised border border-main p-4 rounded-xl">
-                            <div className="flex items-center gap-2 text-tertiary mb-2">
-                                <Clock size={14} />
-                                <span className="text-[11px] font-bold uppercase tracking-wider">Duration</span>
-                            </div>
-                            <div className="text-xl font-bold text-primary">
-                                {summary?.duration_ms || 0}ms
-                            </div>
-                        </div>
-                        <div className="bg-surface-raised border border-main p-4 rounded-xl">
-                            <div className="flex items-center gap-2 text-tertiary mb-2">
-                                <Info size={14} />
-                                <span className="text-[11px] font-bold uppercase tracking-wider">Steps</span>
-                            </div>
-                            <div className="text-xl font-bold text-primary">
-                                {summary?.last_successful_step || 0} / {summary?.total_steps || 10}
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Steps List */}
-                    <div className="space-y-3">
-                        <h3 className="text-sm font-bold text-secondary flex items-center gap-2">
-                            Execution Steps
-                        </h3>
-                        <div className="border border-main rounded-xl overflow-hidden bg-surface-raised shadow-inner">
-                            {summary?.steps_completed?.map((step, idx) => (
-                                <div
-                                    key={idx}
-                                    className={`flex items-center gap-4 px-4 py-3 border-b border-main last:border-0 hover:bg-surface-hover transition-colors`}
-                                >
-                                    <div className="flex flex-col items-center">
-                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${step.status === 'success' ? 'bg-emerald-500/20 text-emerald-400' :
-                                            step.status === 'skipped' ? 'bg-slate-500/20 text-slate-400' : 'bg-red-500/20 text-red-400'
-                                            }`}>
-                                            {step.status === 'success' ? '✓' : step.status === 'skipped' ? '○' : '✗'}
-                                        </div>
-                                        {idx !== summary.steps_completed.length - 1 && <div className="w-px h-4 bg-main my-0.5" />}
+                        <>
+                            <div className="grid grid-cols-3 gap-4">
+                                <div className="bg-surface-raised border border-main p-4 rounded-xl">
+                                    <div className="flex items-center gap-2 text-tertiary mb-2">
+                                        <Activity size={14} />
+                                        <span className="text-[11px] font-bold uppercase tracking-wider">Status</span>
                                     </div>
-                                    <div className="flex-1">
-                                        <div className="flex items-center justify-between">
-                                            <span className="text-xs font-bold text-primary">Step {step.step_number}: {step.step_name}</span>
-                                            <span className="text-[10px] font-medium text-tertiary font-mono">{step.duration_ms}ms</span>
-                                        </div>
-                                        {step.message && <p className="text-[11px] text-tertiary mt-0.5">{step.message}</p>}
+                                    <div className={`text-xl font-bold ${isSuccess ? 'text-emerald-400' : 'text-red-400'}`}>
+                                        {summary?.status || 'UNKNOWN'}
                                     </div>
                                 </div>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* Errors */}
-                    {summary?.errors?.length > 0 && (
-                        <div className="space-y-3 animate-in slide-in-from-bottom-2 duration-300">
-                            <h3 className="text-sm font-bold text-red-400 flex items-center gap-2">
-                                <AlertTriangle size={16} /> Error Details
-                            </h3>
-                            <div className="border border-red-500/30 bg-red-500/5 rounded-xl p-4 space-y-2">
-                                {summary.errors.map((err, idx) => (
-                                    <div key={idx} className="text-xs">
-                                        <div className="font-bold text-red-300">Step {err.step_number} ({err.step_name}):</div>
-                                        <div className="mt-1 font-mono text-red-200/80 bg-black/20 p-2 rounded border border-red-500/20 whitespace-pre-wrap">
-                                            {err.message}
-                                        </div>
+                                <div className="bg-surface-raised border border-main p-4 rounded-xl">
+                                    <div className="flex items-center gap-2 text-tertiary mb-2">
+                                        <Clock size={14} />
+                                        <span className="text-[11px] font-bold uppercase tracking-wider">Duration</span>
                                     </div>
-                                ))}
+                                    <div className="text-xl font-bold text-primary">
+                                        {summary?.duration_ms || 0}ms
+                                    </div>
+                                </div>
+                                <div className="bg-surface-raised border border-main p-4 rounded-xl">
+                                    <div className="flex items-center gap-2 text-tertiary mb-2">
+                                        <Info size={14} />
+                                        <span className="text-[11px] font-bold uppercase tracking-wider">Steps</span>
+                                    </div>
+                                    <div className="text-xl font-bold text-primary">
+                                        {summary?.last_successful_step || 0} / {summary?.total_steps || 10}
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                    )}
-                    </>
+
+                            {/* Steps List */}
+                            <div className="space-y-3">
+                                <h3 className="text-sm font-bold text-secondary flex items-center gap-2">
+                                    Execution Steps
+                                </h3>
+                                <div className="border border-main rounded-xl overflow-hidden bg-surface-raised shadow-inner">
+                                    {summary?.steps_completed?.map((step, idx) => (
+                                        <div
+                                            key={idx}
+                                            className={`flex items-center gap-4 px-4 py-3 border-b border-main last:border-0 hover:bg-surface-hover transition-colors`}
+                                        >
+                                            <div className="flex flex-col items-center">
+                                                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${step.status === 'success' ? 'bg-emerald-500/20 text-emerald-400' :
+                                                    step.status === 'skipped' ? 'bg-slate-500/20 text-slate-400' : 'bg-red-500/20 text-red-400'
+                                                    }`}>
+                                                    {step.status === 'success' ? '✓' : step.status === 'skipped' ? '○' : '✗'}
+                                                </div>
+                                                {idx !== summary.steps_completed.length - 1 && <div className="w-px h-4 bg-main my-0.5" />}
+                                            </div>
+                                            <div className="flex-1">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-xs font-bold text-primary">Step {step.step_number}: {step.step_name}</span>
+                                                    <span className="text-[10px] font-medium text-tertiary font-mono">{step.duration_ms}ms</span>
+                                                </div>
+                                                {step.message && <p className="text-[11px] text-tertiary mt-0.5">{step.message}</p>}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Errors */}
+                            {summary?.errors?.length > 0 && (
+                                <div className="space-y-3 animate-in slide-in-from-bottom-2 duration-300">
+                                    <h3 className="text-sm font-bold text-red-400 flex items-center gap-2">
+                                        <AlertTriangle size={16} /> Error Details
+                                    </h3>
+                                    <div className="border border-red-500/30 bg-red-500/5 rounded-xl p-4 space-y-2">
+                                        {summary.errors.map((err, idx) => (
+                                            <div key={idx} className="text-xs">
+                                                <div className="font-bold text-red-300">Step {err.step_number} ({err.step_name}):</div>
+                                                <div className="mt-1 font-mono text-red-200/80 bg-black/20 p-2 rounded border border-red-500/20 whitespace-pre-wrap">
+                                                    {err.message}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </>
                     )}
                 </div>
 
@@ -207,6 +204,96 @@ const DeploySummaryModal = ({ isOpen, onClose, summary, status, results }) => {
                         className="px-6 py-2 bg-accent-blue text-white rounded-lg text-sm font-bold shadow-lg shadow-accent-blue/20 hover:bg-accent-blue-hover active:scale-95 transition-all"
                     >
                         Done
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const ConflictResolutionModal = ({ isOpen, onClose, onProceed, conflicts, isDeploying }) => {
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-300" style={{ background: 'var(--bg-backdrop)' }}>
+            <div className="bg-surface border border-amber-500/30 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-300">
+                {/* Header */}
+                <div className="px-8 py-6 flex items-center justify-between border-b border-main bg-amber-500/10">
+                    <div className="flex items-center gap-4">
+                        <div className="p-3 rounded-xl bg-amber-500/20 text-amber-400 animate-pulse">
+                            <AlertTriangle size={28} />
+                        </div>
+                        <div>
+                            <h2 className="text-xl font-bold text-primary tracking-tight">Sync Conflict Detected</h2>
+                            <p className="text-sm text-amber-300/80 mt-0.5">External changes detected on Snowflake target</p>
+                        </div>
+                    </div>
+                    <button onClick={onClose} className="p-2 hover:bg-surface-hover rounded-full text-tertiary transition-colors">
+                        <X size={20} />
+                    </button>
+                </div>
+
+                {/* Content */}
+                <div className="flex-1 overflow-y-auto p-8 space-y-6 custom-scrollbar">
+                    <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-5">
+                        <p className="text-sm text-secondary leading-relaxed">
+                            We detected <span className="font-bold text-amber-400">{conflicts?.length || 'some'} manual changes</span> in the Snowflake semantic view that are not in your repository.
+                            Proceeding will <span className="font-bold text-red-400 underline decoration-red-400/30 underline-offset-4">overwrite</span> these changes with your repository state.
+                        </p>
+                    </div>
+
+                    <div className="space-y-4">
+                        <h3 className="text-xs font-bold text-tertiary uppercase tracking-widest flex items-center gap-2">
+                            <Activity size={14} /> Affected Entities
+                        </h3>
+                        <div className="border border-main rounded-xl overflow-hidden bg-surface-raised shadow-inner max-h-60 overflow-y-auto">
+                            <table className="w-full text-xs text-left">
+                                <thead className="bg-surface sticky top-0 border-b border-main">
+                                    <tr>
+                                        <th className="px-4 py-3 font-bold text-tertiary uppercase tracking-tighter">Model / Entity</th>
+                                        <th className="px-4 py-3 font-bold text-tertiary uppercase tracking-tighter">Change</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {conflicts?.map((c, i) => (
+                                        <tr key={i} className="border-b border-main last:border-0 hover:bg-surface-hover transition-colors">
+                                            <td className="px-4 py-3 font-mono font-bold text-primary">{c.model_name}</td>
+                                            <td className="px-4 py-3">
+                                                <span className={`px-2.5 py-1 rounded-md text-[10px] font-bold uppercase ${c.change_type === 'ADDED' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-blue-500/10 text-blue-400'
+                                                    }`}>
+                                                    {c.change_type}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {(!conflicts || conflicts.length === 0) && (
+                                        <tr>
+                                            <td colSpan="2" className="px-4 py-8 text-center text-tertiary italic">
+                                                No granular conflict details available.
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Footer */}
+                <div className="px-8 py-6 bg-surface-raised border-t border-main flex justify-between items-center gap-4">
+                    <button
+                        onClick={onClose}
+                        className="px-6 py-2.5 border border-main text-secondary rounded-xl text-sm font-bold hover:bg-surface-hover active:scale-95 transition-all"
+                    >
+                        Cancel Sync
+                    </button>
+                    <button
+                        onClick={onProceed}
+                        disabled={isDeploying}
+                        className="px-8 py-2.5 bg-amber-500 text-black rounded-xl text-sm font-bold shadow-xl shadow-amber-500/20 hover:bg-amber-400 active:scale-95 disabled:opacity-50 disabled:scale-100 transition-all flex items-center gap-2"
+                    >
+                        {isDeploying ? <Loader2 size={18} className="animate-spin" /> : <Play size={18} fill="currentColor" />}
+                        {isDeploying ? 'Deploying...' : 'Force Overwrite'}
                     </button>
                 </div>
             </div>
@@ -383,8 +470,10 @@ export default function YamlEditor({ selectedItems = [], activeModelId = null, s
     const [isDeploying, setIsDeploying] = useState(false);
     const [syncResult, setSyncResult] = useState(null);
     const [showModal, setShowModal] = useState(false);
+    const [showConflictModal, setShowConflictModal] = useState(false);
+    const [conflicts, setConflicts] = useState([]);
 
-    const handleDeploy = useCallback(async () => {
+    const handleDeploy = useCallback(async (isForced = false) => {
         // Block deploy if there are errors
         if (errors.length > 0) {
             addLog('error', 'Deploy', 'Cannot deploy: validation errors exist');
@@ -392,7 +481,7 @@ export default function YamlEditor({ selectedItems = [], activeModelId = null, s
         }
         setIsDeploying(true);
         setTableWarning(null);
-        addLog('info', 'Deploy', 'Starting deployment...');
+        addLog('info', 'Deploy', isForced ? 'Proceeding with forced deployment...' : 'Starting deployment...');
         try {
             const envExecutor = String(import.meta.env.VITE_SYNC_EXECUTOR || '').trim().toLowerCase();
             const envMaxParallelModels = Number.parseInt(String(import.meta.env.VITE_MAX_PARALLEL_MODELS || ''), 10);
@@ -400,6 +489,9 @@ export default function YamlEditor({ selectedItems = [], activeModelId = null, s
             const envProcessMaxWorkers = Number.parseInt(String(import.meta.env.VITE_PROCESS_MAX_WORKERS || ''), 10);
 
             const syncPayload = { content: editorContent };
+            if (isForced) {
+                syncPayload.force = true;
+            }
             if (envExecutor === 'thread' || envExecutor === 'process') {
                 syncPayload.executor = envExecutor;
             }
@@ -415,7 +507,24 @@ export default function YamlEditor({ selectedItems = [], activeModelId = null, s
 
             const res = await api.sync(syncPayload);
             console.log("Sync result:", res);
+
+            if (res.status === 'conflict') {
+                const runId = res.run_id || (res.results?.[0]?.run_id);
+                if (runId) {
+                    try {
+                        const conflictData = await api.getConflicts(runId);
+                        setConflicts(conflictData);
+                    } catch (confErr) {
+                        console.warn("Failed to fetch granular conflicts:", confErr);
+                    }
+                }
+                setShowConflictModal(true);
+                addLog('warning', 'Deploy', 'Sync blocked: manual changes detected on Snowflake. Review required.');
+                return;
+            }
+
             setSyncResult(res);
+            setShowConflictModal(false);
 
             const succeeded = res.models_synced ?? (res.status === 'success' ? 1 : 0);
             const total = res.total_models ?? 1;
@@ -621,6 +730,14 @@ export default function YamlEditor({ selectedItems = [], activeModelId = null, s
                 summary={syncResult?.summary}
                 status={syncResult?.status}
                 results={syncResult?.results}
+            />
+
+            <ConflictResolutionModal
+                isOpen={showConflictModal}
+                onClose={() => setShowConflictModal(false)}
+                onProceed={() => handleDeploy(true)}
+                conflicts={conflicts}
+                isDeploying={isDeploying}
             />
         </div>
     );

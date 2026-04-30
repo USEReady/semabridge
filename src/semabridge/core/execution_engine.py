@@ -325,6 +325,7 @@ class ExecutionEngine:
         account_id: Optional[str] = None,  # Linked Account ID for per-user credentials
         config_dict: Optional[Dict[str, Any]] = None, # In-memory configuration override
         sync_mode: str = "copy",
+        force: bool = False,
     ) -> RunSummary:
         """
         Execute the full 10-step pipeline.
@@ -437,8 +438,7 @@ class ExecutionEngine:
             self._step5_validate_source(context)
             
             # Step 6: Convert to Canonical SML
-            sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id)
-            self._apply_mapping_overrides_from_config(sml_model, Path(config_path), config_payload=config_dict)
+            sml_model = self._step6_convert_to_sml(context, source_format, force=force)
             context.sml_model = sml_model
             
             # Step 7: Persist Artifacts
@@ -1619,8 +1619,8 @@ class ExecutionEngine:
     def _step6_convert_to_sml(
         self,
         context: RunContext,
-        workspace_id: Optional[str],
-        dataset_id: Optional[str],
+        source_format: SourceFormat,
+        force: bool = False,
     ) -> SMLModel:
         """
         Step 6: Convert to canonical SML.
@@ -1635,7 +1635,7 @@ class ExecutionEngine:
             if context.source_type == "snowflake":
                 sml_model = self._convert_snowflake_to_sml(context)
             elif context.source_type == "fabric":
-                sml_model = self._convert_fabric_to_sml(context, workspace_id, dataset_id)
+                sml_model = self._convert_fabric_to_sml(context)
             elif context.source_type == "pbix":
                 sml_model = self._convert_pbix_to_sml(context)
             else:
@@ -1644,13 +1644,24 @@ class ExecutionEngine:
             # Apply sync_mode logic (COPY vs UPSERT)
             if context.sync_mode == "upsert":
                 try:
-                    head_snapshot = self.db_manager.get_head(context.project_id)
-                    if head_snapshot and head_snapshot.sml_blob:
-                        tgt_model = SMLModel.model_validate(head_snapshot.sml_blob)
-                        logger.info("Applying UPSERT sync mode: merging source with target HEAD")
-                        sml_model = apply_sync_mode(sml_model, tgt_model, "upsert")
-                except Exception as merge_err:
-                    logger.warning("Failed to fetch/merge target model for UPSERT: %s", merge_err)
+                    logger.info("Applying UPSERT sync mode: fetching LIVE target state")
+                    tgt_model = self._extract_live_target_sml(context)
+                    if tgt_model:
+                        # Detect and log conflicts before merging
+                        self._detect_and_log_target_conflicts(context, tgt_model, force=force)
+                        
+                        sml_model = apply_sync_mode(
+                            src_model=sml_model,
+                            tgt_model=tgt_model,
+                            sync_mode=context.sync_mode,
+                        )
+                    else:
+                        logger.info("No live target state found; proceeding with full overwrite (first sync)")
+                except Exception as upsert_exc:
+                    logger.warning("Failed to perform LIVE target merge for UPSERT: %s. Falling back to COPY mode.", upsert_exc)
+            
+            # Record SML in context
+            context.sml_model = sml_model
 
             # Normalize relationship names/deduplication here so all downstream
             # target conversions and deployments operate on the same final model.
@@ -1859,6 +1870,58 @@ class ExecutionEngine:
         scored.sort(key=lambda x: x[0], reverse=True)
         return scored[0][1]
     
+    def _detect_and_log_target_conflicts(
+        self,
+        context: RunContext,
+        live_target_sml: SMLModel,
+        force: bool = False,
+    ) -> None:
+        """Compare live target state with last known snapshot and log conflicts."""
+        from semabridge.repository.semantic_diff_engine import SemanticDiffEngine, ChangeType
+        import json
+        
+        try:
+            head = self.db_manager.get_head(context.project_id)
+            if not head:
+                logger.info("No head snapshot found for project %s; skipping conflict detection", context.project_id)
+                return
+            
+            diff_engine = SemanticDiffEngine()
+            diff = diff_engine.compare_states(
+                state_1=head.sml_blob,
+                state_2=live_target_sml.model_dump(),
+            )
+            
+            if not diff.changes:
+                logger.info("No conflicts detected between head snapshot and live target")
+                return
+            
+            conflict_count = 0
+            for change in diff.changes:
+                # We only care about things in target that are NOT in our head
+                # or have been modified externally.
+                if change.change_type in [ChangeType.ADDED, ChangeType.MODIFIED]:
+                    self.db_manager.record_sync_conflict(
+                        run_id=context.run_id,
+                        model_name=change.entity_name,
+                        change_type=change.change_type.value,
+                        severity="high" if change.is_breaking else "medium",
+                        description=change.change_reason,
+                        source_value=json.dumps(change.before) if change.before else None,
+                        target_value=json.dumps(change.after) if change.after else None,
+                    )
+                    conflict_count += 1
+            
+            if conflict_count > 0:
+                logger.warning("Detected %d conflicts with live target state for run %s", conflict_count, context.run_id)
+                if not force:
+                    raise ConversionError(f"CONFLICT: {conflict_count} external changes detected on target. Review and approve before proceeding.")
+                
+        except (ConversionError, Exception) as exc:
+            if isinstance(exc, ConversionError):
+                raise
+            logger.error("Failed to detect/log sync conflicts: %s", exc)
+
     def _convert_snowflake_to_sml(self, context: RunContext) -> SMLModel:
         """Convert Snowflake source to SML."""
         from semabridge.connectors.inference_engine import SmlInferenceEngine
@@ -2048,8 +2111,8 @@ class ExecutionEngine:
     def _convert_fabric_to_sml(
         self,
         context: RunContext,
-        workspace_id: Optional[str],
-        dataset_id: Optional[str],
+        workspace_id: Optional[str] = None,
+        dataset_id: Optional[str] = None,
     ) -> SMLModel:
         """Convert Fabric TMSL to SML via the mandatory OSI intermediate layer.
         
@@ -2726,6 +2789,60 @@ class ExecutionEngine:
             logger.info(f"Generated OSI YAML with inferred types: {yaml_path}")
         except Exception as ex:
             logger.warning(f"Failed to export inferred OSI artifacts (non-fatal): {ex}")
+
+    def _extract_live_target_sml(self, context: RunContext) -> Optional[SMLModel]:
+        """Attempt to extract the live semantic model from the target connector."""
+        if context.target_type != "snowflake":
+            return None
+
+        try:
+            from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
+            from semabridge.converter.semantic_view_to_osi import SemanticViewToOSIConverter
+            from semabridge.converter.osi_to_sml import OSIToSMLConverter
+            from semabridge.repository.orm.models import Account
+            from semabridge.repository.orm.session_factory import db_manager
+            from semabridge.auth.account_credential_resolver import scoped_account_env
+            from sqlalchemy import select
+
+            # Identify identity_id for target scoping
+            target_configs = getattr(context.config, "targets", None) or []
+            identity_id = ""
+            for tc in target_configs:
+                if isinstance(tc, dict) and tc.get("type") == "snowflake":
+                    identity_id = str(tc.get("identity_id", "") or "").strip()
+                    break
+            if not identity_id:
+                target_config = getattr(context.config, "target", None)
+                if target_config and getattr(target_config, "type", "") == "snowflake":
+                    identity_id = str(getattr(target_config, "identity_id", "") or "").strip()
+
+            def _do_extract(cfg):
+                extractor = SnowflakeExtractor(cfg)
+                # View name is usually project_id or from target config
+                view_name = context.project_id
+                target_cfg = getattr(context.config, "target", None)
+                if target_cfg and getattr(target_cfg, "semantic_view_name", None):
+                    view_name = target_cfg.semantic_view_name
+                
+                ddl = extractor.extract_semantic_view_ddl(view_name)
+                osi_model = SemanticViewToOSIConverter().to_osi({"ddl": ddl})
+                return OSIToSMLConverter().from_osi(osi_model)
+
+            if identity_id:
+                with db_manager.get_session() as session:
+                    account = session.execute(
+                        select(Account).where(Account.connector_type == "SNOWFLAKE", Account.id == identity_id)
+                    ).scalars().first()
+                    if account:
+                        with scoped_account_env(account, session):
+                            from semabridge.core.settings import reload_settings
+                            return _do_extract(reload_settings().snowflake)
+            
+            return _do_extract(context.config.snowflake)
+
+        except Exception as exc:
+            logger.debug("Live target extraction failed (expected if view missing): %s", exc)
+            return None
     
     # =========================================================================
     # Step 10: Finalize Run
@@ -2770,13 +2887,16 @@ class ExecutionEngine:
             db_status = status.value.lower()  # 'success', 'failed', 'partial'
             error_msg = None
             if db_status != "success":
-                # Collect first error from step results
-                for step in (finalized.steps or []):
-                    if getattr(step, "error", None):
-                        error_msg = str(step.error)[:1000]
-                        break
-                if not error_msg and finalized.error_message:
-                    error_msg = str(finalized.error_message)[:1000]
+                # Collect first error from errors list
+                if finalized.errors:
+                    error_msg = finalized.errors[0].message[:1000]
+                
+                if not error_msg:
+                    # Fallback to checking step messages for failed status
+                    for step in (finalized.steps_completed or []):
+                        if step.status == StepStatus.FAILED:
+                            error_msg = str(step.message)[:1000]
+                            break
 
             self.db_manager.record_run_complete(
                 run_id=context.run_id,

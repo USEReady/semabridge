@@ -1,7 +1,7 @@
 import os
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Request
+from fastapi import APIRouter, BackgroundTasks, Request, Body
 
 from semabridge.api.services.project_runs_service import (
     get_project_runs_compat,
@@ -16,6 +16,7 @@ from semabridge.api.services.project_runs_service import (
     get_snapshot_content_compat,
     get_snapshot_report_compat,
     manual_deploy_compat,
+    get_run_conflicts_compat,
 )
 
 router = APIRouter()
@@ -30,6 +31,8 @@ router.get('/api/projects/{project_id}/stats')(get_project_stats_compat)
 router.get('/api/projects/{project_id}/snapshots/{snapshot_id}/content')(get_snapshot_content_compat)
 router.get('/api/projects/{project_id}/snapshots/{snapshot_id}/report')(get_snapshot_report_compat)
 router.post('/api/projects/{project_id}/snapshots/{snapshot_id}/deploy')(manual_deploy_compat)
+router.get('/api/runs/{run_id}/conflicts')(get_run_conflicts_compat)
+
 
 
 @router.post('/api/projects/{project_id}/run')
@@ -37,7 +40,7 @@ async def run_project_now_with_user_context(
     project_id: str,
     background_tasks: BackgroundTasks,
     request: Request,
-    payload: Optional[Dict[str, Any]] = None,
+    payload: Optional[Dict[str, Any]] = Body(None),
 ):
     body: Dict[str, Any] = dict(payload or {})
     if os.environ.get("AUTH_ENABLED", "").lower() == "true":
@@ -45,3 +48,5 @@ async def run_project_now_with_user_context(
         if user_id:
             body["user_id"] = user_id
     return await run_project_now_compat(project_id, background_tasks, body)
+ 
+router.post('/api/runs/{run_id}/resolve')(run_project_now_with_user_context)
