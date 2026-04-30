@@ -1,0 +1,40 @@
+project_name: sync1
+source:
+  type: fabric
+  identity_id: 8649e716-06f0-4e1a-a4a2-d738cead6e60
+  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
+  workspace: semabridge
+  models:
+  - Core_Finance_v1
+targets:
+- type: snowflake
+  identity_id: 28af405d-bb21-4c7a-bdb1-9ceb4e02df05
+mappings:
+- source: Core_Finance_v1
+  target: CORE_FINANCE_V1
+  type: table
+  columns:
+  - source: id
+    target: ID
+    type: integer
+    primary_key: true
+  - source: name
+    target: NAME
+    type: string
+  - source: created_at
+    target: CREATED_AT
+    type: timestamp
+  - source: updated_at
+    target: UPDATED_AT
+    type: timestamp
+ui:
+  intermediate_format: osi
+  editor_mode: form
+selection:
+  model_ids:
+  - bbe97d8c-bf99-457f-b322-6c5e7a948171
+options:
+  auto_relationships: true
+  generate_descriptions: true
+project_id: proj-sync1
+display_name: sync1

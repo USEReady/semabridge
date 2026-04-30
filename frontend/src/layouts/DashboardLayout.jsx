@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
-  Map, FolderOpen, PlayCircle, Settings, GitBranch,
+  Map, FolderOpen, PlayCircle, Settings,
   Hexagon, LogOut, ChevronLeft, ChevronRight, Bell, Split,
   History as HistoryIcon,
 } from 'lucide-react';
@@ -55,7 +55,6 @@ export default function DashboardLayout() {
     { to: '/projects',      label: 'Projects',        icon: FolderOpen },
     { to: '/jobs',          label: 'Runs',            icon: PlayCircle },
     { to: '/explore',       label: 'Explore',         icon: Map },
-    { to: '/model-mapping', label: 'Model Mapping',   icon: GitBranch },
     { to: '/version-control', label: 'Version Control', icon: HistoryIcon },
     { to: '/comparator',    label: 'Comparator',      icon: Split },
     { to: '/settings',      label: 'Settings',        icon: Settings },

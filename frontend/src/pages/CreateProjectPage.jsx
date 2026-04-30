@@ -9,22 +9,26 @@
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import './mapping-styles.css';
 import {
   ArrowLeft, ArrowRight, Check, X, Loader2,
   ChevronDown, ChevronRight, CheckSquare, Square, RefreshCw,
-  Table2,
+  Table2, AlertTriangle, Play, Rocket, Search,
+  Cloud, Database, Snowflake,
 } from 'lucide-react';
 import { api } from '../utils/api';
 import { useHPSearch } from '../hooks/useHPSearch';
 import SearchableSelect from '../components/common/SearchableSelect';
 import SmartSearchBar, { matchesSmartQuery } from '../components/common/SmartSearchBar';
 import SourceIcon from '../components/common/SourceIcon';
+import StatusBadge from '../components/common/StatusBadge';
 import { useWorkspace } from '../context/WorkspaceContext';
 import Modal from '../components/common/Modal';
 import { useLogs } from '../context/LogsContext';
 import { useUIStore } from '../store/uiStore';
 import useSessionDraft from '../hooks/useSessionDraft';
 import DraftBanner from '../components/common/DraftBanner';
+import ErrorBoundary from '../components/ErrorBoundary';
 
 const STEPS = [
   { id: 1, label: 'Basic Info' },
@@ -66,6 +70,421 @@ const INPUT = {
 
 const LABEL = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 };
 
+const MAPPING_FILTERS = [
+  { id: 'all', label: 'All' },
+  { id: 'auto', label: 'Auto' },
+  { id: 'manual', label: 'Manual' },
+  { id: 'unmapped', label: 'Unmapped' },
+  { id: 'collision', label: 'Collision/Error' },
+];
+
+const SNOWFLAKE_RESERVED = new Set([
+  'SELECT', 'GROUP', 'ORDER', 'TABLE', 'COLUMN', 'DATE', 'FROM', 'WHERE',
+  'BY', 'JOIN', 'VIEW', 'UNION', 'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'DROP',
+]);
+
+function shortDeterministicHash(value) {
+  let hash = 2166136261;
+  const text = String(value || '');
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0').slice(0, 4);
+}
+
+function sanitizeMappingName(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const cleaned = raw
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  if (!cleaned) return '';
+  return /^\d/.test(cleaned) ? `N_${cleaned}` : cleaned;
+}
+
+function resolveSourceTableName(column, tableSource = '') {
+  const fromColumn = String(column?.source_table_name || column?.parent_table || '').trim();
+  if (fromColumn) return fromColumn;
+  const path = String(column?.source_path || column?.parent_source_path || '').trim();
+  const direct = /^datasets\.([^.]+)/i.exec(path);
+  if (direct?.[1]) return direct[1];
+  return String(tableSource || '').trim();
+}
+
+function normalizeTargetStatus(item) {
+  if (item?.collision_detected) return 'collision';
+  const explicit = String(item?.status || '').toLowerCase();
+  if (!String(item?.target || item?.target_name || item?.target_field || '').trim()) return 'unmapped';
+  if (explicit === 'manual') return 'manual';
+  return 'auto';
+}
+
+function buildSourceFingerprint(mapping, column) {
+  return [
+    mapping?.source_schema,
+    mapping?.schema,
+    mapping?.source,
+    column?.source_table_name,
+    column?.parent_table,
+    column?.source_path,
+    column?.source,
+  ].map(part => String(part || '').trim()).filter(Boolean).join('.');
+}
+
+function applyHashDeduplication(mappings) {
+  return (mappings || []).map((mapping) => {
+    const columns = Array.isArray(mapping?.columns) ? mapping.columns : [];
+    if (columns.length === 0) return mapping;
+
+    const grouped = new Map();
+    columns.forEach((column) => {
+      const key = sanitizeMappingName(column?.target || column?.source || '');
+      if (!key) return;
+      grouped.set(key, [...(grouped.get(key) || []), column]);
+    });
+
+    const nextColumns = columns.map((column) => {
+      const baseTarget = sanitizeMappingName(column?.target || column?.source || '');
+      const duplicates = grouped.get(baseTarget) || [];
+      if (duplicates.length < 2) {
+        return { ...column, status: normalizeTargetStatus(column), collision_detected: false };
+      }
+      const hash = shortDeterministicHash(buildSourceFingerprint(mapping, column));
+      const resolved = `${baseTarget}_${hash}`;
+      return {
+        ...column,
+        target: resolved,
+        suggested_target_name: resolved,
+        original_target_name: baseTarget,
+        status: 'manual',
+        auto_resolved: true,
+        collision_detected: false,
+      };
+    });
+
+    return {
+      ...mapping,
+      columns: nextColumns,
+      status: String(mapping?.status || 'auto').toLowerCase(),
+      collision_detected: false,
+    };
+  });
+}
+
+function TypeBadge({ type }) {
+  const label = String(type || 'unknown');
+  const normalized = label.toLowerCase();
+  let hash = 0;
+  for (let i = 0; i < normalized.length; i += 1) {
+    hash = ((hash << 5) - hash) + normalized.charCodeAt(i);
+    hash |= 0;
+  }
+  const hue = Math.abs(hash) % 360;
+  const color = `hsl(${hue}, 72%, 58%)`;
+  return (
+    <span style={{
+      fontFamily: 'monospace',
+      fontSize: 10,
+      fontWeight: 700,
+      padding: '2px 6px',
+      borderRadius: 4,
+      background: `${color}20`,
+      color,
+      border: `1px solid ${color}35`,
+      whiteSpace: 'nowrap',
+    }}>
+      {label}
+    </span>
+  );
+}
+
+function FieldKindBadge({ kind = 'Column', fieldType }) {
+  const resolvedKind = String(fieldType || kind || 'column').toLowerCase();
+  const isMeasure = resolvedKind === 'measure' || resolvedKind === 'metric';
+  return (
+    <span style={{
+      fontSize: 10,
+      fontWeight: 700,
+      padding: '2px 6px',
+      borderRadius: 999,
+      border: isMeasure ? '1px solid rgba(56, 189, 248, 0.45)' : '1px solid var(--border-main)',
+      background: isMeasure ? 'rgba(56, 189, 248, 0.14)' : 'var(--bg-surface-raised)',
+      color: isMeasure ? '#7dd3fc' : 'var(--text-secondary)',
+      whiteSpace: 'nowrap',
+    }}>
+      {isMeasure ? 'fx Measure' : 'Column'}
+    </span>
+  );
+}
+
+function SourceTableBadge({ tables, hasIssue = false }) {
+  const uniqueTables = Array.isArray(tables)
+    ? [...new Set(tables.map((name) => String(name || '').trim()).filter(Boolean))]
+    : [];
+  if (uniqueTables.length === 0) return null;
+
+  const isMulti = uniqueTables.length > 1;
+  const label = isMulti ? 'Table: Multi-table' : `Table: ${uniqueTables[0]}`;
+  const tooltip = isMulti ? uniqueTables.join(', ') : uniqueTables[0];
+  return (
+    <span
+      title={tooltip}
+      style={{
+        fontSize: 10,
+        fontWeight: 700,
+        padding: '2px 6px',
+        borderRadius: 999,
+        border: hasIssue ? '1px solid rgba(239, 68, 68, 0.45)' : '1px solid rgba(56, 189, 248, 0.45)',
+        background: hasIssue ? 'rgba(239, 68, 68, 0.12)' : 'rgba(56, 189, 248, 0.12)',
+        color: hasIssue ? 'var(--color-error)' : '#7dd3fc',
+        maxWidth: 190,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
+function normalizeStatus(item) {
+  const validationStatus = String(item?.validation_status || '').toLowerCase();
+  const validationCode = String(item?.validation_code || '').toUpperCase();
+  const explicit = String(item?.status || '').toLowerCase();
+  const targetField = String(item?.target_field || item?.target_name || item?.target || '').trim();
+
+  if (
+    item?.collision_detected === true ||
+    validationStatus === 'invalid' ||
+    validationStatus === 'collision' ||
+    (validationCode && validationCode !== 'OK')
+  ) return 'collision';
+
+  if (!targetField) return 'unmapped';
+  if (explicit === 'manual') return 'manual';
+  return 'auto';
+}
+
+function isBlockingRow(row) {
+  const status = String(row?.status || '').toLowerCase();
+  if (status === 'collision' || status === 'unmapped') return true;
+
+  const validationStatus = String(row?.validation_status || '').toLowerCase();
+  if (validationStatus === 'invalid' || validationStatus === 'collision') return true;
+
+  const validationCode = String(row?.validation_code || '').toUpperCase();
+  return Boolean(validationCode && validationCode !== 'OK');
+}
+
+function parseDatasetFromPath(pathValue) {
+  const path = String(pathValue || '').trim();
+  if (!path) return '';
+  const direct = /^datasets\.([^.]+)$/i.exec(path);
+  if (direct?.[1]) return String(direct[1]).trim();
+  const nested = /^datasets\.([^.]+)\./i.exec(path);
+  if (nested?.[1]) return String(nested[1]).trim();
+  return '';
+}
+
+function resolveMeasureSourceTables(row) {
+  const fromRow = Array.isArray(row?.measure_source_tables)
+    ? row.measure_source_tables.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  if (fromRow.length > 0) return [...new Set(fromRow)];
+
+  const fallback = parseDatasetFromPath(row?.parent_source_path);
+  return fallback ? [fallback] : [];
+}
+
+function resolveColumnSourceTable(row, parentTable = '') {
+  const fromPath = parseDatasetFromPath(row?.source_path);
+  if (fromPath) return fromPath;
+
+  const fromParentPath = parseDatasetFromPath(row?.parent_source_path);
+  if (fromParentPath) return fromParentPath;
+
+  return String(parentTable || row?.parent_table || row?.source_table_name || '').trim();
+}
+
+function resolveMeasureExpression(row) {
+  return String(row?.source_expression || row?.measure_expression || row?.expression || '').trim();
+}
+
+function normalizeRows(data) {
+  console.log('[normalizeRows] Input data:', data);
+  const entityRows = Array.isArray(data?.entity_mappings) ? data.entity_mappings : [];
+  console.log('[normalizeRows] Total entity rows:', entityRows.length);
+  console.log('[normalizeRows] Entity kinds:', entityRows.map(r => r?.entity_kind));
+
+  if (entityRows.length > 0) {
+    const fieldRows = entityRows.filter((row) => {
+      const kind = String(row?.entity_kind || '').toLowerCase();
+      const isTable = kind === 'table';
+      if (isTable) {
+        console.log('[normalizeRows] Filtering out table row:', row?.source_entity || row?.source_name);
+      }
+      return !isTable;
+    });
+
+    console.log('[normalizeRows] Field rows after filtering:', fieldRows.length);
+    if (fieldRows.length === 0 && entityRows.length > 0) {
+      console.error('[normalizeRows] No field rows! Entity kinds present:', 
+        [...new Set(entityRows.map(r => r?.entity_kind))]);
+    }
+
+    return fieldRows.map((row, index) => {
+      const kind = String(row?.entity_kind || 'column').toLowerCase();
+      const isMeasure = kind === 'metric' || kind === 'measure';
+      const sourceName = String(row?.source_name || row?.name || '').trim();
+      const targetName = String(row?.target_name || row?.name || '').trim();
+      return {
+        id: String(row?.id || `entity-${index}`),
+        source_field: sourceName || `field_${index + 1}`,
+        source_path: String(row?.source_path || '').trim(),
+        entity_kind: kind,
+        parent_source_path: String(row?.parent_source_path || '').trim(),
+        source_type: String(row?.source_data_type || row?.data_type || kind || 'unknown'),
+        field_type: isMeasure ? 'measure' : 'column',
+        measure_source_tables: isMeasure ? resolveMeasureSourceTables(row) : [],
+        source_table_name: !isMeasure ? resolveColumnSourceTable(row) : '',
+        measure_expression: isMeasure ? resolveMeasureExpression(row) : '',
+        target_field: targetName,
+        target_type: String(row?.target_data_type || row?.source_data_type || row?.data_type || 'unknown'),
+        status: normalizeStatus({ ...row, target_field: targetName }),
+        validation_status: String(row?.validation_status || ''),
+        validation_code: String(row?.validation_code || ''),
+        validation_message: String(row?.validation_message || ''),
+        suggested_target_name: String(row?.suggested_target_name || ''),
+        collision_detected: Boolean(row?.collision_detected),
+        isDirty: false,
+      };
+    });
+  }
+
+  const rows = [];
+  const tableMappings = Array.isArray(data?.mappings) ? data.mappings : [];
+  tableMappings.forEach((table, tableIndex) => {
+    const tableSource = String(table?.source || table?.name || '').trim();
+    const columns = Array.isArray(table?.columns) ? table.columns : [];
+
+    if (columns.length === 0) {
+      return;
+    }
+
+    columns.forEach((column, columnIndex) => {
+      const colSource = String(column?.source || column?.name || '').trim();
+      const colTarget = String(column?.target || '').trim();
+      const fieldType = String(column?.field_type || '').toLowerCase() === 'measure' ? 'measure' : 'column';
+      rows.push({
+        id: `${table?.id || tableSource || `t${tableIndex}`}::${column?.source_path || colSource || columnIndex}`,
+        source_field: colSource || `column_${columnIndex + 1}`,
+        source_path: String(column?.source_path || '').trim(),
+        entity_kind: String(column?.entity_kind || 'column').toLowerCase(),
+        source_type: String(column?.type || column?.data_type || 'unknown'),
+        field_type: fieldType,
+        source_table_name: resolveColumnSourceTable(column, tableSource),
+        measure_source_tables: [],
+        measure_expression: '',
+        target_field: colTarget,
+        target_type: String(column?.type || column?.data_type || 'unknown'),
+        status: normalizeStatus({ ...column, target_field: colTarget }),
+        validation_status: String(column?.validation_status || ''),
+        validation_code: String(column?.validation_code || ''),
+        validation_message: String(column?.validation_message || ''),
+        suggested_target_name: String(column?.suggested_target_name || ''),
+        collision_detected: Boolean(column?.collision_detected),
+        parent_table: tableSource,
+        isDirty: false,
+      });
+    });
+  });
+
+  return rows;
+}
+
+function countResponseFields(data) {
+  const entityRows = Array.isArray(data?.entity_mappings)
+    ? data.entity_mappings.filter((row) => String(row?.entity_kind || '').toLowerCase() !== 'table')
+    : [];
+  if (entityRows.length > 0) return entityRows.length;
+
+  const tableMappings = Array.isArray(data?.mappings) ? data.mappings : [];
+  return tableMappings.flatMap((mapping) => {
+    const columns = Array.isArray(mapping?.columns) ? mapping.columns : [];
+    return columns;
+  }).length;
+}
+
+function sanitizeIdentifier(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return 'UNNAMED';
+  const cleaned = raw
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  if (!cleaned) return 'UNNAMED';
+  return /^\d/.test(cleaned) ? `N_${cleaned}` : cleaned;
+}
+
+function validateTargetName(value, targetPlatform, sourceType, targetType) {
+  const next = String(value || '').trim();
+  if (!next) {
+    return { isValid: false, code: 'EMPTY_TARGET', message: 'Target field cannot be empty.', suggestion: 'UNNAMED' };
+  }
+
+  const platform = String(targetPlatform || '').toLowerCase();
+  const upper = next.toUpperCase();
+
+  if (platform.includes('snowflake') && SNOWFLAKE_RESERVED.has(upper)) {
+    return {
+      isValid: false,
+      code: 'RESERVED_KEYWORD',
+      message: 'Target field is a Snowflake reserved keyword.',
+      suggestion: `COL_${upper}`,
+    };
+  }
+
+  const sanitized = sanitizeIdentifier(next);
+  if (platform.includes('snowflake') && sanitized !== upper) {
+    return {
+      isValid: false,
+      code: 'UNSUPPORTED_CHARACTERS',
+      message: 'Target field has unsupported characters for Snowflake.',
+      suggestion: sanitized,
+    };
+  }
+
+  if (String(sourceType || '').toLowerCase() === 'boolean' && String(targetType || '').toLowerCase() === 'date') {
+    return {
+      isValid: false,
+      code: 'INCOMPATIBLE_TYPE',
+      message: 'Source and target data types are incompatible.',
+      suggestion: sanitized,
+    };
+  }
+
+  return { isValid: true, code: 'OK', message: '', suggestion: sanitized };
+}
+
+function getConnectorPresentation(type) {
+  const normalized = String(type || '').toLowerCase();
+  if (normalized.includes('fabric')) {
+    return { label: 'Microsoft Fabric', icon: <Cloud size={14} />, accent: '#60a5fa' };
+  }
+  if (normalized.includes('snowflake')) {
+    return { label: 'Snowflake', icon: <Snowflake size={14} />, accent: '#38bdf8' };
+  }
+  if (normalized.includes('databricks')) {
+    return { label: 'Databricks', icon: <Database size={14} />, accent: '#fb923c' };
+  }
+  return { label: normalized || 'Connector', icon: <Database size={14} />, accent: '#94a3b8' };
+}
+
 export default function CreateProjectPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -85,7 +504,10 @@ export default function CreateProjectPage() {
     resumeDraft, discardDraft, clearDraft,
   } = useSessionDraft('createProjectDraft');
 
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState(() => {
+    const requestedStep = Number(new URLSearchParams(location.search || '').get('step'));
+    return requestedStep >= 1 && requestedStep <= 5 ? requestedStep : 1;
+  });
   const [showStep1Validation, setShowStep1Validation] = useState(false);
   const [saving, setSaving] = useState(false);
   const [createError, setCreateError] = useState('');
@@ -170,7 +592,11 @@ export default function CreateProjectPage() {
   const [detectedEntityMappings, setDetectedEntityMappings] = useState([]);
   const [mappingLoading, setMappingLoading] = useState(false);
   const [mappingError, setMappingError] = useState('');
-  const [mappingReadyToProceed, setMappingReadyToProceed] = useState(true);
+  const [mappingReadyToProceed, setMappingReadyToProceed] = useState(false);
+  const [mappingDryRunStatus, setMappingDryRunStatus] = useState('idle');
+  const [mappingDryRunSignature, setMappingDryRunSignature] = useState('');
+  const [mappingDryRunError, setMappingDryRunError] = useState('');
+  const [unmappedAcknowledged, setUnmappedAcknowledged] = useState(false);
 
   // Step 5
   const [createReverseProject, setCreateReverseProject] = useState(false);
@@ -209,6 +635,12 @@ export default function CreateProjectPage() {
     if (d.databricksQuery != null) setDatabricksQuery(d.databricksQuery);
     if (d.autoRelationships != null) setAutoRelationships(d.autoRelationships);
     if (d.generateDescriptions != null) setGenerateDescriptions(d.generateDescriptions);
+    if (Array.isArray(d.detectedMappings)) setDetectedMappings(d.detectedMappings);
+    if (Array.isArray(d.detectedEntityMappings)) setDetectedEntityMappings(d.detectedEntityMappings);
+    if (d.mappingDryRunStatus != null) setMappingDryRunStatus(d.mappingDryRunStatus);
+    if (d.mappingDryRunSignature != null) setMappingDryRunSignature(d.mappingDryRunSignature);
+    if (d.mappingDryRunError != null) setMappingDryRunError(d.mappingDryRunError);
+    if (d.unmappedAcknowledged != null) setUnmappedAcknowledged(Boolean(d.unmappedAcknowledged));
   }, [resumedDraft]);
 
   // --- Save draft (debounced) on every form field change ---
@@ -226,6 +658,8 @@ export default function CreateProjectPage() {
       expandedWs, selectedModels: Array.from(selectedModels), selectedModelNameByKey,
       selectedDatabricksTables: Array.from(selectedDatabricksTables), databricksQuery,
       autoRelationships, generateDescriptions,
+      detectedMappings, detectedEntityMappings,
+      mappingDryRunStatus, mappingDryRunSignature, mappingDryRunError, unmappedAcknowledged,
     });
   }, [
     step, name, description, sourceConnector, targetConnectors,
@@ -236,15 +670,23 @@ export default function CreateProjectPage() {
     pbixSourceMode, selectedLocalFolderId, selectedPbixFilePath,
     expandedWs, selectedModels, selectedModelNameByKey,
     selectedDatabricksTables, databricksQuery,
-    autoRelationships, generateDescriptions, saveDraft,
+    autoRelationships, generateDescriptions, detectedMappings, detectedEntityMappings,
+    mappingDryRunStatus, mappingDryRunSignature, mappingDryRunError, unmappedAcknowledged, saveDraft,
   ]);
 
   /* ─── HP search for model browser ─── */
-  const allModels = Object.entries(wsModels).flatMap(([wsid, models]) =>
-    models.map(m => ({ ...m, wsid, _id: `${wsid}::${m.id}` }))
+  const allModels = useMemo(() => 
+    Object.entries(wsModels).flatMap(([wsid, models]) =>
+      models.map(m => ({ ...m, wsid, _id: `${wsid}::${m.id}` }))
+    ),
+    [wsModels]
   );
+  
+  const searchFields = useMemo(() => ['name', 'description', 'wsid'], []);
+  const searchOptions = useMemo(() => ({ idField: '_id' }), []);
+
   const { query: modelQuery, setQuery: setModelQuery } = useHPSearch(
-    allModels, ['name', 'description', 'wsid'], { idField: '_id' }
+    allModels, searchFields, searchOptions
   );
 
   const liveFabricWorkspaces = useMemo(() => {
@@ -297,6 +739,44 @@ export default function CreateProjectPage() {
     return pbixFiles.find(file => file.path === selectedPbixFilePath) || null;
   }, [pbixFiles, selectedPbixFilePath]);
   const resolvedPbixPath = pbixSourceMode === 'TAG' ? selectedPbixFilePath : pbixUploadPath;
+
+  const currentMappingSignature = useMemo(() => JSON.stringify({
+    sourceConnector,
+    targetConnectors: [...targetConnectors].sort(),
+    intermediateFormat,
+    fabricAccountId,
+    selectedConnectionId,
+    fabricWorkspaceId,
+    snowflakeAccountId,
+    snowflakeDatabase,
+    snowflakeSchema,
+    targetDatabase,
+    targetSchema,
+    targetAccount,
+    targetWarehouse,
+    databricksAccountId,
+    selectedModels: [...selectedModels].sort(),
+    selectedModelNames: [...selectedModelNames].sort(),
+    selectedDatabricksTables: [...selectedDatabricksTables].sort(),
+    pbixPath: resolvedPbixPath,
+  }), [
+    databricksAccountId, fabricAccountId, fabricWorkspaceId, intermediateFormat,
+    resolvedPbixPath, selectedConnectionId, selectedDatabricksTables, selectedModelNames,
+    selectedModels, snowflakeAccountId, snowflakeDatabase, snowflakeSchema,
+    sourceConnector, targetAccount, targetConnectors, targetDatabase, targetSchema,
+    targetWarehouse,
+  ]);
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => {
+    if (!mappingDryRunSignature || mappingDryRunSignature === currentMappingSignature) return;
+    setMappingDryRunStatus('idle');
+    setMappingDryRunError('');
+    setMappingReadyToProceed(false);
+    setUnmappedAcknowledged(false);
+    setDetectedMappings([]);
+    setDetectedEntityMappings([]);
+  }, [currentMappingSignature, mappingDryRunSignature]);
 
   const refreshLocalFolders = useCallback(async () => {
     setLocalFoldersLoading(true);
@@ -994,37 +1474,73 @@ export default function CreateProjectPage() {
 
   const fetchMappings = useCallback(async ({ dryRun = false, resetManual = true } = {}) => {
     setMappingError('');
+    setMappingDryRunError('');
+    if (dryRun) setMappingDryRunStatus('running');
     setMappingLoading(true);
     try {
-      const response = await api.autoMap({
-        project_name: name.trim() || 'Untitled Project',
-        source_connector: sourceConnector,
-        target_connectors: [...targetConnectors],
-        target_connector: [...targetConnectors][0] || '',
-        intermediate_format: intermediateFormat,
-        selected_model_names: selectedModelNames,
-        reset_manual: resetManual,
-        dry_run: dryRun,
-      });
+      const projectId = createdProject?.id || createdProject?.project_id || 'preview';
+      
+      // We must access state directly or recreate the config builder logic since we are in useCallback
+      const sourceConfig = { type: sourceConnector };
+      if (sourceConnector === 'fabric' && fabricWorkspaceId) sourceConfig.workspace_id = fabricWorkspaceId;
+      if (sourceConnector === 'snowflake' && snowflakeDatabase) sourceConfig.database = snowflakeDatabase;
+      
+      const targetConfig = { type: [...targetConnectors][0] || '' };
+      if (targetConfig.type === 'snowflake' && targetDatabase) targetConfig.database = targetDatabase;
+      if (targetConfig.type === 'fabric' && fabricWorkspaceId) targetConfig.workspace_id = fabricWorkspaceId;
 
-      const mappings = Array.isArray(response?.mappings) ? response.mappings : [];
+      const payload = {
+        source_config: sourceConfig,
+        target_config: targetConfig,
+        selected_sources: selectedModelNames,
+        reset_manual: resetManual
+      };
+
+      let response;
+      if (dryRun) {
+        response = await api.runProjectDryRun(projectId, payload);
+      } else {
+        response = await api.rerunAutoMap(projectId, payload);
+      }
+      
+      console.log('[Dry Run] Raw response:', JSON.stringify(response, null, 2));
+
+      if (response?.entity_mappings) {
+        const kinds = response.entity_mappings.map(m => m.entity_kind);
+        console.log('[Dry Run] Entity kinds in response:', kinds);
+        console.log('[Dry Run] Has table entities:', kinds.includes('table'));
+        console.log('[Dry Run] Has field entities:', kinds.includes('field'));
+      }
+
       const entityMappings = Array.isArray(response?.entity_mappings) ? response.entity_mappings : [];
-      setDetectedMappings(mappings);
+      // If we don't have mappings array, we can use entityMappings directly for our table
+      setDetectedMappings(response?.mappings || []);
       setDetectedEntityMappings(entityMappings);
+      
+      if (dryRun) {
+        setMappingDryRunStatus('success');
+        setMappingDryRunSignature(currentMappingSignature);
+        setUnmappedAcknowledged(false);
+      }
 
-      if (Array.isArray(response?.collisions) && response.collisions.length > 0) {
-        addLog('warning', 'Mapping', `${response.collisions.length} naming collision(s) auto-resolved with deterministic hash suffixes.`);
+      if (response?.summary?.collisions > 0 || (Array.isArray(response?.collisions) && response.collisions.length > 0)) {
+        const count = response?.summary?.collisions || response.collisions.length;
+        addLog('warning', 'Mapping', `${count} naming collision(s) auto-resolved with deterministic hash suffixes.`);
       }
       return { ok: true, response };
     } catch (err) {
       const msg = err?.message || 'Failed to generate mappings.';
       setMappingError(msg);
+      if (dryRun) {
+        setMappingDryRunStatus('failed');
+        setMappingDryRunError(msg);
+      }
       addLog('error', 'Mapping', msg);
       return { ok: false, error: msg };
     } finally {
       setMappingLoading(false);
     }
-  }, [addLog, intermediateFormat, name, selectedModelNames, sourceConnector, targetConnectors]);
+  }, [addLog, currentMappingSignature, sourceConnector, targetConnectors, selectedModelNames, createdProject, fabricWorkspaceId, snowflakeDatabase, targetDatabase]);
 
   const goNext = async () => {
     if (step === 5) { handleFinish(); return; }
@@ -1038,13 +1554,15 @@ export default function CreateProjectPage() {
     }
     if (step === 3) {
       setMappingError('');
-      setDetectedMappings([]);
-      setDetectedEntityMappings([]);
       sessionStorage.removeItem('detectedRelationships');
-      setMappingReadyToProceed(true);
-
-      if (selectedModelNames.length > 0) {
-        await fetchMappings({ dryRun: false, resetManual: true });
+      if (mappingDryRunSignature !== currentMappingSignature) {
+        setDetectedMappings([]);
+        setDetectedEntityMappings([]);
+        setMappingReadyToProceed(false);
+        setMappingDryRunStatus('idle');
+        setMappingDryRunError('');
+        setMappingDryRunSignature('');
+        setUnmappedAcknowledged(false);
       }
     }
     if (step === 4 && !mappingReadyToProceed) {
@@ -1054,6 +1572,27 @@ export default function CreateProjectPage() {
     setStep(s => Math.min(5, s + 1));
   };
   const goBack = () => setStep(s => Math.max(1, s - 1));
+
+  const handleDeployMapping = useCallback(async (fieldMappings) => {
+    try {
+      const projectId = createdProject?.id || createdProject?.project_id || 'preview';
+      const result = await api.deployMappings(projectId, fieldMappings);
+      
+      if (result.success) {
+        if (result.project_id && projectId === 'preview') {
+          // Store the created project so we use it moving forward
+          setCreatedProject({ id: result.project_id, project_id: result.project_id });
+        }
+        setMappingReadyToProceed(true);
+        goNext();
+      } else {
+        setMappingError('Deployment returned without success.');
+      }
+    } catch (err) {
+      setMappingError(err.message || 'Deploy failed');
+      console.error('Deploy failed:', err);
+    }
+  }, [createdProject, goNext]);
 
   const updateTableMappingTarget = useCallback((mappingId, nextTarget) => {
     const normalized = String(nextTarget || '').trim();
@@ -1157,7 +1696,7 @@ export default function CreateProjectPage() {
       />
 
       {/* Step content */}
-      <div style={{ flex: 1, padding: '32px', maxWidth: 700 }}>
+      <div style={{ flex: 1, padding: '32px', maxWidth: step === 4 ? 1100 : 700 }}>
         {step === 1 && (
           <StepBasicInfo
             name={name} setName={setName}
@@ -1250,23 +1789,45 @@ export default function CreateProjectPage() {
           />
         )}
         {step === 4 && (
-          <StepMappingOptions
-            autoRelationships={autoRelationships} setAutoRelationships={setAutoRelationships}
-            generateDescriptions={generateDescriptions} setGenerateDescriptions={setGenerateDescriptions}
-            detectedMappings={detectedMappings}
-            mappingLoading={mappingLoading}
-            mappingError={mappingError}
-            selectedModelNames={selectedModelNames}
-            onUpdateTableTarget={updateTableMappingTarget}
-            onUpdateColumnTarget={updateColumnMappingTarget}
-            onRunDryRun={() => fetchMappings({ dryRun: true, resetManual: false })}
-            onClearMappings={() => {
-              setDetectedMappings([]);
-              setDetectedEntityMappings([]);
-            }}
-            onProceedStateChange={setMappingReadyToProceed}
-            primaryTargetConnector={[...targetConnectors][0] || ''}
-          />
+          <ErrorBoundary>
+            <StepMappingOptions
+              autoRelationships={autoRelationships} setAutoRelationships={setAutoRelationships}
+              generateDescriptions={generateDescriptions} setGenerateDescriptions={setGenerateDescriptions}
+              detectedMappings={detectedMappings}
+              mappingLoading={mappingLoading}
+              mappingError={mappingError}
+              dryRunStatus={mappingDryRunStatus}
+              dryRunError={mappingDryRunError}
+              unmappedAcknowledged={unmappedAcknowledged}
+              setUnmappedAcknowledged={setUnmappedAcknowledged}
+              selectedModelNames={selectedModelNames}
+              sourceConnector={sourceConnector}
+              onUpdateTableTarget={updateTableMappingTarget}
+              onUpdateColumnTarget={updateColumnMappingTarget}
+              onRunDryRun={() => fetchMappings({ dryRun: true, resetManual: false })}
+              onClearMappings={() => {
+                setDetectedMappings([]);
+                setDetectedEntityMappings([]);
+              }}
+              onRowsChange={(rows) => {
+                setDetectedEntityMappings(
+                  rows
+                    .filter(r => r.isDirty)
+                    .map(r => ({
+                      id: r.id,
+                      source_path: r.source_path,
+                      entity_kind: r.entity_kind,
+                      source_name: r.source_field,
+                      target_name: r.target_field,
+                      status: r.status,
+                    }))
+                );
+              }}
+              onDeploy={handleDeployMapping}
+              onProceedStateChange={setMappingReadyToProceed}
+              primaryTargetConnector={[...targetConnectors][0] || ''}
+            />
+          </ErrorBoundary>
         )}
         {step === 5 && (
           <StepFinish
@@ -2769,7 +3330,7 @@ function ModelRow({ model, selected, onToggle, indent, showWs }) {
 }
 
 /* ─── Step 4: Mapping Options ─── */
-function StepMappingOptions({
+function StepMappingOptionsOld({
   autoRelationships,
   setAutoRelationships,
   generateDescriptions,
@@ -2777,6 +3338,10 @@ function StepMappingOptions({
   detectedMappings,
   mappingLoading,
   mappingError,
+  dryRunStatus,
+  dryRunError,
+  unmappedAcknowledged,
+  setUnmappedAcknowledged,
   selectedModelNames,
   onUpdateTableTarget,
   onUpdateColumnTarget,
@@ -2786,45 +3351,14 @@ function StepMappingOptions({
   primaryTargetConnector,
 }) {
   const [autoMappingMode, setAutoMappingMode] = useState(true);
-  const [dryRunCompleted, setDryRunCompleted] = useState(false);
-  const [dryRunError, setDryRunError] = useState('');
   const [expandedMapping, setExpandedMapping] = useState(null);
   const [mappingSearch, setMappingSearch] = useState('');
+  const [activeFieldFilter, setActiveFieldFilter] = useState('all');
   const [showOnlyCollisions, setShowOnlyCollisions] = useState(false);
   const [showOnlyEdited, setShowOnlyEdited] = useState(false);
   const [showOnlyExpandedColumns, setShowOnlyExpandedColumns] = useState(true);
-
-  const isSnowflakeTarget = String(primaryTargetConnector || '').toLowerCase() === 'snowflake';
-  const snowflakeReserved = useMemo(() => new Set([
-    'TABLE', 'COLUMN', 'DATE', 'GROUP', 'ORDER', 'JOIN', 'VIEW', 'SELECT', 'FROM', 'WHERE',
-    'AND', 'OR', 'NOT', 'NULL', 'TRUE', 'FALSE', 'AS', 'BY', 'ON', 'IN', 'IS',
-    'HAVING', 'LIMIT', 'OFFSET', 'UNION', 'EXCEPT', 'INTERSECT', 'INTO',
-    'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'DROP', 'ALTER', 'COUNT', 'SUM', 'AVG',
-    'MIN', 'MAX', 'CURRENT', 'SESSION', 'ACCOUNT', 'DATABASE', 'SCHEMA', 'USER', 'ROLE',
-    'WAREHOUSE', 'PRIMARY', 'FOREIGN', 'KEY', 'REFERENCES',
-  ]), []);
-
-  const sanitizeTarget = useCallback((value) => {
-    const raw = String(value || '').trim();
-    if (!raw) return 'UNNAMED';
-    const cleaned = raw
-      .toUpperCase()
-      .replace(/[^A-Z0-9]+/g, '_')
-      .replace(/_+/g, '_')
-      .replace(/^_+|_+$/g, '');
-    const resolved = cleaned || 'UNNAMED';
-    return /^\d/.test(resolved) ? `N_${resolved}` : resolved;
-  }, []);
-
-  const isBlockingTarget = useCallback((target, collisionDetected) => {
-    if (collisionDetected) return false;
-    const resolved = String(target || '').trim();
-    if (!resolved) return true;
-    if (!isSnowflakeTarget) return false;
-    const upper = resolved.toUpperCase();
-    if (snowflakeReserved.has(upper)) return true;
-    return sanitizeTarget(resolved) !== upper;
-  }, [isSnowflakeTarget, sanitizeTarget, snowflakeReserved]);
+  const dryRunCompleted = dryRunStatus === 'success';
+  const dryRunFailed = dryRunStatus === 'failed';
 
   // Get relationships from session storage (read-only)
   const detectedRelationships = (() => {
@@ -2850,46 +3384,70 @@ function StepMappingOptions({
     ));
   }, [detectedMappings, explicitTables]);
 
-  const collisionCount = useMemo(() => {
-    let total = 0;
+  const targetCollisionMap = useMemo(() => {
+    const byTarget = new Map();
     (detectedMappings || []).forEach((mapping) => {
-      if (mapping?.collision_detected) total += 1;
       (mapping?.columns || []).forEach((column) => {
-        if (column?.collision_detected) total += 1;
+        const key = sanitizeMappingName(column?.target);
+        if (!key) return;
+        byTarget.set(key, [...(byTarget.get(key) || []), `${mapping.id}:${column.source}`]);
       });
     });
-    return total;
+    return byTarget;
   }, [detectedMappings]);
 
-  const editedCount = useMemo(() => (
-    (detectedMappings || []).filter((mapping) => String(mapping?.status || '').toLowerCase() === 'manual').length
-  ), [detectedMappings]);
+  const getColumnStatus = useCallback((mapping, column) => {
+    const targetKey = sanitizeMappingName(column?.target);
+    const targetCount = targetKey ? (targetCollisionMap.get(targetKey) || []).length : 0;
+    if (column?.collision_detected || targetCount > 1) return 'collision';
+    if (!String(column?.target || '').trim()) return 'unmapped';
+    const explicit = String(column?.status || '').toLowerCase();
+    if (explicit === 'manual' || column?.auto_resolved) return 'manual';
+    return String(mapping?.status || '').toLowerCase() === 'manual' ? 'manual' : 'auto';
+  }, [targetCollisionMap]);
 
-  const blockingIssueCount = useMemo(() => {
-    let total = 0;
+  const fieldRows = useMemo(() => {
+    const rows = [];
     (detectedMappings || []).forEach((mapping) => {
-      if (isBlockingTarget(mapping?.target, mapping?.collision_detected)) total += 1;
-      (mapping?.columns || []).forEach((column) => {
-        if (isBlockingTarget(column?.target, column?.collision_detected)) total += 1;
+      (mapping?.columns || []).forEach((column, index) => {
+        const status = getColumnStatus(mapping, column);
+        rows.push({
+          id: `${mapping.id || mapping.source}:${column.source || index}`,
+          mappingId: mapping.id,
+          mapping,
+          column,
+          status,
+          sourceTable: resolveSourceTableName(column, mapping.source),
+        });
       });
     });
-    return total;
-  }, [detectedMappings, isBlockingTarget]);
+    return rows;
+  }, [detectedMappings, getColumnStatus]);
 
-  const manualEditLocked = !autoMappingMode && !dryRunCompleted;
+  const fieldCounts = useMemo(() => {
+    const counts = { all: fieldRows.length, auto: 0, manual: 0, unmapped: 0, collision: 0 };
+    fieldRows.forEach((row) => {
+      if (counts[row.status] !== undefined) counts[row.status] += 1;
+    });
+    return counts;
+  }, [fieldRows]);
+
+  const collisionCount = fieldCounts.collision;
+  const unmappedCount = fieldCounts.unmapped;
+  const editedCount = fieldCounts.manual;
+
+  const manualEditLocked = !dryRunCompleted;
 
   useEffect(() => {
-    const ready = autoMappingMode || (dryRunCompleted && blockingIssueCount === 0);
+    const ready = dryRunCompleted && collisionCount === 0 && (unmappedCount === 0 || unmappedAcknowledged);
     onProceedStateChange?.(ready);
-  }, [autoMappingMode, blockingIssueCount, dryRunCompleted, onProceedStateChange]);
+  }, [collisionCount, dryRunCompleted, onProceedStateChange, unmappedAcknowledged, unmappedCount]);
 
   const toggleAutoMappingMode = useCallback(() => {
-    setDryRunError('');
     setExpandedMapping(null);
     setAutoMappingMode((prev) => {
       const next = !prev;
       if (!next) {
-        setDryRunCompleted(false);
         onClearMappings?.();
       }
       return next;
@@ -2897,14 +3455,7 @@ function StepMappingOptions({
   }, [onClearMappings]);
 
   const runDryRun = useCallback(async () => {
-    setDryRunError('');
-    const result = await onRunDryRun?.();
-    if (result?.ok) {
-      setDryRunCompleted(true);
-      return;
-    }
-    setDryRunCompleted(false);
-    setDryRunError(result?.error || 'Dry run failed.');
+    await onRunDryRun?.();
   }, [onRunDryRun]);
 
   const filteredMappings = useMemo(() => {
@@ -2925,15 +3476,19 @@ function StepMappingOptions({
       if (query && !mappingText.includes(query)) return false;
       if (showOnlyCollisions) {
         const hasCollision = Boolean(mapping?.collision_detected)
-          || (mapping?.columns || []).some((column) => column?.collision_detected);
+          || (mapping?.columns || []).some((column) => getColumnStatus(mapping, column) === 'collision');
         if (!hasCollision) return false;
       }
-      if (showOnlyEdited && String(mapping?.status || '').toLowerCase() !== 'manual') {
+      if (showOnlyEdited && !(mapping?.columns || []).some((column) => getColumnStatus(mapping, column) === 'manual')) {
         return false;
+      }
+      if (activeFieldFilter !== 'all') {
+        const hasStatus = (mapping?.columns || []).some((column) => getColumnStatus(mapping, column) === activeFieldFilter);
+        if (!hasStatus) return false;
       }
       return true;
     });
-  }, [detectedMappings, mappingSearch, showOnlyCollisions, showOnlyEdited]);
+  }, [activeFieldFilter, detectedMappings, getColumnStatus, mappingSearch, showOnlyCollisions, showOnlyEdited]);
 
   const filterButtonStyle = {
     display: 'inline-flex',
@@ -2986,36 +3541,56 @@ function StepMappingOptions({
         </div>
 
         {!autoMappingMode && (
-          <div style={{ borderRadius: 8, border: '1px dashed var(--border-main)', padding: 12, display: 'grid', gap: 10 }}>
-            <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-              Dry run is required to validate names against target constraints before manual edits.
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                onClick={runDryRun}
-                disabled={mappingLoading}
-                style={{
-                  ...filterButtonStyle,
-                  background: 'var(--accent-blue)',
-                  color: '#fff',
-                  border: '1px solid var(--accent-blue)',
-                  opacity: mappingLoading ? 0.7 : 1,
-                  cursor: mappingLoading ? 'not-allowed' : 'pointer',
-                }}
-              >
-                {mappingLoading ? 'Running Dry Run...' : 'Run Dry Run'}
-              </button>
-              <span style={{ fontSize: 11, color: dryRunCompleted ? 'var(--color-success)' : 'var(--text-tertiary)' }}>
-                {dryRunCompleted ? 'Dry run complete. Manual editing is unlocked.' : 'Dry run pending.'}
-              </span>
-            </div>
-            {dryRunError && (
-              <div style={{ fontSize: 11, color: 'var(--accent-orange)' }}>{dryRunError}</div>
-            )}
+          <div style={{ borderRadius: 8, border: '1px dashed rgba(245, 158, 11, 0.35)', padding: 12, background: 'rgba(245, 158, 11, 0.08)', fontSize: 12, color: 'var(--accent-orange)' }}>
+            Manual mode active. All mappings must be set explicitly.
           </div>
         )}
       </div>
+
+      {!dryRunCompleted && (
+        <div style={{ borderRadius: 10, border: dryRunFailed ? '1px solid rgba(239, 68, 68, 0.45)' : '1px solid var(--border-main)', padding: 18, background: dryRunFailed ? 'rgba(239, 68, 68, 0.08)' : 'var(--bg-surface)', display: 'grid', gap: 14 }}>
+          <div>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 6px' }}>
+              Dry Run Required
+            </h3>
+            <p style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.6, margin: 0 }}>
+              A dry run is required before you can view and edit field-level mappings. This validates your connector config and selected sources without writing any data.
+            </p>
+          </div>
+          {mappingLoading && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--accent-blue)' }}>
+              <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+              Running dry run validation...
+            </div>
+          )}
+          {dryRunFailed && (
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12, color: 'var(--color-error)', lineHeight: 1.5 }}>
+              <AlertTriangle size={14} style={{ marginTop: 1, flexShrink: 0 }} />
+              <span>{dryRunError || mappingError || 'Dry run failed. Review connector settings and selected sources, then retry.'}</span>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={runDryRun}
+            disabled={mappingLoading}
+            style={{
+              ...filterButtonStyle,
+              width: 'fit-content',
+              background: 'var(--accent-blue)',
+              color: '#fff',
+              border: '1px solid var(--accent-blue)',
+              opacity: mappingLoading ? 0.7 : 1,
+              cursor: mappingLoading ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {mappingLoading ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={13} />}
+            {dryRunFailed ? 'Retry Dry Run' : 'Run Dry Run'}
+          </button>
+        </div>
+      )}
+
+      {!dryRunCompleted ? null : (
+        <>
 
       {/* TABLE MAPPINGS SECTION */}
       <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)' }}>
@@ -3047,6 +3622,77 @@ function StepMappingOptions({
           {mappingError}
         </div>
       )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+        <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)', padding: '14px 16px', display: 'grid', gap: 6 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Source Model</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{explicitTables[0] || 'Selected Sources'}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{fieldCounts.all} fields</div>
+        </div>
+        <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)', padding: '14px 16px', display: 'grid', gap: 6 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Target Model</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{primaryTargetConnector || 'Target Connector'}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{fieldRows.filter(row => String(row.column?.target || '').trim()).length} mapped fields</div>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        {MAPPING_FILTERS.map((filter) => {
+          const count = fieldCounts[filter.id] ?? fieldCounts.all;
+          const active = activeFieldFilter === filter.id;
+          const isCollision = filter.id === 'collision' && count > 0;
+          return (
+            <button
+              key={filter.id}
+              type="button"
+              onClick={() => {
+                setActiveFieldFilter(filter.id);
+                if (filter.id === 'collision') setShowOnlyCollisions(count > 0);
+                else setShowOnlyCollisions(false);
+              }}
+              style={{
+                ...filterButtonStyle,
+                borderRadius: 999,
+                background: active ? (isCollision ? 'rgba(239, 68, 68, 0.16)' : 'var(--accent-blue)20') : 'var(--bg-surface-raised)',
+                color: isCollision ? 'var(--color-error)' : (active ? 'var(--accent-blue)' : 'var(--text-primary)'),
+                border: isCollision ? '1px solid rgba(239, 68, 68, 0.45)' : filterButtonStyle.border,
+              }}
+            >
+              {filter.label} ({count})
+            </button>
+          );
+        })}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ position: 'relative' }}>
+            <Search size={13} style={{ position: 'absolute', left: 8, top: 10, color: 'var(--text-tertiary)' }} />
+            <input
+              value={mappingSearch}
+              onChange={(e) => setMappingSearch(e.target.value)}
+              placeholder="Search fields..."
+              style={{ ...INPUT, width: 240, paddingLeft: 28 }}
+            />
+          </div>
+          <button type="button" onClick={runDryRun} disabled={mappingLoading} style={{ ...filterButtonStyle }}>
+            {mappingLoading ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={13} />}
+            Run Auto-Map
+          </button>
+          <button
+            type="button"
+            disabled={collisionCount > 0 || mappingLoading || (unmappedCount > 0 && !unmappedAcknowledged)}
+            onClick={() => onProceedStateChange?.(collisionCount === 0 && (unmappedCount === 0 || unmappedAcknowledged))}
+            style={{
+              ...filterButtonStyle,
+              background: 'var(--accent-blue)',
+              color: '#fff',
+              border: '1px solid var(--accent-blue)',
+              opacity: collisionCount > 0 || mappingLoading || (unmappedCount > 0 && !unmappedAcknowledged) ? 0.55 : 1,
+            }}
+          >
+            <Rocket size={13} />
+            Deploy Mapping
+          </button>
+        </div>
+      </div>
 
       {detectedMappings.length > 0 && !mappingLoading && (
         <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)' }}>
@@ -3140,11 +3786,11 @@ function StepMappingOptions({
                     <div style={{ fontSize: 10, color: 'var(--text-tertiary)', background: 'var(--border-main)20', padding: '3px 8px', borderRadius: 4 }}>
                       {(mapping.columns || []).length} columns
                     </div>
-                    {mapping.collision_detected && (
+                    {(mapping.collision_detected || (mapping.columns || []).some(column => getColumnStatus(mapping, column) === 'collision')) && (
                       <div
                         style={{
                           padding: '3px 10px', borderRadius: 4,
-                          background: 'rgba(245, 158, 11, 0.14)', color: 'var(--accent-orange)',
+                          background: 'rgba(239, 68, 68, 0.12)', color: 'var(--color-error)',
                           fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
                         }}
                       >
@@ -3200,12 +3846,24 @@ function StepMappingOptions({
                               value={col.target || ''}
                               disabled={manualEditLocked}
                               onChange={(e) => onUpdateColumnTarget?.(mapping.id, col.source, e.target.value)}
-                              style={{ ...INPUT, fontSize: 11, padding: '4px 8px', minWidth: 140, flex: '1 1 180px', opacity: manualEditLocked ? 0.6 : 1 }}
+                              style={{
+                                ...INPUT,
+                                fontSize: 11,
+                                padding: '4px 8px',
+                                minWidth: 140,
+                                flex: '1 1 180px',
+                                opacity: manualEditLocked ? 0.6 : 1,
+                                background: col.auto_resolved ? 'rgba(245, 158, 11, 0.12)' : INPUT.background,
+                                border: getColumnStatus(mapping, col) === 'collision'
+                                  ? '1px solid var(--color-error)'
+                                  : (col.auto_resolved ? '1px solid rgba(245, 158, 11, 0.55)' : INPUT.border),
+                              }}
                             />
                             <span style={{ fontSize: 10, color: 'var(--text-tertiary)', background: 'var(--border-main)20', padding: '1px 6px', borderRadius: 3 }}>
                               {col.type}
                             </span>
                             {col.collision_detected && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--accent-orange)' }}>COLLISION</span>}
+                            {col.auto_resolved && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--accent-orange)' }}>AUTO-RESOLVED</span>}
                             {col.key && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--accent-blue)' }}>🔑 PRIMARY KEY</span>}
                           </div>
                         </div>
@@ -3277,6 +3935,8 @@ function StepMappingOptions({
           </p>
         </div>
       )}
+        </>
+      )}
 
       {/* OPTIONS */}
       <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)' }}>
@@ -3297,11 +3957,25 @@ function StepMappingOptions({
         </div>
       </div>
 
+      {dryRunCompleted && unmappedCount > 0 && (
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: 12, borderRadius: 8, background: 'rgba(245, 158, 11, 0.10)', border: '1px solid rgba(245, 158, 11, 0.35)', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={unmappedAcknowledged}
+            onChange={(e) => setUnmappedAcknowledged?.(e.target.checked)}
+            style={{ marginTop: 2 }}
+          />
+          <span style={{ fontSize: 12, color: 'var(--accent-orange)', lineHeight: 1.5 }}>
+            Acknowledge {unmappedCount} unmapped field{unmappedCount === 1 ? '' : 's'} as intentional.
+          </span>
+        </label>
+      )}
+
       <div style={{ padding: 12, borderRadius: 8, background: 'var(--accent-blue)08', border: '1px solid var(--accent-blue)20' }}>
         <p style={{ fontSize: 11, color: 'var(--accent-blue)', margin: 0, lineHeight: 1.6 }}>
-          {autoMappingMode || (dryRunCompleted && blockingIssueCount === 0)
-            ? '✓ Ready to proceed: Mapping validation is complete for the current mode. Click "Continue" to move to the next step.'
-            : `⚠ Action required: Run dry run and resolve ${blockingIssueCount} blocking issue(s) before continuing.`}
+          {dryRunCompleted && collisionCount === 0 && (unmappedCount === 0 || unmappedAcknowledged)
+            ? 'Ready to proceed: dry run is complete and mapping validation is clear. Click Continue to move to the next step.'
+            : `Action required: ${dryRunCompleted ? `resolve ${collisionCount} collision/error row(s) and ${unmappedCount} unmapped row(s).` : 'run dry run before continuing.'}`}
         </p>
       </div>
     </div>
@@ -3454,3 +4128,616 @@ function footerBtn(variant) {
 function escapeYamlString(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
+
+function FlowCard({ label, model }) {
+  const connector = getConnectorPresentation(model.type);
+  return (
+    <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)', padding: '14px 16px', display: 'grid', gap: 8 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>{label}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ width: 30, height: 30, borderRadius: 8, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: `${connector.accent}1f`, color: connector.accent, border: `1px solid ${connector.accent}33` }}>
+          {connector.icon}
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{model.name}</div>
+          <div style={{ marginTop: 2, fontSize: 12, color: 'var(--text-tertiary)' }}>{connector.label} · {model.field_count} fields</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CenteredNotice({ icon = null, text }) {
+  return (
+    <div style={{ padding: '38px 0', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--text-tertiary)', fontSize: 13 }}>
+      {icon}
+      <span>{text}</span>
+    </div>
+  );
+}
+
+function DryRunCTA({ mappingLoading, dryRunFailed, dryRunError, mappingError, onRunDryRun }) {
+  return (
+    <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)', padding: '34px 18px', display: 'grid', justifyItems: 'center', gap: 14, textAlign: 'center' }}>
+      <div style={{ width: 44, height: 44, borderRadius: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--accent-blue)18', color: 'var(--accent-blue)', border: '1px solid var(--accent-blue)30' }}>
+        <Play size={20} />
+      </div>
+      <div style={{ display: 'grid', gap: 5 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Run a dry run to generate field-level mappings.</div>
+        <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.55, maxWidth: 460 }}>
+          A dry run validates your connector config and selected sources without writing any data.
+        </div>
+      </div>
+      {dryRunFailed && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--color-error)', lineHeight: 1.5 }}>
+          <AlertTriangle size={13} style={{ color: 'var(--color-error)' }} />
+          <span>{dryRunError || mappingError || 'Dry run failed. Review connector settings and selected sources, then retry.'}</span>
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={onRunDryRun}
+        disabled={mappingLoading}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 7,
+          padding: '9px 14px',
+          borderRadius: 8,
+          background: 'var(--accent-blue)',
+          color: '#fff',
+          border: '1px solid var(--accent-blue)',
+          fontSize: 12,
+          fontWeight: 700,
+          cursor: mappingLoading ? 'not-allowed' : 'pointer',
+          opacity: mappingLoading ? 0.7 : 1,
+        }}
+      >
+        {mappingLoading ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={13} />}
+        Run Dry Run
+      </button>
+    </div>
+  );
+}
+
+function useFieldMappings({ rows, filteredRows }) {
+  const [page, setPage] = useState(0);
+  const pageSize = 50;
+  const requiresPagination = filteredRows.length > 1000;
+  const pageCount = requiresPagination ? Math.max(1, Math.ceil(filteredRows.length / pageSize)) : 1;
+
+  useEffect(() => {
+    setPage(0);
+  }, [filteredRows.length]);
+
+  const visibleRows = useMemo(() => {
+    if (!requiresPagination) return filteredRows;
+    const start = page * pageSize;
+    return filteredRows.slice(start, start + pageSize);
+  }, [filteredRows, page, requiresPagination]);
+
+  return {
+    totalCount: rows.length,
+    filteredCount: filteredRows.length,
+    visibleRows,
+    page,
+    pageCount,
+    pageSize,
+    requiresPagination,
+    setPage,
+  };
+}
+
+function StepMappingOptions({
+  autoRelationships,
+  setAutoRelationships,
+  generateDescriptions,
+  setGenerateDescriptions,
+  detectedMappings,
+  mappingLoading,
+  mappingError,
+  dryRunStatus,
+  dryRunError,
+  unmappedAcknowledged,
+  setUnmappedAcknowledged,
+  selectedModelNames,
+  sourceConnector,
+  onRunDryRun,
+  onClearMappings,
+  onRowsChange,
+  onProceedStateChange,
+  primaryTargetConnector,
+}) {
+  const [autoMappingMode, setAutoMappingMode] = useState(true);
+  const [rows, setRows] = useState([]);
+  const [search, setSearch] = useState('');
+  const [activeFilter, setActiveFilter] = useState('all');
+  const dryRunCompleted = dryRunStatus === 'success';
+  const dryRunFailed = dryRunStatus === 'failed';
+  const hasDryRunResult = dryRunCompleted;
+  const showInitialDryRunCTA = !mappingLoading && !hasDryRunResult && rows.length === 0;
+  const showMappingControls = !mappingLoading && hasDryRunResult && rows.length > 0;
+
+  useEffect(() => {
+    onRowsChange?.(rows);
+  }, [rows]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const blockingCount = useMemo(
+    () => rows.filter((row) => isBlockingRow(row)).length,
+    [rows],
+  );
+
+  const sourceModel = useMemo(() => ({
+    name: selectedModelNames?.[0] || 'Selected Sources',
+    type: sourceConnector || 'Source Model',
+    field_count: rows.length,
+  }), [rows.length, selectedModelNames, sourceConnector]);
+
+  const targetModel = useMemo(() => ({
+    name: primaryTargetConnector || 'Target Model',
+    type: primaryTargetConnector || 'Target Connector',
+    field_count: rows.filter(row => String(row.target_field || '').trim()).length,
+  }), [primaryTargetConnector, rows]);
+
+  const explicitTables = useMemo(() => (
+    Array.from(new Set((selectedModelNames || []).map(name => String(name || '').trim()).filter(Boolean)))
+  ), [selectedModelNames]);
+
+  const inferredTables = useMemo(() => {
+    const explicitUpper = new Set(explicitTables.map(name => name.toUpperCase()));
+    const rowTables = rows.flatMap((row) => {
+      if (row.field_type === 'measure') return Array.isArray(row.measure_source_tables) ? row.measure_source_tables : [];
+      return row.source_table_name ? [row.source_table_name] : [];
+    });
+    return Array.from(new Set(
+      rowTables
+        .map(name => String(name || '').trim())
+        .filter(Boolean)
+        .filter(name => !explicitUpper.has(name.toUpperCase()))
+    ));
+  }, [explicitTables, rows]);
+
+  const counts = useMemo(() => {
+    const summary = { all: rows.length, auto: 0, manual: 0, unmapped: 0, collision: 0 };
+    rows.forEach(row => {
+      if (summary[row.status] !== undefined) summary[row.status] += 1;
+    });
+    return summary;
+  }, [rows]);
+
+  const filteredRows = useMemo(() => {
+    const query = String(search || '').trim().toLowerCase();
+    return rows.filter((row) => {
+      if (activeFilter !== 'all' && row.status !== activeFilter) return false;
+      if (!query) return true;
+      const haystack = [
+        row.source_field,
+        row.target_field,
+        row.validation_message,
+        row.field_type,
+        Array.isArray(row.measure_source_tables) ? row.measure_source_tables.join(' ') : '',
+        row.source_table_name,
+        row.measure_expression,
+      ].join(' ').toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [activeFilter, rows, search]);
+
+  const fieldMappings = useFieldMappings({ rows, filteredRows });
+
+  const readyToProceed = autoMappingMode
+    ? blockingCount === 0
+    : dryRunCompleted && blockingCount === 0;
+
+  useEffect(() => {
+    onProceedStateChange?.(readyToProceed);
+  }, [readyToProceed]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggleAutoMappingMode = useCallback(() => {
+    setAutoMappingMode((prev) => {
+      const next = !prev;
+      if (!next) {
+        onClearMappings?.();
+        setRows([]);
+        setActiveFilter('all');
+      }
+      return next;
+    });
+  }, [onClearMappings]);
+
+  const runDryRun = useCallback(async () => {
+    const result = await onRunDryRun?.();
+    if (result?.ok) {
+      const responseData = result.response ?? result;
+      const nextRows = normalizeRows(responseData);
+      console.log(`[MAPPING] Source fields in response: ${countResponseFields(responseData)}, Rows produced: ${nextRows.length}`);
+      setRows(nextRows);
+      if (nextRows.length > 0) setActiveFilter('all');
+    }
+  }, [onRunDryRun]);
+
+  const handleInlineTargetChange = useCallback((rowId, value) => {
+    const projectId = 'preview'; // Replace with real one if accessible, but endpoints handle preview
+    // Optimistic update
+    setRows((prev) => prev.map((row) => {
+      if (row.id !== rowId) return row;
+      const validation = validateTargetName(value, primaryTargetConnector, row.source_type, row.target_type);
+      if (validation.isValid) {
+        return {
+          ...row,
+          target_field: value,
+          status: 'manual',
+          validation_status: 'valid',
+          validation_code: 'OK',
+          validation_message: '',
+          suggested_target_name: validation.suggestion,
+          collision_detected: false,
+          isDirty: true,
+        };
+      }
+      return {
+        ...row,
+        target_field: value,
+        status: 'collision',
+        validation_status: 'invalid',
+        validation_code: 'INVALID_IDENTIFIER',
+        validation_message: validation.error,
+        suggested_target_name: validation.suggestion,
+        collision_detected: true,
+        isDirty: true,
+      };
+    }));
+
+    // Call API
+    api.updateMapping(projectId, rowId, value).catch(err => {
+      console.error('Failed to update mapping:', err);
+      // Let user know mapping failed. We would normally rollback here, but a toast or error state works.
+    });
+  }, [primaryTargetConnector]);
+
+
+  const applySuggestion = useCallback((rowId) => {
+    setRows((prev) => prev.map((row) => {
+      if (row.id !== rowId) return row;
+      const suggested = String(row.suggested_target_name || '').trim();
+      if (!suggested) return row;
+      return {
+        ...row,
+        target_field: suggested,
+        status: 'manual',
+        validation_status: 'valid',
+        validation_code: 'OK',
+        validation_message: '',
+        collision_detected: false,
+        isDirty: true,
+      };
+    }));
+  }, []);
+
+  const readiness = (() => {
+    if (!autoMappingMode && !dryRunCompleted) {
+      return {
+        message: '\u26A0 Run dry run to unlock manual editing.',
+        background: 'rgba(245, 158, 11, 0.10)',
+        border: '1px solid rgba(245, 158, 11, 0.35)',
+        color: 'var(--accent-orange)',
+      };
+    }
+    if (blockingCount > 0) {
+      return {
+        message: `\u26A0 Resolve ${blockingCount} blocking row(s) before continuing.`,
+        background: 'rgba(239, 68, 68, 0.10)',
+        border: '1px solid rgba(239, 68, 68, 0.35)',
+        color: 'var(--color-error)',
+      };
+    }
+    return {
+      message: '\u2713 Ready to proceed \u2014 mapping validation complete.',
+      background: 'var(--accent-blue)08',
+      border: '1px solid var(--accent-blue)25',
+      color: 'var(--accent-blue)',
+    };
+  })();
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div>
+        <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Mapping Options & Verification</h2>
+        <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
+          Review field-level mappings, resolve validation issues, and keep manual overrides synced before project creation.
+        </p>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
+        <FlowCard label="Source Model" model={sourceModel} />
+        <FlowCard label="Target Model" model={targetModel} />
+      </div>
+
+      {showMappingControls && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <div className="filter-tabs">
+            <button className={`filter-tab ${activeFilter === 'all' ? 'active' : ''}`} onClick={() => setActiveFilter('all')}>
+              All ({counts.all})
+            </button>
+            <button className={`filter-tab ${activeFilter === 'auto' ? 'active' : ''}`} onClick={() => setActiveFilter('auto')}>
+              Auto ({counts.auto})
+            </button>
+            <button className={`filter-tab ${activeFilter === 'manual' ? 'active' : ''}`} onClick={() => setActiveFilter('manual')}>
+              Manual ({counts.manual})
+            </button>
+            <button className={`filter-tab ${activeFilter === 'unmapped' ? 'active' : ''}`} onClick={() => setActiveFilter('unmapped')}>
+              Unmapped ({counts.unmapped})
+            </button>
+            <button className={`filter-tab collision-tab ${activeFilter === 'collision' ? 'active' : ''}`} onClick={() => setActiveFilter('collision')}>
+              Collision/Error ({counts.collision})
+            </button>
+          </div>
+
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ position: 'relative' }}>
+              <Search size={13} style={{ position: 'absolute', left: 8, top: 8, color: 'var(--text-tertiary)' }} />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search fields..."
+                style={{
+                  ...INPUT,
+                  padding: '6px 10px 6px 28px',
+                  width: 240,
+                }}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={runDryRun}
+              disabled={mappingLoading}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '8px 12px',
+                borderRadius: 8,
+                border: '1px solid var(--border-main)',
+                background: 'var(--bg-surface-raised)',
+                color: 'var(--text-primary)',
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: mappingLoading ? 'not-allowed' : 'pointer',
+                opacity: mappingLoading ? 0.65 : 1,
+              }}
+            >
+              {mappingLoading ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <RefreshCw size={13} />}
+              Run Auto-Map
+            </button>
+            <button
+              type="button"
+              disabled={counts.collision > 0 || mappingLoading || (counts.unmapped > 0 && !unmappedAcknowledged)}
+              onClick={() => {
+                if (onDeploy) onDeploy(rows);
+                else onProceedStateChange?.(counts.collision === 0 && (counts.unmapped === 0 || unmappedAcknowledged));
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '8px 12px',
+                borderRadius: 8,
+                background: 'var(--accent-blue)',
+                color: '#fff',
+                border: '1px solid var(--accent-blue)',
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: counts.collision > 0 || mappingLoading || (counts.unmapped > 0 && !unmappedAcknowledged) ? 'not-allowed' : 'pointer',
+                opacity: counts.collision > 0 || mappingLoading || (counts.unmapped > 0 && !unmappedAcknowledged) ? 0.55 : 1,
+              }}
+            >
+              <Rocket size={13} />
+              Deploy Mapping
+            </button>
+          </div>
+        </div>
+      )}
+
+      {mappingError && !mappingLoading && !dryRunFailed && (
+        <div style={{ border: '1px solid rgba(239, 68, 68, 0.45)', background: 'rgba(239, 68, 68, 0.12)', color: 'var(--color-error)', borderRadius: 8, padding: '10px 12px', fontSize: 12 }}>
+          {mappingError}
+        </div>
+      )}
+
+      {showInitialDryRunCTA ? (
+        <DryRunCTA
+          mappingLoading={mappingLoading}
+          dryRunFailed={dryRunFailed}
+          dryRunError={dryRunError}
+          mappingError={mappingError}
+          onRunDryRun={runDryRun}
+        />
+      ) : mappingLoading ? (
+        <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)' }}>
+          <CenteredNotice icon={<Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />} text="Running auto-map validation..." />
+        </div>
+      ) : (
+        <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, overflow: 'hidden', background: 'var(--bg-surface)' }}>
+          {rows.length > 0 && (
+            <>
+              <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-main)', fontSize: 11, color: 'var(--text-tertiary)', background: 'var(--bg-surface)' }}>
+                Showing {fieldMappings.visibleRows.length} of {fieldMappings.filteredCount} field{fieldMappings.filteredCount === 1 ? '' : 's'}
+                {fieldMappings.filteredCount !== fieldMappings.totalCount ? ` (${fieldMappings.totalCount} total)` : ''}
+              </div>
+              {/* Header Row */}
+              <div className="mapping-header">
+                <div>Source Field</div>
+                <div>Target Field</div>
+                <div>Status</div>
+              </div>
+            </>
+          )}
+
+          {filteredRows.length === 0 ? (
+            rows.length > 0 ? (
+              <div style={{ padding: '38px 0', display: 'grid', justifyItems: 'center', gap: 5, color: 'var(--text-tertiary)', fontSize: 13 }}>
+                <div style={{ color: 'var(--text-primary)', fontWeight: 700 }}>No rows match the current filters.</div>
+                <div>Clear search or change the active filter.</div>
+              </div>
+            ) : (
+              <CenteredNotice text="Dry run completed, but no field-level mappings were returned." />
+            )
+          ) : (
+            fieldMappings.visibleRows.map((row) => (
+              <div key={row.id} className="mapping-row">
+                {/* Source Field Column */}
+                <div className="source-column">
+                  <div className="field-name">{row.source_field}</div>
+                  <div className="badge-group">
+                    <TypeBadge type={row.source_type} />
+                    <span className="badge-secondary">Column</span>
+                    <span className="badge-table">Table: {row.source_table_name}</span>
+                  </div>
+                </div>
+
+                {/* Target Field Column */}
+                <div className="target-column">
+                  <input
+                    type="text"
+                    className="target-input"
+                    value={row.target_field || ''}
+                    onChange={(e) => handleInlineTargetChange(row.id, e.target.value)}
+                    placeholder="Map to target field..."
+                    disabled={!dryRunCompleted && !autoMappingMode}
+                  />
+                  {row.target_type && <TypeBadge type={row.target_type} />}
+                </div>
+
+                {/* Status Column */}
+                <div className="status-column">
+                  <span className={`status-badge status-${row.status}`}>
+                    {row.status === 'auto' ? 'Auto' : 
+                     row.status === 'manual' ? 'Manual' :
+                     row.status === 'unmapped' ? 'Unmapped' : 'Collision'}
+                  </span>
+                </div>
+              </div>
+            ))
+          )}
+          {fieldMappings.requiresPagination && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 12px', borderTop: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)', fontSize: 12, color: 'var(--text-secondary)' }}>
+              <span>
+                Page {fieldMappings.page + 1} of {fieldMappings.pageCount}
+              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  type="button"
+                  disabled={fieldMappings.page === 0}
+                  onClick={() => fieldMappings.setPage((current) => Math.max(0, current - 1))}
+                  style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-surface)', color: 'var(--text-primary)', fontSize: 12, cursor: fieldMappings.page === 0 ? 'not-allowed' : 'pointer', opacity: fieldMappings.page === 0 ? 0.5 : 1 }}
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  disabled={fieldMappings.page >= fieldMappings.pageCount - 1}
+                  onClick={() => fieldMappings.setPage((current) => Math.min(fieldMappings.pageCount - 1, current + 1))}
+                  style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-surface)', color: 'var(--text-primary)', fontSize: 12, cursor: fieldMappings.page >= fieldMappings.pageCount - 1 ? 'not-allowed' : 'pointer', opacity: fieldMappings.page >= fieldMappings.pageCount - 1 ? 0.5 : 1 }}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {dryRunCompleted && counts.unmapped > 0 && (
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: 12, borderRadius: 8, background: 'rgba(245, 158, 11, 0.10)', border: '1px solid rgba(245, 158, 11, 0.35)', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={unmappedAcknowledged}
+            onChange={(e) => setUnmappedAcknowledged?.(e.target.checked)}
+            style={{ marginTop: 2 }}
+          />
+          <span style={{ fontSize: 12, color: 'var(--accent-orange)', lineHeight: 1.5 }}>
+            Acknowledge {counts.unmapped} unmapped field{counts.unmapped === 1 ? '' : 's'} as intentional.
+          </span>
+        </label>
+      )}
+
+      <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)' }}>
+        <h3 style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 12px' }}>Transformation Options</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ borderRadius: 8, border: '1px solid var(--border-main)', padding: 12, background: 'var(--bg-main)', display: 'grid', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Auto-Detect Mapping</div>
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                  Switch off to enter manual override mode. Manual mode requires a successful dry run.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={toggleAutoMappingMode}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                  padding: '8px 12px',
+                  borderRadius: 8,
+                  minWidth: 180,
+                  background: autoMappingMode ? 'var(--color-success-bg)' : 'rgba(245, 158, 11, 0.14)',
+                  color: autoMappingMode ? 'var(--color-success)' : 'var(--accent-orange)',
+                  border: autoMappingMode ? '1px solid rgba(34, 197, 94, 0.35)' : '1px solid rgba(245, 158, 11, 0.35)',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                {autoMappingMode ? 'AUTO MODE ON' : 'MANUAL MODE'}
+              </button>
+            </div>
+
+            {!autoMappingMode && (
+              <div style={{ borderRadius: 8, border: '1px dashed rgba(245, 158, 11, 0.35)', padding: 10, background: 'rgba(245, 158, 11, 0.08)', fontSize: 12, color: 'var(--accent-orange)' }}>
+                Manual mode active. Run dry run, then edit target fields directly.
+              </div>
+            )}
+          </div>
+
+          <div style={{ borderRadius: 8, border: '1px solid var(--border-main)', padding: 12, background: 'var(--bg-main)', display: 'grid', gap: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Scope Verification</div>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+              Extraction will include selected sources and validated field-level mappings.
+            </div>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                <strong>Explicitly selected:</strong> {explicitTables.length > 0 ? explicitTables.join(', ') : 'None'}
+              </div>
+              <div style={{ fontSize: 11, color: inferredTables.length > 0 ? 'var(--accent-orange)' : 'var(--text-secondary)' }}>
+                <strong>Inferred from mapping:</strong> {inferredTables.length > 0 ? inferredTables.join(', ') : 'None'}
+              </div>
+            </div>
+          </div>
+
+          <ToggleOption
+            label="Auto-detect Relationships"
+            description="Automatically infer joins and relationships from foreign keys and naming conventions."
+            checked={autoRelationships}
+            onChange={setAutoRelationships}
+          />
+          <ToggleOption
+            label="Generate AI Descriptions"
+            description="Use the LLM to auto-generate descriptions for tables and fields during sync."
+            checked={generateDescriptions}
+            onChange={setGenerateDescriptions}
+          />
+        </div>
+      </div>
+
+      <div style={{ padding: 12, borderRadius: 8, background: readiness.background, border: readiness.border }}>
+        <p style={{ fontSize: 11, color: readiness.color, margin: 0, lineHeight: 1.6, fontWeight: 700 }}>
+          {readiness.message}
+        </p>
+      </div>
+    </div>
+  );
+}
+

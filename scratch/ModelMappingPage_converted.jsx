@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Check, Cloud, Database, FileCode2, Loader2, Play, RefreshCw, Rocket, Search, Snowflake } from 'lucide-react';
 import { parseDocument as parseYamlDocument } from 'yaml';
 import SearchableSelect from '../components/common/SearchableSelect';
@@ -987,7 +987,7 @@ function FlowCard({ label, model }) {
         </div>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{model.name}</div>
-          <div style={{ marginTop: 2, fontSize: 12, color: 'var(--text-tertiary)' }}>{connector.label} · {model.field_count} fields</div>
+          <div style={{ marginTop: 2, fontSize: 12, color: 'var(--text-tertiary)' }}>{connector.label} ┬╖ {model.field_count} fields</div>
         </div>
       </div>
     </div>
@@ -1002,3 +1002,4 @@ function CenteredNotice({ icon = null, text }) {
     </div>
   );
 }
+
