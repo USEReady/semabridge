@@ -2133,6 +2133,7 @@ class ExecutionEngine:
             "tmsl": sf.tmsl_definition,
             "workspace_id": ws_id,
             "dataset_id": ds_id,
+            "display_name": sf.dataset_name,
         }
         osi_model = TMSLToOSIConverter().to_osi(source_data)
         context.osi_model = osi_model  # Store on context for step-7 persistence
