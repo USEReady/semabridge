@@ -272,6 +272,28 @@ export const api = {
         return handleResponse(res);
     },
 
+    // ── API Secrets ────────────────────────────────────────────────────────
+    async listSecrets() {
+        const res = await authFetch(`${API_BASE_URL}/secrets`);
+        return handleResponse(res);
+    },
+
+    async saveSecret(payload) {
+        const res = await authFetch(`${API_BASE_URL}/secrets`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res);
+    },
+
+    async deleteSecret(key) {
+        const res = await authFetch(`${API_BASE_URL}/secrets/${encodeURIComponent(key)}`, {
+            method: 'DELETE',
+        });
+        return handleResponse(res);
+    },
+
     // ── Auth & Identity Vault ──────────────────────────────────────────────
     async getAccounts(connectorType = '') {
         const query = connectorType ? `?connector_type=${encodeURIComponent(connectorType)}` : '';

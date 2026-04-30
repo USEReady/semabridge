@@ -717,6 +717,7 @@ function ConnectionManager({ type, title, subtitle, icon: Icon, color, FormCompo
     const [accounts, setAccounts] = useState([]);
     const [isAdding, setIsAdding] = useState(false);
     const [newTag, setNewTag] = useState('');
+    const [searchQuery, setSearchQuery] = useState('');
     const { addLog } = useLogs();
 
     useEffect(() => {
@@ -781,6 +782,10 @@ function ConnectionManager({ type, title, subtitle, icon: Icon, color, FormCompo
         }
     };
 
+    const filteredAccounts = accounts.filter(acc => 
+        (acc.tag || '').toLowerCase().includes(searchQuery.toLowerCase())
+    );
+
     return (
         <div className="mb-8">
             <div className="mb-4">
@@ -789,6 +794,17 @@ function ConnectionManager({ type, title, subtitle, icon: Icon, color, FormCompo
                     <h2 className="text-sm font-bold text-white">{title}</h2>
                 </div>
                 <p className="text-xs text-gray-400">{subtitle}</p>
+            </div>
+
+            {/* Search Bar */}
+            <div className="mb-3">
+                <input 
+                    type="text"
+                    placeholder="Search by tag..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full bg-[#131620] border border-gray-700/50 px-3 py-2 rounded-lg text-xs outline-none focus:border-indigo-500/50 text-gray-300 transition-colors"
+                />
             </div>
 
             {/* List Header */}
@@ -806,8 +822,12 @@ function ConnectionManager({ type, title, subtitle, icon: Icon, color, FormCompo
                     <div className="p-6 text-center text-xs text-gray-500 border border-gray-800 rounded-lg">
                         No identities configured yet. Ensure to add an account to sync.
                     </div>
+                ) : filteredAccounts.length === 0 ? (
+                    <div className="p-6 text-center text-xs text-gray-500 border border-gray-800 rounded-lg">
+                        No accounts match your search.
+                    </div>
                 ) : (
-                    accounts.map(acc => (
+                    filteredAccounts.map(acc => (
                         <div key={acc.id} className="grid grid-cols-3 gap-4 items-center px-4 py-3 bg-[#131620] border border-gray-100/10 rounded-lg hover:border-gray-100/20 transition-colors">
                             <div className="text-xs text-gray-400 truncate">{acc.identity}</div>
                             <div className="text-xs font-bold text-[#e2e8f0] truncate">{acc.tag}</div>

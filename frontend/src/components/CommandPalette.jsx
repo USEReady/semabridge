@@ -197,9 +197,10 @@ export default function CommandPalette({
                         type="button"
                         onClick={() => setRegexEnabled(!regexEnabled)}
                         title={regexEnabled ? 'Regex enabled' : 'Regex disabled'}
+                        className="hover:opacity-80 transition-opacity"
                         style={{
-                            width: 22,
-                            height: 22,
+                            width: 24,
+                            height: 24,
                             borderRadius: 6,
                             border: '1px solid var(--border-main)',
                             background: regexEnabled ? 'var(--accent-blue)18' : 'var(--bg-surface)',
@@ -211,9 +212,16 @@ export default function CommandPalette({
                             flexShrink: 0,
                         }}
                     >
-                        <Regex size={12} />
+                        <Regex size={14} />
                     </button>
-                    <kbd className="px-1.5 py-0.5 rounded bg-surface-raised border border-main text-[9px] font-mono text-tertiary">ESC</kbd>
+                    <button 
+                        onClick={onClose}
+                        className="px-1.5 py-0.5 rounded border border-main text-[9px] font-mono text-tertiary cursor-pointer hover:text-white transition-colors"
+                        style={{ background: 'var(--bg-surface-raised)' }}
+                        title="Close (ESC)"
+                    >
+                        ESC
+                    </button>
                 </div>
                 {regexError && (
                     <div className="px-4 py-1 text-[10px]" style={{ color: 'var(--color-error)', borderBottom: '1px solid var(--border-main)' }}>

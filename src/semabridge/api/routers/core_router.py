@@ -6,6 +6,7 @@ from semabridge.api.controllers.health_controller import router as health_router
 from semabridge.api.controllers.history_controller import router as history_router
 from semabridge.api.controllers.model_controller import router as model_router
 from semabridge.api.controllers.semantic_controller import router as semantic_router
+from semabridge.api.controllers.secrets_controller import router as secrets_router
 
 router = APIRouter()
 
@@ -16,5 +17,6 @@ for child_router in [
     model_router,
     config_router,
     history_router,
+    secrets_router,
 ]:
     router.include_router(child_router)

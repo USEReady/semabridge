@@ -89,7 +89,7 @@ export function ProjectWizard({ editMode = false, initialData = null, onSaveConf
 
   const [globalStatus, setGlobalStatus] = useState(null);
   useEffect(() => {
-    api.getGlobalStatus().then(status => setGlobalStatus(status)).catch(() => {});
+    api.getConnectionsStatus().then(status => setGlobalStatus(status)).catch(() => {});
   }, []);
 
   const isConfigured = (connectorValue) => {
@@ -1218,6 +1218,7 @@ export function ProjectWizard({ editMode = false, initialData = null, onSaveConf
             tags={tags} setTags={setTags}
             tagInput={tagInput} setTagInput={setTagInput}
             showValidation={showStep1Validation}
+            isConfigured={isConfigured}
           />
         )}
         {step === 2 && (
@@ -1320,6 +1321,7 @@ export function ProjectWizard({ editMode = false, initialData = null, onSaveConf
         )}
         {step === 5 && (
           <StepFinish
+            editMode={editMode}
             name={name}
             saving={saving}
             createdProject={createdProject}
@@ -1403,6 +1405,7 @@ function StepBasicInfo({
   tagInput,
   setTagInput,
   showValidation,
+  isConfigured,
 }) {
   // Validation state
   const isNameEmpty = name.trim().length === 0;
@@ -3399,6 +3402,7 @@ function ToggleOption({ label, description, checked, onChange }) {
 
 /* ─── Step 5: Finish ─── */
 function StepFinish({
+  editMode,
   name,
   saving,
   createReverseProject,

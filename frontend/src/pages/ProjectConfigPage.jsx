@@ -27,6 +27,12 @@ const INPUT = {
 
 const LABEL = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 };
 
+const primaryBtn = {
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+  padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+  background: 'var(--accent-blue)', color: '#fff', border: 'none', transition: 'opacity 0.2s',
+};
+
 function pad2(value) {
   return String(value).padStart(2, '0');
 }
@@ -1452,7 +1458,7 @@ export default function ProjectConfigPage() {
                     setYamlText(res.yaml);
                     return res;
                   } catch (err) {
-                    addLog('error', \Wizard save failed: \\);
+                    addLog('error', `Wizard save failed: ${err?.message || 'Unknown error'}`);
                     throw err;
                   }
                 }}
