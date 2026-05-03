@@ -1,5 +1,21 @@
 from semabridge.api.services.project_shared import *
 
+def _clear_project_mapping_cache(project_id: str) -> None:
+    """Clear compat mapping cache entries for a project after config creation/save."""
+    pid = str(project_id or "").strip()
+    if not pid:
+        return
+    removed = 0
+    for mapping_id, mapping in list(_compat_mappings.items()):
+        if not isinstance(mapping, dict):
+            continue
+        if str(mapping.get("project_id") or "").strip() != pid:
+            continue
+        _compat_mappings.pop(mapping_id, None)
+        removed += 1
+    if removed:
+        logger.info("Cleared %s cached mapping row(s) for project %s after config write", removed, pid)
+
 
 def _project_display_name_from_cfg(project_cfg: Dict[str, Any], fallback: str) -> str:
     if not isinstance(project_cfg, dict):
@@ -132,21 +148,18 @@ async def create_project_compat(request: dict):
     src_type = (src.get("type") or payload.get("source_type") or "fabric").strip().lower()
     ws_id = str(src.get("workspace_id") or payload.get("workspace_id") or "").strip()
 
-    # Idempotency guard: if a project with same name/source/workspace already exists,
-    # return it instead of creating a duplicate entry.
-    if payload_name:
-        for existing in _compat_projects.values():
-            ex_name = _compat_clean_project_name(existing.get("name"), "")
-            ex_src = str(existing.get("source") or existing.get("adapter") or "").strip().lower()
-            ex_ws = str(existing.get("workspace_id") or "").strip()
-            if ex_name == payload_name and ex_src == src_type and ex_ws == ws_id:
-                existing["updated_at"] = _compat_now_iso()
-                _compat_projects[str(existing.get("id") or existing.get("project_id"))] = existing
-                return existing
+    # Always create a distinct project record for create requests.
+    # Projects that target the same semantic model/workspace must not share
+    # mapping state implicitly, because each project can have different naming.
 
     safe_name = re.sub(r'[^a-zA-Z0-9_]+', '-', payload_name.lower()).strip('-')
     default_id = f"proj-{safe_name}" if safe_name else f"proj-{int(_time.time() * 1000)}"
-    project_id = str(payload.get("id") or payload.get("project_id") or default_id)
+    requested_id = str(payload.get("id") or payload.get("project_id") or default_id).strip()
+    project_id = requested_id or default_id
+    if project_id in _compat_projects:
+        # Avoid reusing an existing project's mapping cache/state when the user
+        # creates another project with the same semantic model/name.
+        project_id = f"{project_id}-{int(_time.time() * 1000)}"
     project = _compat_project_payload(project_id, payload)
     _compat_projects[project_id] = project
 
@@ -156,6 +169,7 @@ async def create_project_compat(request: dict):
         _compat_project_configs[project_id] = normalized_yaml
         try:
             _compat_save_project_yaml_text(project_id, normalized_yaml)
+            _clear_project_mapping_cache(project_id)
         except Exception as exc:
             logger.warning("Failed to persist project config for %s: %s", project_id, exc)
     else:
@@ -166,6 +180,7 @@ async def create_project_compat(request: dict):
         _compat_project_configs.setdefault(project_id, normalized_yaml)
         try:
             _compat_save_project_yaml_text(project_id, normalized_yaml)
+            _clear_project_mapping_cache(project_id)
         except Exception as exc:
             logger.warning("Failed to initialize project config file for %s: %s", project_id, exc)
 
@@ -299,6 +314,7 @@ async def save_project_config_compat(project_id: str, payload: dict):
     _compat_project_configs[project_id] = yaml_text
     try:
         _compat_save_project_yaml_text(project_id, yaml_text)
+        _clear_project_mapping_cache(project_id)
     except Exception as exc:
         logger.warning("Failed to persist project config for %s: %s", project_id, exc)
     project["updated_at"] = _compat_now_iso()

@@ -1,7 +1,9 @@
 import os
+import uuid
+import yaml
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
-from fastapi import APIRouter, Request, Depends, HTTPException
+from fastapi import APIRouter, Request, Depends, HTTPException, BackgroundTasks
 
 from semabridge.api.services.mappings_service import (
     MappingService,
@@ -19,6 +21,7 @@ class DryRunRequest(BaseModel):
 
 class UpdateMappingRequest(BaseModel):
     target_name: str
+    target_data_type: Optional[str] = None
     status: Optional[str] = "manual"
 
 class AutoMapRequest(BaseModel):
@@ -38,84 +41,241 @@ router.delete('/api/mappings')(delete_mappings_compat)
 
 from fastapi.responses import JSONResponse
 
+
+def _build_config_yaml_from_request(
+    source_config: Dict[str, Any],
+    target_config: Dict[str, Any],
+    selected_sources: List[str],
+    project_name: str = "dry-run-preview",
+) -> str:
+    """
+    Build a minimal semabridge config YAML from the wizard's source/target config
+    so the real sync pipeline can run extraction + OSI + SML without deployment.
+    """
+    source_type = str(source_config.get("type") or "fabric").strip().lower()
+    target_type = str(target_config.get("type") or "snowflake").strip().lower()
+
+    source_section: Dict[str, Any] = {"type": source_type}
+    if source_config.get("workspace_id"):
+        source_section["workspace_id"] = source_config["workspace_id"]
+    if source_config.get("identity_id"):
+        source_section["identity_id"] = source_config["identity_id"]
+    if source_config.get("database"):
+        source_section["database"] = source_config["database"]
+    if source_config.get("schema"):
+        source_section["schema"] = source_config["schema"]
+    if selected_sources:
+        source_section["models"] = selected_sources
+
+    target_section: Dict[str, Any] = {"type": target_type}
+    if target_config.get("database"):
+        target_section["database"] = target_config["database"]
+    if target_config.get("schema"):
+        target_section["schema"] = target_config["schema"]
+    if target_config.get("account"):
+        target_section["account"] = target_config["account"]
+    if target_config.get("warehouse"):
+        target_section["warehouse"] = target_config["warehouse"]
+    if target_config.get("identity_id"):
+        target_section["identity_id"] = target_config["identity_id"]
+    if target_config.get("workspace_id"):
+        target_section["workspace_id"] = target_config["workspace_id"]
+
+    config = {
+        "project_name": project_name,
+        "source": source_section,
+        "targets": [target_section],
+        "options": {
+            "auto_relationships": False,
+            "generate_descriptions": False,
+        },
+    }
+    return yaml.safe_dump(config, sort_keys=False, allow_unicode=False)
+
+
 @router.post("/api/projects/{project_id}/dry-run")
 async def dry_run_mapping(
-    project_id: str, 
+    project_id: str,
     request: DryRunRequest,
     service: MappingService = Depends(get_mapping_service)
 ):
     """
-    Execute dry run to get field-level mappings.
-    Uses project_id = "preview" for wizard flows.
-    Returns ONLY entity_kind = "field" mappings.
+    Execute a dry run by running the full semantic pipeline (extraction → OSI → SML)
+    WITHOUT deployment, then return the real field-level mappings (columns + measures).
     """
+    from semabridge.api.services.core_domain_service import sync_models
+    from semabridge.api.services.project_runs_impl import (
+        _compat_build_project_entity_mappings,
+        _compat_preferred_snapshot_id_from_sync_result,
+        _compat_serialize_auto_map_entity_mappings,
+    )
+    import semabridge.api.services.project_shared as project_shared
+
     try:
-        # Call existing auto_map_compat
-        result = await service.auto_map_compat(
+        # ── 1. Resolve or create a stable preview project in the compat store ──
+        # Use a deterministic project id based on source+models so repeated dry
+        # runs for the same wizard session reuse the same project slot.
+        seed = f"{request.source_config.get('type','')}-{request.source_config.get('workspace_id','')}-{'|'.join(sorted(request.selected_sources))}"
+        preview_project_id = f"preview-{uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex[:12]}"
+
+        project_shared._compat_ensure_loaded()
+        if preview_project_id not in project_shared._compat_projects:
+            project_shared._compat_projects[preview_project_id] = {
+                "id": preview_project_id,
+                "project_id": preview_project_id,
+                "name": "dry-run-preview",
+                "created_at": project_shared._compat_now_iso(),
+            }
+            project_shared._compat_save_store()
+
+        # ── 2. Build a real config YAML from the wizard's source/target config ─
+        config_yaml = _build_config_yaml_from_request(
             source_config=request.source_config,
             target_config=request.target_config,
             selected_sources=request.selected_sources,
-            dry_run=True
+            project_name="dry-run-preview",
         )
-        
-        # SAFELY extract entity_mappings
-        entity_mappings = result.get("entity_mappings", [])
-        
-        # Ensure it's a list
-        if not isinstance(entity_mappings, list):
-            entity_mappings = []
-        
-        # Filter to field-level only
+        project_shared._compat_project_configs[preview_project_id] = config_yaml
+
+        # ── 3. Run the real pipeline with dry_run=True (no deployment) ──────────
+        #    This runs: connector extraction → OSI conversion → SML generation
+        #    and stores the resulting SML snapshot so entity mappings can be built.
+        sync_result = await sync_models({
+            "project_id": preview_project_id,
+            "content": config_yaml,
+            "dry_run": True,
+        })
+
+        preferred_snapshot_id = _compat_preferred_snapshot_id_from_sync_result(
+            sync_result, request.selected_sources
+        )
+
+        # ── 4. Build entity mappings from the real SML snapshot ──────────────────
+        target_connector = str(request.target_config.get("type") or "snowflake").strip().lower()
+
+        # Try the full project-backed path first; fall back to reading the
+        # snapshot directly if the project slot isn't found in the compat store.
+        try:
+            data = _compat_build_project_entity_mappings(
+                preview_project_id,
+                save_store=False,
+                target_connector=target_connector,
+                selected_model_names=request.selected_sources if request.selected_sources else None,
+                preferred_snapshot_id=preferred_snapshot_id,
+            )
+        except Exception as build_err:
+            # Fallback: read the SML blob directly from the snapshot and build
+            # entity mappings without needing the project in the compat store.
+            from semabridge.api.services.project_mapping_engine import build_entity_mappings
+            from semabridge.api.services.project_runs_impl import db_manager as _db_manager
+
+            sml_blob: Dict[str, Any] = {}
+            if preferred_snapshot_id:
+                try:
+                    snap = _db_manager.get_snapshot(preferred_snapshot_id)
+                    if snap and isinstance(getattr(snap, "sml_blob", None), dict):
+                        sml_blob = snap.sml_blob
+                except Exception:
+                    pass
+
+            if not sml_blob:
+                # Last resort: try each result's snapshot
+                for result_row in (sync_result.get("results") or []):
+                    sid = str((result_row.get("summary") or {}).get("sml_snapshot_id") or "").strip()
+                    if not sid:
+                        continue
+                    try:
+                        snap = _db_manager.get_snapshot(sid)
+                        if snap and isinstance(getattr(snap, "sml_blob", None), dict):
+                            sml_blob = snap.sml_blob
+                            break
+                    except Exception:
+                        continue
+
+            built = build_entity_mappings(
+                project_id=preview_project_id,
+                model=sml_blob or {"unique_name": "preview", "datasets": [], "metrics": []},
+                existing_mappings={},
+                session_key=f"{preview_project_id}-mapping-session",
+                target_connector=target_connector,
+            )
+            data = {
+                "project_id": preview_project_id,
+                "mappings": built.get("mappings", []),
+                "source_fields": built.get("source_fields", []),
+                "target_fields": built.get("target_fields", []),
+                "collisions": built.get("collisions", []),
+            }
+
+        entity_mappings = _compat_serialize_auto_map_entity_mappings(
+            data.get("mappings", []),
+            target_connector=target_connector,
+        )
+
+        # ── 5. Filter to field-level only (columns + measures, no table rows) ────
+        # entity_kind values from the mapping engine: "column", "metric" (measures), "table"
+        # "metric" is the canonical kind for measures — include it alongside "column".
+        FIELD_KINDS = {"field", "column", "measure", "metric"}
         filtered_mappings = []
         for m in entity_mappings:
             if not isinstance(m, dict):
                 continue
-            kind = m.get("entity_kind")
-            if kind == "field" or kind == "column" or kind == "measure":
-                # Ensure required fields exist
-                safe_mapping = {
-                    "id": m.get("id", f"field_{len(filtered_mappings)}"),
-                    "entity_kind": "field",
-                    "source_name": m.get("source_name", "unknown"),
-                    "source_data_type": m.get("source_data_type", "unknown"),
-                    "source_table": m.get("source_table", m.get("source_entity", "unknown")),
-                    "source_path": m.get("source_path", ""),
-                    "source_qualified_path": m.get("source_qualified_path", ""),
-                    "target_name": m.get("target_name", ""),
-                    "target_data_type": m.get("target_data_type", ""),
-                    "mapping_status": m.get("mapping_status", m.get("status", "unmapped")),
-                    "status": m.get("status", m.get("mapping_status", "unmapped"))
-                }
-                filtered_mappings.append(safe_mapping)
-        
-        # Add collision handling
+            kind = str(m.get("entity_kind") or "").lower()
+            if kind not in FIELD_KINDS:
+                continue
+            # Normalise "metric" → "measure" so the frontend field_type split works
+            normalised_kind = "measure" if kind in ("metric", "measure") else kind
+            filtered_mappings.append({
+                "id": m.get("id", f"field_{len(filtered_mappings)}"),
+                "entity_kind": normalised_kind,
+                "source_name": m.get("source_name", ""),
+                "source_data_type": m.get("source_data_type", "unknown"),
+                "source_table": m.get("source_table", m.get("source_entity", "")),
+                "source_path": m.get("source_path", ""),
+                "source_qualified_path": m.get("source_qualified_path", ""),
+                "target_name": m.get("target_name", ""),
+                "target_data_type": m.get("target_data_type", m.get("source_data_type", "unknown")),
+                "mapping_status": m.get("status", "auto"),
+                "status": m.get("status", "auto"),
+                "suggested_target_name": m.get("suggested_target_name", ""),
+                "collision_detected": bool(m.get("collision_detected")),
+                "validation_status": m.get("validation_status", "valid"),
+                "validation_code": m.get("validation_code", "OK"),
+                "validation_message": m.get("validation_message", ""),
+                "measure_source_tables": list(m.get("measure_source_tables") or []),
+                "source_expression": m.get("source_expression", ""),
+            })
+
+        # Apply collision handling on top of what the serializer already did
         filtered_mappings = service.add_collision_handling(filtered_mappings)
-        
+
+        auto_count = sum(1 for m in filtered_mappings if m.get("status") == "auto")
+        unmapped_count = sum(1 for m in filtered_mappings if m.get("status") == "unmapped")
+        collision_count = sum(1 for m in filtered_mappings if m.get("status") == "collision")
+
         return {
             "success": True,
             "entity_mappings": filtered_mappings,
             "summary": {
                 "total_fields": len(filtered_mappings),
-                "auto_mapped": sum(1 for m in filtered_mappings if m.get("mapping_status") == "auto" or m.get("status") == "auto"),
-                "unmapped": sum(1 for m in filtered_mappings if m.get("mapping_status") == "unmapped" or m.get("status") == "unmapped"),
-                "collisions": sum(1 for m in filtered_mappings if m.get("mapping_status") == "collision" or m.get("status") == "collision")
-            }
+                "auto_mapped": auto_count,
+                "unmapped": unmapped_count,
+                "collisions": collision_count,
+            },
         }
-        
+
     except Exception as e:
         print(f"[Dry Run Error] {str(e)}")
         import traceback
         traceback.print_exc()
-        
-        # Return proper error response (not crash)
         return JSONResponse(
             status_code=500,
             content={
                 "success": False,
                 "error": str(e),
                 "entity_mappings": [],
-                "summary": {"total_fields": 0, "auto_mapped": 0, "unmapped": 0, "collisions": 0}
-            }
+                "summary": {"total_fields": 0, "auto_mapped": 0, "unmapped": 0, "collisions": 0},
+            },
         )
 
 @router.put("/api/projects/{project_id}/mappings/{mapping_id}")
@@ -132,6 +292,7 @@ async def update_mapping(
     result = await service.update_mapping_compat(
         mapping_id=mapping_id,
         target_name=request.target_name,
+        target_data_type=request.target_data_type,
         status="manual"
     )
     return {"success": True, "mapping": result}
@@ -165,29 +326,96 @@ async def rerun_auto_map(
 async def deploy_mappings(
     project_id: str,
     request: DeployRequest,
+    background_tasks: BackgroundTasks,
     service: MappingService = Depends(get_mapping_service)
 ):
     """
-    Deploy final mappings to target system.
-    For "preview" projects, this creates the actual project first.
+    Deploy final mappings to target system by triggering the full semantic sync pipeline.
+    Stores the user-edited field mappings first, then kicks off a SYNC run.
+    For "preview" projects, creates the actual project first.
     """
-    # If project_id is "preview", create the project first
-    actual_project_id = project_id
-    if project_id == "preview":
-        project = await service.create_project_from_mappings(request.field_mappings)
-        actual_project_id = project.id
-    
-    result = await service.manual_deploy_compat(
-        project_id=actual_project_id,
-        field_mappings=request.field_mappings
+    from semabridge.api.services.project_domain_service import (
+        create_project_compat,
+        run_project_now_compat,
     )
-    
-    return {
-        "success": True,
-        "project_id": actual_project_id,
-        "deployed_count": result.get("deployed_count", 0),
-        "errors": result.get("errors", [])
-    }
+    import semabridge.api.services.project_shared as project_shared
+
+    # ── 1. Resolve / create the project ──────────────────────────────────────
+    actual_project_id = project_id
+    if project_id == "preview" or project_id.startswith("preview-"):
+        preview_cfg = str(project_shared._compat_project_configs.get(project_id) or "").strip()
+        new_project_payload = {
+            "name": f"project-{uuid.uuid4().hex[:8]}",
+            "source": {"type": "fabric"},
+            "targets": [{"type": "snowflake"}],
+            "preferred_interface": "ui",
+        }
+        if preview_cfg:
+            new_project_payload["config_yaml"] = preview_cfg
+        created = await create_project_compat(new_project_payload)
+        actual_project_id = str(created.get("id") or created.get("project_id") or "").strip()
+        if not actual_project_id:
+            raise HTTPException(status_code=500, detail="Failed to create actual project for deploy.")
+
+    # ── 2. Persist the user-edited field mappings into the compat store ───────
+    for idx, mapping in enumerate(request.field_mappings):
+        if not isinstance(mapping, dict):
+            continue
+        source_path = str(mapping.get("source_path") or "").strip()
+        source_name = str(mapping.get("source_name") or "").strip()
+        target_name = str(mapping.get("target_name") or "").strip()
+        mapping_id = str(mapping.get("id") or "").strip()
+        if not mapping_id:
+            seed = source_path or source_name or f"row-{idx}"
+            mapping_id = f"{actual_project_id}-{uuid.uuid5(uuid.NAMESPACE_URL, f'{actual_project_id}:{seed}').hex[:16]}"
+
+        existing = project_shared._compat_mappings.get(mapping_id, {})
+        if not isinstance(existing, dict):
+            existing = {}
+
+        merged = {**existing, **mapping}
+        merged["id"] = mapping_id
+        merged["project_id"] = actual_project_id
+        merged["target_name"] = target_name
+        merged["target_data_type"] = str(mapping.get("target_data_type") or "").strip()
+        merged["updated_at"] = project_shared._compat_now_iso()
+        if target_name:
+            merged["status"] = "manual"
+            merged["is_user_edited"] = True
+        project_shared._compat_mappings[mapping_id] = merged
+    project_shared._compat_save_store()
+
+    # ── 3. Trigger the full semantic sync pipeline (SYNC run) ─────────────────
+    try:
+        run_result = await run_project_now_compat(
+            actual_project_id,
+            background_tasks,
+            payload={
+                "run_type": "SYNC",
+                "field_mappings": request.field_mappings,
+            },
+        )
+        return {
+            "success": True,
+            "project_id": actual_project_id,
+            "run_id": run_result.get("run_id"),
+            "status": run_result.get("status", "running"),
+            "deployed_count": len(request.field_mappings),
+            "errors": [],
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "project_id": actual_project_id,
+                "error": str(e),
+                "deployed_count": 0,
+                "errors": [str(e)],
+            },
+        )
 
 # Keep old endpoint for backwards compatibility for now
 @router.post('/api/mappings/auto')

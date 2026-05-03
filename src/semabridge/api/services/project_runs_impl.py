@@ -718,7 +718,14 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
     try:
         from semabridge.api.services.core_domain_service import sync_models
 
-        sync_payload: Dict[str, Any] = {"content": project_cfg, "project_id": project_id}
+        sync_payload: Dict[str, Any] = {
+            "content": project_cfg,
+            "project_id": project_id,
+            # Explicitly enable deployment — the config YAML controls the target
+            # connector details, but the deploy flag must be set here so
+            # execute_sync_request does not skip Stage 8/9.
+            "deploy": True,
+        }
         user_id = run.get("user_id")
         if user_id is not None and str(user_id).strip():
             sync_payload["user_id"] = user_id
@@ -794,8 +801,6 @@ async def run_project_now_compat(project_id: str, background_tasks: BackgroundTa
         preview_payload = dict(payload or {})
         preview_payload["project_id"] = project_id
         preview_payload["dry_run"] = True
-        # Dry-run route should guarantee a fresh non-deploy sync; do not
-        # silently continue with stale state when pre-sync fails.
         preview_payload["require_sync"] = True
         preview_result = await auto_map_compat(preview_payload)
         return {
@@ -804,25 +809,6 @@ async def run_project_now_compat(project_id: str, background_tasks: BackgroundTa
             "run_type": "DRY_RUN",
             "message": "Dry run preview generated using the shared run pipeline.",
         }
-
-    # Safety gate: deploy only after dry-run blocker checks pass.
-    preview_payload = dict(payload or {})
-    preview_payload["project_id"] = project_id
-    preview_payload["dry_run"] = True
-    preview_payload["require_sync"] = True
-    preview_result = await auto_map_compat(preview_payload)
-    blockers = _compat_collect_dry_run_blockers(preview_result)
-    if blockers:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "status": "blocked",
-                "mode": "DRY_RUN",
-                "message": f"Deploy blocked: resolve {len(blockers)} blocking mapping issue(s) found by dry run.",
-                "blocking_issue_count": len(blockers),
-                "blocking_issues": blockers,
-            },
-        )
 
     run_type = str((payload or {}).get("run_type") or "SYNC").upper()
     if run_type not in {"SYNC", "RESTORE"}:

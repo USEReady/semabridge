@@ -391,7 +391,18 @@ def _compat_load_modular_project(project_id: str) -> Optional[Dict[str, Any]]:
             except Exception as exc:
                 logger.warning("Failed to parse mapping profile %s: %s", profile_file, exc)
 
-    assembled = _compat_assembled_project_config(project_id, project_cfg, profile_cfg)
+    # Self-contained project files (no mapping_profile) should be used as-is.
+    # This preserves mappings_overrides authored directly in Config/projects/<id>.yaml.
+    if not profile_name:
+        assembled = dict(project_cfg)
+    else:
+        assembled = _compat_assembled_project_config(project_id, project_cfg, profile_cfg)
+        # Preserve project-level overrides when present, even with mapping profiles.
+        if isinstance(project_cfg.get("mappings_overrides"), list):
+            assembled["mappings_overrides"] = project_cfg.get("mappings_overrides") or []
+        if isinstance(project_cfg.get("mappings"), list):
+            assembled["mappings"] = project_cfg.get("mappings") or []
+
     config_yaml = yaml.safe_dump(assembled, sort_keys=False, allow_unicode=False)
     return {
         "project_id": project_id,

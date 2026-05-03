@@ -7,14 +7,15 @@
  * Step 4: Model mapping settings
  * Step 5: Finish and configure
  */
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import './mapping-styles.css';
 import {
   ArrowLeft, ArrowRight, Check, X, Loader2,
   ChevronDown, ChevronRight, CheckSquare, Square, RefreshCw,
-  Table2, AlertTriangle, Play, Rocket, Search,
+  Table2, AlertTriangle, Play, Search,
   Cloud, Database, Snowflake,
+  Info, Settings,
 } from 'lucide-react';
 import { api } from '../utils/api';
 import { useHPSearch } from '../hooks/useHPSearch';
@@ -29,6 +30,8 @@ import { useUIStore } from '../store/uiStore';
 import useSessionDraft from '../hooks/useSessionDraft';
 import DraftBanner from '../components/common/DraftBanner';
 import ErrorBoundary from '../components/ErrorBoundary';
+import DryRunMappingTable, { isBlockingRow as isDryRunBlockingRow } from '../components/DryRunMappingTable';
+import FieldMappingEditor from '../components/FieldMappingEditor';
 
 const STEPS = [
   { id: 1, label: 'Basic Info' },
@@ -597,6 +600,13 @@ export default function CreateProjectPage() {
   const [mappingDryRunSignature, setMappingDryRunSignature] = useState('');
   const [mappingDryRunError, setMappingDryRunError] = useState('');
   const [unmappedAcknowledged, setUnmappedAcknowledged] = useState(false);
+
+  // Step 4 — dry-run → edit → deploy flow
+  const [dryRunData, setDryRunData] = useState(null);
+  const [editingRow, setEditingRow] = useState(null);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [isDeploying, setIsDeploying] = useState(false);
+  const [deployError, setDeployError] = useState('');
 
   // Step 5
   const [createReverseProject, setCreateReverseProject] = useState(false);
@@ -1218,6 +1228,28 @@ export default function CreateProjectPage() {
         }
       }
 
+      // Persist any manually-edited dry-run mappings so the sync run picks them up.
+      // These are stored in detectedMappings (NormalizedRow[]) with isDirty=true.
+      if (projectId && detectedMappings.length > 0) {
+        const dirtyRows = detectedMappings.filter(r => r.isDirty || r.status === 'manual');
+        for (const row of dirtyRows) {
+          try {
+            await api.updateMapping(projectId, row.id, {
+              target_name: row.target_field,
+              target_data_type: row.target_type,
+              status: 'manual',
+              project_id: projectId,
+              source_path: row.source_path,
+              source_name: row.source_field,
+              entity_kind: row.entity_kind,
+              is_user_edited: true,
+            });
+          } catch {
+            // Non-fatal — best effort
+          }
+        }
+      }
+
       if (sourceConnector === 'pbix' && projectId && pbixFile) {
         try {
           const uploadResp = await api.uploadProjectPbix(projectId, pbixFile);
@@ -1388,22 +1420,19 @@ export default function CreateProjectPage() {
       if (target.workspace) lines.push(`    workspace: "${escapeYamlString(target.workspace)}"`);
     });
 
-    // Add mappings section
-    if (detectedMappings.length > 0) {
-      lines.push('mappings:');
-      detectedMappings.forEach((mapping) => {
-        lines.push(`  - source: "${escapeYamlString(mapping.source)}"`);
-        lines.push(`    target: "${escapeYamlString(mapping.target)}"`);
-        lines.push(`    type: ${mapping.type}`);
-        if (mapping.columns && mapping.columns.length > 0) {
-          lines.push('    columns:');
-          mapping.columns.forEach((col) => {
-            lines.push(`      - source: "${escapeYamlString(col.source)}"`);
-            lines.push(`        target: "${escapeYamlString(col.target)}"`);
-            lines.push(`        type: ${col.type}`);
-            if (col.key) lines.push(`        primary_key: true`);
-          });
-        }
+    // Persist user-edited field/model names for later deploy runs.
+    const mappingOverrides = (detectedMappings || [])
+      .map((row) => ({
+        source_path: String(row?.source_path || '').trim(),
+        target_name: String(row?.target_field || row?.target_name || row?.target || '').trim(),
+      }))
+      .filter((row) => row.source_path && row.target_name);
+
+    if (mappingOverrides.length > 0) {
+      lines.push('mappings_overrides:');
+      mappingOverrides.forEach((row) => {
+        lines.push(`  - source_path: "${escapeYamlString(row.source_path)}"`);
+        lines.push(`    target_name: "${escapeYamlString(row.target_name)}"`);
       });
     }
 
@@ -1542,6 +1571,153 @@ export default function CreateProjectPage() {
     }
   }, [addLog, currentMappingSignature, sourceConnector, targetConnectors, selectedModelNames, createdProject, fabricWorkspaceId, snowflakeDatabase, targetDatabase]);
 
+  // ── handleDryRun — triggers the dry-run API and populates detectedMappings ──
+  const handleDryRun = useCallback(async () => {
+    setMappingDryRunStatus('loading');
+    setMappingError('');
+
+    const projectId = createdProject?.id || createdProject?.project_id || 'preview';
+
+    const sourceConfig = { type: sourceConnector };
+    if (sourceConnector === 'fabric') {
+      if (fabricWorkspaceId) sourceConfig.workspace_id = fabricWorkspaceId;
+    }
+    if (sourceConnector === 'snowflake') {
+      if (snowflakeDatabase) sourceConfig.database = snowflakeDatabase;
+    }
+
+    const targetConfig = { type: Array.from(targetConnectors)[0] || '' };
+    if (targetConfig.type === 'snowflake' && targetDatabase) targetConfig.database = targetDatabase;
+    if (targetConfig.type === 'fabric' && fabricWorkspaceId) targetConfig.workspace_id = fabricWorkspaceId;
+
+    const selectedSources = selectedModelNames;
+
+    try {
+      const response = await api.runProjectDryRun(projectId, {
+        source_config: sourceConfig,
+        target_config: targetConfig,
+        selected_sources: selectedSources,
+      });
+
+      if (response?.success === false) {
+        setMappingError(response?.error || 'Dry run failed.');
+        setMappingDryRunStatus('error');
+        return;
+      }
+
+      const rows = normalizeRows(response);
+      setDetectedMappings(rows);
+      setDryRunData(response);
+      setMappingDryRunStatus('success');
+      setMappingDryRunSignature(currentMappingSignature);
+      setUnmappedAcknowledged(false);
+      // Dry run succeeded — unlock the Continue button so the user can proceed to Step 5
+      setMappingReadyToProceed(true);
+    } catch (err) {
+      setMappingError(err?.message || 'Dry run failed.');
+      setMappingDryRunStatus('error');
+      // preserve existing detectedMappings on failure
+    }
+  }, [
+    createdProject, sourceConnector, fabricWorkspaceId, snowflakeDatabase,
+    targetConnectors, targetDatabase, selectedModelNames, currentMappingSignature,
+  ]);
+
+  // ── handleFieldEdit — saves a single field mapping edit via the API ──────────
+  const handleFieldEdit = useCallback(async (rowId, updates) => {
+    setIsSavingEdit(true);
+
+    const targetPlatform = Array.from(targetConnectors)[0] || 'snowflake';
+    const editingRowData = detectedMappings.find(r => r.id === rowId);
+    const sourceType = editingRowData?.source_type || '';
+
+    const validation = validateTargetName(
+      updates.target_name,
+      targetPlatform,
+      sourceType,
+      updates.target_data_type,
+    );
+
+    if (!validation.isValid) {
+      setIsSavingEdit(false);
+      return; // error shown inline in modal
+    }
+
+    const projectId = createdProject?.id || createdProject?.project_id || 'preview';
+
+    try {
+      await api.updateMapping(projectId, rowId, {
+        target_name: updates.target_name,
+        target_data_type: updates.target_data_type,
+        status: 'manual',
+      });
+
+      setDetectedMappings(prev =>
+        prev.map(row =>
+          row.id === rowId
+            ? {
+                ...row,
+                target_field: updates.target_name,
+                target_type: updates.target_data_type,
+                status: 'manual',
+                isDirty: true,
+              }
+            : row
+        )
+      );
+      setEditingRow(null);
+    } catch (err) {
+      setMappingError(err?.message || 'Failed to save field edit.');
+      // do NOT update the row on failure
+    } finally {
+      setIsSavingEdit(false);
+    }
+  }, [targetConnectors, detectedMappings, createdProject]);
+
+  // ── handleDeploy — deploys finalized mappings and advances to Step 5 ─────────
+  const handleDeploy = useCallback(async () => {
+    const blockingRows = detectedMappings.filter(row => isDryRunBlockingRow(row));
+    if (blockingRows.length > 0) {
+      setDeployError('Resolve all collisions before deploying.');
+      return;
+    }
+
+    setIsDeploying(true);
+    setDeployError('');
+
+    const projectId = createdProject?.id || createdProject?.project_id || 'preview';
+
+    const fieldMappings = detectedMappings.map(row => ({
+      id: row.id,
+      source_name: row.source_field,
+      target_name: row.target_field,
+      target_data_type: row.target_type,
+      status: row.status,
+      entity_kind: row.entity_kind,
+    }));
+
+    try {
+      const result = await api.deployMappings(projectId, fieldMappings);
+
+      if (result?.success) {
+        if (result.project_id) {
+          setCreatedProject({ id: result.project_id, project_id: result.project_id });
+        }
+        setMappingReadyToProceed(true);
+        setStep(5);
+      } else {
+        const errMsg = (Array.isArray(result?.errors) && result.errors[0])
+          ? `Deploy failed: ${result.errors[0]}`
+          : 'Deploy failed: unknown error';
+        setDeployError(errMsg);
+      }
+    } catch (err) {
+      setDeployError(err?.message || 'Deploy failed.');
+    } finally {
+      setIsDeploying(false);
+    }
+  }, [detectedMappings, createdProject]);
+
   const goNext = async () => {
     if (step === 5) { handleFinish(); return; }
     if (step === 1) {
@@ -1647,6 +1823,7 @@ export default function CreateProjectPage() {
       <div style={{
         padding: '16px 32px', borderBottom: '1px solid var(--border-main)',
         display: 'flex', alignItems: 'center', gap: 16,
+        position: 'sticky', top: 0, zIndex: 70, background: 'var(--bg-main)',
       }}>
         <button onClick={() => navigate('/projects')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 5, fontSize: 13 }}>
           <ArrowLeft size={14} /> Projects
@@ -1658,7 +1835,7 @@ export default function CreateProjectPage() {
       </div>
 
       {/* Step indicator */}
-      <div style={{ padding: '24px 32px 0', display: 'flex', alignItems: 'center', gap: 0 }}>
+      <div style={{ padding: '24px 32px 0', display: 'flex', alignItems: 'center', gap: 0, position: 'sticky', top: 66, zIndex: 65, background: 'var(--bg-main)' }}>
         {STEPS.map((s, i) => (
           <div key={s.id} style={{ display: 'flex', alignItems: 'center' }}>
             <div
@@ -1696,7 +1873,7 @@ export default function CreateProjectPage() {
       />
 
       {/* Step content */}
-      <div style={{ flex: 1, padding: '32px', maxWidth: step === 4 ? 1100 : 700 }}>
+      <div style={{ flex: 1, padding: '44px 32px 32px', maxWidth: step === 4 ? 1100 : 700 }}>
         {step === 1 && (
           <StepBasicInfo
             name={name} setName={setName}
@@ -1804,7 +1981,7 @@ export default function CreateProjectPage() {
               sourceConnector={sourceConnector}
               onUpdateTableTarget={updateTableMappingTarget}
               onUpdateColumnTarget={updateColumnMappingTarget}
-              onRunDryRun={() => fetchMappings({ dryRun: true, resetManual: false })}
+              onRunDryRun={handleDryRun}
               onClearMappings={() => {
                 setDetectedMappings([]);
                 setDetectedEntityMappings([]);
@@ -1826,6 +2003,15 @@ export default function CreateProjectPage() {
               onDeploy={handleDeployMapping}
               onProceedStateChange={setMappingReadyToProceed}
               primaryTargetConnector={[...targetConnectors][0] || ''}
+              dryRunData={dryRunData}
+              editingRow={editingRow}
+              setEditingRow={setEditingRow}
+              isSavingEdit={isSavingEdit}
+              isDeploying={isDeploying}
+              deployError={deployError}
+              onFieldEdit={handleFieldEdit}
+              onDeployMappings={handleDeploy}
+              targetConnectors={targetConnectors}
             />
           </ErrorBoundary>
         )}
@@ -1922,7 +2108,7 @@ function StepBasicInfo({
   const isFormatMissing = !intermediateFormat;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20, paddingBottom: 80 }}>
       <div>
         <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Project Details</h2>
         <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
@@ -3676,21 +3862,6 @@ function StepMappingOptionsOld({
             {mappingLoading ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={13} />}
             Run Auto-Map
           </button>
-          <button
-            type="button"
-            disabled={collisionCount > 0 || mappingLoading || (unmappedCount > 0 && !unmappedAcknowledged)}
-            onClick={() => onProceedStateChange?.(collisionCount === 0 && (unmappedCount === 0 || unmappedAcknowledged))}
-            style={{
-              ...filterButtonStyle,
-              background: 'var(--accent-blue)',
-              color: '#fff',
-              border: '1px solid var(--accent-blue)',
-              opacity: collisionCount > 0 || mappingLoading || (unmappedCount > 0 && !unmappedAcknowledged) ? 0.55 : 1,
-            }}
-          >
-            <Rocket size={13} />
-            Deploy Mapping
-          </button>
         </div>
       </div>
 
@@ -4247,20 +4418,46 @@ function StepMappingOptions({
   onRowsChange,
   onProceedStateChange,
   primaryTargetConnector,
+  // New dry-run → edit → deploy props
+  dryRunData,
+  editingRow,
+  setEditingRow,
+  isSavingEdit,
+  isDeploying,
+  deployError,
+  onFieldEdit,
+  onDeployMappings,
+  targetConnectors,
 }) {
   const [autoMappingMode, setAutoMappingMode] = useState(true);
   const [rows, setRows] = useState([]);
-  const [search, setSearch] = useState('');
-  const [activeFilter, setActiveFilter] = useState('all');
+  const [needsRefresh, setNeedsRefresh] = useState(false);
+  const mappingTableRef = useRef(null);
   const dryRunCompleted = dryRunStatus === 'success';
   const dryRunFailed = dryRunStatus === 'failed';
   const hasDryRunResult = dryRunCompleted;
-  const showInitialDryRunCTA = !mappingLoading && !hasDryRunResult && rows.length === 0;
-  const showMappingControls = !mappingLoading && hasDryRunResult && rows.length > 0;
+  const aiToggleInitRef = useRef(false);
 
   useEffect(() => {
     onRowsChange?.(rows);
   }, [rows]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // If AI options change after initial mount, prompt a quick refresh.
+  useEffect(() => {
+    if (!aiToggleInitRef.current) {
+      aiToggleInitRef.current = true;
+      return;
+    }
+    setNeedsRefresh(true);
+  }, [autoRelationships, generateDescriptions, aiToggleInitRef]);
+
+  // Sync internal rows from detectedMappings when the parent updates it (e.g. after handleDryRun)
+  useEffect(() => {
+    if (Array.isArray(detectedMappings) && detectedMappings.length > 0) {
+      setRows(detectedMappings);
+      setNeedsRefresh(false);
+    }
+  }, [detectedMappings]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const blockingCount = useMemo(
     () => rows.filter((row) => isBlockingRow(row)).length,
@@ -4278,6 +4475,12 @@ function StepMappingOptions({
     type: primaryTargetConnector || 'Target Connector',
     field_count: rows.filter(row => String(row.target_field || '').trim()).length,
   }), [primaryTargetConnector, rows]);
+  const connectorHealthy = Boolean(sourceConnector) && Boolean(primaryTargetConnector);
+  const targetDestination = useMemo(() => {
+    const firstMapped = rows.find((row) => String(row?.target_field || '').trim());
+    if (firstMapped?.target_field) return firstMapped.target_field;
+    return `${String(primaryTargetConnector || 'target').toUpperCase()}.PUBLIC.<TABLE>`;
+  }, [rows, primaryTargetConnector]);
 
   const explicitTables = useMemo(() => (
     Array.from(new Set((selectedModelNames || []).map(name => String(name || '').trim()).filter(Boolean)))
@@ -4296,6 +4499,10 @@ function StepMappingOptions({
         .filter(name => !explicitUpper.has(name.toUpperCase()))
     ));
   }, [explicitTables, rows]);
+  const visibleInferredTables = useMemo(() => {
+    if (!autoMappingMode && !autoRelationships) return [];
+    return inferredTables;
+  }, [autoMappingMode, autoRelationships, inferredTables]);
 
   const counts = useMemo(() => {
     const summary = { all: rows.length, auto: 0, manual: 0, unmapped: 0, collision: 0 };
@@ -4304,26 +4511,10 @@ function StepMappingOptions({
     });
     return summary;
   }, [rows]);
-
-  const filteredRows = useMemo(() => {
-    const query = String(search || '').trim().toLowerCase();
-    return rows.filter((row) => {
-      if (activeFilter !== 'all' && row.status !== activeFilter) return false;
-      if (!query) return true;
-      const haystack = [
-        row.source_field,
-        row.target_field,
-        row.validation_message,
-        row.field_type,
-        Array.isArray(row.measure_source_tables) ? row.measure_source_tables.join(' ') : '',
-        row.source_table_name,
-        row.measure_expression,
-      ].join(' ').toLowerCase();
-      return haystack.includes(query);
-    });
-  }, [activeFilter, rows, search]);
-
-  const fieldMappings = useFieldMappings({ rows, filteredRows });
+  const estimatedVolume = useMemo(() => {
+    const totalFields = Number(dryRunData?.summary?.total_fields || rows.length || 0);
+    return `${totalFields} mapped fields`;
+  }, [dryRunData, rows.length]);
 
   const readyToProceed = autoMappingMode
     ? blockingCount === 0
@@ -4339,21 +4530,14 @@ function StepMappingOptions({
       if (!next) {
         onClearMappings?.();
         setRows([]);
-        setActiveFilter('all');
       }
       return next;
     });
   }, [onClearMappings]);
 
   const runDryRun = useCallback(async () => {
-    const result = await onRunDryRun?.();
-    if (result?.ok) {
-      const responseData = result.response ?? result;
-      const nextRows = normalizeRows(responseData);
-      console.log(`[MAPPING] Source fields in response: ${countResponseFields(responseData)}, Rows produced: ${nextRows.length}`);
-      setRows(nextRows);
-      if (nextRows.length > 0) setActiveFilter('all');
-    }
+    await onRunDryRun?.();
+    // rows will be synced from detectedMappings via useEffect below
   }, [onRunDryRun]);
 
   const handleInlineTargetChange = useCallback((rowId, value) => {
@@ -4415,29 +4599,35 @@ function StepMappingOptions({
   }, []);
 
   const readiness = (() => {
-    if (!autoMappingMode && !dryRunCompleted) {
+    if (mappingLoading || dryRunStatus === 'running' || dryRunStatus === 'loading') {
       return {
-        message: '\u26A0 Run dry run to unlock manual editing.',
-        background: 'rgba(245, 158, 11, 0.10)',
+        message: 'Dry Run in Progress / Validating Schema...',
+        background: 'rgba(245, 158, 11, 0.12)',
         border: '1px solid rgba(245, 158, 11, 0.35)',
         color: 'var(--accent-orange)',
       };
     }
-    if (blockingCount > 0) {
+    if (dryRunCompleted && blockingCount === 0) {
       return {
-        message: `\u26A0 Resolve ${blockingCount} blocking row(s) before continuing.`,
-        background: 'rgba(239, 68, 68, 0.10)',
-        border: '1px solid rgba(239, 68, 68, 0.35)',
-        color: 'var(--color-error)',
+        message: 'Ready to proceed — mapping validation complete',
+        background: 'rgba(34, 197, 94, 0.12)',
+        border: '1px solid rgba(34, 197, 94, 0.35)',
+        color: 'var(--color-success)',
       };
     }
     return {
-      message: '\u2713 Ready to proceed \u2014 mapping validation complete.',
-      background: 'var(--accent-blue)08',
-      border: '1px solid var(--accent-blue)25',
+      message: 'Ready for Dry Run',
+      background: 'rgba(59, 130, 246, 0.12)',
+      border: '1px solid rgba(59, 130, 246, 0.35)',
       color: 'var(--accent-blue)',
     };
   })();
+  const checkState = useMemo(() => {
+    if (mappingLoading || dryRunStatus === 'running' || dryRunStatus === 'loading') return 'running';
+    if (!dryRunCompleted) return 'pending';
+    if (blockingCount > 0 || dryRunFailed) return 'issues';
+    return 'success';
+  }, [mappingLoading, dryRunStatus, dryRunCompleted, blockingCount, dryRunFailed]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -4448,95 +4638,218 @@ function StepMappingOptions({
         </p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
-        <FlowCard label="Source Model" model={sourceModel} />
-        <FlowCard label="Target Model" model={targetModel} />
-      </div>
-
-      {showMappingControls && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <div className="filter-tabs">
-            <button className={`filter-tab ${activeFilter === 'all' ? 'active' : ''}`} onClick={() => setActiveFilter('all')}>
-              All ({counts.all})
-            </button>
-            <button className={`filter-tab ${activeFilter === 'auto' ? 'active' : ''}`} onClick={() => setActiveFilter('auto')}>
-              Auto ({counts.auto})
-            </button>
-            <button className={`filter-tab ${activeFilter === 'manual' ? 'active' : ''}`} onClick={() => setActiveFilter('manual')}>
-              Manual ({counts.manual})
-            </button>
-            <button className={`filter-tab ${activeFilter === 'unmapped' ? 'active' : ''}`} onClick={() => setActiveFilter('unmapped')}>
-              Unmapped ({counts.unmapped})
-            </button>
-            <button className={`filter-tab collision-tab ${activeFilter === 'collision' ? 'active' : ''}`} onClick={() => setActiveFilter('collision')}>
-              Collision/Error ({counts.collision})
-            </button>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: 12 }}>
+        <div style={{ gridColumn: 'span 8', display: 'grid', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 12, alignItems: 'center' }}>
+            <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)', padding: 12, display: 'grid', gap: 6 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Source</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <SourceIcon source={sourceModel.type} size={16} />
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{sourceModel.type === 'fabric' ? 'Microsoft Fabric' : sourceModel.type}</div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{sourceModel.name}</span>
+                <span style={{ fontSize: 10, fontWeight: 700, borderRadius: 999, padding: '2px 8px', border: '1px solid rgba(34, 197, 94, 0.35)', background: 'rgba(34, 197, 94, 0.12)', color: 'var(--color-success)' }}>
+                  {connectorHealthy ? 'Active' : 'Check'}
+                </span>
+              </div>
+            </div>
+            <div
+              title="Source to Target Mapping Direction"
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                border: '1px solid var(--border-main)',
+                background: 'var(--bg-main)',
+                color: 'var(--accent-blue)',
+                fontSize: 18,
+                fontWeight: 800,
+              }}
+            >
+              →
+            </div>
+            <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)', padding: 12, display: 'grid', gap: 6 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Target</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <SourceIcon source={targetModel.type} size={16} />
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{targetModel.type}</div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{targetDestination}</span>
+                <span style={{ fontSize: 10, fontWeight: 700, borderRadius: 999, padding: '2px 8px', border: '1px solid rgba(34, 197, 94, 0.35)', background: 'rgba(34, 197, 94, 0.12)', color: 'var(--color-success)' }}>
+                  {connectorHealthy ? 'Active' : 'Check'}
+                </span>
+              </div>
+            </div>
           </div>
 
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <div style={{ position: 'relative' }}>
-              <Search size={13} style={{ position: 'absolute', left: 8, top: 8, color: 'var(--text-tertiary)' }} />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search fields..."
-                style={{
-                  ...INPUT,
-                  padding: '6px 10px 6px 28px',
-                  width: 240,
-                }}
-              />
+          <div style={{ border: '1px solid var(--border-main)', borderRadius: 12, background: 'linear-gradient(135deg, rgba(30,41,59,0.7), rgba(15,23,42,0.9))', padding: 16, display: 'grid', gap: 12, minHeight: 160 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>Pre-migration Integrity Check</div>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Simulate sync and validate schema mappings before writing data.</div>
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={runDryRun}
-              disabled={mappingLoading}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '8px 12px',
-                borderRadius: 8,
-                border: '1px solid var(--border-main)',
-                background: 'var(--bg-surface-raised)',
-                color: 'var(--text-primary)',
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: mappingLoading ? 'not-allowed' : 'pointer',
-                opacity: mappingLoading ? 0.65 : 1,
-              }}
-            >
-              {mappingLoading ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <RefreshCw size={13} />}
-              Run Auto-Map
-            </button>
-            <button
-              type="button"
-              disabled={counts.collision > 0 || mappingLoading || (counts.unmapped > 0 && !unmappedAcknowledged)}
-              onClick={() => {
-                if (onDeploy) onDeploy(rows);
-                else onProceedStateChange?.(counts.collision === 0 && (counts.unmapped === 0 || unmappedAcknowledged));
-              }}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '8px 12px',
-                borderRadius: 8,
-                background: 'var(--accent-blue)',
-                color: '#fff',
-                border: '1px solid var(--accent-blue)',
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: counts.collision > 0 || mappingLoading || (counts.unmapped > 0 && !unmappedAcknowledged) ? 'not-allowed' : 'pointer',
-                opacity: counts.collision > 0 || mappingLoading || (counts.unmapped > 0 && !unmappedAcknowledged) ? 0.55 : 1,
-              }}
-            >
-              <Rocket size={13} />
-              Deploy Mapping
-            </button>
+            <div style={{ display: 'grid', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                <span style={{ fontSize: 11, color: 'var(--accent-blue)', fontWeight: 700 }}>
+                  {checkState === 'pending' && 'Status: Pending'}
+                  {checkState === 'running' && 'Status: Validating Schema...'}
+                  {checkState === 'issues' && `Status: ${counts.collision} Schema Conflict${counts.collision === 1 ? '' : 's'}`}
+                  {checkState === 'success' && 'Status: Ready to Sync'}
+                </span>
+                <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-tertiary)', fontWeight: 700 }}>
+                  Checking: {explicitTables.length || 1} Source, {primaryTargetConnector ? 1 : 0} Target
+                </span>
+              </div>
+              <div style={{ height: 8, borderRadius: 999, background: '#2A2A35', position: 'relative', overflow: 'hidden', border: '1px solid rgba(71,85,105,0.35)' }}>
+                {checkState === 'running' && (
+                  <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '35%',
+                    height: '100%',
+                    borderRadius: 999,
+                    background: 'linear-gradient(90deg, rgba(59,130,246,0.2), rgba(59,130,246,0.9), rgba(59,130,246,0.2))',
+                    animation: 'pulse 1s ease-in-out infinite',
+                  }} />
+                )}
+                {checkState === 'success' && (
+                  <div style={{ position: 'absolute', inset: 0, background: 'rgba(34,197,94,0.85)', borderRadius: 999 }} />
+                )}
+                {checkState === 'issues' && (
+                  <div style={{ position: 'absolute', inset: 0, background: 'rgba(239,68,68,0.75)', borderRadius: 999 }} />
+                )}
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: 10, flexWrap: 'wrap' }}>
+              {checkState === 'pending' || checkState === 'running' ? (
+                <button
+                  type="button"
+                  onClick={runDryRun}
+                  disabled={mappingLoading}
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 16px', minWidth: 220, borderRadius: 8, border: '1px solid var(--accent-blue)', background: 'var(--accent-blue)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: mappingLoading ? 'not-allowed' : 'pointer', opacity: mappingLoading ? 0.65 : 1 }}
+                >
+                  {mappingLoading ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={14} />}
+                  {mappingLoading ? 'Running Check...' : 'Run Check'}
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={runDryRun}
+                    disabled={mappingLoading}
+                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 16px', minWidth: 170, borderRadius: 8, border: '1px solid var(--border-main)', background: 'transparent', color: 'var(--text-primary)', fontSize: 12, fontWeight: 700, cursor: mappingLoading ? 'not-allowed' : 'pointer', opacity: mappingLoading ? 0.65 : 1 }}
+                  >
+                    <RefreshCw size={14} />
+                    Re-run Check
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!readyToProceed}
+                    onClick={() => onProceedStateChange?.(true)}
+                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 16px', minWidth: 170, borderRadius: 8, border: '1px solid var(--accent-blue)', background: 'var(--accent-blue)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: !readyToProceed ? 'not-allowed' : 'pointer', opacity: !readyToProceed ? 0.6 : 1 }}
+                  >
+                    Proceed
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </div>
-      )}
+
+        <div style={{ gridColumn: 'span 4', display: 'grid', gap: 12 }}>
+          <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 14, background: 'var(--bg-surface)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', textTransform: 'uppercase' }}>AI Enhancements</div>
+              <button type="button" title="Configure AI semantic matching and prompt behavior." style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer' }}>
+                <Settings size={14} color="var(--text-tertiary)" />
+              </button>
+            </div>
+            <div style={{ display: 'grid', gap: 8 }}>
+              <ToggleOption
+                label="Auto-Detect Mapping"
+                description="Maps source to target by semantics."
+                checked={autoMappingMode}
+                onChange={toggleAutoMappingMode}
+              />
+              <ToggleOption
+                label="Auto-detect Relationships"
+                description="Infers FK constraints automatically."
+                checked={autoRelationships}
+                onChange={setAutoRelationships}
+              />
+              <div style={{ borderRadius: 8, border: '1px solid var(--border-main)', padding: 10, background: 'var(--bg-main)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>Generate AI Descriptions</span>
+                    <span title="Uses LLM orchestration (such as LangChain) to automatically generate technical descriptions for tables and fields during sync.">
+                      <Info size={13} color="var(--text-tertiary)" />
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Drafts metadata documentation.</div>
+                </div>
+                <input type="checkbox" checked={generateDescriptions} onChange={(e) => setGenerateDescriptions(e.target.checked)} />
+              </div>
+            </div>
+          </div>
+          <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 14, background: 'var(--bg-surface)' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', textTransform: 'uppercase', marginBottom: 10 }}>Scope Verification</div>
+            <div style={{ display: 'grid', gap: 8 }}>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}><strong>Explicitly selected:</strong> {explicitTables.length > 0 ? explicitTables.join(', ') : 'None'}</div>
+              <div style={{ fontSize: 11, color: visibleInferredTables.length > 0 ? 'var(--accent-orange)' : 'var(--text-secondary)' }}>
+                <strong>Inferred:</strong> {visibleInferredTables.length > 0 ? visibleInferredTables.join(', ') : 'None'}
+                {visibleInferredTables.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => mappingTableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                    style={{ marginLeft: 8, border: 'none', background: 'transparent', color: 'var(--accent-blue)', cursor: 'pointer', fontSize: 11, textDecoration: 'underline' }}
+                  >
+                    Review
+                  </button>
+                )}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}><strong>Unsupported types:</strong> 0</div>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}><strong>Estimated Volume:</strong> {estimatedVolume}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+        {needsRefresh && (
+          <span style={{ fontSize: 11, color: 'var(--accent-orange)' }}>
+            AI settings changed. Refresh mappings to apply.
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={runDryRun}
+          disabled={mappingLoading}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '8px 12px',
+            borderRadius: 8,
+            border: '1px solid var(--border-main)',
+            background: 'var(--bg-surface-raised)',
+            color: 'var(--text-primary)',
+            fontSize: 12,
+            fontWeight: 700,
+            cursor: mappingLoading ? 'not-allowed' : 'pointer',
+            opacity: mappingLoading ? 0.65 : 1,
+          }}
+        >
+          {mappingLoading ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <RefreshCw size={13} />}
+          Refresh Mappings
+        </button>
+      </div>
 
       {mappingError && !mappingLoading && !dryRunFailed && (
         <div style={{ border: '1px solid rgba(239, 68, 68, 0.45)', background: 'rgba(239, 68, 68, 0.12)', color: 'var(--color-error)', borderRadius: 8, padding: '10px 12px', fontSize: 12 }}>
@@ -4544,106 +4857,49 @@ function StepMappingOptions({
         </div>
       )}
 
-      {showInitialDryRunCTA ? (
-        <DryRunCTA
-          mappingLoading={mappingLoading}
-          dryRunFailed={dryRunFailed}
-          dryRunError={dryRunError}
-          mappingError={mappingError}
-          onRunDryRun={runDryRun}
-        />
-      ) : mappingLoading ? (
-        <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)' }}>
-          <CenteredNotice icon={<Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />} text="Running auto-map validation..." />
+      {deployError && (
+        <div style={{ border: '1px solid rgba(239, 68, 68, 0.45)', background: 'rgba(239, 68, 68, 0.12)', color: 'var(--color-error)', borderRadius: 8, padding: '10px 12px', fontSize: 12 }}>
+          {deployError}
         </div>
-      ) : (
-        <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, overflow: 'hidden', background: 'var(--bg-surface)' }}>
-          {rows.length > 0 && (
-            <>
-              <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-main)', fontSize: 11, color: 'var(--text-tertiary)', background: 'var(--bg-surface)' }}>
-                Showing {fieldMappings.visibleRows.length} of {fieldMappings.filteredCount} field{fieldMappings.filteredCount === 1 ? '' : 's'}
-                {fieldMappings.filteredCount !== fieldMappings.totalCount ? ` (${fieldMappings.totalCount} total)` : ''}
-              </div>
-              {/* Header Row */}
-              <div className="mapping-header">
-                <div>Source Field</div>
-                <div>Target Field</div>
-                <div>Status</div>
-              </div>
-            </>
-          )}
+      )}
 
-          {filteredRows.length === 0 ? (
-            rows.length > 0 ? (
-              <div style={{ padding: '38px 0', display: 'grid', justifyItems: 'center', gap: 5, color: 'var(--text-tertiary)', fontSize: 13 }}>
-                <div style={{ color: 'var(--text-primary)', fontWeight: 700 }}>No rows match the current filters.</div>
-                <div>Clear search or change the active filter.</div>
-              </div>
-            ) : (
-              <CenteredNotice text="Dry run completed, but no field-level mappings were returned." />
-            )
-          ) : (
-            fieldMappings.visibleRows.map((row) => (
-              <div key={row.id} className="mapping-row">
-                {/* Source Field Column */}
-                <div className="source-column">
-                  <div className="field-name">{row.source_field}</div>
-                  <div className="badge-group">
-                    <TypeBadge type={row.source_type} />
-                    <span className="badge-secondary">Column</span>
-                    <span className="badge-table">Table: {row.source_table_name}</span>
-                  </div>
-                </div>
+      {/* ── New DryRunMappingTable — shown after a successful dry run ─────── */}
+      {dryRunStatus === 'success' && detectedMappings.length > 0 && (
+        <div ref={mappingTableRef}>
+          <DryRunMappingTable
+            mappings={detectedMappings}
+            summary={dryRunData?.summary}
+            relationships={(() => {
+              try {
+                const stored = sessionStorage.getItem('detectedRelationships');
+                return stored ? JSON.parse(stored) : [];
+              } catch { return []; }
+            })()}
+            onEdit={(rowId) => {
+              const row = detectedMappings.find(r => r.id === rowId);
+              if (row) setEditingRow(row);
+            }}
+          />
+        </div>
+      )}
 
-                {/* Target Field Column */}
-                <div className="target-column">
-                  <input
-                    type="text"
-                    className="target-input"
-                    value={row.target_field || ''}
-                    onChange={(e) => handleInlineTargetChange(row.id, e.target.value)}
-                    placeholder="Map to target field..."
-                    disabled={!dryRunCompleted && !autoMappingMode}
-                  />
-                  {row.target_type && <TypeBadge type={row.target_type} />}
-                </div>
+      {/* ── FieldMappingEditor modal — shown when a row is being edited ───── */}
+      {editingRow && (
+        <FieldMappingEditor
+          row={editingRow}
+          onSave={onFieldEdit}
+          onClose={() => setEditingRow(null)}
+          targetPlatform={Array.from(targetConnectors || new Set())[0] || 'snowflake'}
+          isSaving={isSavingEdit}
+        />
+      )}
 
-                {/* Status Column */}
-                <div className="status-column">
-                  <span className={`status-badge status-${row.status}`}>
-                    {row.status === 'auto' ? 'Auto' : 
-                     row.status === 'manual' ? 'Manual' :
-                     row.status === 'unmapped' ? 'Unmapped' : 'Collision'}
-                  </span>
-                </div>
-              </div>
-            ))
-          )}
-          {fieldMappings.requiresPagination && (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 12px', borderTop: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)', fontSize: 12, color: 'var(--text-secondary)' }}>
-              <span>
-                Page {fieldMappings.page + 1} of {fieldMappings.pageCount}
-              </span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <button
-                  type="button"
-                  disabled={fieldMappings.page === 0}
-                  onClick={() => fieldMappings.setPage((current) => Math.max(0, current - 1))}
-                  style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-surface)', color: 'var(--text-primary)', fontSize: 12, cursor: fieldMappings.page === 0 ? 'not-allowed' : 'pointer', opacity: fieldMappings.page === 0 ? 0.5 : 1 }}
-                >
-                  Previous
-                </button>
-                <button
-                  type="button"
-                  disabled={fieldMappings.page >= fieldMappings.pageCount - 1}
-                  onClick={() => fieldMappings.setPage((current) => Math.min(fieldMappings.pageCount - 1, current + 1))}
-                  style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-surface)', color: 'var(--text-primary)', fontSize: 12, cursor: fieldMappings.page >= fieldMappings.pageCount - 1 ? 'not-allowed' : 'pointer', opacity: fieldMappings.page >= fieldMappings.pageCount - 1 ? 0.5 : 1 }}
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-          )}
+      {mappingLoading && (
+        <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)', padding: 10 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 8 }}>Generating Mappings...</div>
+          <div style={{ width: '100%', height: 6, borderRadius: 999, background: 'rgba(71,85,105,0.35)', overflow: 'hidden' }}>
+            <div style={{ width: '40%', height: '100%', background: 'var(--accent-blue)', borderRadius: 999, animation: 'pulse 1.2s ease-in-out infinite' }} />
+          </div>
         </div>
       )}
 
@@ -4661,80 +4917,24 @@ function StepMappingOptions({
         </label>
       )}
 
-      <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)' }}>
-        <h3 style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 12px' }}>Transformation Options</h3>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ borderRadius: 8, border: '1px solid var(--border-main)', padding: 12, background: 'var(--bg-main)', display: 'grid', gap: 10 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Auto-Detect Mapping</div>
-                <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
-                  Switch off to enter manual override mode. Manual mode requires a successful dry run.
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={toggleAutoMappingMode}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 6,
-                  padding: '8px 12px',
-                  borderRadius: 8,
-                  minWidth: 180,
-                  background: autoMappingMode ? 'var(--color-success-bg)' : 'rgba(245, 158, 11, 0.14)',
-                  color: autoMappingMode ? 'var(--color-success)' : 'var(--accent-orange)',
-                  border: autoMappingMode ? '1px solid rgba(34, 197, 94, 0.35)' : '1px solid rgba(245, 158, 11, 0.35)',
-                  fontSize: 12,
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                }}
-              >
-                {autoMappingMode ? 'AUTO MODE ON' : 'MANUAL MODE'}
-              </button>
-            </div>
-
-            {!autoMappingMode && (
-              <div style={{ borderRadius: 8, border: '1px dashed rgba(245, 158, 11, 0.35)', padding: 10, background: 'rgba(245, 158, 11, 0.08)', fontSize: 12, color: 'var(--accent-orange)' }}>
-                Manual mode active. Run dry run, then edit target fields directly.
-              </div>
+      <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 45, background: readiness.background, borderTop: readiness.border, padding: '10px 16px' }}>
+        <p style={{ fontSize: 11, color: readiness.color, margin: 0, lineHeight: 1.6, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10, color: 'var(--text-secondary)', fontWeight: 600 }}>
+            <span>API Connected</span>
+            <span style={{ opacity: 0.6 }}>|</span>
+            <span>Branch: local/dev</span>
+          </span>
+          <span style={{ textAlign: 'center', flex: '1 1 auto' }}>{readiness.message}</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+            {counts.collision > 0 && (
+              <span style={{ fontSize: 10, fontWeight: 700, borderRadius: 999, padding: '2px 8px', border: '1px solid rgba(239, 68, 68, 0.45)', background: 'rgba(239, 68, 68, 0.12)', color: 'var(--color-error)' }}>
+                Attention: Comparator
+              </span>
             )}
-          </div>
-
-          <div style={{ borderRadius: 8, border: '1px solid var(--border-main)', padding: 12, background: 'var(--bg-main)', display: 'grid', gap: 8 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Scope Verification</div>
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
-              Extraction will include selected sources and validated field-level mappings.
-            </div>
-            <div style={{ display: 'grid', gap: 6 }}>
-              <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                <strong>Explicitly selected:</strong> {explicitTables.length > 0 ? explicitTables.join(', ') : 'None'}
-              </div>
-              <div style={{ fontSize: 11, color: inferredTables.length > 0 ? 'var(--accent-orange)' : 'var(--text-secondary)' }}>
-                <strong>Inferred from mapping:</strong> {inferredTables.length > 0 ? inferredTables.join(', ') : 'None'}
-              </div>
-            </div>
-          </div>
-
-          <ToggleOption
-            label="Auto-detect Relationships"
-            description="Automatically infer joins and relationships from foreign keys and naming conventions."
-            checked={autoRelationships}
-            onChange={setAutoRelationships}
-          />
-          <ToggleOption
-            label="Generate AI Descriptions"
-            description="Use the LLM to auto-generate descriptions for tables and fields during sync."
-            checked={generateDescriptions}
-            onChange={setGenerateDescriptions}
-          />
-        </div>
-      </div>
-
-      <div style={{ padding: 12, borderRadius: 8, background: readiness.background, border: readiness.border }}>
-        <p style={{ fontSize: 11, color: readiness.color, margin: 0, lineHeight: 1.6, fontWeight: 700 }}>
-          {readiness.message}
+            <button type="button" onClick={() => onProceedStateChange?.(readyToProceed)} style={{ border: '1px solid var(--border-main)', borderRadius: 6, padding: '4px 10px', fontSize: 10, fontWeight: 700, background: 'var(--bg-surface)', color: 'var(--text-primary)' }}>
+              NEXT STEP
+            </button>
+          </span>
         </p>
       </div>
     </div>

@@ -1063,11 +1063,15 @@ export const api = {
         }
     },
 
-    async updateMapping(projectId, mappingId, targetName) {
+    async updateMapping(projectId, mappingId, targetNameOrPayload) {
+        // Accept either a plain string (legacy) or a full payload object
+        const body = typeof targetNameOrPayload === 'object' && targetNameOrPayload !== null
+            ? targetNameOrPayload
+            : { target_name: targetNameOrPayload };
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/mappings/${mappingId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ target_name: targetName }),
+            body: JSON.stringify(body),
         });
         return handleResponse(res);
     },

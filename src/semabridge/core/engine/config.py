@@ -47,6 +47,10 @@ from semabridge.core.engine.exceptions import (
 
 logger = get_logger(__name__)
 
+def _normalize_identifier_for_match(value: str) -> str:
+    """Normalize identifiers so mapping overrides survive space/underscore/case differences."""
+    return re.sub(r"_+", "_", re.sub(r"[^A-Z0-9]+", "_", str(value or "").upper())).strip("_")
+
 def _apply_mapping_overrides_from_config(
     sml_model: SMLModel,
     config_path: Path,
@@ -94,10 +98,15 @@ def _apply_mapping_overrides_from_config(
         if source_path.startswith("metrics."):
             metric_name = source_path[len("metrics."):].strip()
             metric_lookup = metric_name.lower()
+            metric_lookup_normalized = _normalize_identifier_for_match(metric_name)
             for metric in sml_model.metrics:
                 metric_unique_name = str(getattr(metric, "unique_name", "")).strip()
                 metric_label = str(getattr(metric, "label", "")).strip()
-                if metric_unique_name.lower() == metric_lookup or metric_label.lower() == metric_lookup:
+                unique_match = metric_unique_name.lower() == metric_lookup
+                label_match = metric_label.lower() == metric_lookup
+                normalized_unique_match = _normalize_identifier_for_match(metric_unique_name) == metric_lookup_normalized
+                normalized_label_match = _normalize_identifier_for_match(metric_label) == metric_lookup_normalized
+                if unique_match or label_match or normalized_unique_match or normalized_label_match:
                     if str(metric.unique_name) != target_name:
                         metric.unique_name = target_name
                         metric.label = target_name
