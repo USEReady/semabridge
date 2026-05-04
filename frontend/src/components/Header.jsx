@@ -139,11 +139,6 @@ export default function Header({ onToggleLogs, onToggleVersionControl, onToggleR
                         title="Logs & Activity"
                     >
                         <Bell size={16} />
-                        {unreadCount > 0 && (
-                            <span className="absolute top-1.5 right-1.5 min-w-[14px] h-[14px] flex items-center justify-center rounded-full bg-red-500 text-white text-[8px] font-bold leading-none px-1">
-                                {unreadCount > 9 ? '9+' : unreadCount}
-                            </span>
-                        )}
                     </button>
 
                     <div className="flex flex-col items-center gap-1">
