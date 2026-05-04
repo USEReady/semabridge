@@ -18,3 +18,15 @@ agent_rules:
 # Automatically expose your domain workflows to the agent
 capabilities:
   skills_dir: "../.github/skills/"
+ 
+
+# Add pointers so APM clients know where your "brain" lives
+instructions:
+  system: "../.github/copilot-instructions.md"
+  
+agent_rules:
+  - "../.github/AGENTS.md"
+
+# Automatically expose your domain workflows to the agent
+capabilities:
+  skills_dir: "../.github/skills/"

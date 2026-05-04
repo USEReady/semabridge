@@ -1,7 +1,7 @@
 """add missing snapshot and run fields
 
 Revision ID: a2b3c4d5e6f7
-Revises: 89c75544e395
+Revises: b3d7a9c4e1f2
 Create Date: 2026-04-29 10:20:00.000000
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'a2b3c4d5e6f7'
-down_revision: Union[str, Sequence[str], None] = '89c75544e395'
+down_revision: Union[str, Sequence[str], None] = 'b3d7a9c4e1f2'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

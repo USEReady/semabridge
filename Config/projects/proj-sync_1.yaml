@@ -1,0 +1,45 @@
+project_name: sync_1
+source:
+  type: snowflake
+  database: semabridge_db
+  schema: public
+  model: ANNUAL_SEMANTIC
+targets:
+- type: fabric
+  identity_id: 8649e716-06f0-4e1a-a4a2-d738cead6e60
+  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
+  workspace: semabridge
+mappings:
+- source: ANNUAL_SEMANTIC
+  target: ANNUAL_SEMANTIC
+  type: table
+  columns:
+  - source: id
+    target: ID
+    type: integer
+    primary_key: true
+  - source: name
+    target: NAME
+    type: string
+  - source: created_at
+    target: CREATED_AT
+    type: timestamp
+  - source: updated_at
+    target: UPDATED_AT
+    type: timestamp
+ui:
+  intermediate_format: osi
+  editor_mode: form
+  output_format: osi
+selection:
+  model_ids:
+  - ANNUAL_SEMANTIC
+options:
+  auto_relationships: true
+  generate_descriptions: true
+project_id: proj-sync_1
+display_name: sync_1
+target:
+  type: fabric
+  identity_id: 8649e716-06f0-4e1a-a4a2-d738cead6e60
+  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718

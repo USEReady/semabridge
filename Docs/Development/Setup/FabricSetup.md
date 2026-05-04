@@ -39,11 +39,25 @@ Add the following permissions:
 
 | API | Permission | Type |
 |-----|------------|------|
-| Power BI Service | Dataset.ReadWrite.All | Delegated |
-| Power BI Service | Workspace.Read.All | Delegated |
+| Power BI Service | Dataset.ReadWrite.All | Application |
+| Power BI Service | Workspace.Read.All | Application |
 | Power BI Service | Tenant.Read.All | Application |
+| Microsoft Fabric | Item.Read.All | Application |
+| Microsoft Fabric | Item.ReadWrite.All | Application |
 
 Then click "Grant admin consent".
+
+> **Important:** The Fabric Items API (`/v1/workspaces/.../items`) requires the **Microsoft Fabric** API permissions, not just Power BI. Without `Item.Read.All`, the service principal will receive a 401 Unauthorized when listing semantic models even if the Power BI permissions are granted.
+
+### Step 2b: Enable Service Principals in Fabric Tenant
+
+Service principal access must be explicitly enabled in the Fabric admin portal:
+
+1. Go to [Fabric Admin Portal](https://app.fabric.microsoft.com/admin-portal) → Tenant settings
+2. Find **"Service principals can use Fabric APIs"** and enable it
+3. Optionally restrict to a specific security group containing your app registration
+
+Without this setting, all service principal calls to the Fabric API return 401 regardless of Azure AD permissions.
 
 ### Step 3: Create Client Secret
 
@@ -152,6 +166,14 @@ uv run -m semabridge rollback -d DATASET_ID --tag v1.0
 - Verify API permissions are granted
 - Check if admin consent is granted
 - Verify app has workspace access
+
+#### 401 Unauthorized on Fabric API calls
+This is the most common service-principal issue. Work through this checklist:
+
+1. **Fabric tenant setting** — Go to Fabric Admin Portal → Tenant settings → enable **"Service principals can use Fabric APIs"**. Without this, all SP calls return 401.
+2. **Azure AD permissions** — The app registration needs **Microsoft Fabric** API permissions (`Item.Read.All` / `Item.ReadWrite.All`), not just Power BI permissions. Grant admin consent after adding them.
+3. **Workspace membership** — Add the service principal as Contributor or Admin in the Fabric workspace (Settings → Manage access).
+4. **Permission type** — Fabric API permissions must be **Application** type (not Delegated) for service-principal (client-credentials) flow.
 
 #### "InvalidRequest" on model operations
 - Ensure workspace has Premium/Fabric capacity

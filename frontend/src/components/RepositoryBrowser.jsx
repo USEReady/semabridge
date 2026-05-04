@@ -25,6 +25,13 @@ import { api } from '../utils/api';
 import { GlassCard, ActionButton, Badge } from "../pages/VersionControlPage"; 
 
 // --- Helper: Modal for Raw Content (Inspector) ---
+function formatSnapshotDate(value) {
+    if (!value || value === 0) return "—";
+    const date = new Date(value);
+    if (isNaN(date.getTime()) || date.getTime() <= 86400000) return "—";
+    return date.toLocaleString();
+}
+
 function SnapshotContentModal({ isOpen, onClose, snapshotId, projectId }) {
     const [content, setContent] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
@@ -79,7 +86,7 @@ function SnapshotContentModal({ isOpen, onClose, snapshotId, projectId }) {
                                 </div>
                                 <div className="p-4 rounded-xl bg-slate-500/5 border border-[var(--border-light)]">
                                     <span className="text-[10px] font-black text-[var(--text-tertiary)] uppercase block mb-1">Captured At</span>
-                                    <span className="text-sm font-bold text-[var(--text-primary)]">{new Date(content.captured_at).toLocaleString()}</span>
+                                    <span className="text-sm font-bold text-[var(--text-primary)]">{formatSnapshotDate(content.captured_at || content.created_at)}</span>
                                 </div>
                                 <div className="p-4 rounded-xl bg-slate-500/5 border border-[var(--border-light)]">
                                     <span className="text-[10px] font-black text-[var(--text-tertiary)] uppercase block mb-1">Model Count</span>
@@ -276,7 +283,7 @@ export default function RepositoryBrowser({ projectId }) {
                 (s.comment && s.comment.toLowerCase().includes(q));
                 
             return matchesRole && matchesOrigin && matchesPinned && matchesSearch;
-        }).sort((a, b) => new Date(b.captured_at) - new Date(a.captured_at));
+        }).sort((a, b) => new Date(b.created_at || b.captured_at || 0) - new Date(a.created_at || a.captured_at || 0));
     }, [snapshots, searchQuery, roleFilter, originFilter, pinnedOnly]);
 
     const handleManualDeploy = async (snapId) => {
@@ -395,9 +402,17 @@ export default function RepositoryBrowser({ projectId }) {
                         <div className="space-y-3 z-10">
                             <div className="flex items-center gap-2 text-[var(--text-secondary)]">
                                 <Calendar size={14} className="opacity-50" />
-                                <span className="text-xs font-bold">{new Date(snap.captured_at).toLocaleDateString()}</span>
+                                <span className="text-xs font-bold">
+                                    {(snap.created_at || snap.captured_at) && new Date(snap.created_at || snap.captured_at).getTime() > 86400000
+                                        ? new Date(snap.created_at || snap.captured_at).toLocaleDateString()
+                                        : '—'}
+                                </span>
                                 <Clock size={14} className="ml-2 opacity-50" />
-                                <span className="text-xs font-bold">{new Date(snap.captured_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                <span className="text-xs font-bold">
+                                    {(snap.created_at || snap.captured_at) && new Date(snap.created_at || snap.captured_at).getTime() > 86400000
+                                        ? new Date(snap.created_at || snap.captured_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                                        : '—'}
+                                </span>
                             </div>
                             {snap.comment && (
                                 <p className="text-[10px] font-bold text-[var(--text-tertiary)] italic line-clamp-1">

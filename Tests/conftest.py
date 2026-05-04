@@ -48,8 +48,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             ),
         )
     except ValueError:
-        pass  # already added
-
+        pass  # already registered by another conftest
 
 # -----------------------------------------------------------------------------
 # Database environment — force in-memory SQLite for all tests

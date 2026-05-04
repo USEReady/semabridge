@@ -232,11 +232,14 @@ def _get_msal_http_client():
             logger.info("MSAL session initialized with explicit proxies: %s", list(proxies.keys()))
 
         retry = Retry(
-            total=3,
-            read=3,
-            connect=3,
-            backoff_factor=0.5,
-            status_forcelist=(500, 502, 503, 504),
+            total=5,
+            read=5,
+            connect=5,
+            backoff_factor=0.75,
+            status_forcelist=(429, 500, 502, 503, 504),
+            # MSAL token requests are POST calls; allow retries for all methods.
+            allowed_methods=None,
+            respect_retry_after_header=True,
         )
         adapter = HTTPAdapter(max_retries=retry)
         session.mount("http://", adapter)
@@ -279,7 +282,39 @@ def _run_background_msal_poll(
     that concurrent logins from different users/tabs are fully isolated.
     """
     try:
-        result: Dict[str, Any] = app_msal.acquire_token_by_device_flow(flow)
+        # Retry device-flow poll on transient network disconnects.
+        result: Dict[str, Any] = {}
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                result = app_msal.acquire_token_by_device_flow(flow)
+                break
+            except Exception as poll_exc:
+                err_text = str(poll_exc).lower()
+                transient = any(
+                    marker in err_text
+                    for marker in (
+                        "remote end closed connection",
+                        "remotedisconnected",
+                        "connection aborted",
+                        "connection reset",
+                        "temporarily unavailable",
+                        "timeout",
+                    )
+                )
+                if (not transient) or attempt == max_attempts:
+                    raise
+                delay = 1.5 * attempt
+                logger.warning(
+                    "[FlowID=%s] MSAL poll transient network failure "
+                    "(attempt %s/%s): %s. Retrying in %.1fs",
+                    flow_id,
+                    attempt,
+                    max_attempts,
+                    poll_exc,
+                    delay,
+                )
+                _time.sleep(delay)
 
         if "access_token" in result:
             # Extract the username from the id_token_claims of THIS specific

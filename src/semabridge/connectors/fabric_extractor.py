@@ -154,7 +154,18 @@ class FabricExtractor:
                 return models
             except RequestException as e:
                 last_error = str(e)
-                logger.warning("Fabric model list endpoint '%s' failed for workspace %s: %s", source_name, workspace_id, e)
+                # Provide actionable guidance for 401 errors — the most common SP misconfiguration.
+                if hasattr(e, "response") and e.response is not None and e.response.status_code == 401:
+                    logger.warning(
+                        "Fabric model list endpoint '%s' returned 401 for workspace %s. "
+                        "For service-principal auth, verify: (1) 'Service principals can use Fabric APIs' "
+                        "is enabled in the Fabric Admin Portal → Tenant settings, "
+                        "(2) the app registration has Microsoft Fabric 'Item.Read.All' Application permission "
+                        "with admin consent granted, and (3) the service principal is added as a workspace member.",
+                        source_name, workspace_id,
+                    )
+                else:
+                    logger.warning("Fabric model list endpoint '%s' failed for workspace %s: %s", source_name, workspace_id, e)
                 continue
 
         if last_error:
@@ -256,7 +267,7 @@ class FabricExtractor:
                 "grant_type": "client_credentials",
                 "client_id": self.config.client_id,
                 "client_secret": self.config.client_secret.get_secret_value(),
-                "scope": "https://analysis.windows.net/powerbi/api/.default",
+                "scope": "https://api.fabric.microsoft.com/.default",
             }
             try:
                 logger.debug("Requesting new Azure AD access token (service principal)...")

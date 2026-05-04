@@ -25,11 +25,19 @@
 - Run Python dependency audit with pip-audit.
 - Run npm audit for frontend at high severity threshold.
 
-5. Extended Integration (manual)
+5. Database Migrations (Post-Merge)
+- Automatically runs on push to `main` or `develop` branches
+- Validates database connection to staging and production
+- Applies Alembic migrations to keep schema in sync with code
+- Requires `STAGING_DATABASE_URL` and `PRODUCTION_DATABASE_URL` secrets in GitHub
+- Can be manually triggered via `workflow_dispatch` input for environment selection
+- Workflow: `.github/workflows/apply-migrations.yml`
+
+6. Extended Integration (manual)
 - Optional workflow_dispatch input enables an extended integration check.
 - Keeps PR feedback fast while allowing deeper verification before release.
 
-6. Summary and Recovery Guidance
+7. Summary and Recovery Guidance
 - Publish pass/fail status for each stage.
 - Provide direct recovery instructions in workflow summary.
 
