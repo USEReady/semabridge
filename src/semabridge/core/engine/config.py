@@ -172,6 +172,9 @@ def _step1_load_config(
         # config_dict and file-loaded configs so that model_name, source
         # workspace, and target schema are honoured in all call paths).
         if raw_config:
+            if "project_id" in raw_config:
+                object.__setattr__(config, "_project_id_from_yaml", str(raw_config["project_id"]).strip())
+            
             source_cfg = raw_config.get("source") if isinstance(raw_config.get("source"), dict) else {}
             target_cfg: dict[str, Any] = {}
             raw_target = raw_config.get("target")
@@ -242,13 +245,23 @@ def _step2_init_identifiers(
     logger.info("Step 2: Initializing identifiers")
 
     # Determine project_id
-    if dataset_id:
+    if hasattr(config, "_project_id_from_yaml") and config._project_id_from_yaml:
+        # Strict Decoupling: YAML config is the ultimate authority
+        project_id = config._project_id_from_yaml
+    elif dataset_id:
         # For Fabric source, use dataset_id as project_id
         project_id = dataset_id
     elif project_name:
         project_id = project_name
     else:
         project_id = config.model.name
+
+    if source in ("pbix", "local"):
+        import re
+        # Strip 32-character UUID prefix if it exists (e.g. d501c10cadeb4687b0398c755d2b1add_continent -> continent)
+        project_id = re.sub(r'^[0-9a-f]{32}_', '', project_id)
+        if project_name:
+            project_name = re.sub(r'^[0-9a-f]{32}_', '', project_name)
 
     # Behavior loading logic (matches ExecutionConfig)
     behavior = ConnectorBehavior()

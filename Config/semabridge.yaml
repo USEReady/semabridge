@@ -1,40 +1,16 @@
-project_name: lan
+project_name: ffdf
 source:
-  type: fabric
-  identity_id: c505f63e-bb85-439a-be22-d7bcbde8a8cc
-  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
-  workspace: semabridge
-  models:
-    - annual
+  type: pbix
+  pbix_path: C:/Users/Premasai/AppData/Local/Temp/semabridge/projects/proj-ffdf/ab788b2836cc481c9f3799dec4d864dd_continent.pbix
+  pbix_file_path: C:/Users/Premasai/AppData/Local/Temp/semabridge/projects/proj-ffdf/ab788b2836cc481c9f3799dec4d864dd_continent.pbix
 targets:
-  - type: snowflake
-mappings:
-  - source: annual
-    target: ANNUAL
-    type: table
-    columns:
-      - source: id
-        target: ID
-        type: integer
-        primary_key: true
-      - source: name
-        target: NAME
-        type: string
-      - source: created_at
-        target: CREATED_AT
-        type: timestamp
-      - source: updated_at
-        target: UPDATED_AT
-        type: timestamp
+- type: snowflake
+  identity_id: 241347f2-70b3-4bb5-9586-85bc50b2bd7b
 ui:
   intermediate_format: osi
   editor_mode: form
-  output_format: osi
-selection:
-  model_ids:
-    - a3eb7be8-2df8-482b-872b-9d661659895a
 options:
   auto_relationships: true
   generate_descriptions: true
-target:
-  type: snowflake
+project_id: proj-ffdf
+display_name: ffdf
