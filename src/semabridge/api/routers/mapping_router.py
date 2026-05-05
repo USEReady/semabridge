@@ -112,4 +112,8 @@ def bulk_resolve_collisions(body: BulkResolveRequest) -> BulkResolveResponse:
             )
         )
 
+<<<<<<< HEAD
     return BulkResolveResponse(resolved=resolved, total=len(resolved))
+=======
+    return BulkResolveResponse(resolved=resolved, total=len(resolved))
+>>>>>>> fac44e3 (fixed ui,worked on the regex,logo,merged branches)

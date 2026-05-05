@@ -176,4 +176,8 @@
 #bulk-resolve-btn:not(:disabled):hover {
   background: rgba(251, 191, 36, 0.20) !important;
   border-color: rgba(251, 191, 36, 0.75) !important;
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> fac44e3 (fixed ui,worked on the regex,logo,merged branches)

@@ -57,10 +57,19 @@ function isGlob(q) {
 }
 
 function isRegexQuery(q) {
-  return q.startsWith('/') && q.length > 2 && q.lastIndexOf('/') > 0;
+  return /^(?:re|regex):.+/i.test(q) || (q.startsWith('/') && q.length > 2 && q.lastIndexOf('/') > 0);
 }
 
 function parseRegexQuery(q) {
+  const prefixed = q.match(/^(?:re|regex):(.+)$/i);
+  if (prefixed) {
+    try {
+      return new RegExp(prefixed[1], 'i');
+    } catch {
+      return null;
+    }
+  }
+
   const lastSlash = q.lastIndexOf('/');
   const pattern = q.slice(1, lastSlash);
   const flags = q.slice(lastSlash + 1) || 'i';
@@ -69,6 +78,15 @@ function parseRegexQuery(q) {
   } catch {
     return null;
   }
+}
+
+function isPrefixQuery(q) {
+  return /^(?:p|prefix):.+/i.test(q);
+}
+
+function parsePrefixQuery(q) {
+  const prefixed = q.match(/^(?:p|prefix):(.+)$/i);
+  return String(prefixed?.[1] || '').trim().toLowerCase();
 }
 
 // ---------------------------------------------------------------------------
@@ -81,6 +99,24 @@ function applyPatternFilter(items, regex, fields, maxResults) {
     for (const field of fields) {
       const val = item[field];
       if (val != null && regex.test(String(val))) {
+        out.push(item);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+function applyPrefixFilter(items, prefix, fields, maxResults) {
+  const out = [];
+  if (!prefix) return items.slice(0, maxResults);
+
+  for (const item of items) {
+    if (out.length >= maxResults) break;
+    for (const field of fields) {
+      const val = item[field];
+      const words = String(val ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+      if (words.some(word => word.startsWith(prefix))) {
         out.push(item);
         break;
       }
@@ -168,6 +204,10 @@ export function useHPSearch(items, fields, options = {}) {
     const q = query.trim();
 
     if (!q || !items || items.length === 0) return items ?? [];
+
+    if (isPrefixQuery(q)) {
+      return applyPrefixFilter(items, parsePrefixQuery(q), fields, maxResults);
+    }
 
     // Regex mode
     if (isRegexQuery(q)) {

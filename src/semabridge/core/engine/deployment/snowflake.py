@@ -115,9 +115,23 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
     if deployment_method in ("ddl", "both"):
         deployed = emitter.deploy(context.sml_model)
         if not deployed:
+            error_msg = emitter.last_deployment_error or 'unknown deployment error'
+            
+            # Check if this is a database-not-found error
+            if "object does not exist" in error_msg.lower() and "use database" in error_msg.lower():
+                db_name, _ = context.config.snowflake._resolved_db_schema() if hasattr(context.config.snowflake, '_resolved_db_schema') else ("UNKNOWN", "")
+                raise DeploymentError(
+                    f"Snowflake deployment failed: Target database does not exist.\n"
+                    f"Database: {db_name}\n"
+                    f"Error: {error_msg}\n\n"
+                    f"SOLUTIONS:\n"
+                    f"1. Create the database manually in Snowflake: CREATE DATABASE {db_name}\n"
+                    f"2. Or enable auto-create in config: add 'auto_create_database: true' to snowflake section in semabridge.yaml\n"
+                    f"3. Or check if the database name in config is correct."
+                )
+            
             raise DeploymentError(
-                f"Snowflake DDL deployment returned unsuccessful status: "
-                f"{emitter.last_deployment_error or 'unknown deployment error'}"
+                f"Snowflake DDL deployment returned unsuccessful status: {error_msg}"
             )
         self._export_inferred_osi_artifacts(context)
 

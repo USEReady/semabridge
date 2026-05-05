@@ -1538,4 +1538,3 @@ function _triggerDownload(blob, filename) {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
-

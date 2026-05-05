@@ -1607,4 +1607,3 @@ class SnowflakeSchemaManager:
             )
 
         return history_view_ddls, dataset_source_overrides
-

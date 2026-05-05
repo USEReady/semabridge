@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   Map, FolderOpen, PlayCircle, Settings,
-  Hexagon, LogOut, ChevronLeft, ChevronRight, Bell, Split,
+  LogOut, ChevronLeft, ChevronRight, Bell, Split,
   History as HistoryIcon,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -121,7 +121,15 @@ export default function DashboardLayout() {
               overflow: 'hidden',
             }}
           >
-            <Hexagon size={26} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} strokeWidth={2.5} />
+            <img 
+              src="/favicon.svg" 
+              alt="SemaBridge" 
+              style={{ 
+                width: 32, 
+                height: 32, 
+                flexShrink: 0,
+              }} 
+            />
             {!collapsed && (
               <span
                 className="font-bold text-primary"

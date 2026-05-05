@@ -566,4 +566,8 @@ class IdentifierRegistry:
         will still produce distinct hashes (e.g. "A1B2" vs "7F3C").
         """
         seed = f"{original_name}{sanitized_base}".encode("utf-8")
+<<<<<<< HEAD
         return hashlib.sha256(seed).hexdigest()[:4].upper()
+=======
+        return hashlib.sha256(seed).hexdigest()[:4].upper()
+>>>>>>> fac44e3 (fixed ui,worked on the regex,logo,merged branches)
