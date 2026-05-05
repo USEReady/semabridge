@@ -66,7 +66,7 @@ const INPUT = {
 
 const LABEL = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 };
 
-export function ProjectWizard({ editMode = false, initialData = null, onSaveConfig = null }) {
+export function ProjectWizard({ editMode = false, initialData = null, projectMappings = [], onSaveConfig = null }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { addLog } = useLogs();
@@ -80,10 +80,11 @@ export function ProjectWizard({ editMode = false, initialData = null, onSaveConf
   } = useWorkspace();
 
   // --- Intent-aware draft hook ---
+  const draftKey = (editMode && initialData?.id) ? `projectEditDraft_${initialData.id}` : 'createProjectDraft';
   const {
     hasDraft, draft: resumedDraft, saveDraft,
     resumeDraft, discardDraft, clearDraft,
-  } = useSessionDraft('createProjectDraft');
+  } = useSessionDraft(draftKey);
 
   const [step, setStep] = useState(1);
 
@@ -189,22 +190,28 @@ export function ProjectWizard({ editMode = false, initialData = null, onSaveConf
   // Step 5
   const [createReverseProject, setCreateReverseProject] = useState(false);
   const [createdProject, setCreatedProject] = useState(null);
+  const [mappingChoice, setMappingChoice] = useState('auto');
+  const [initialValues, setInitialValues] = useState(null);
 
   // --- Hydrate from edit mode initialData ---
   useEffect(() => {
     if (editMode && initialData) {
       if (initialData.project_name) setName(initialData.project_name);
+      if (initialData.description) setDescription(initialData.description);
+      if (initialData.tags && Array.isArray(initialData.tags)) setTags(new Set(initialData.tags));
       if (initialData.source_type) setSourceConnector(initialData.source_type);
       if (initialData.target_type) setTargetConnectors(new Set([initialData.target_type]));
       if (initialData.intermediate_format) setIntermediateFormat(initialData.intermediate_format);
       
       if (initialData.source_type === 'fabric') {
-         setFabricAccountId(initialData.source_identity_id || '');
-         setFabricWorkspaceId(initialData.source_workspace_id || '');
+         const accountId = String(initialData.source_identity_id || initialData.identity_id || '');
+         setFabricAccountId(accountId);
+         setSelectedConnectionId(accountId);
+         setFabricWorkspaceId(String(initialData.source_workspace_id || initialData.workspace_id || ''));
       } else if (initialData.source_type === 'snowflake') {
-         setSnowflakeAccountId(initialData.source_identity_id || '');
-         setSnowflakeDatabase(initialData.source_database || '');
-         setSnowflakeSchema(initialData.source_schema || '');
+         setSnowflakeAccountId(String(initialData.source_identity_id || initialData.identity_id || ''));
+         setSnowflakeDatabase(String(initialData.source_database || initialData.database || ''));
+         setSnowflakeSchema(String(initialData.source_schema || initialData.schema || ''));
       }
 
       if (initialData.target_type === 'snowflake') {
@@ -216,10 +223,94 @@ export function ProjectWizard({ editMode = false, initialData = null, onSaveConf
 
       if (initialData.allow_models) {
          const models = initialData.allow_models.split(',').map(m => m.trim()).filter(Boolean);
+         // Use a Set for fast lookup and ensure we store what's in allow_models
          setSelectedModels(new Set(models));
+         const nameMap = {};
+         models.forEach(m => { 
+           nameMap[m] = m; 
+           // If it looks like a name, also try to map it
+         });
+         setSelectedModelNameByKey(prev => ({ ...prev, ...nameMap }));
       }
+
+      if (initialData.mapping_options) {
+        setAutoRelationships(initialData.mapping_options.auto_detect_relationships !== false);
+        setGenerateDescriptions(initialData.mapping_options.generate_descriptions !== false);
+      }
+      
+      setCreateReverseProject(!!initialData.create_reverse_project);
+      if (editMode) setMappingChoice('saved');
+      
+      // Store initial values for change highlighting in step 5
+      setInitialValues({
+        name: initialData.project_name || '',
+        description: initialData.description || '',
+        sourceConnector: initialData.source_type || '',
+        targetConnector: initialData.target_type || '',
+        intermediateFormat: initialData.intermediate_format || 'osi',
+        fabricWorkspaceId: initialData.source_workspace_id || initialData.workspace_id || '',
+        selectedModels: initialData.allow_models ? initialData.allow_models.split(',').map(m => m.trim()).filter(Boolean) : [],
+        autoRelationships: initialData.mapping_options ? initialData.mapping_options.auto_detect_relationships !== false : true,
+        generateDescriptions: initialData.mapping_options ? initialData.mapping_options.generate_descriptions !== false : true,
+        createReverseProject: !!initialData.create_reverse_project
+      });
     }
   }, [editMode, initialData]);
+
+  // --- Derivations (Live state calculated from state/props) ---
+  const liveFabricWorkspaces = useMemo(() => {
+    // If we have accounts at all, and source is Fabric, we should prioritize
+    // the list fetched explicitly for the selected account in Step 2.
+    // Fallback to availableWorkspaces (global default) only if we haven't
+    // fetched the account-specific list yet.
+    const baseList = allWorkspacesFromApi.length > 0 
+      ? allWorkspacesFromApi 
+      : (fabricAccountId ? [] : availableWorkspaces);
+
+    // In edit mode, ensure the initial workspace is visible even if not yet in the fetched list
+    if (editMode && initialValues?.fabricWorkspaceId && !baseList.some(ws => String(ws.id) === String(initialValues.fabricWorkspaceId))) {
+      return [{ id: initialValues.fabricWorkspaceId, name: 'Saved Workspace' }, ...baseList];
+    }
+    
+    const normalized = (baseList || [])
+      .filter(Boolean)
+      .map((ws) => ({
+        ...ws,
+        id: ws?.id || ws?.workspace_id || '',
+        name: ws?.name || ws?.displayName || ws?.workspace_name || ws?.workspace_id || ws?.id || '',
+        displayName: ws?.displayName || ws?.name || ws?.workspace_name || '',
+      }))
+      .filter((ws) => ws.id);
+
+    const deduped = [];
+    const seen = new Set();
+    for (const ws of normalized) {
+      if (seen.has(ws.id)) continue;
+      seen.add(ws.id);
+      deduped.push(ws);
+    }
+    return deduped;
+  }, [availableWorkspaces, allWorkspacesFromApi, fabricAccountId]);
+
+  const selectedWorkspace = useMemo(() => {
+    if (!fabricWorkspaceId) return null;
+    return liveFabricWorkspaces.find(ws => ws.id === fabricWorkspaceId) || null;
+  }, [liveFabricWorkspaces, fabricWorkspaceId]);
+
+  const selectedModelNames = [...selectedModels]
+    .map(modelKey => selectedModelNameByKey[modelKey])
+    .filter(Boolean);
+
+  const selectedLocalFolder = useMemo(() => (
+    localFolders.find(folder => String(folder.id) === String(selectedLocalFolderId)) || null
+  ), [localFolders, selectedLocalFolderId]);
+
+  const selectedLocalFolderTag = selectedLocalFolder?.tag_name || '';
+  const selectedPbixFile = useMemo(() => {
+    if (!selectedPbixFilePath) return null;
+    return pbixFiles.find(file => file.path === selectedPbixFilePath) || null;
+  }, [pbixFiles, selectedPbixFilePath]);
+  const resolvedPbixPath = pbixSourceMode === 'TAG' ? selectedPbixFilePath : pbixUploadPath;
 
   // --- Hydrate form when user clicks "Resume" on the draft banner ---
   useEffect(() => {
@@ -292,56 +383,10 @@ export function ProjectWizard({ editMode = false, initialData = null, onSaveConf
     allModels, ['name', 'description', 'wsid'], { idField: '_id' }
   );
 
-  const liveFabricWorkspaces = useMemo(() => {
-    // If we have accounts at all, and source is Fabric, we should prioritize
-    // the list fetched explicitly for the selected account in Step 2.
-    // Fallback to availableWorkspaces (global default) only if we haven't
-    // fetched the account-specific list yet.
-    const baseList = allWorkspacesFromApi.length > 0 
-      ? allWorkspacesFromApi 
-      : (fabricAccountId ? [] : availableWorkspaces);
 
-    const normalized = (baseList || [])
-      .filter(Boolean)
-      .map((ws) => ({
-        ...ws,
-        id: ws?.id || ws?.workspace_id || '',
-        name: ws?.name || ws?.displayName || ws?.workspace_name || ws?.workspace_id || ws?.id || '',
-        displayName: ws?.displayName || ws?.name || ws?.workspace_name || '',
-      }))
-      .filter((ws) => ws.id);
-
-    const deduped = [];
-    const seen = new Set();
-    for (const ws of normalized) {
-      if (seen.has(ws.id)) continue;
-      seen.add(ws.id);
-      deduped.push(ws);
-    }
-    return deduped;
-  }, [availableWorkspaces, allWorkspacesFromApi, fabricAccountId]);
-
-  const selectedWorkspace = useMemo(() => {
-    if (!fabricWorkspaceId) return null;
-    return liveFabricWorkspaces.find(ws => ws.id === fabricWorkspaceId) || null;
-  }, [liveFabricWorkspaces, fabricWorkspaceId]);
-
-  const selectedModelNames = [...selectedModels]
-    .map(modelKey => selectedModelNameByKey[modelKey])
-    .filter(Boolean);
 
   const [isRefreshingWorkspaces, setIsRefreshingWorkspaces] = useState(false);
 
-  const selectedLocalFolder = useMemo(() => (
-    localFolders.find(folder => String(folder.id) === String(selectedLocalFolderId)) || null
-  ), [localFolders, selectedLocalFolderId]);
-
-  const selectedLocalFolderTag = selectedLocalFolder?.tag_name || '';
-  const selectedPbixFile = useMemo(() => {
-    if (!selectedPbixFilePath) return null;
-    return pbixFiles.find(file => file.path === selectedPbixFilePath) || null;
-  }, [pbixFiles, selectedPbixFilePath]);
-  const resolvedPbixPath = pbixSourceMode === 'TAG' ? selectedPbixFilePath : pbixUploadPath;
 
   const refreshLocalFolders = useCallback(async () => {
     setLocalFoldersLoading(true);
@@ -549,15 +594,18 @@ export function ProjectWizard({ editMode = false, initialData = null, onSaveConf
   // This eliminates the "Primary Workspace" zombie that was persisted in localStorage.
   useEffect(() => {
     if (!fabricWorkspaceId) return;
+    // Skip ghost purge in edit mode if we're still using the initial saved workspace
+    if (editMode && fabricWorkspaceId === initialValues?.fabricWorkspaceId) return;
+    
     const liveList = liveFabricWorkspaces;
     if (liveList.length === 0) return; // don't clear before we have data
-    const stillExists = liveList.some(ws => ws.id === fabricWorkspaceId);
+    const stillExists = liveList.some(ws => String(ws.id) === String(fabricWorkspaceId));
     if (!stillExists) {
       console.warn('[SemaBridge] Ghost workspace detected — force-clearing:', fabricWorkspaceId);
       setFabricWorkspaceId('');
       localStorage.removeItem('semabridge_workspace_id');
     }
-  }, [fabricWorkspaceId, availableWorkspaces, allWorkspacesFromApi]);
+  }, [fabricWorkspaceId, availableWorkspaces, allWorkspacesFromApi, editMode, initialValues]);
 
 
   useEffect(() => {
@@ -602,6 +650,10 @@ export function ProjectWizard({ editMode = false, initialData = null, onSaveConf
       const workspace = selectedWorkspace || { id: fabricWorkspaceId, name: fabricWorkspaceId };
       setWorkspaces([workspace]);
       setExpandedWs(prev => ({ ...prev, [fabricWorkspaceId]: true }));
+      // Ensure models are loaded if not already present
+      if (!wsModels[fabricWorkspaceId]) {
+         loadWsModels(fabricWorkspaceId);
+      }
       setWsLoading(true);
       console.log('[SemaBridge] Discovering Fabric models for workspaceId:', fabricWorkspaceId);
       api.discoverFabricModels(fabricWorkspaceId, selectedConnectionId)
@@ -726,8 +778,8 @@ export function ProjectWizard({ editMode = false, initialData = null, onSaveConf
         source,
         targets,
         tags: [...tags],
-        mappings: detectedMappings.length > 0 ? detectedMappings : undefined,
-        relationships: relationships.length > 0 ? relationships : undefined,
+        mappings: (editMode && mappingChoice === 'saved') ? projectMappings : (detectedMappings.length > 0 ? detectedMappings : undefined),
+        relationships: (editMode && mappingChoice === 'saved') ? undefined : (relationships.length > 0 ? relationships : undefined),
         mapping_options: {
           auto_detect_relationships: autoRelationships,
           generate_descriptions: generateDescriptions,
@@ -1153,10 +1205,10 @@ export function ProjectWizard({ editMode = false, initialData = null, onSaveConf
 
   /* ─── Render ─── */
   return (
-    <div style={{ padding: '28px 16px', minHeight: '100%', maxWidth: 1400, margin: '0 auto', display: 'flex', flexDirection: 'column' }} className="md:px-10">
+    <div style={{ padding: '12px 16px', minHeight: 'auto', maxWidth: 1400, margin: '0 auto', display: 'flex', flexDirection: 'column' }} className="md:px-10">
       {/* Top bar */}
       <div style={{
-        padding: '16px 32px', borderBottom: '1px solid var(--border-main)',
+        padding: '12px 32px', borderBottom: '1px solid var(--border-main)',
         display: 'flex', alignItems: 'center', gap: 16,
       }}>
         <button onClick={() => navigate(-1)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 5, fontSize: 13 }}>
@@ -1164,12 +1216,15 @@ export function ProjectWizard({ editMode = false, initialData = null, onSaveConf
         </button>
         <span style={{ color: 'var(--border-main)' }}>|</span>
         <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
-          {name.trim() ? `New Project: ${name.trim()}` : 'New Project'}
+          {editMode 
+            ? (name.trim() ? `Edit Project: ${name.trim()}` : 'Edit Project') 
+            : (name.trim() ? `New Project: ${name.trim()}` : 'New Project')
+          }
         </span>
       </div>
 
       {/* Step indicator */}
-      <div style={{ padding: '24px 32px 0', display: 'flex', alignItems: 'center', gap: 0 }}>
+      <div style={{ padding: '16px 32px 0', display: 'flex', alignItems: 'center', gap: 0 }}>
         {STEPS.map((s, i) => (
           <div key={s.id} style={{ display: 'flex', alignItems: 'center' }}>
             <div
@@ -1207,7 +1262,7 @@ export function ProjectWizard({ editMode = false, initialData = null, onSaveConf
       />
 
       {/* Step content */}
-      <div style={{ flex: 1, padding: '32px', maxWidth: 700 }}>
+      <div style={{ padding: '16px 0', maxWidth: 700 }}>
         {step === 1 && (
           <StepBasicInfo
             name={name} setName={setName}
@@ -1291,6 +1346,7 @@ export function ProjectWizard({ editMode = false, initialData = null, onSaveConf
             selectedDatabricksTables={selectedDatabricksTables}
             setSelectedDatabricksTables={setSelectedDatabricksTables}
             allModels={allModels}
+            initialModels={initialValues?.selectedModels || []}
             pbixSourceMode={pbixSourceMode}
             selectedLocalFolderTag={selectedLocalFolderTag}
             pbixFiles={pbixFiles}
@@ -1302,6 +1358,10 @@ export function ProjectWizard({ editMode = false, initialData = null, onSaveConf
         )}
         {step === 4 && (
           <StepMappingOptions
+            editMode={editMode}
+            mappingChoice={mappingChoice}
+            setMappingChoice={setMappingChoice}
+            projectMappings={projectMappings}
             autoRelationships={autoRelationships} setAutoRelationships={setAutoRelationships}
             generateDescriptions={generateDescriptions} setGenerateDescriptions={setGenerateDescriptions}
             detectedMappings={detectedMappings}
@@ -1322,6 +1382,7 @@ export function ProjectWizard({ editMode = false, initialData = null, onSaveConf
         {step === 5 && (
           <StepFinish
             editMode={editMode}
+            initialValues={initialValues}
             name={name}
             saving={saving}
             createdProject={createdProject}
@@ -1332,7 +1393,14 @@ export function ProjectWizard({ editMode = false, initialData = null, onSaveConf
             sourceConnector={sourceConnector}
             targetConnectors={targetConnectors}
             intermediateFormat={intermediateFormat}
+            fabricWorkspaceId={fabricWorkspaceId}
             selectedWorkspace={selectedWorkspace}
+            selectedModels={selectedModels}
+            selectedModelNames={selectedModelNames}
+            autoRelationships={autoRelationships}
+            generateDescriptions={generateDescriptions}
+            liveFabricWorkspaces={liveFabricWorkspaces}
+            allModels={allModels}
             navigate={navigate}
           />
         )}
@@ -1340,8 +1408,8 @@ export function ProjectWizard({ editMode = false, initialData = null, onSaveConf
       {/* Footer nav */}
       {!createdProject && (
         <div style={{
-          padding: '16px 32px', borderTop: '1px solid var(--border-main)',
-          display: 'flex', justifyContent: 'space-between',
+          padding: '12px 32px', borderTop: '1px solid var(--border-main)',
+          display: 'flex', justifyContent: 'space-between', background: 'var(--bg-main)', zIndex: 10
         }}>
           <button
             onClick={goBack}
@@ -1780,7 +1848,7 @@ function StepConnectorConfig({
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20, paddingBottom: 320 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div>
         <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Connector Configuration</h2>
         <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
@@ -2290,6 +2358,7 @@ function StepSourceBrowser({
   setDatabricksQuery = () => {},
   databricksQueryRegex = false,
   setDatabricksQueryRegex = () => {},
+  initialModels = [],
 }) {
 
   if (sourceConnector === 'pbix') {
@@ -2441,6 +2510,7 @@ function StepSourceBrowser({
                   key={modelId}
                   model={{ ...m, _id: modelId }}
                   selected={selectedModels.has(modelId)}
+                  previouslySelected={initialModels.some(val => String(val) === String(modelId) || String(val) === String(m.name))}
                   onToggle={() => toggleModel(modelId, m.name || m.id)}
                 />
               );
@@ -2804,7 +2874,7 @@ function WorkspaceRow({ ws, expanded, models, selectedModels, onToggle, onModelT
   );
 }
 
-function ModelRow({ model, selected, onToggle, indent, showWs }) {
+function ModelRow({ model, selected, onToggle, indent, showWs, previouslySelected }) {
   return (
     <div
       onClick={onToggle}
@@ -2822,6 +2892,15 @@ function ModelRow({ model, selected, onToggle, indent, showWs }) {
         ? <CheckSquare size={14} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />
         : <Square size={14} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />}
       <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>{model.name || model.id}</span>
+      {previouslySelected && (
+        <span style={{ 
+          fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 4, 
+          background: 'var(--border-main)', color: 'var(--text-secondary)', 
+          textTransform: 'uppercase', marginLeft: 6 
+        }}>
+          Saved
+        </span>
+      )}
       {showWs && <span style={{ fontSize: 10, color: 'var(--text-tertiary)', marginLeft: 'auto' }}>{model.wsid}</span>}
     </div>
   );
@@ -2829,6 +2908,10 @@ function ModelRow({ model, selected, onToggle, indent, showWs }) {
 
 /* ─── Step 4: Mapping Options ─── */
 function StepMappingOptions({
+  editMode,
+  mappingChoice,
+  setMappingChoice,
+  projectMappings,
   autoRelationships,
   setAutoRelationships,
   generateDescriptions,
@@ -2844,6 +2927,7 @@ function StepMappingOptions({
   onProceedStateChange,
   primaryTargetConnector,
 }) {
+  const isAutoMode = mappingChoice === 'auto';
   const [autoMappingMode, setAutoMappingMode] = useState(true);
   const [dryRunCompleted, setDryRunCompleted] = useState(false);
   const [dryRunError, setDryRunError] = useState('');
@@ -2852,6 +2936,50 @@ function StepMappingOptions({
   const [showOnlyCollisions, setShowOnlyCollisions] = useState(false);
   const [showOnlyEdited, setShowOnlyEdited] = useState(false);
   const [showOnlyExpandedColumns, setShowOnlyExpandedColumns] = useState(true);
+
+  const renderMappingStrategy = () => {
+    if (!editMode) return null;
+    return (
+      <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-main)', borderRadius: 12, padding: 16, marginBottom: 20 }}>
+        <div style={{ marginBottom: 16 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>Mapping Strategy</h3>
+          <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Choose how to define your project mappings for this edit.</p>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div
+            onClick={() => setMappingChoice('saved')}
+            style={{
+              padding: 14, borderRadius: 10, cursor: 'pointer', border: `1.5px solid ${mappingChoice === 'saved' ? 'var(--accent-blue)' : 'var(--border-main)'}`,
+              background: mappingChoice === 'saved' ? 'var(--accent-blue)08' : 'transparent', transition: 'all 0.2s'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+              <div style={{ width: 16, height: 16, borderRadius: '50%', border: `1.5px solid ${mappingChoice === 'saved' ? 'var(--accent-blue)' : 'var(--text-tertiary)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {mappingChoice === 'saved' && <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent-blue)' }} />}
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 600, color: mappingChoice === 'saved' ? 'var(--accent-blue)' : 'var(--text-primary)' }}>Use Last Saved Mapping</span>
+            </div>
+            <p style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.4, margin: 0 }}>Load the mappings exactly as they were previously saved.</p>
+          </div>
+          <div
+            onClick={() => setMappingChoice('auto')}
+            style={{
+              padding: 14, borderRadius: 10, cursor: 'pointer', border: `1.5px solid ${mappingChoice === 'auto' ? 'var(--accent-blue)' : 'var(--border-main)'}`,
+              background: mappingChoice === 'auto' ? 'var(--accent-blue)08' : 'transparent', transition: 'all 0.2s'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+              <div style={{ width: 16, height: 16, borderRadius: '50%', border: `1.5px solid ${mappingChoice === 'auto' ? 'var(--accent-blue)' : 'var(--text-tertiary)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {mappingChoice === 'auto' && <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent-blue)' }} />}
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 600, color: mappingChoice === 'auto' ? 'var(--accent-blue)' : 'var(--text-primary)' }}>Auto-Detect Again</span>
+            </div>
+            <p style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.4, margin: 0 }}>Re-scan the source to automatically generate fresh mappings.</p>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const isSnowflakeTarget = String(primaryTargetConnector || '').toLowerCase() === 'snowflake';
   const snowflakeReserved = useMemo(() => new Set([
@@ -2899,41 +3027,45 @@ function StepMappingOptions({
     return Array.from(new Set((selectedModelNames || []).map(name => String(name || '').trim()).filter(Boolean)));
   }, [selectedModelNames]);
 
+  const activeMappings = useMemo(() => (
+    mappingChoice === 'saved' ? (projectMappings || []) : (detectedMappings || [])
+  ), [mappingChoice, projectMappings, detectedMappings]);
+
   const inferredTables = useMemo(() => {
     const explicitUpper = new Set(explicitTables.map(name => name.toUpperCase()));
     return Array.from(new Set(
-      (detectedMappings || [])
+      activeMappings
         .map(mapping => String(mapping?.source || '').trim())
         .filter(Boolean)
         .filter(name => !explicitUpper.has(name.toUpperCase()))
     ));
-  }, [detectedMappings, explicitTables]);
+  }, [activeMappings, explicitTables]);
 
   const collisionCount = useMemo(() => {
     let total = 0;
-    (detectedMappings || []).forEach((mapping) => {
+    activeMappings.forEach((mapping) => {
       if (mapping?.collision_detected) total += 1;
       (mapping?.columns || []).forEach((column) => {
         if (column?.collision_detected) total += 1;
       });
     });
     return total;
-  }, [detectedMappings]);
+  }, [activeMappings]);
 
   const editedCount = useMemo(() => (
-    (detectedMappings || []).filter((mapping) => String(mapping?.status || '').toLowerCase() === 'manual').length
-  ), [detectedMappings]);
+    activeMappings.filter((mapping) => String(mapping?.status || '').toLowerCase() === 'manual').length
+  ), [activeMappings]);
 
   const blockingIssueCount = useMemo(() => {
     let total = 0;
-    (detectedMappings || []).forEach((mapping) => {
+    activeMappings.forEach((mapping) => {
       if (isBlockingTarget(mapping?.target, mapping?.collision_detected)) total += 1;
       (mapping?.columns || []).forEach((column) => {
         if (isBlockingTarget(column?.target, column?.collision_detected)) total += 1;
       });
     });
     return total;
-  }, [detectedMappings, isBlockingTarget]);
+  }, [activeMappings, isBlockingTarget]);
 
   const manualEditLocked = !autoMappingMode && !dryRunCompleted;
 
@@ -2969,7 +3101,7 @@ function StepMappingOptions({
   const filteredMappings = useMemo(() => {
     const query = String(mappingSearch || '').trim().toLowerCase();
 
-    return (detectedMappings || []).filter((mapping) => {
+    return activeMappings.filter((mapping) => {
       const mappingText = [
         mapping?.source,
         mapping?.target,
@@ -3014,10 +3146,12 @@ function StepMappingOptions({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {renderMappingStrategy()}
+      
       <div>
         <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Mapping Options & Verification</h2>
         <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
-          Review detected mappings and relationships before proceeding. These will transform your source model.
+          {mappingChoice === 'saved' ? 'Reviewing saved mappings from the backend.' : 'Review detected mappings and relationships before proceeding. These will transform your source model.'}
         </p>
       </div>
 
@@ -3403,6 +3537,7 @@ function ToggleOption({ label, description, checked, onChange }) {
 /* ─── Step 5: Finish ─── */
 function StepFinish({
   editMode,
+  initialValues,
   name,
   saving,
   createReverseProject,
@@ -3413,7 +3548,14 @@ function StepFinish({
   sourceConnector,
   targetConnectors,
   intermediateFormat,
+  fabricWorkspaceId,
   selectedWorkspace,
+  selectedModels,
+  selectedModelNames,
+  autoRelationships,
+  generateDescriptions,
+  liveFabricWorkspaces,
+  allModels,
   navigate,
 }) {
   const createdProjectId = createdProject?.id || createdProject?.project_id;
@@ -3466,8 +3608,40 @@ function StepFinish({
     );
   }
 
+  const isChanged = (field, current) => {
+    if (!editMode || !initialValues) return false;
+    const initial = initialValues[field];
+    if (Array.isArray(initial)) {
+      return JSON.stringify([...initial].sort()) !== JSON.stringify([...(current || [])].sort());
+    }
+    return initial !== current;
+  };
+
+  const HighlightRow = ({ label, value, changed, oldValue }) => (
+    <div style={{ 
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', 
+      borderRadius: 10, border: `1px solid ${changed ? 'var(--accent-blue)40' : 'var(--border-main)'}`, 
+      background: changed ? 'var(--accent-blue)05' : 'var(--bg-surface)', transition: 'all 0.2s' 
+    }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>{label}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+           <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{value || '(none)'}</span>
+           {changed && (
+             <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 4, background: 'var(--accent-blue)', color: '#fff', textTransform: 'uppercase' }}>Edited</span>
+           )}
+        </div>
+        {changed && (
+          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>
+            Was: <span style={{ textDecoration: 'line-through' }}>{oldValue || '(empty)'}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div>
         <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>{editMode ? 'Review Changes' : 'Ready to Create'}</h2>
         <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
@@ -3475,16 +3649,57 @@ function StepFinish({
         </p>
       </div>
 
-      <div style={{ padding: '16px', borderRadius: 10, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>{name}</div>
-        <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.6 }}>
-          Source: {sourceConnector} <br />
-          Targets: {Array.from(targetConnectors).join(', ')} <br />
-          Intermediate Format: {intermediateFormat} <br />
-          Preferred Interface: UI Form <br />
-          Workspace: {selectedWorkspace?.name || 'Will use saved defaults'}
-        </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+         <HighlightRow 
+            label="Project Name" 
+            value={name} 
+            changed={isChanged('name', name)} 
+            oldValue={initialValues?.name} 
+         />
+         <HighlightRow 
+            label="Source" 
+            value={sourceConnector} 
+            changed={isChanged('sourceConnector', sourceConnector)} 
+            oldValue={initialValues?.sourceConnector} 
+         />
+         <HighlightRow 
+            label="Intermediate Format" 
+            value={intermediateFormat} 
+            changed={isChanged('intermediateFormat', intermediateFormat)} 
+            oldValue={initialValues?.intermediateFormat} 
+         />
+         <HighlightRow 
+            label="Workspace" 
+            value={selectedWorkspace?.name || fabricWorkspaceId || 'N/A'} 
+            changed={isChanged('fabricWorkspaceId', fabricWorkspaceId)} 
+            oldValue={liveFabricWorkspaces.find(ws => String(ws.id) === String(initialValues?.fabricWorkspaceId))?.name || initialValues?.fabricWorkspaceId} 
+         />
       </div>
+
+      <HighlightRow 
+         label="Selected Models" 
+         value={selectedModelNames.length > 0 ? selectedModelNames.join(', ') : 'Everything (*)'} 
+         changed={isChanged('selectedModels', selectedModels ? Array.from(selectedModels) : [])} 
+         oldValue={initialValues?.selectedModels?.map(mid => allModels.find(m => String(m.id) === String(mid))?.name || mid).join(', ')} 
+      />
+
+      {isChanged('autoRelationships', autoRelationships) && (
+        <HighlightRow 
+          label="Auto Relationships" 
+          value={autoRelationships ? 'Enabled' : 'Disabled'} 
+          changed={true} 
+          oldValue={initialValues?.autoRelationships ? 'Enabled' : 'Disabled'} 
+        />
+      )}
+
+      {isChanged('generateDescriptions', generateDescriptions) && (
+        <HighlightRow 
+          label="Generate Descriptions" 
+          value={generateDescriptions ? 'Enabled' : 'Disabled'} 
+          changed={true} 
+          oldValue={initialValues?.generateDescriptions ? 'Enabled' : 'Disabled'} 
+        />
+      )}
 
       {createError && (
         <div style={{ padding: '12px 14px', borderRadius: 10, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.28)', color: 'var(--text-primary)', fontSize: 12, lineHeight: 1.5 }}>

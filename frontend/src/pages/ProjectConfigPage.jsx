@@ -1451,8 +1451,8 @@ export default function ProjectConfigPage() {
   }
 
   return (
-    <div style={{ padding: '28px 16px', minHeight: '100%', maxWidth: 1400, margin: '0 auto', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} className="md:px-10">
-      <div style={{ padding: '18px 28px', borderBottom: '1px solid var(--border-main)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+    <div style={{ padding: '12px 16px', minHeight: 'auto', maxWidth: 1400, margin: '0 auto', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} className="md:px-10">
+      <div style={{ padding: '12px 28px', borderBottom: '1px solid var(--border-main)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <button
           onClick={() => navigate(-1)}
           style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}
@@ -1461,7 +1461,7 @@ export default function ProjectConfigPage() {
         </button>
         <span style={{ color: 'var(--border-main)' }}>|</span>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{project.name}</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{project?.name || 'Project Configuration'}</div>
           <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Edit Project</div>
         </div>
 
@@ -1498,7 +1498,7 @@ export default function ProjectConfigPage() {
             />
           </div>
 
-          <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 16 }}>
+          <div style={{ minHeight: 0, overflow: 'auto', padding: 16 }}>
             <MappingPreviewPanel
               mappings={projectMappings}
               loading={projectMappingsLoading}
@@ -1507,18 +1507,17 @@ export default function ProjectConfigPage() {
             {viewMode === 'form' ? (
               <ProjectWizard
                 editMode={true}
-                initialData={configForm}
+                initialData={{...configForm, ...project, project_name: project?.name, description: project?.description, tags: project?.tags}}
+                projectMappings={projectMappings}
                 onSaveConfig={async (payload) => {
                   try {
-                    await api.saveProjectConfig(project.id, payload.config_yaml);
-                    addLog('success', 'Project config updated via wizard.');
-                    const res = await api.getProjectConfig(project.id);
-                    setConfigTree(res.tree);
-                    setConfigForm(res.form);
-                    setYamlText(res.yaml);
-                    return res;
+                    await api.updateProject(project?.id, payload);
+                    await api.saveProjectConfig(project?.id, payload.config_yaml);
+                    addLog('success', 'Project Config', 'Project updated successfully.');
+                    navigate('/projects');
+                    return project;
                   } catch (err) {
-                    addLog('error', `Wizard save failed: ${err?.message || 'Unknown error'}`);
+                    addLog('error', 'Project Config', `Update failed: ${err?.message || 'Unknown error'}`);
                     throw err;
                   }
                 }}

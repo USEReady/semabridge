@@ -1,17 +1,17 @@
-project_name: "new"
+project_name: "old2"
 source:
   type: fabric
   identity_id: "e72128ae-89a2-4dd8-b2d9-91f88a936e38"
-  workspace_id: "d875c0c3-59e9-4d55-a7f0-99595b756718"
-  workspace: "semabridge"
+  workspace_id: "459a30fc-2ca3-45bf-8783-5dc1f65f6656"
+  workspace: "My workspace"
   models:
-    - "continent"
+    - "Device"
 targets:
   - type: snowflake
     identity_id: "a491dc24-4acf-4a49-b456-56c57fb43280"
 mappings:
-  - source: "continent"
-    target: "CONTINENT"
+  - source: "Device"
+    target: "DEVICE"
     type: table
     columns:
       - source: "id"
@@ -32,7 +32,7 @@ ui:
   editor_mode: "form"
 selection:
   model_ids:
-    - "d32e8900-31cc-4647-872d-08a7e62bf03b"
+    - "3aa534a0-a350-4160-a390-3e4d2296aff0"
 options:
   auto_relationships: true
   generate_descriptions: true
