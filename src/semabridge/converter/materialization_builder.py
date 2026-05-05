@@ -62,8 +62,11 @@ class MaterializationQueryBuilder:
             # Tier-specific reconstruction happens in Snowflake view generation.
             if triage and triage.strategy == MaterializationStrategy.DECOMPOSITION and triage.components:
                 measure_parts.append(f'"{alias}", [{metric_name}]')
-                measure_parts.append(f'"{alias}_Num", {triage.components.get("_Num", "BLANK()") }')
-                measure_parts.append(f'"{alias}_Denom", {triage.components.get("_Denom", "BLANK()") }')
+                num_expr = triage.components.get("_Num", "BLANK()")
+                denom_expr = triage.components.get("_Denom", "BLANK()")
+                measure_parts.append(f'"{alias}_Num", {num_expr}')
+                measure_parts.append(f'"{alias}_Denom", {denom_expr}')
+
             else:
                 measure_parts.append(f'"{alias}", [{metric_name}]')
 

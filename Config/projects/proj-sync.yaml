@@ -2,7 +2,7 @@ project_name: sync
 source:
   type: fabric
   identity_id: 8649e716-06f0-4e1a-a4a2-d738cead6e60
-  workspace_id: d875c0c3-59e9-4d55-a7f0-99595b756718
+  workspace_id: d6e5bfe7-c544-4474-ac3b-ddce9a02e712
   workspace: semabridge
   models:
   - annual
