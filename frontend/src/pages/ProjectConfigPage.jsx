@@ -33,6 +33,66 @@ const primaryBtn = {
   background: 'var(--accent-blue)', color: '#fff', border: 'none', transition: 'opacity 0.2s',
 };
 
+const secondaryBtn = {
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+  padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+  background: 'var(--bg-surface)', color: 'var(--text-secondary)',
+  border: '1px solid var(--border-main)', transition: 'all 0.2s',
+};
+
+const modalInputStyle = {
+  ...INPUT,
+  padding: '8px 12px',
+};
+
+function ModeButton({ active, onClick, icon, ariaLabel }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label={ariaLabel}
+      style={{
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        padding: '6px 12px', background: active ? 'var(--bg-surface)' : 'transparent',
+        color: active ? 'var(--text-primary)' : 'var(--text-tertiary)',
+        border: 'none', cursor: 'pointer', transition: 'all 0.2s',
+      }}
+    >
+      {icon}
+    </button>
+  );
+}
+
+function ScheduleOptionCard({ active, title, description, onClick }) {
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        padding: '12px', border: `1px solid ${active ? 'var(--accent-blue)' : 'var(--border-main)'}`,
+        borderRadius: 8, cursor: 'pointer', background: active ? 'rgba(88, 166, 255, 0.1)' : 'var(--bg-surface)',
+        transition: 'all 0.2s',
+      }}
+    >
+      <div style={{ fontSize: 13, fontWeight: 600, color: active ? 'var(--accent-blue)' : 'var(--text-primary)', marginBottom: 4 }}>
+        {title}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+        {description}
+      </div>
+    </div>
+  );
+}
+
+function InfoRow({ label, value, mono }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <span style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', fontWeight: 600 }}>{label}</span>
+      <span style={{ fontSize: 12, color: 'var(--text-primary)', fontFamily: mono ? 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' : 'inherit' }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
 function pad2(value) {
   return String(value).padStart(2, '0');
 }

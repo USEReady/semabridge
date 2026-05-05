@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../utils/api';
+import { normalizeStatus, deriveProgressFromRun } from '../utils/syncUtils';
 
 const SyncStatusContext = createContext(null);
 
@@ -16,27 +17,7 @@ function shallowEqualObject(a, b) {
   return true;
 }
 
-function normalizeStatus(status) {
-  const s = String(status || 'draft').toLowerCase();
-  if (s === 'running' || s === 'success' || s === 'failed' || s === 'draft') return s;
-  if (s === 'warning' || s === 'partial' || s === 'completed') return 'success';
-  if (s === 'error' || s === 'cancelled') return 'failed';
-  return 'draft';
-}
-
-function deriveProgressFromRun(run) {
-  if (!run) return 0;
-  const explicit = Number(run?.progress_pct);
-  if (!Number.isNaN(explicit) && explicit >= 0) {
-    return Math.max(0, Math.min(100, Math.round(explicit)));
-  }
-  const total = Number(run?.total_items ?? run?.total_models ?? 0);
-  const synced = Number(run?.completed_items ?? run?.models_synced ?? 0);
-  if (total > 0) {
-    return Math.round(Math.max(0, Math.min(1, synced / total)) * 100);
-  }
-  return 0;
-}
+// normalizeStatus and deriveProgressFromRun moved to src/utils/syncUtils.js
 
 function getRunSortTimestamp(run) {
   const started = run?.started_at ? Date.parse(run.started_at) : NaN;

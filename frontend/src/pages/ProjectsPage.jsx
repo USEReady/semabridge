@@ -1047,7 +1047,10 @@ function ProjectCard({
         {/* 3-dot menu */}
         <div style={{ position: 'relative' }}>
           <button
-            onClick={() => onMenuToggle(isOpen ? null : project.id)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onMenuToggle(isOpen ? null : project.id);
+            }}
             style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 4 }}
           >
             <MoreVertical size={14} />

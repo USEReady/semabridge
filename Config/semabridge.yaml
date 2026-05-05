@@ -1,17 +1,17 @@
-project_name: "sales"
+project_name: "new"
 source:
   type: fabric
   identity_id: "e72128ae-89a2-4dd8-b2d9-91f88a936e38"
-  workspace_id: "459a30fc-2ca3-45bf-8783-5dc1f65f6656"
-  workspace: "My workspace"
+  workspace_id: "d875c0c3-59e9-4d55-a7f0-99595b756718"
+  workspace: "semabridge"
   models:
-    - "annual"
+    - "continent"
 targets:
   - type: snowflake
     identity_id: "a491dc24-4acf-4a49-b456-56c57fb43280"
 mappings:
-  - source: "annual"
-    target: "ANNUAL"
+  - source: "continent"
+    target: "CONTINENT"
     type: table
     columns:
       - source: "id"
@@ -32,7 +32,7 @@ ui:
   editor_mode: "form"
 selection:
   model_ids:
-    - "5820bde1-2284-4197-8795-4f156b94a7eb"
+    - "d32e8900-31cc-4647-872d-08a7e62bf03b"
 options:
   auto_relationships: true
   generate_descriptions: true

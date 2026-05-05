@@ -151,6 +151,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     const [filePreview, setFilePreview] = useState(null);
     const [workbenchOpen, setWorkbenchOpen] = useState(Boolean(uiPrefs?.workbenchOpen));
     const [showExplorer, setShowExplorer] = useState(uiPrefs?.showExplorer !== false);
+    const [explorerWidth, setExplorerWidth] = useState(uiPrefs?.explorerWidth || 260);
 
     const [layout, setLayout] = useState('hierarchical');           // hierarchical | force
     const [erMode, setErMode] = useState(uiPrefs?.erMode ?? true);                     // Power BI-like relationship view
@@ -291,11 +292,12 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                 selectedConnector,
                 selectedTableId,
                 includeSystemTables,
+                explorerWidth,
             }));
         } catch {
             // ignore persistence failures
         }
-    }, [workbenchOpen, showExplorer, erMode, selectedModelId, selectedConnector, selectedTableId, includeSystemTables]);
+    }, [workbenchOpen, showExplorer, erMode, selectedModelId, selectedConnector, selectedTableId, includeSystemTables, explorerWidth]);
 
     useEffect(() => {
         let active = true;
@@ -898,9 +900,9 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
                 {/* File Tree */}
                 {showExplorer && (
+                <>
                 <div style={{
-                    width: 260, minWidth: 200,
-                    borderRight: '1px solid var(--border-color)',
+                    width: explorerWidth, minWidth: 200, maxWidth: '50vw',
                     overflow: 'hidden',
                     background: 'var(--bg-surface)',
                     display: 'flex', flexDirection: 'column',
@@ -928,6 +930,31 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     )}
                     </div>
                 </div>
+                {/* Resizer */}
+                <div
+                    style={{
+                        width: 4,
+                        cursor: 'col-resize',
+                        background: 'var(--border-color)',
+                        zIndex: 10,
+                    }}
+                    onMouseDown={(e) => {
+                        e.preventDefault();
+                        const startX = e.clientX;
+                        const startWidth = explorerWidth;
+                        const onMouseMove = (moveEvent) => {
+                            const newWidth = Math.max(200, startWidth + moveEvent.clientX - startX);
+                            setExplorerWidth(newWidth);
+                        };
+                        const onMouseUp = () => {
+                            document.removeEventListener('mousemove', onMouseMove);
+                            document.removeEventListener('mouseup', onMouseUp);
+                        };
+                        document.addEventListener('mousemove', onMouseMove);
+                        document.addEventListener('mouseup', onMouseUp);
+                    }}
+                />
+                </>
                 )}
 
                 {/* Dependency Graph */}
