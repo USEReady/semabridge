@@ -76,14 +76,29 @@ class TMSLToOSIConverter(BaseConverter):
                 )
 
             model_obj = tmsl_json.get("model", {})
-            # Prioritize display_name passed from source_data, then from model name, then default
-            display_name = source_data.get("display_name") or model_obj.get("name") or "FabricModel"
+            # Prioritize display_name passed from source_data, then dataset_id, then from model name, then default
+            display_name = source_data.get("display_name") or dataset_id or model_obj.get("name") or "FabricModel"
             self._dump_measure_audit(model_obj, dataset_id, phase="tmsl_to_osi_pre")
+
+            # Guard: connector-type keywords used as model names produce misleading view names
+            # (e.g. a dataset named "fabric" would generate a "fabric_SEMANTIC" view).
+            # Fall back to the dataset_id when the display name collides with a reserved keyword.
+            _RESERVED_MODEL_NAMES = frozenset({"fabric", "snowflake", "pbix", "databricks", "model"})
+            resolved_unique_name = display_name or dataset_id
+            if str(resolved_unique_name).strip().lower() in _RESERVED_MODEL_NAMES:
+                logger.warning(
+                    "Fabric dataset display name '%s' collides with a reserved connector keyword. "
+                    "Using dataset_id '%s' as the model unique_name to avoid ambiguous Snowflake view names. "
+                    "Rename the Fabric dataset or set 'project_name' in your project config to override.",
+                    resolved_unique_name,
+                    dataset_id,
+                )
+                resolved_unique_name = dataset_id
 
             # Use display name as unique_name to ensure Snowflake views use display names, not GUIDs.
             # GUID (dataset_id) is still preserved in metadata for traceability.
             osi_model = OSIModel(
-                unique_name=display_name or dataset_id,
+                unique_name=resolved_unique_name,
                 label=display_name,
                 description=model_obj.get("description", ""),
                 source_platform="fabric",

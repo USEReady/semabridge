@@ -140,9 +140,10 @@ class SemanticViewBuilder:
         """SML implementation via builders."""
         self._migrate_numeric_leading_identifiers(sml)
         
-        view_name = self._sanitize_view_name(sml.unique_name or sml.label)
-        suffix = self.behavior.semantic_model.view_suffix or "_SEMANTIC"
-        safe_view_name = view_name if view_name.upper().endswith(suffix.upper()) else view_name + suffix
+        from semabridge.utils.name_translator import get_target_deployment_name
+        
+        view_name_raw = sml.unique_name or sml.label or "model"
+        safe_view_name = get_target_deployment_name(view_name_raw, "snowflake")
         full_view_name = f'"{self.config.database}"."{self.config.schema_name}"."{safe_view_name}"'
         
         lines = [f"CREATE OR REPLACE SEMANTIC VIEW {full_view_name}"]
@@ -191,9 +192,10 @@ class SemanticViewBuilder:
 
     def _generate_semantic_view_from_osi(self, osi: OSIModel) -> str:
         """OSI implementation via builders."""
-        view_name = self._sanitize_view_name(osi.unique_name or osi.label)
-        suffix = self.behavior.semantic_model.view_suffix or "_SEMANTIC"
-        safe_view_name = view_name if view_name.upper().endswith(suffix.upper()) else view_name + suffix
+        from semabridge.utils.name_translator import get_target_deployment_name
+        
+        view_name_raw = osi.unique_name or osi.label or "model"
+        safe_view_name = get_target_deployment_name(view_name_raw, "snowflake")
         full_view_name = f'"{self.config.database}"."{self.config.schema_name}"."{safe_view_name}"'
 
         

@@ -270,9 +270,9 @@ class SnowflakeEmitter(BaseEmitter):
         local filesystem access is required.  A semantic-model registration
         call is then executed so Cortex Analyst can discover the file.
         """
-        model_name = self._id.sanitize_column(
-            getattr(sml, "unique_name", None) or getattr(sml, "label", None) or "model"
-        )
+        from semabridge.utils.name_translator import get_target_deployment_name
+        model_name_raw = getattr(sml, "unique_name", None) or getattr(sml, "label", None) or "model"
+        model_name = get_target_deployment_name(model_name_raw, "snowflake")
         stage_fqn = (
             f"{self.config.database}.{self.config.schema_name}.SEMABRIDGE_CORTEX"
         )

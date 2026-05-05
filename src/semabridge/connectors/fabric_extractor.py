@@ -46,6 +46,7 @@ class FabricExtractor:
         self._access_token: Optional[str] = access_token.strip() if access_token else None
         self._token_expires_at: float = 0
         self._model_cache: dict[str, dict] = {}  # Cache for model lookups
+        self._skip_env_token_once: bool = False
 
         if self._access_token:
             # Conservative lifetime for request-provided tokens.
@@ -56,12 +57,30 @@ class FabricExtractor:
         """List Fabric workspaces visible to the authenticated principal."""
         api_url = f"{self.config.api_base_url}/workspaces"
         try:
-            response = requests.get(api_url, headers=self._get_headers(), timeout=15)
+            response = self._request_with_auth_retry("GET", api_url, timeout=15)
             response.raise_for_status()
             return response.json().get("value", [])
         except RequestException as e:
             logger.warning("Workspace resolution: failed to list workspaces: %s", e)
             return []
+
+    def _reset_auth_cache_for_retry(self) -> None:
+        """Clear cached auth state after a 401 so the next request reacquires a token."""
+        self._access_token = None
+        self._token_expires_at = 0
+        # If an env token is stale/revoked, bypass it once and attempt real refresh/acquire.
+        self._skip_env_token_once = True
+
+    def _request_with_auth_retry(self, method: str, url: str, **kwargs) -> requests.Response:
+        """Perform one authenticated request with a single retry on HTTP 401."""
+        response = requests.request(method, url, headers=self._get_headers(), **kwargs)
+        if response.status_code != 401:
+            return response
+
+        logger.warning("Fabric API returned 401 for %s %s; resetting auth cache and retrying once", method, url)
+        self._reset_auth_cache_for_retry()
+        retry_response = requests.request(method, url, headers=self._get_headers(), **kwargs)
+        return retry_response
 
     def resolve_workspace_id(self, workspace_id_or_name: str) -> str:
         """Resolve workspace display name to GUID. Returns original value if unresolved."""
@@ -138,7 +157,7 @@ class FabricExtractor:
         logger.info("Listing semantic models in workspace %s...", workspace_id)
         for source_name, api_url in candidate_urls:
             try:
-                response = requests.get(api_url, headers=self._get_headers(), timeout=15)
+                response = self._request_with_auth_retry("GET", api_url, timeout=15)
                 if response.status_code == 404:
                     logger.warning("Fabric model list endpoint '%s' returned 404 for workspace %s", source_name, workspace_id)
                     continue
@@ -156,13 +175,18 @@ class FabricExtractor:
                 last_error = str(e)
                 # Provide actionable guidance for 401 errors — the most common SP misconfiguration.
                 if hasattr(e, "response") and e.response is not None and e.response.status_code == 401:
+                    body_preview = (e.response.text or "").strip()
+                    if body_preview:
+                        body_preview = body_preview[:300]
                     logger.warning(
                         "Fabric model list endpoint '%s' returned 401 for workspace %s. "
                         "For service-principal auth, verify: (1) 'Service principals can use Fabric APIs' "
                         "is enabled in the Fabric Admin Portal → Tenant settings, "
                         "(2) the app registration has Microsoft Fabric 'Item.Read.All' Application permission "
-                        "with admin consent granted, and (3) the service principal is added as a workspace member.",
+                        "with admin consent granted, and (3) the service principal is added as a workspace member. "
+                        "Response body (truncated): %s",
                         source_name, workspace_id,
+                        body_preview or "<empty>",
                     )
                 else:
                     logger.warning("Fabric model list endpoint '%s' failed for workspace %s: %s", source_name, workspace_id, e)
@@ -254,11 +278,14 @@ class FabricExtractor:
 
         # 1.5. Pre-issued token supplied via environment variable.
         env_token = get_fabric_access_token_from_env()
-        if env_token:
+        if env_token and not self._skip_env_token_once:
             self._access_token = env_token
             self._token_expires_at = time.time() + 3600
             logger.debug("Using FABRIC_ACCESS_TOKEN from environment")
             return self._access_token
+        if env_token and self._skip_env_token_once:
+            logger.debug("Skipping FABRIC_ACCESS_TOKEN once after a 401 to force token reacquisition")
+            self._skip_env_token_once = False
 
         # 2. Service-principal (client-credentials) flow.
         if self.config.client_secret is not None:

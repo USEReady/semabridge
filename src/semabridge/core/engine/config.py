@@ -168,6 +168,10 @@ def _step1_load_config(
                 logger.warning("Could not parse config at %s for project-scoped settings: %s", config_path, raw_exc)
                 raw_config = {}
 
+        # Apply project-scoped overrides from raw_config (works for both
+        # config_dict and file-loaded configs so that model_name, source
+        # workspace, and target schema are honoured in all call paths).
+        if raw_config:
             source_cfg = raw_config.get("source") if isinstance(raw_config.get("source"), dict) else {}
             target_cfg: dict[str, Any] = {}
             raw_target = raw_config.get("target")
@@ -190,6 +194,12 @@ def _step1_load_config(
                     target_workspace_id = str(target_cfg.get("workspace_id") or "").strip()
                     if target_workspace_id:
                         config.fabric.workspace_id = target_workspace_id
+
+            # We intentionally DO NOT override the semantic view name with the project name.
+            # This ensures that if a project has multiple models (e.g. continent, annual),
+            # they are deployed as distinct views (e.g. CONTINENT_SF, ANNUAL_SF)
+            # rather than collapsing into the same project name.
+            pass
 
         # Validate connector types
         if source not in self.SUPPORTED_SOURCES:
@@ -284,6 +294,7 @@ def _step2_init_identifiers(
         target_type=target,
         behavior=behavior,
         sync_mode=sync_mode,
+        semantic_view_name_override=getattr(config, "_semantic_view_name_override", None),
     )
 
     # Register the project + run row in the DB immediately.

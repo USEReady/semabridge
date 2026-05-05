@@ -85,6 +85,20 @@ def _convert_fabric_to_sml(
         row_counts=sf.row_counts,
     )
 
+    # Allow the project config's model_name / project_name to override the
+    # SML model's unique_name.  This lets users control the Snowflake view
+    # name without renaming the Fabric dataset.
+    # Read from context.semantic_view_name_override — never from
+    # context.config.model.name, which is a shared singleton.
+    override_name = context.semantic_view_name_override
+    if override_name and str(override_name).strip():
+        sml_model.unique_name = str(override_name).strip()
+        sml_model.label = sml_model.label or sml_model.unique_name
+        logger.info(
+            "Model unique_name overridden by project config model_name: '%s'",
+            sml_model.unique_name,
+        )
+
     self._record_step(
         6, StepStatus.SUCCESS,
         f"{sml_model.dataset_count} datasets, {sml_model.metric_count} metrics (via OSI)"

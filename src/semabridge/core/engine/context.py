@@ -24,7 +24,13 @@ class RunContext:
     target_type: Optional[Literal["snowflake", "fabric", "databricks"]] = None
     behavior: ConnectorBehavior = Field(default_factory=ConnectorBehavior)
     account_id: Optional[str] = None  # Linked Account for multi-user credential scoping
-    
+
+    # Optional override for the Snowflake semantic view name.
+    # Set from model_name / project_name in the project config YAML.
+    # Kept separate from config.model.name to avoid mutating the shared
+    # lru_cache Settings singleton.
+    semantic_view_name_override: Optional[str] = None
+
     # Artifacts accumulated during execution
     source_format: Optional[SourceFormat] = None
     osi_model: Optional[OSIModel] = None  # OSI intermediate — populated after Step 6
