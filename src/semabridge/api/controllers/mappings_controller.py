@@ -20,7 +20,7 @@ class DryRunRequest(BaseModel):
     selected_sources: List[str]
 
 class UpdateMappingRequest(BaseModel):
-    target_name: str
+    target_name: Optional[str] = None
     target_data_type: Optional[str] = None
     status: Optional[str] = "manual"
 
@@ -305,7 +305,7 @@ async def update_mapping(
     """
     result = await service.update_mapping_compat(
         mapping_id=mapping_id,
-        target_name=request.target_name,
+        target_name=request.target_name or "",
         target_data_type=request.target_data_type,
         status="manual"
     )
