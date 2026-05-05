@@ -1502,9 +1502,9 @@ function StepBasicInfo({
         </p>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'row', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         {/* SOURCE CONNECTOR - Single Selection */}
-        <div style={{ flex: 1 }}>
+        <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
             <label style={{...LABEL, margin: 0}}>Source Connector</label>
             <span style={{
@@ -1570,7 +1570,7 @@ function StepBasicInfo({
         </div>
 
         {/* TARGET CONNECTORS - Multiple Selection */}
-        <div style={{ flex: 1 }}>
+        <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
             <label style={{...LABEL, margin: 0}}>Target Connectors</label>
             <span style={{
