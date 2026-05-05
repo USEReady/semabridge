@@ -375,16 +375,11 @@ class SyncOrchestrator:
                     # We'll check hash after extraction; for now just queue
                     pass
 
-            import re
-            raw_stem = pbix_path.stem
-            # Strip 32-character UUID prefix if it exists (e.g. d501c10cadeb4687b0398c755d2b1add_continent -> continent)
-            clean_stem = re.sub(r'^[0-9a-f]{32}_', '', raw_stem)
-            
             items.append(
                 SyncJobItem(
                     item_id=_new_id(),
                     job_id=job_id,
-                    model_name=clean_stem,
+                    model_name=pbix_path.stem,
                     source_path=str(pbix_path),
                 )
             )
