@@ -358,7 +358,6 @@ def _run_single_job(
             config_path=Path(config_path) if config_path else None,
             config_dict=config,
             dataset_id=job["dataset_id"],
-            workspace_id=resolved_workspace_id,
             pbix_path=job["pbix_path"],
             project_name=model_label,
             tag=str(config.get("version_tag", "v1.0")),

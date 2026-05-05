@@ -1,12 +1,9 @@
 project_name: lan
 project_name: lan
 source:
-  type: fabric
-  identity_id: c505f63e-bb85-439a-be22-d7bcbde8a8cc
-  workspace_id: d6e5bfe7-c544-4474-ac3b-ddce9a02e712
-  workspace: semabridge
-  models:
-    - annual
+  type: pbix
+  pbix_path: C:/Users/Premasai/AppData/Local/Temp/semabridge/projects/proj-ffdf/ab788b2836cc481c9f3799dec4d864dd_continent.pbix
+  pbix_file_path: C:/Users/Premasai/AppData/Local/Temp/semabridge/projects/proj-ffdf/ab788b2836cc481c9f3799dec4d864dd_continent.pbix
 targets:
   - type: snowflake
 mappings:
@@ -60,5 +57,5 @@ selection:
 options:
   auto_relationships: true
   generate_descriptions: true
-target:
-  type: snowflake
+project_id: proj-ffdf
+display_name: ffdf

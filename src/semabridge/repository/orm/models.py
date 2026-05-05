@@ -346,6 +346,8 @@ class SnapshotRow(Base):
     __tablename__ = "snapshots"
     __table_args__ = (
         Index("ix_snapshots_project_ts", "project_id", "timestamp"),
+        Index("ix_snapshots_connector", "connector_id"),
+        Index("ix_snapshots_trigger", "trigger"),
     )
 
     snapshot_id: Mapped[str] = mapped_column(String(36), primary_key=True)

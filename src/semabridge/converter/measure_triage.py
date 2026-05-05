@@ -1,4 +1,4 @@
-"""
+﻿"""
 Measure Triage — triage classification for DAX measures.
 
 Classifies DAX expressions into materialization strategies:
