@@ -1298,7 +1298,43 @@ async def get_connections_status(user_id: int = 0):
         return cm.get_connection_status(user_id=user_id)
     except Exception as e:
         logger.exception(f"Failed to fetch connection status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Keep the Settings page usable even when credential storage is unavailable.
+        # Returning a safe disconnected snapshot avoids a hard 500 loop in the UI.
+        msg = f"Credential status unavailable: {e}"
+        return {
+            "fabric": {
+                "configured": False,
+                "fields_stored": 0,
+                "fields_required": 1,
+                "missing_fields": ["workspace_id"],
+                "credentials": {},
+                "auth_method": "none",
+                "has_auth": False,
+                "status": "disconnected",
+                "error": msg,
+            },
+            "snowflake": {
+                "configured": False,
+                "fields_stored": 0,
+                "fields_required": 5,
+                "missing_fields": ["account", "user", "warehouse", "database", "password"],
+                "credentials": {},
+                "auth_type": "password",
+                "status": "disconnected",
+                "error": msg,
+            },
+            "databricks": {
+                "configured": False,
+                "fields_stored": 0,
+                "fields_required": 3,
+                "missing_fields": ["host", "warehouse_id", "token"],
+                "credentials": {},
+                "auth_type": "pat",
+                "auth_method": "none",
+                "status": "disconnected",
+                "error": msg,
+            },
+        }
 
 
 async def save_connection(service: str, payload: Dict[str, Any], user_id: int = 0):

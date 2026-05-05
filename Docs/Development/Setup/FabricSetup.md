@@ -154,6 +154,47 @@ uv run -m semabridge reverse-sync -d DATASET_ID --tag v2.0
 uv run -m semabridge rollback -d DATASET_ID --tag v1.0
 ```
 
+## Controlling the Snowflake Semantic View Name
+
+By default, SemaBridge uses the Fabric dataset's display name as the Snowflake semantic view name (with a `_SEMANTIC` suffix). For example, a dataset named `SalesModel` produces a view called `SalesModel_SEMANTIC`.
+
+### Problem: Generic or Reserved Dataset Names
+
+If your Fabric dataset has a generic name like `fabric`, `model`, or `snowflake`, the generated view name will be ambiguous (e.g. `fabric_SEMANTIC`). SemaBridge detects this and falls back to the dataset GUID, but the result is still not human-readable.
+
+### Option 2: Override via `model_name` in Project Config
+
+Add `model_name` to your project config YAML to control the Snowflake view name without renaming the Fabric dataset:
+
+```yaml
+# semabridge.yaml (or your project config)
+model_name: "SalesAnalytics"   # → produces SalesAnalytics_SEMANTIC in Snowflake
+
+source:
+  type: fabric
+  workspace_id: "your-workspace-id"
+
+target:
+  type: snowflake
+```
+
+You can also use `project_name` as an alias:
+
+```yaml
+project_name: "SalesAnalytics"
+```
+
+**Resolution order** (highest priority first):
+
+1. `model_name` in project config YAML
+2. `project_name` in project config YAML
+3. Fabric dataset display name (from TMSL)
+4. Fabric dataset GUID (fallback when display name is a reserved keyword)
+
+> **Note:** Reserved keywords (`fabric`, `snowflake`, `pbix`, `databricks`, `model`) are automatically detected and will trigger a warning in the logs. Use `model_name` to set a meaningful name in these cases.
+
+---
+
 ## Troubleshooting
 
 ### Common Issues
