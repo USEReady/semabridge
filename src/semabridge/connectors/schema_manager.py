@@ -80,6 +80,24 @@ class SnowflakeSchemaManager:
     def _safe_table_name(self, name: str) -> str:
         return self._id.sanitize_table_name(name)
 
+    @staticmethod
+    def _quote_ident(value: str) -> str:
+        """Quote a Snowflake identifier safely."""
+        raw = str(value or "").replace('"', '""')
+        return f'"{raw}"'
+
+    def _schema_fqn(self) -> str:
+        """Return fully-qualified schema name as "DB"."SCHEMA"."""
+        db_name = str(self.config.database or "").strip()
+        schema_name = str(self.config.schema_name or "").strip()
+        # Accept accidental DB.SCHEMA input in schema_name without producing
+        # malformed "DB"."DB.SCHEMA" references.
+        if "." in schema_name and db_name:
+            left, right = schema_name.split(".", 1)
+            if left.strip().upper() == db_name.upper():
+                schema_name = right.strip()
+        return f"{self._quote_ident(db_name)}.{self._quote_ident(schema_name)}"
+
     def _sanitize_col_name(self, name: str) -> str:
         sanitized = self._id.sanitize_column(name)
         if sanitized and sanitized[0].isdigit():
@@ -170,11 +188,11 @@ class SnowflakeSchemaManager:
             return
 
         # Only query Snowflake if we have datasets to check
-        self._execute_sql(cursor, f"SHOW TABLES IN SCHEMA {self.config.schema_name}", context="SHOW TABLES")
+        self._execute_sql(cursor, f"SHOW TABLES IN SCHEMA {self._schema_fqn()}", context="SHOW TABLES")
         existing_tables = {row[1].upper() for row in cursor.fetchall()}
         
         # Get list of existing views (to avoid collision)
-        self._execute_sql(cursor, f"SHOW VIEWS IN SCHEMA {self.config.schema_name}", context="SHOW VIEWS")
+        self._execute_sql(cursor, f"SHOW VIEWS IN SCHEMA {self._schema_fqn()}", context="SHOW VIEWS")
         existing_views = {row[1].upper() for row in cursor.fetchall()}
         
         all_existing = existing_tables | existing_views
@@ -1367,10 +1385,10 @@ class SnowflakeSchemaManager:
 
     def _preflight_check_osi(self, cursor, osi: OSIModel) -> None:
         """Verify all referenced tables in OSI model exist in Snowflake."""
-        self._execute_sql(cursor, f"SHOW TABLES IN SCHEMA {self.config.schema_name}", context="PREFLIGHT SHOW TABLES")
+        self._execute_sql(cursor, f"SHOW TABLES IN SCHEMA {self._schema_fqn()}", context="PREFLIGHT SHOW TABLES")
         existing_tables = {row[1].upper() for row in cursor.fetchall()}
         
-        self._execute_sql(cursor, f"SHOW VIEWS IN SCHEMA {self.config.schema_name}", context="PREFLIGHT SHOW VIEWS")
+        self._execute_sql(cursor, f"SHOW VIEWS IN SCHEMA {self._schema_fqn()}", context="PREFLIGHT SHOW VIEWS")
         existing_views = {row[1].upper() for row in cursor.fetchall()}
         
         all_objects = existing_tables | existing_views

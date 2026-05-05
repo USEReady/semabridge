@@ -39,12 +39,14 @@ class SnowflakeConnectionManager:
             "QUERY_TAG": self.sf_behavior.query_tag or "Semabridge_Connector"
         }
         conn = snowflake.connector.connect(**kwargs)
+        self._ensure_session_context(conn)
         return conn, True
 
     def authenticate(self) -> None:
         """Establish connection to Snowflake."""
         kwargs = get_snowflake_connect_kwargs(self.config)
         self._connection = snowflake.connector.connect(**kwargs)
+        self._ensure_session_context(self._connection)
 
     def discover(self) -> Dict[str, Any]:
         """List tables and views in the schema."""
@@ -52,10 +54,19 @@ class SnowflakeConnectionManager:
             self.authenticate()
         
         cur = self._connection.cursor()
-        self._execute_sql(cur, f"SHOW TABLES IN SCHEMA {self.config.schema_name}", context="SHOW TABLES")
+        db_name, schema_name = self._resolved_db_schema()
+        self._execute_sql(
+            cur,
+            f"SHOW TABLES IN SCHEMA {self._quote_ident(db_name)}.{self._quote_ident(schema_name)}",
+            context="SHOW TABLES",
+        )
         tables = [row[1] for row in cur.fetchall()]
         
-        self._execute_sql(cur, f"SHOW VIEWS IN SCHEMA {self.config.schema_name}", context="SHOW VIEWS")
+        self._execute_sql(
+            cur,
+            f"SHOW VIEWS IN SCHEMA {self._quote_ident(db_name)}.{self._quote_ident(schema_name)}",
+            context="SHOW VIEWS",
+        )
         views = [row[1] for row in cur.fetchall()]
         
         return {"tables": tables, "views": views}
@@ -113,6 +124,7 @@ class SnowflakeConnectionManager:
             "QUERY_TAG": self.sf_behavior.query_tag or "Semabridge_Connector"
         }
         self._session_conn = snowflake.connector.connect(**kwargs)
+        self._ensure_session_context(self._session_conn)
 
     def close_session(self) -> None:
         """Close the shared Snowflake session and reset caches."""
@@ -133,17 +145,59 @@ class SnowflakeConnectionManager:
         *,
         context: str = "SQL",
     ) -> Any:
-        """Log and execute a Snowflake statement in one place."""
-        logger.info("%s:\n%s", context, self._ddl_preview(sql))
+        """Log and execute a Snowflake statement in one place.
+
+        This wrapper adds richer session context to logs and provides
+        targeted hints for common failures (e.g. SHOW TABLES against a
+        missing schema or insufficient RBAC privileges).
+        """
+        # Best-effort: collect basic session config to help debugging
+        session_info = None
+        try:
+            session_info = {
+                "account": getattr(self.config, "account", None),
+                "database": getattr(self.config, "database", None) or getattr(self.config, "database_name", None) or getattr(self.config, "db", None),
+                "schema": getattr(self.config, "schema_name", None) or getattr(self.config, "schema", None),
+                "warehouse": getattr(self.config, "warehouse", None),
+            }
+        except Exception:
+            session_info = None
+
+        if session_info:
+            logger.info("%s: session=%s\n%s", context, session_info, self._ddl_preview(sql))
+        else:
+            logger.info("%s:\n%s", context, self._ddl_preview(sql))
+
         try:
             if params is None:
-                return cursor.execute(sql)
-            return cursor.execute(sql, params)
+                result = cursor.execute(sql)
+            else:
+                result = cursor.execute(sql, params)
+            return result
         except Exception as exc:
             invalid_identifier = self._extract_invalid_identifier(exc)
-            message = f"{context} failed: {exc}"
+            base_msg = f"{context} failed: {exc}"
             if invalid_identifier:
-                message = f"{message} [invalid_identifier={invalid_identifier}]"
+                base_msg = f"{base_msg} [invalid_identifier={invalid_identifier}]"
+
+            # Add targeted hints for common SHOW TABLES/schema errors
+            hint = None
+            try:
+                lower_sql = str(sql or "").lower()
+                if "show tables" in lower_sql or "show views" in lower_sql:
+                    hint = (
+                        "Verify that the target database/schema exists and the active role has "
+                        "USAGE on the database and schema. Also ensure the configured warehouse is set and running."
+                    )
+                elif "use schema" in lower_sql:
+                    hint = "Verify the schema exists and current role has USAGE on the database and schema."
+            except Exception:
+                hint = None
+
+            message = base_msg
+            if hint:
+                message = f"{message} -- HINT: {hint}"
+
             logger.error(message, exc_info=True)
             raise ConnectorError(message) from exc
 
@@ -230,3 +284,49 @@ class SnowflakeConnectionManager:
             flags=re.IGNORECASE,
         )
         return match.group(1) if match else None
+
+    @staticmethod
+    def _quote_ident(value: str) -> str:
+        raw = str(value or "").replace('"', '""')
+        return f'"{raw}"'
+
+    def _resolved_db_schema(self) -> tuple[str, str]:
+        """Resolve DB/SCHEMA, handling accidental 'DB.SCHEMA' in schema_name."""
+        db_name = str(getattr(self.config, "database", "") or "").strip()
+        schema_name = str(getattr(self.config, "schema_name", "") or "").strip()
+        if "." in schema_name and db_name:
+            left, right = schema_name.split(".", 1)
+            if left.strip().upper() == db_name.upper():
+                schema_name = right.strip()
+        return db_name, schema_name
+
+    def _ensure_session_context(self, conn: Any) -> None:
+        """Explicitly set warehouse/database/schema for this session."""
+        db_name, schema_name = self._resolved_db_schema()
+        warehouse = str(getattr(self.config, "warehouse", "") or "").strip()
+        if not db_name or not schema_name:
+            return
+
+        cur = conn.cursor()
+        try:
+            if warehouse:
+                self._execute_sql(
+                    cur,
+                    f"USE WAREHOUSE {self._quote_ident(warehouse)}",
+                    context="USE WAREHOUSE",
+                )
+            self._execute_sql(
+                cur,
+                f"USE DATABASE {self._quote_ident(db_name)}",
+                context="USE DATABASE",
+            )
+            self._execute_sql(
+                cur,
+                f"USE SCHEMA {self._quote_ident(db_name)}.{self._quote_ident(schema_name)}",
+                context="USE SCHEMA",
+            )
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass

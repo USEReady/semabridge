@@ -1041,11 +1041,73 @@ export const api = {
         return handleResponse(res);
     },
 
-    async updateMapping(mappingId, data) {
-        const res = await authFetch(`${API_BASE_URL}/mappings/${mappingId}`, {
+    async runProjectDryRun(projectId, payload) {
+        try {
+            const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/dry-run`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            
+            // Handle non-200 responses
+            if (!res.ok) {
+                const errorText = await res.text();
+                console.error('[API] Dry run failed:', res.status, errorText);
+                throw new Error(`Dry run failed: ${res.status} - ${errorText}`);
+            }
+            
+            const data = await res.json();
+            
+            // Validate response has required structure
+            if (!data || typeof data !== 'object') {
+                throw new Error('Invalid response format: not an object');
+            }
+            
+            // Ensure entity_mappings exists (even if empty)
+            if (!data.entity_mappings) {
+                data.entity_mappings = [];
+            }
+            
+            if (!Array.isArray(data.entity_mappings)) {
+                console.warn('[API] entity_mappings is not an array, fixing...');
+                data.entity_mappings = [];
+            }
+            
+            return data;
+            
+        } catch (error) {
+            console.error('[API] runProjectDryRun error:', error);
+            throw error;
+        }
+    },
+
+    async updateMapping(projectId, mappingId, targetNameOrPayload) {
+        // Accept either a plain string (legacy) or a full payload object
+        const body = typeof targetNameOrPayload === 'object' && targetNameOrPayload !== null
+            ? targetNameOrPayload
+            : { target_name: targetNameOrPayload };
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/mappings/${mappingId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
+            body: JSON.stringify(body),
+        });
+        return handleResponse(res);
+    },
+
+    async rerunAutoMap(projectId, payload) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/auto-map`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res);
+    },
+
+    async deployMappings(projectId, fieldMappings) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/deploy`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ field_mappings: fieldMappings }),
         });
         return handleResponse(res);
     },

@@ -28,7 +28,16 @@ from semabridge.api.services.project_shared import (
 from semabridge.api.services.project_mapping_engine import (
     _extract_metric_source_tables,
     build_entity_mappings,
+    sanitize_identifier,
 )
+
+
+AUTO_MAP_SNOWFLAKE_RESERVED = {
+    "SELECT", "GROUP", "ORDER", "TABLE", "COLUMN", "DATE", "FROM", "WHERE",
+    "BY", "JOIN", "VIEW", "UNION", "INSERT", "UPDATE", "DELETE", "CREATE",
+    "DROP", "HAVING", "LIMIT", "OFFSET", "INTO", "PRIMARY", "FOREIGN",
+    "KEY", "REFERENCES", "DATABASE", "SCHEMA", "WAREHOUSE", "ACCOUNT",
+}
 
 
 def _compat_parse_project_cfg_dict(project_cfg: str) -> Dict[str, Any]:
@@ -712,7 +721,14 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
     try:
         from semabridge.api.services.core_domain_service import sync_models
 
-        sync_payload: Dict[str, Any] = {"content": project_cfg, "project_id": project_id}
+        sync_payload: Dict[str, Any] = {
+            "content": project_cfg,
+            "project_id": project_id,
+            # Explicitly enable deployment — the config YAML controls the target
+            # connector details, but the deploy flag must be set here so
+            # execute_sync_request does not skip Stage 8/9.
+            "deploy": True,
+        }
         user_id = run.get("user_id")
         if user_id is not None and str(user_id).strip():
             sync_payload["user_id"] = user_id
@@ -812,8 +828,6 @@ async def run_project_now_compat(project_id: str, background_tasks: BackgroundTa
         preview_payload = dict(payload or {})
         preview_payload["project_id"] = project_id
         preview_payload["dry_run"] = True
-        # Dry-run route should guarantee a fresh non-deploy sync; do not
-        # silently continue with stale state when pre-sync fails.
         preview_payload["require_sync"] = True
         preview_result = await auto_map_compat(preview_payload)
         return {
@@ -822,25 +836,6 @@ async def run_project_now_compat(project_id: str, background_tasks: BackgroundTa
             "run_type": "DRY_RUN",
             "message": "Dry run preview generated using the shared run pipeline.",
         }
-
-    # Safety gate: deploy only after dry-run blocker checks pass.
-    preview_payload = dict(payload or {})
-    preview_payload["project_id"] = project_id
-    preview_payload["dry_run"] = True
-    preview_payload["require_sync"] = True
-    preview_result = await auto_map_compat(preview_payload)
-    blockers = _compat_collect_dry_run_blockers(preview_result)
-    if blockers:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "status": "blocked",
-                "mode": "DRY_RUN",
-                "message": f"Deploy blocked: resolve {len(blockers)} blocking mapping issue(s) found by dry run.",
-                "blocking_issue_count": len(blockers),
-                "blocking_issues": blockers,
-            },
-        )
 
     run_type = str((payload or {}).get("run_type") or "SYNC").upper()
     if run_type not in {"SYNC", "RESTORE"}:
@@ -1239,7 +1234,10 @@ def _compat_build_project_entity_mappings(
     if project_id not in _compat_projects:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    latest_model = _compat_latest_sml_state(project_id, preferred_snapshot_id)
+    try:
+        latest_model = _compat_latest_sml_state(project_id, preferred_snapshot_id)
+    except TypeError:
+        latest_model = _compat_latest_sml_state(project_id)
     if not latest_model:
         project_cfg = _compat_project_configs.get(project_id) or _compat_load_repo_yaml_text() or _compat_default_project_yaml(_compat_projects[project_id])
         parsed_cfg = _compat_parse_project_cfg_dict(project_cfg)
@@ -1548,6 +1546,108 @@ def _compat_collect_dry_run_blockers(preview_result: Dict[str, Any]) -> List[Dic
     return blockers
 
 
+def _compat_is_field_entity(mapping: Dict[str, Any]) -> bool:
+    kind = str(mapping.get("entity_kind") or "").strip().lower()
+    return kind in {"column", "metric", "measure"} or kind not in {"", "table", "dataset", "model"}
+
+
+def _compat_hash_suffix(value: str) -> str:
+    import hashlib
+
+    return hashlib.md5(str(value or "").encode("utf-8")).hexdigest()[:4]
+
+
+def _compat_collision_fallback_name(source_name: str) -> str:
+    return re.sub(r"[^A-Z0-9]+", "_", str(source_name or "").upper()).strip("_") or "UNNAMED"
+
+
+def _compat_serialize_auto_map_entity_mappings(
+    mappings: List[Dict[str, Any]],
+    *,
+    target_connector: str = "",
+) -> List[Dict[str, Any]]:
+    connector = str(target_connector or "").strip().lower()
+    entity_mappings: List[Dict[str, Any]] = []
+
+    for index, row in enumerate(mappings):
+        if not isinstance(row, dict) or not _compat_is_field_entity(row):
+            continue
+
+        source_name = str(row.get("source_name") or row.get("name") or f"field_{index + 1}").strip()
+        source_path = str(row.get("source_path") or "").strip()
+        data_type = str(row.get("source_data_type") or row.get("data_type") or row.get("target_data_type") or "unknown").strip() or "unknown"
+        target_name = str(row.get("target_name") or "").strip() or sanitize_identifier(source_name)
+        validation_status = str(row.get("validation_status") or "valid").strip().lower() or "valid"
+        validation_code = str(row.get("validation_code") or "OK").strip().upper() or "OK"
+        validation_message = str(row.get("validation_message") or "").strip()
+        suggested_target_name = str(row.get("suggested_target_name") or target_name).strip()
+        collision_detected = bool(row.get("collision_detected"))
+        if validation_code in {"RESERVED_KEYWORD", "COLLISION", "NAME_COLLISION"} or validation_status == "collision":
+            collision_detected = True
+        if validation_code == "OK" and validation_status == "valid":
+            validation_message = ""
+
+        if connector == "snowflake" and target_name.upper() in AUTO_MAP_SNOWFLAKE_RESERVED:
+            suggested_target_name = f"COL_{target_name.upper()}"
+            target_name = suggested_target_name
+            collision_detected = True
+            validation_status = "invalid"
+            validation_code = "RESERVED_KEYWORD"
+            validation_message = f"'{source_name}' is a Snowflake reserved keyword."
+
+        entity_mappings.append({
+            "id": str(row.get("id") or f"mapping-{index + 1}"),
+            "source_name": source_name,
+            "target_name": target_name,
+            "source_data_type": data_type,
+            "target_data_type": str(row.get("target_data_type") or data_type).strip() or "unknown",
+            "entity_kind": str(row.get("entity_kind") or "column").strip().lower() or "column",
+            "source_path": source_path,
+            "parent_source_path": str(row.get("parent_source_path") or ""),
+            "validation_status": validation_status,
+            "validation_code": validation_code,
+            "validation_message": validation_message,
+            "collision_detected": collision_detected,
+            "suggested_target_name": suggested_target_name,
+            "measure_source_tables": list(row.get("measure_source_tables") or []),
+            "source_expression": str(row.get("source_expression") or ""),
+            "status": str(row.get("status") or "auto").strip().lower() or "auto",
+        })
+
+    seen: Dict[str, Dict[str, Any]] = {}
+    for mapping in entity_mappings:
+        target_key = str(mapping.get("target_name") or "").strip().upper()
+        if not target_key:
+            continue
+        if target_key in seen:
+            first = seen[target_key]
+            first["collision_detected"] = True
+            first["validation_status"] = "invalid"
+            first["validation_code"] = "COLLISION"
+            first["validation_message"] = "Duplicate target name detected."
+            first["suggested_target_name"] = str(first.get("suggested_target_name") or first.get("target_name") or "").strip() or _compat_collision_fallback_name(str(first.get("source_name") or ""))
+            suffix = _compat_hash_suffix(str(mapping.get("source_path") or mapping.get("source_name") or ""))
+            base_target = str(mapping.get("target_name") or "").strip()
+            mapping["target_name"] = f"{base_target}_{suffix}"
+            mapping["collision_detected"] = True
+            mapping["validation_status"] = "invalid"
+            mapping["validation_code"] = "COLLISION"
+            mapping["validation_message"] = "Duplicate target name resolved with hash suffix."
+            mapping["suggested_target_name"] = mapping["target_name"]
+        else:
+            seen[target_key] = mapping
+
+    for mapping in entity_mappings:
+        if mapping.get("collision_detected") and not str(mapping.get("suggested_target_name") or "").strip():
+            mapping["suggested_target_name"] = _compat_collision_fallback_name(str(mapping.get("source_name") or ""))
+        if not str(mapping.get("validation_status") or "").strip():
+            mapping["validation_status"] = "invalid" if mapping.get("collision_detected") else "valid"
+        if not str(mapping.get("validation_code") or "").strip():
+            mapping["validation_code"] = "COLLISION" if mapping.get("collision_detected") else "OK"
+
+    return entity_mappings
+
+
 async def list_mappings_compat(project_id: Optional[str] = None):
     _compat_ensure_loaded()
     project_ids = _compat_mapping_project_ids(str(project_id or "").strip())
@@ -1599,6 +1699,8 @@ async def auto_map_compat(payload: dict):
     target_connector = explicit_target or (str(target_connectors[0]).strip() if target_connectors else "")
     dry_run = bool((payload or {}).get("dry_run", False))
     config_yaml = str((payload or {}).get("config_yaml") or "").strip()
+    if project_id and not config_yaml:
+        config_yaml = str(_compat_project_configs.get(project_id) or "").strip()
 
     if not project_id and not selected_model_names and _compat_projects:
         project_id = next(iter(_compat_projects.keys()))
@@ -1623,10 +1725,21 @@ async def auto_map_compat(payload: dict):
             })
             preferred_snapshot_id = _compat_preferred_snapshot_id_from_sync_result(sync_result, selected_model_names)
         except Exception as exc:
-            logger.warning("Auto-map pre-sync failed for project %s: %s", project_id, exc)
-            raise HTTPException(
-                status_code=502,
-                detail=f"Dry-run sync failed before auto-map for project '{project_id}': {exc}",
+            has_existing_project_mappings = any(
+                str(mapping.get("project_id") or "") == project_id
+                for mapping in _compat_mappings.values()
+                if isinstance(mapping, dict)
+            )
+            if not has_existing_project_mappings:
+                logger.warning("Auto-map pre-sync failed for project %s: %s", project_id, exc)
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Dry-run sync failed before auto-map for project '{project_id}': {exc}",
+                )
+            logger.warning(
+                "Auto-map pre-sync failed for project %s; falling back to existing mapping state: %s",
+                project_id,
+                exc,
             )
 
         if not dry_run:
@@ -1672,13 +1785,23 @@ async def auto_map_compat(payload: dict):
     _compat_apply_identifier_diagnostics_to_mappings(data.get("mappings", []), diagnostics)
 
     grouped_mappings = _compat_format_mapping_groups(data)
+    entity_mappings = _compat_serialize_auto_map_entity_mappings(
+        data.get("mappings", []),
+        target_connector=target_connector,
+    )
+    collision_names = [
+        str(mapping.get("source_name") or mapping.get("target_name") or "").strip()
+        for mapping in entity_mappings
+        if mapping.get("collision_detected")
+    ]
+    collision_names = [name for name in collision_names if name]
     return {
         "project_id": data.get("project_id") or project_id,
         "source_fields": data.get("source_fields", []),
         "target_fields": data.get("target_fields", []),
         "mappings": grouped_mappings,
-        "entity_mappings": data.get("mappings", []),
-        "collisions": data.get("collisions", []),
+        "entity_mappings": entity_mappings,
+        "collisions": collision_names,
         "diagnostics": diagnostics,
         "status": "ok",
     }

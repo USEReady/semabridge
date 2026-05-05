@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import time
+import contextlib
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -107,8 +108,12 @@ def _apply_schema_compatibility_fixes() -> None:
         run_columns = {col["name"] for col in inspector.get_columns("runs")}
         if "run_type" not in run_columns:
             pending_alters.append("ALTER TABLE runs ADD COLUMN run_type VARCHAR(50)")
+        if "sync_mode" not in run_columns:
+            pending_alters.append("ALTER TABLE runs ADD COLUMN sync_mode VARCHAR(20) NOT NULL DEFAULT 'copy'")
         if "before_src_snapshot_id" not in run_columns:
             pending_alters.append("ALTER TABLE runs ADD COLUMN before_src_snapshot_id VARCHAR(36)")
+        if "restored_from_snapshot_id" not in run_columns:
+            pending_alters.append("ALTER TABLE runs ADD COLUMN restored_from_snapshot_id VARCHAR(36)")
         if "restore_snapshot_id" not in run_columns:
             pending_alters.append("ALTER TABLE runs ADD COLUMN restore_snapshot_id VARCHAR(36)")
         if "before_target_snapshot_ids" not in run_columns:
@@ -142,6 +147,17 @@ def _apply_schema_compatibility_fixes() -> None:
     with engine.begin() as conn:
         for ddl in pending_alters:
             conn.execute(text(ddl))
+        # Backfill ORM canonical column from legacy column when both exist.
+        if "runs" in set(inspector.get_table_names()):
+            run_columns = {col["name"] for col in inspector.get_columns("runs")}
+            if "restored_from_snapshot_id" in run_columns and "restore_snapshot_id" in run_columns:
+                conn.execute(
+                    text(
+                        "UPDATE runs "
+                        "SET restored_from_snapshot_id = restore_snapshot_id "
+                        "WHERE restored_from_snapshot_id IS NULL AND restore_snapshot_id IS NOT NULL"
+                    )
+                )
 
     logger.info("Applied accounts schema compatibility fixes: %s", ", ".join(pending_alters))
 
@@ -487,6 +503,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info('SemaBridge API startup complete; application is ready')
     yield
     cleanup_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await cleanup_task
 
     from semabridge.repository.orm.session_factory import db_manager as orm_db_manager
 

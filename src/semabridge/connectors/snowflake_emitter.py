@@ -173,6 +173,14 @@ class SnowflakeEmitter(BaseEmitter):
                 else:
                     ddls = self.semantic_view_builder.generate_ddls(model)
 
+                if not ddls:
+                    raise ConnectorError(
+                        "No Snowflake semantic-view DDL statements were generated. "
+                        "Verify model datasets/mappings and target database/schema settings."
+                    )
+
+                logger.info("[%s] generated %s DDL statement(s) for model=%s", path_type, len(ddls), model_name)
+
                 # Step 3: Execute DDLs  (generate_ddls returns list[str])
                 for idx, sql in enumerate(ddls):
                     if sql:

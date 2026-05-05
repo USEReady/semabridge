@@ -30,6 +30,7 @@ mappings:
 ui:
   intermediate_format: osi
   editor_mode: form
+  output_format: osi
 selection:
   model_ids:
   - d32e8900-31cc-4647-872d-08a7e62bf03b
@@ -38,3 +39,5 @@ options:
   generate_descriptions: true
 project_id: proj-ff
 display_name: ff
+target:
+  type: snowflake

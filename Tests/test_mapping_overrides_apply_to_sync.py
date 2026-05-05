@@ -108,3 +108,42 @@ def test_execution_engine_applies_mapping_overrides_from_config(tmp_path: Path):
 
     assert model.metrics[0].unique_name == "REV_TOTAL"
     assert model.datasets[0].columns[0].unique_name == "SALES_AMOUNT"
+
+
+def test_execution_engine_applies_metric_override_with_space_underscore_variants(tmp_path: Path):
+    model = SMLModel(
+        unique_name="Model1",
+        datasets=[
+            SMLDataset(
+                unique_name="Sales",
+                columns=[
+                    SMLColumn(unique_name="amount", data_type=DataType.DECIMAL),
+                ],
+            )
+        ],
+        metrics=[
+            SMLMetric(
+                unique_name="MEASURE_2",
+                label="Measure 2",
+                dataset="Sales",
+                expression="SUM([amount])",
+            ),
+        ],
+    )
+
+    cfg = tmp_path / "semabridge.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "project_name: test",
+                "mappings_overrides:",
+                "  - source_path: metrics.Measure 2",
+                "    target_name: MEASURE_FF",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    ExecutionEngine._apply_mapping_overrides_from_config(model, cfg)
+
+    assert model.metrics[0].unique_name == "MEASURE_FF"

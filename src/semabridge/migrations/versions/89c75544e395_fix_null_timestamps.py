@@ -19,20 +19,20 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    \"\"\"Upgrade schema.\"\"\"
+    """Upgrade schema."""
     # For snapshots: update NULL or epoch timestamps to now
-    op.execute(\"\"\"
+    op.execute("""
         UPDATE snapshots 
         SET timestamp = NOW() 
         WHERE timestamp IS NULL OR timestamp <= '1970-01-02';
-    \"\"\")
+    """)
     
     # For runs: update NULL or epoch started_at to now
-    op.execute(\"\"\"
+    op.execute("""
         UPDATE runs 
         SET started_at = NOW() 
         WHERE started_at IS NULL OR started_at <= '1970-01-02';
-    \"\"\")
+    """)
     
     # Ensure they are NOT NULL (though they should be already)
     with op.batch_alter_table('snapshots', schema=None) as batch_op:
@@ -43,6 +43,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    \"\"\"Downgrade schema.\"\"\"
+    """Downgrade schema."""
     # We don't want to revert the data updates, and the NOT NULL was already there
     pass

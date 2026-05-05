@@ -53,6 +53,51 @@ npm install
 cd ..
 ```
 
+### Development Setup
+
+We provide **convenient commands** for common development tasks on all platforms:
+
+**Linux/macOS with Make:**
+```bash
+make help              # Show all available commands
+make install           # Install all dependencies
+make migrate           # Apply database migrations
+make run               # Start backend
+make run-frontend      # Start frontend
+```
+
+**Windows (PowerShell) — No Make Required:**
+```powershell
+.\dev.ps1 help         # Show all available commands
+.\dev.ps1 install      # Install all dependencies
+.\dev.ps1 migrate      # Apply database migrations
+.\dev.ps1 run          # Start backend
+.\dev.ps1 run-frontend # Start frontend
+```
+
+These provide a **uniform interface** across Windows, macOS, and Linux. All backend + database tasks are abstracted away from OS-level complexity.
+
+**Key Development Commands:**
+
+```bash
+# macOS/Linux
+make migrate      # Apply latest database migrations
+make run          # Start Uvicorn backend (http://127.0.0.1:8001)
+make run-frontend # Start Vite frontend dev server
+
+# Windows (PowerShell)
+.\dev.ps1 migrate
+.\dev.ps1 run
+.\dev.ps1 run-frontend
+```
+
+**Database Migrations:**
+- Migrations are version-controlled in `src/semabridge/migrations/versions/`
+- Always run `make migrate` (or `.\dev.ps1 migrate` on Windows) after pulling new changes
+- For production deployments, the CI/CD pipeline automatically applies migrations
+- Cross-platform scripts: `scripts/migrate.sh` (Unix/Mac) and `scripts/migrate.ps1` (Windows)
+- Full guide: See [Docs/DEVELOPMENT.md](Docs/DEVELOPMENT.md)
+
 ### Configuration
 
 1. **Environment Variables**: Create a `.env` file (copy from `.env.example`):

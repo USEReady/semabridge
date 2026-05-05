@@ -192,3 +192,4 @@ Vagrantfile
 *.wal
 
 
+Config/projects/*

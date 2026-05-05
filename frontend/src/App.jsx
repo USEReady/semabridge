@@ -17,7 +17,6 @@ import ProjectsPage     from './pages/ProjectsPage';
 import CreateProjectPage from './pages/CreateProjectPage';
 import ProjectConfigPage from './pages/ProjectConfigPage';
 import ProjectJobsPage  from './pages/ProjectJobsPage';
-import ModelMappingPage from './pages/ModelMappingPage';
 import SettingsPage    from './pages/SettingsPage';
 import GlobalConfigPage from './pages/GlobalConfigPage';
 import ProjectDetailPage from './pages/ProjectDetailPage';
@@ -124,7 +123,7 @@ export default function App() {
           <Route path="/projects/:id/edit" element={<ProjectConfigPage />} />
           <Route path="/projects/:id/config" element={<ProjectConfigPage />} />
           <Route path="/jobs"          element={<ProjectJobsPage />} />
-          <Route path="/model-mapping" element={<ModelMappingPage />} />
+          <Route path="/model-mapping" element={<Navigate to="/projects/new?step=4" replace />} />
           <Route path="/comparator"    element={<ComparatorPage />} />
           <Route path="/settings"      element={<SettingsPage />} />
           <Route path="/global-config" element={<GlobalConfigPage />} />

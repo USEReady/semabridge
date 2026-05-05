@@ -221,6 +221,10 @@ class ModelRepository:
                             conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN connector_id VARCHAR(36)")
                         if "trigger" not in snapshot_columns:
                             conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN trigger VARCHAR(50)")
+                    if "runs" in inspector.get_table_names():
+                        run_columns = {col["name"] for col in inspector.get_columns("runs")}
+                        if "sync_mode" not in run_columns:
+                            conn.exec_driver_sql("ALTER TABLE runs ADD COLUMN sync_mode VARCHAR(20) NOT NULL DEFAULT 'copy'")
                 cls._schema_initialized_urls.add(url_key)
             except NotImplementedError as e:
                 if "Snowflake" in str(e) or "index" in str(e).lower():
