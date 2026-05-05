@@ -402,13 +402,6 @@ class FabricExtractor:
         # 1. Initiate Export
         api_url = f"{self.config.api_base_url}/workspaces/{workspace_id}/semanticModels/{resolved_id}/getDefinition?format=TMSL"
         
-        # Identify original display name for BIM name injection
-        display_name = None
-        for item in self._model_cache.values():
-            if item.get("id") == resolved_id:
-                display_name = item.get("displayName")
-                break
-
         result = {}
         try:
             logger.info(f"Initiating extraction for model {dataset_id}...")
@@ -435,11 +428,7 @@ class FabricExtractor:
                 result = self._poll_operation(operation_url, retry_after)
             else:
                  response.raise_for_status()
-            
-            # Inject display name if missing from BIM
-            if display_name and "model" in result and not result["model"].get("name"):
-                result["model"]["name"] = display_name
-
+                 
             # DEBUG: Save raw definition
             try:
                 safe_dataset = re.sub(r"[^A-Za-z0-9_.-]", "_", str(dataset_id or resolved_id or "model"))
