@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import hashlib
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -139,6 +140,7 @@ class SemanticViewBuilder:
     def _generate_semantic_view(self, sml: SMLModel) -> str:
         """SML implementation via builders."""
         self._migrate_numeric_leading_identifiers(sml)
+        self._apply_proactive_suffixes(sml)
         
         from semabridge.utils.name_translator import get_target_deployment_name
         
@@ -192,6 +194,7 @@ class SemanticViewBuilder:
 
     def _generate_semantic_view_from_osi(self, osi: OSIModel) -> str:
         """OSI implementation via builders."""
+        self._apply_proactive_suffixes(osi)
         from semabridge.utils.name_translator import get_target_deployment_name
         
         view_name_raw = osi.unique_name or osi.label or "model"
@@ -297,7 +300,11 @@ class SemanticViewBuilder:
             if metric_base_totals.get(metric_base_alias, 0) > 1:
                 metric_seen_idx = metric_base_seen.get(metric_base_alias, 0) + 1
                 metric_base_seen[metric_base_alias] = metric_seen_idx
-                preferred_name = f"{metric_base_alias}_{metric_seen_idx}"
+                
+                entity_name = metric.dataset or "UnknownEntity"
+                field_name = metric.unique_name or "UnknownField"
+                collision_hash = self._generate_deterministic_hash(entity_name, field_name)
+                preferred_name = f"{metric_base_alias}_{collision_hash}".upper()
 
                 metric_signature_seed = self._build_duplicate_signature_seed(
                     source_name=metric.unique_name,
@@ -336,7 +343,11 @@ class SemanticViewBuilder:
             if metric_base_totals.get(metric_base_alias, 0) > 1:
                 metric_seen_idx = metric_base_seen.get(metric_base_alias, 0) + 1
                 metric_base_seen[metric_base_alias] = metric_seen_idx
-                preferred_name = f"{metric_base_alias}_{metric_seen_idx}"
+                
+                entity_name = metric.dataset or "UnknownEntity"
+                field_name = metric.unique_name or "UnknownField"
+                collision_hash = self._generate_deterministic_hash(entity_name, field_name)
+                preferred_name = f"{metric_base_alias}_{collision_hash}".upper()
 
                 metric_signature_seed = self._build_duplicate_signature_seed(
                     source_name=metric.unique_name,
@@ -390,7 +401,11 @@ class SemanticViewBuilder:
                 sig_idx = signature_seen.get(signature_seed, 0) + 1
                 signature_seen[signature_seed] = sig_idx
                 source_signature = f"{signature_seed}::occ{sig_idx}"
-                preferred_name = f"{safe_base}_{next_idx}"
+                
+                entity_name = dataset.source_table or dataset.unique_name or "UnknownEntity"
+                field_name = col.unique_name or "UnknownField"
+                collision_hash = self._generate_deterministic_hash(entity_name, field_name)
+                preferred_name = f"{safe_base}_{collision_hash}".upper()
                 self._resolve_persistent_duplicate_name(
                     scope_type="column",
                     namespace_key=namespace_key,
@@ -432,7 +447,11 @@ class SemanticViewBuilder:
                 sig_idx = signature_seen.get(signature_seed, 0) + 1
                 signature_seen[signature_seed] = sig_idx
                 source_signature = f"{signature_seed}::occ{sig_idx}"
-                preferred_name = f"{safe_base}_{next_idx}"
+                
+                entity_name = dataset.source_table or dataset.unique_name or "UnknownEntity"
+                field_name = col.unique_name or "UnknownField"
+                collision_hash = self._generate_deterministic_hash(entity_name, field_name)
+                preferred_name = f"{safe_base}_{collision_hash}".upper()
                 self._resolve_persistent_duplicate_name(
                     scope_type="column",
                     namespace_key=namespace_key,
@@ -442,6 +461,13 @@ class SemanticViewBuilder:
                     source_signature=source_signature,
                     preferred_name=preferred_name,
                 )
+
+    @staticmethod
+    def _generate_deterministic_hash(entity_name: str, field_name: str) -> str:
+        """Generate a consistent 4-character uppercase hash for a given entity and field."""
+        seed_str = f"{entity_name}{field_name}".encode('utf-8')
+        full_hash = hashlib.sha256(seed_str).hexdigest()
+        return full_hash[:4].upper()
 
     def _duplicate_namespace_key(self, model_name: Optional[str] = None) -> str:
         parts = [
@@ -467,6 +493,25 @@ class SemanticViewBuilder:
         except Exception as exc:
             logger.warning("Duplicate mapping failed for %s: %s", source_name, exc)
             return preferred_name
+
+    def _apply_proactive_suffixes(self, model: Any) -> None:
+        """Proactively append structural suffixes for specific naming strategies.
+
+        Only activates when naming_strategy is 'source_prefix' or 'entity_suffix'
+        at the project level. For 'deterministic_hash' (the default), collision
+        suffixes are applied reactively in the duplicate-mapping pipeline.
+        """
+        naming_strategy = str(getattr(self.config, "naming_strategy", "deterministic_hash")).strip().lower()
+        if naming_strategy not in ("source_prefix", "entity_suffix"):
+            return
+
+        suffix = "_HK"
+        for ds in getattr(model, "datasets", []):
+            for col in getattr(ds, "columns", []):
+                col_name = str(col.unique_name or "").upper()
+                # Apply suffix to ID fields if not already suffixed
+                if col_name.endswith("_ID") and not col_name.endswith(suffix):
+                    col.unique_name = f"{col.unique_name}{suffix}"
 
     def _migrate_numeric_leading_identifiers(self, model: Any) -> None:
         """Snowflake semantic identifiers cannot reliably start with digits."""

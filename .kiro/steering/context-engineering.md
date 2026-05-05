@@ -1,9 +1,0 @@
----
-inclusion: manual
----
-
-# context-engineering
-
-> Optimizes agent context setup. Use when starting a new session, when agent output quality degrades, when switching between tasks, or when you need to configure rules files and context for a project.
-
-For full guidance, see the skill file at: .kiro/skills/context-engineering/SKILL.md

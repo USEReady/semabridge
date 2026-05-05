@@ -300,9 +300,11 @@ def build_entity_mappings(
         if not preferred_target_name:
             if prior_source_path and prior_source_path != source_path:
                 collision_detected = True
+                entity_seed = str(entity.get("parent_source_path") or entity.get("model_name") or "").strip()
+                field_seed = source_name
                 target_name, hash_suffix = apply_collision_suffix(
                     sanitized,
-                    fingerprint=f"{project_id}:{scope}:{source_path}:{source_name}",
+                    fingerprint=f"{entity_seed}::{field_seed}",
                 )
                 collisions.append({
                     "scope": scope,

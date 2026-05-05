@@ -34,6 +34,7 @@ from semabridge.sml.models import SMLModel, SMLRelationship
 from semabridge.repository.model_repository import ModelRepository
 from semabridge.utils.logger import get_logger
 from semabridge.utils.relationship_naming import generate_relationship_name
+from semabridge.utils.identifiers import IdentifierSanitizer
 from semabridge.core.engine.context import RunContext
 from semabridge.core.engine.exceptions import (
     ConfigValidationError,
@@ -75,12 +76,22 @@ def _apply_mapping_overrides_from_config(
     if not isinstance(raw_overrides, list):
         return
 
+    target_cfg = parsed.get("target") if isinstance(parsed.get("target"), dict) else {}
+    if not target_cfg:
+        targets_cfg = parsed.get("targets")
+        if isinstance(targets_cfg, list) and targets_cfg and isinstance(targets_cfg[0], dict):
+            target_cfg = targets_cfg[0]
+    target_type = str(target_cfg.get("type") or "").strip().lower()
+    snowflake_sanitizer = IdentifierSanitizer(force_uppercase=True, suppress_reserved=True)
+
     overrides: Dict[str, str] = {}
     for row in raw_overrides:
         if not isinstance(row, dict):
             continue
         source_path = str(row.get("source_path") or "").strip()
         target_name = str(row.get("target_name") or "").strip()
+        if target_type == "snowflake" and target_name:
+            target_name = snowflake_sanitizer.sanitize_alias(target_name)
         if source_path and target_name:
             overrides[source_path] = target_name
 
@@ -124,8 +135,9 @@ def _apply_mapping_overrides_from_config(
                 continue
             for column in dataset.columns:
                 if str(column.unique_name) == column_name:
-                    if str(column.unique_name) != target_name:
-                        column.unique_name = target_name
+                    # Keep physical identity stable for extraction/CTAS/sample-query
+                    # paths; only override semantic display/alias label.
+                    if str(column.label) != target_name:
                         column.label = target_name
                         renamed_columns += 1
                     break

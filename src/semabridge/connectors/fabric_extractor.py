@@ -279,10 +279,42 @@ class FabricExtractor:
         # 1.5. Pre-issued token supplied via environment variable.
         env_token = get_fabric_access_token_from_env()
         if env_token and not self._skip_env_token_once:
-            self._access_token = env_token
-            self._token_expires_at = time.time() + 3600
-            logger.debug("Using FABRIC_ACCESS_TOKEN from environment")
-            return self._access_token
+            # Validate expiry from JWT 'exp' claim where possible so we don't
+            # repeatedly use an expired pre-issued token (common for short-lived
+            # developer tokens placed in .env). If parsing fails, fall back to
+            # a conservative 1-hour TTL.
+            try:
+                token_valid = False
+                exp_ts = None
+                parts = env_token.split('.')
+                if len(parts) == 3:
+                    payload = parts[1]
+                    import base64 as _b64
+                    rem = len(payload) % 4
+                    if rem:
+                        payload += '=' * (4 - rem)
+                    decoded = _b64.urlsafe_b64decode(payload.encode())
+                    payload_json = json.loads(decoded)
+                    exp_ts = int(payload_json.get('exp', 0))
+                if exp_ts and exp_ts > int(time.time()) + 60:
+                    token_valid = True
+                    self._token_expires_at = exp_ts
+                else:
+                    # Token is already expired or about to expire; do not use.
+                    token_valid = False
+            except Exception:
+                # Unable to parse JWT; assume 1 hour validity but still check
+                # whether it's expired relative to current time.
+                self._token_expires_at = time.time() + 3600
+                token_valid = time.time() < self._token_expires_at - 60
+
+            if token_valid:
+                self._access_token = env_token
+                logger.debug("Using FABRIC_ACCESS_TOKEN from environment (validated)")
+                return self._access_token
+            else:
+                logger.debug("FABRIC_ACCESS_TOKEN from environment is expired or near-expiry; skipping to allow refresh")
+
         if env_token and self._skip_env_token_once:
             logger.debug("Skipping FABRIC_ACCESS_TOKEN once after a 401 to force token reacquisition")
             self._skip_env_token_once = False

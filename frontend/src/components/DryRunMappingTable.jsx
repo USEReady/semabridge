@@ -9,10 +9,11 @@
  *   summary       : { total_fields, auto_mapped, unmapped, collisions }
  *   relationships : Array<{ source, target, joinType, condition, confidence }>
  */
-import { useState, useMemo } from 'react';
-import { Edit2, GitMerge } from 'lucide-react';
+import { useState, useMemo, useCallback } from 'react';
+import { Edit2, GitMerge, Zap, CheckCircle } from 'lucide-react';
 import StatusBadge from './common/StatusBadge';
 import SmartSearchBar, { matchesSmartQuery } from './common/SmartSearchBar';
+import { api } from '../utils/api';
 
 // ─── Filter tab definitions ───────────────────────────────────────────────────
 const MAPPING_FILTERS = [
@@ -78,6 +79,7 @@ function MeasureBadge() {
 const STATUS_BADGE_MAP = {
   auto:      { status: 'success', label: 'Auto' },
   manual:    { status: 'running', label: 'Manual' },
+  auto_resolved: { status: 'success', label: 'Auto-Resolved' },
   unmapped:  { status: 'draft',   label: 'Unmapped' },
   collision: { status: 'error',   label: 'Collision' },
 };
@@ -363,12 +365,15 @@ function RelationshipsSection({ relationships }) {
 export default function DryRunMappingTable({
   mappings = [],
   onEdit,
+  onBulkResolved,     // (resolvedMap: Record<rowId, suggestedTarget>) => void
   summary,
   relationships = [],
 }) {
   const [activeFilter, setActiveFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [useRegex, setUseRegex] = useState(false);
+  const [bulkResolving, setBulkResolving] = useState(false);
+  const [bulkToast, setBulkToast] = useState(null); // { type: 'success'|'error', msg }
 
   // ── Split columns vs measures ───────────────────────────────────────────────
   const { columns, measures } = useMemo(() => {
@@ -394,6 +399,47 @@ export default function DryRunMappingTable({
     });
     return c;
   }, [mappings]);
+
+  // ── Bulk resolve handler ─────────────────────────────────────────────────────
+  const handleBulkResolve = useCallback(async () => {
+    const collisions = mappings
+      .filter(r => String(r?.status || '').toLowerCase() === 'collision')
+      .map(r => ({
+        entity_name:    r.source_table_name || '',
+        field_name:     r.source_field      || '',
+        current_target: r.target_field      || r.source_field || '',
+      }));
+
+    if (!collisions.length) return;
+
+    setBulkResolving(true);
+    setBulkToast(null);
+    try {
+      const data = await api.bulkResolve(collisions);
+
+      // Build a map from field identity → suggested target for the parent to consume
+      const resolvedMap = {};
+      const resolvedList = data.resolved || [];
+      resolvedList.forEach((resolved) => {
+        // Match by entity + field name back to the row
+        const matchedRow = mappings.find(
+          r => r.source_table_name === resolved.entity_name
+            && r.source_field      === resolved.field_name
+        );
+        if (matchedRow?.id) {
+          resolvedMap[matchedRow.id] = resolved.suggested_target;
+        }
+      });
+
+      onBulkResolved?.(resolvedMap);
+      setBulkToast({ type: 'success', msg: `${resolvedList.length} collision${resolvedList.length !== 1 ? 's' : ''} resolved with deterministic hashes.` });
+    } catch (err) {
+      setBulkToast({ type: 'error', msg: `Resolve failed: ${err.message}` });
+    } finally {
+      setBulkResolving(false);
+      setTimeout(() => setBulkToast(null), 4000);
+    }
+  }, [mappings, onBulkResolved]);
 
   // ── Filtered rows ───────────────────────────────────────────────────────────
   const filterRow = (row) => {
@@ -468,7 +514,7 @@ export default function DryRunMappingTable({
         )}
       </div>
 
-      {/* ── Controls row: filter tabs + search ───────────────────────────────── */}
+      {/* ── Controls row: filter tabs + search + Resolve All ─────────────────── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <div className="filter-tabs" style={{ marginBottom: 0 }}>
           {MAPPING_FILTERS.map((filter) => {
@@ -496,7 +542,70 @@ export default function DryRunMappingTable({
             placeholder="Search fields..."
           />
         </div>
+
+        {/* ── Resolve All button — only shown when collisions exist ─────── */}
+        {counts.collision > 0 && (
+          <button
+            id="bulk-resolve-btn"
+            type="button"
+            disabled={bulkResolving}
+            onClick={handleBulkResolve}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 14px',
+              borderRadius: 7,
+              border: '1px solid rgba(251,191,36,0.55)',
+              background: bulkResolving
+                ? 'rgba(251,191,36,0.06)'
+                : 'rgba(251,191,36,0.12)',
+              color: '#fbbf24',
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: bulkResolving ? 'not-allowed' : 'pointer',
+              whiteSpace: 'nowrap',
+              transition: 'background 0.15s, opacity 0.15s',
+              opacity: bulkResolving ? 0.7 : 1,
+            }}
+          >
+            {bulkResolving
+              ? <>
+                  <span style={{
+                    width: 11, height: 11, border: '2px solid #fbbf24',
+                    borderTopColor: 'transparent', borderRadius: '50%',
+                    display: 'inline-block',
+                    animation: 'spin 0.7s linear infinite',
+                  }} />
+                  Resolving…
+                </>
+              : <><Zap size={12} /> Resolve All ({counts.collision})</>}
+          </button>
+        )}
       </div>
+
+      {/* ── Bulk-resolve toast ───────────────────────────────────────────────── */}
+      {bulkToast && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '9px 14px',
+          borderRadius: 8,
+          border: bulkToast.type === 'success'
+            ? '1px solid rgba(34,197,94,0.4)'
+            : '1px solid rgba(239,68,68,0.4)',
+          background: bulkToast.type === 'success'
+            ? 'rgba(34,197,94,0.09)'
+            : 'rgba(239,68,68,0.09)',
+          color: bulkToast.type === 'success' ? 'var(--color-success)' : 'var(--color-error)',
+          fontSize: 12,
+          fontWeight: 600,
+        }}>
+          {bulkToast.type === 'success' && <CheckCircle size={13} />}
+          {bulkToast.msg}
+        </div>
+      )}
 
       {/* ── Columns table ────────────────────────────────────────────────────── */}
       {mappings.length === 0 ? (

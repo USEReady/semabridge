@@ -1657,6 +1657,26 @@ export default function CreateProjectPage() {
     }
   }, [targetConnectors, detectedMappings, createdProject]);
 
+  const handleBulkResolved = useCallback((resolvedMap) => {
+    if (!resolvedMap || typeof resolvedMap !== 'object') return;
+
+    setDetectedMappings((prev) => prev.map((row) => {
+      const nextTarget = resolvedMap[row.id];
+      if (!nextTarget) return row;
+      return {
+        ...row,
+        target_field: nextTarget,
+        status: 'auto_resolved',
+        validation_status: 'valid',
+        validation_code: 'OK',
+        validation_message: '',
+        collision_detected: false,
+        auto_resolved: true,
+        isDirty: true,
+      };
+    }));
+  }, []);
+
   // ── handleDeploy — deploys finalized mappings and advances to Step 5 ─────────
   const handleDeploy = useCallback(async () => {
     const blockingRows = detectedMappings.filter(row => isDryRunBlockingRow(row));
@@ -1995,6 +2015,7 @@ export default function CreateProjectPage() {
               onFieldEdit={handleFieldEdit}
               onDeployMappings={handleDeploy}
               targetConnectors={targetConnectors}
+              onBulkResolved={handleBulkResolved}
             />
           </ErrorBoundary>
         )}
@@ -4411,6 +4432,7 @@ function StepMappingOptions({
   onFieldEdit,
   onDeployMappings,
   targetConnectors,
+  onBulkResolved,
 }) {
   const [autoMappingMode, setAutoMappingMode] = useState(true);
   const [rows, setRows] = useState([]);
@@ -4862,6 +4884,7 @@ function StepMappingOptions({
               const row = detectedMappings.find(r => r.id === rowId);
               if (row) setEditingRow(row);
             }}
+            onBulkResolved={onBulkResolved}
           />
         </div>
       )}

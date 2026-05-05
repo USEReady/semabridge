@@ -167,3 +167,13 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ── Resolve All button spinner ───────────────────────────────────────────── */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+#bulk-resolve-btn:not(:disabled):hover {
+  background: rgba(251, 191, 36, 0.20) !important;
+  border-color: rgba(251, 191, 36, 0.75) !important;
+}
