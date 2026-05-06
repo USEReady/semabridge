@@ -1,16 +1,14 @@
-# Fabric Compatibility Mode
-# For use when moving complex PBI Semantic Models to Snowflake.
+# Fabric compatibility mode
 
 snowflake:
-  # PowerBI often uses spaces in column names, which requires quoting
   quote_identifiers: true
-  use_transient_tables: true # Faster staging
+  use_transient_tables: true
 
 fabric:
   tmsl_generation_mode: "compatibility"
 
 semantic_model:
-  view_suffix: "" # Use direct table names if possible
-  
+  view_suffix: ""
+
 compatibility:
-  force_uppercase: false # Preserve case for PBI compatibility
+  force_uppercase: false

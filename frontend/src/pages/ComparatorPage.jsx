@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import usePageCache from '../hooks/usePageCache';
 import {
   UploadCloud, FileText, ArrowRightLeft, Sparkles, Split, X,
   CheckCircle2, AlertCircle, ChevronDown, ChevronRight,
@@ -834,8 +835,15 @@ export default function ComparatorPage() {
   const [compareResults, setCompareResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [filterType, setFilterType] = useState('all');
-  const [selectedProviderIdx, setSelectedProviderIdx] = useState(0);
+
+  // Cached UI state — survives SPA navigation within the same tab.
+  const [compCache, setCompCache] = usePageCache('comparator-page', {
+    filterType: 'all',
+    selectedProviderIdx: 0,
+  });
+  const { filterType, selectedProviderIdx } = compCache;
+  const setFilterType = (v) => setCompCache({ filterType: typeof v === 'function' ? v(filterType) : v });
+  const setSelectedProviderIdx = (v) => setCompCache({ selectedProviderIdx: typeof v === 'function' ? v(selectedProviderIdx) : v });
   const selectedProvider = LLM_PROVIDERS[selectedProviderIdx];
 
   const resetResults = () => {

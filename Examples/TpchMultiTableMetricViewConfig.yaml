@@ -1,0 +1,24 @@
+# Example Databricks multi-table metric view configuration
+
+snowflake:
+  apply_inferred_types: true
+
+semantic_model:
+  sync_all_attributes: true
+
+databricks:
+  create_metadata_table: true
+  create_measure_views: true
+  measure_view_type: "metric_view"
+  measure_view_mode: "combined"
+  enable_simple_dax_translation: true
+  metric_view_only_sum_translation: true
+  enable_cross_table_joins: true
+  enable_metric_view_joins: true
+  source_table_mapping:
+    orders: "samples.tpch.orders"
+    customer: "samples.tpch.customer"
+    nation: "samples.tpch.nation"
+  source_catalog: "samples"
+  source_schema: "tpch"
+  on_missing_source: "plan"

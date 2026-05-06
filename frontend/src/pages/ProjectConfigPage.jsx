@@ -14,6 +14,7 @@ import { useSyncStatusStore } from '../context/SyncStatusContext';
 import { api } from '../utils/api';
 import { buildMockRunLogs, saveRunLogs } from '../utils/runLogs';
 import { useUIStore } from '../store/uiStore';
+import usePageCache from '../hooks/usePageCache';
 
 import ProjectWizard from './CreateProjectPage';
 import Modal from '../components/common/Modal';
@@ -96,9 +97,7 @@ export default function ProjectConfigPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [syncMode, setSyncMode] = useState(() => {
-    return localStorage.getItem(`project_${id}_syncMode`) || 'copy';
-  });
+  const [syncMode, setSyncMode] = usePageCache(`project_${id}_syncMode`, 'copy');
   const [project, setProject] = useState(null);
   const [allProjects, setAllProjects] = useState([]);
   const [selectedPresetProjectId, setSelectedPresetProjectId] = useState(null);
@@ -109,7 +108,7 @@ export default function ProjectConfigPage() {
   const [projectMappingsLoading, setProjectMappingsLoading] = useState(false);
   const [projectMappingsError, setProjectMappingsError] = useState('');
 
-  const [viewMode, setViewMode] = useState('form'); // form | yaml
+  const [viewMode, setViewMode] = usePageCache(`project_${id}_viewMode`, 'form'); // form | yaml
   const [yamlText, setYamlText] = useState('');
   const [configForm, setConfigForm] = useState({
     source_type: 'fabric',
@@ -230,12 +229,10 @@ export default function ProjectConfigPage() {
 
   useEffect(() => {
     const modeFromUrl = searchParams.get('mode');
-    const storedMode = localStorage.getItem(`project_${id}_viewMode`);
-    const preferred = modeFromUrl === 'yaml' || modeFromUrl === 'form'
-      ? modeFromUrl
-      : (storedMode === 'yaml' || storedMode === 'form' ? storedMode : 'form');
-    setViewMode(preferred);
-  }, [id, searchParams]);
+    if (modeFromUrl === 'yaml' || modeFromUrl === 'form') {
+      setViewMode(modeFromUrl);
+    }
+  }, [id, searchParams, setViewMode]);
 
   useEffect(() => {
     if (!hasHydrated) return;

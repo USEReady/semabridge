@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import usePageCache from '../hooks/usePageCache';
 import {
     History,
     History as HistoryIcon,
@@ -725,25 +726,34 @@ function RestorePreviewModal({ projectId, snapshotId, onConfirm, onCancel }) {
 export default function VersionControlPage() {
     const activeProjectId = useUIStore(state => state.activeProjectId);
     const [projects, setProjects] = useState([]);
-    const [selectedProjectId, setSelectedProjectId] = useState(activeProjectId || '');
     const [versions, setVersions] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isProjectsLoading, setIsProjectsLoading] = useState(false);
     const [selectedRun, setSelectedRun] = useState(null);
     const [diffSelection, setDiffSelection] = useState([]);
-    const [viewMode, setViewMode] = useState('history'); 
     const [diffData, setDiffData] = useState(null);
     const [isComparing, setIsComparing] = useState(false);
     const [rollbackTarget, setRollbackTarget] = useState(null);
     const [isRollingBack, setIsRollingBack] = useState(false);
     const [isDeleting, setIsDeleting] = useState(null);
-    const [searchQuery, setSearchQuery] = useState('');
     const [isTagging, setIsTagging] = useState(null); // snapshot_id being tagged
     const [tagValue, setTagValue] = useState('');
     const [showRestorePreview, setShowRestorePreview] = useState(null); // snapshot_id for preview
     const [selectedModelHistory, setSelectedModelHistory] = useState(null);
-    const [showPinnedOnly, setShowPinnedOnly] = useState(false);
     const [stats, setStats] = useState(null);
+
+    // Cached UI state — survives SPA navigation within the same tab.
+    const [vcCache, setVcCache] = usePageCache('version-control-page', {
+      selectedProjectId: activeProjectId || '',
+      viewMode: 'history',
+      searchQuery: '',
+      showPinnedOnly: false,
+    });
+    const { selectedProjectId, viewMode, searchQuery, showPinnedOnly } = vcCache;
+    const setSelectedProjectId = (v) => setVcCache({ selectedProjectId: typeof v === 'function' ? v(selectedProjectId) : v });
+    const setViewMode = (v) => setVcCache({ viewMode: typeof v === 'function' ? v(viewMode) : v });
+    const setSearchQuery = (v) => setVcCache({ searchQuery: typeof v === 'function' ? v(searchQuery) : v });
+    const setShowPinnedOnly = (v) => setVcCache({ showPinnedOnly: typeof v === 'function' ? v(showPinnedOnly) : v });
     const { addLog } = useLogs();
 
     const loadProjects = useCallback(async () => {

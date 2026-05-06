@@ -27,7 +27,8 @@ import { useWorkspace } from '../context/WorkspaceContext';
 import Modal from '../components/common/Modal';
 import { useLogs } from '../context/LogsContext';
 import { useUIStore } from '../store/uiStore';
-import useSessionDraft from '../hooks/useSessionDraft';
+import { useProjectWizardStore } from '../store/projectWizardStore';
+import DraftToast from '../components/common/DraftToast';
 import DraftBanner from '../components/common/DraftBanner';
 import ErrorBoundary from '../components/ErrorBoundary';
 import DryRunMappingTable, { isBlockingRow as isDryRunBlockingRow } from '../components/DryRunMappingTable';
@@ -335,7 +336,7 @@ function normalizeRows(data) {
 
     console.log('[normalizeRows] Field rows after filtering:', fieldRows.length);
     if (fieldRows.length === 0 && entityRows.length > 0) {
-      console.error('[normalizeRows] No field rows! Entity kinds present:', 
+      console.error('[normalizeRows] No field rows! Entity kinds present:',
         [...new Set(entityRows.map(r => r?.entity_kind))]);
     }
 
@@ -492,8 +493,26 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const navigate = useNavigate();
   const location = useLocation();
   const { addLog } = useLogs();
-  const setCreateProjectDraft = useUIStore(state => state.setCreateProjectDraft);
-  const clearCreateProjectDraft = useUIStore(state => state.clearCreateProjectDraft);
+  const setWizardState = useProjectWizardStore(state => state.setWizardState);
+  const clearWizardState = useProjectWizardStore(state => state.clearWizardState);
+  const hasRestoredDraft = useProjectWizardStore(state => state.hasRestoredDraft);
+  const setHasRestoredDraft = useProjectWizardStore(state => state.setHasRestoredDraft);
+  const hasMeaningfulData = useProjectWizardStore(state => state.hasMeaningfulData);
+
+  // Destructure wizard state for local usage
+  const {
+    name, description, sourceConnector, targetConnectors: targetConnectorsRaw,
+    intermediateFormat, tags: tagsRaw, tagInput,
+    fabricAccountId, selectedConnectionId, snowflakeAccountId, databricksAccountId,
+    fabricWorkspaceId, snowflakeDatabase, snowflakeSchema,
+    targetDatabase, targetSchema, targetAccount, targetWarehouse,
+    domainHint, modelQueryRegex, pbixSourceMode,
+    selectedLocalFolderId, selectedPbixFilePath,
+    expandedWs, selectedModels: selectedModelsRaw, selectedModelNameByKey,
+    selectedDatabricksTables: selectedDatabricksTablesRaw, databricksQuery,
+    autoRelationships, generateDescriptions,
+    currentStepIndex: step,
+  } = useProjectWizardStore(state => state.wizard);
   const {
     workspaces: availableWorkspaces,
     activeWorkspaceId,
@@ -501,96 +520,141 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     isLoading: workspacesLoading,
   } = useWorkspace();
 
-  // --- Intent-aware draft hook ---
-  const {
-    hasDraft, draft: resumedDraft, saveDraft,
-    resumeDraft, discardDraft, clearDraft,
-  } = useSessionDraft('createProjectDraft');
-
-  const [step, setStep] = useState(() => {
-    const requestedStep = Number(new URLSearchParams(location.search || '').get('step'));
-    return requestedStep >= 1 && requestedStep <= 5 ? requestedStep : 1;
-  });
   const [showStep1Validation, setShowStep1Validation] = useState(false);
   const [saving, setSaving] = useState(false);
   const [createError, setCreateError] = useState('');
   const [runWarning, setRunWarning] = useState('');
 
+  const refreshLocalFolders = useCallback(async () => {
+    setLocalFoldersLoading(true);
+    try {
+      const data = await api.listLocalFolders();
+      setLocalFolders(Array.isArray(data) ? data : []);
+    } catch {
+      setLocalFolders([]);
+    } finally {
+      setLocalFoldersLoading(false);
+    }
+  }, []);
+
+  // Detection logic for resumed draft on mount
+  useEffect(() => {
+    if (sourceConnector === 'pbix') {
+      refreshLocalFolders();
+    }
+  }, [refreshLocalFolders, sourceConnector, step]);
+
+  useEffect(() => {
+    if (hasMeaningfulData()) {
+      setHasRestoredDraft(true);
+    }
+  }, []); // Only on initial mount
+
+  const setStep = useCallback((nextStep) => {
+    const val = typeof nextStep === 'function' ? nextStep(step) : nextStep;
+    setWizardState({ currentStepIndex: val });
+  }, [step, setWizardState]);
+
   // Step 1
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [sourceConnector, setSourceConnector] = useState('');
-  const [targetConnectors, setTargetConnectors] = useState(new Set());
-  const [intermediateFormat, setIntermediateFormat] = useState('osi');
   const configMode = 'form';
-  const [tags, setTags] = useState(new Set());
-  const [tagInput, setTagInput] = useState('');
+  const targetConnectors = useMemo(() => new Set(targetConnectorsRaw || []), [targetConnectorsRaw]);
+  const tags = useMemo(() => new Set(tagsRaw || []), [tagsRaw]);
+
+  const setName = useCallback((nextName) => {
+    setWizardState({ name: String(nextName ?? '') });
+  }, [setWizardState]);
+  const setDescription = useCallback((nextDescription) => {
+    setWizardState({ description: String(nextDescription ?? '') });
+  }, [setWizardState]);
+  const setSourceConnector = useCallback((nextConnector) => {
+    setWizardState({ sourceConnector: String(nextConnector ?? '') });
+  }, [setWizardState]);
+  const setIntermediateFormat = useCallback((nextFormat) => {
+    setWizardState({ intermediateFormat: String(nextFormat ?? 'osi') });
+  }, [setWizardState]);
+  const setTagInput = useCallback((nextTagInput) => {
+    setWizardState({ tagInput: String(nextTagInput ?? '') });
+  }, [setWizardState]);
+  const setTargetConnectors = useCallback((nextValue) => {
+    const prev = new Set(useProjectWizardStore.getState()?.wizard?.targetConnectors || []);
+    const resolved = typeof nextValue === 'function' ? nextValue(prev) : nextValue;
+    setWizardState({ targetConnectors: Array.from(resolved || []) });
+  }, [setWizardState]);
+  const setTags = useCallback((nextValue) => {
+    const prev = new Set(useProjectWizardStore.getState()?.wizard?.tags || []);
+    const resolved = typeof nextValue === 'function' ? nextValue(prev) : nextValue;
+    setWizardState({ tags: Array.from(resolved || []) });
+  }, [setWizardState]);
 
   // Step 2
-  const [fabricAccountId, setFabricAccountId] = useState('');
-  const [selectedConnectionId, setSelectedConnectionId] = useState('');
-  const [fabricAccounts, setFabricAccounts] = useState([]);
-  // Snowflake & Databricks multi-account
-  const [snowflakeAccountId, setSnowflakeAccountId] = useState('');
-  const [snowflakeAccounts, setSnowflakeAccounts] = useState([]);
-  const [databricksAccountId, setDatabricksAccountId] = useState('');
-  const [databricksAccounts, setDatabricksAccounts] = useState([]);
-  const [fabricWorkspaceId, setFabricWorkspaceId] = useState('');
-  const [snowflakeDatabase, setSnowflakeDatabase] = useState('');
-  const [snowflakeSchema, setSnowflakeSchema] = useState('');
-  const [targetDatabase, setTargetDatabase] = useState('');
-  const [targetSchema, setTargetSchema] = useState('');
-  const [targetAccount, setTargetAccount] = useState('');
-  const [targetWarehouse, setTargetWarehouse] = useState('');
-  const [domainHint, setDomainHint] = useState('');
-  const [modelQueryRegex, setModelQueryRegex] = useState(false);
+  const selectedModels = useMemo(() => new Set(selectedModelsRaw || []), [selectedModelsRaw]);
+  const selectedDatabricksTables = useMemo(() => new Set(selectedDatabricksTablesRaw || []), [selectedDatabricksTablesRaw]);
+
+  // Setters bound to store
+  const setFabricAccountId = (val) => setWizardState({ fabricAccountId: val });
+  const setSelectedConnectionId = (val) => setWizardState({ selectedConnectionId: val });
+  const setSnowflakeAccountId = (val) => setWizardState({ snowflakeAccountId: val });
+  const setDatabricksAccountId = (val) => setWizardState({ databricksAccountId: val });
+  const setFabricWorkspaceId = (val) => setWizardState({ fabricWorkspaceId: val });
+  const setSnowflakeDatabase = (val) => setWizardState({ snowflakeDatabase: val });
+  const setSnowflakeSchema = (val) => setWizardState({ snowflakeSchema: val });
+  const setTargetDatabase = (val) => setWizardState({ targetDatabase: val });
+  const setTargetSchema = (val) => setWizardState({ targetSchema: val });
+  const setTargetAccount = (val) => setWizardState({ targetAccount: val });
+  const setTargetWarehouse = (val) => setWizardState({ targetWarehouse: val });
+  const setDomainHint = (val) => setWizardState({ domainHint: val });
+  const setModelQueryRegex = (val) => setWizardState({ modelQueryRegex: !!val });
+  const setPbixSourceMode = (val) => setWizardState({ pbixSourceMode: val });
+
   const [pbixFile, setPbixFile] = useState(null);
   const [pbixUploadPath, setPbixUploadPath] = useState('');
   const [pbixUploading, setPbixUploading] = useState(false);
-  const [pbixSourceMode, setPbixSourceMode] = useState('TAG');
+  const [fabricAccounts, setFabricAccounts] = useState([]);
+  const [snowflakeAccounts, setSnowflakeAccounts] = useState([]);
+  const [databricksAccounts, setDatabricksAccounts] = useState([]);
+
   const [localFolders, setLocalFolders] = useState([]);
   const [localFoldersLoading, setLocalFoldersLoading] = useState(false);
-  const [selectedLocalFolderId, setSelectedLocalFolderId] = useState('');
   const [pbixFiles, setPbixFiles] = useState([]);
   const [pbixFilesLoading, setPbixFilesLoading] = useState(false);
   const [pbixFilesError, setPbixFilesError] = useState('');
-  const [selectedPbixFilePath, setSelectedPbixFilePath] = useState('');
+
+  const setSelectedLocalFolderId = (val) => setWizardState({ selectedLocalFolderId: val });
+  const setSelectedPbixFilePath = (val) => setWizardState({ selectedPbixFilePath: val });
+
   const [syncJob, setSyncJob] = useState(null);
   const [syncStarting, setSyncStarting] = useState(false);
   const [syncError, setSyncError] = useState('');
   const [syncErrorOpen, setSyncErrorOpen] = useState(false);
-
-  // Workspace list returned by the backend when the selected account changes.
   const [allWorkspacesFromApi, setAllWorkspacesFromApi] = useState([]);
 
   // Step 3
   const [workspaces, setWorkspaces] = useState([]);
   const [wsLoading, setWsLoading] = useState(false);
-  const [expandedWs, setExpandedWs] = useState({});
   const [wsModels, setWsModels] = useState({}); // wsid → [{id, name}]
-  const [selectedModels, setSelectedModels] = useState(new Set());
-  const [selectedModelNameByKey, setSelectedModelNameByKey] = useState({});
-  // Databricks Step 3 state
   const [databricksObjects, setDatabricksObjects] = useState([]); // [{catalog, schema, table}]
   const [databricksLoading, setDatabricksLoading] = useState(false);
-  const [selectedDatabricksTables, setSelectedDatabricksTables] = useState(new Set());
-  const [databricksQuery, setDatabricksQuery] = useState('');
   const [databricksQueryRegex, setDatabricksQueryRegex] = useState(false);
-  // Fetch Databricks sources when selected in Step 3
-  useEffect(() => {
-    if (step !== 3 || sourceConnector !== 'databricks') return;
-    setDatabricksLoading(true);
-    api.getDatabricksSources()
-      .then(data => {
-        setDatabricksObjects(Array.isArray(data) ? data : []);
-      })
-      .catch(() => setDatabricksObjects([]))
-      .finally(() => setDatabricksLoading(false));
-  }, [step, sourceConnector]);
+
+  const setExpandedWs = (val) => setWizardState({ expandedWs: typeof val === 'function' ? val(expandedWs) : val });
+  const setSelectedModels = (val) => {
+    const prev = new Set(selectedModelsRaw || []);
+    const next = typeof val === 'function' ? val(prev) : val;
+    setWizardState({ selectedModels: Array.from(next || []) });
+  };
+  const setSelectedModelNameByKey = (val) => setWizardState({
+    selectedModelNameByKey: typeof val === 'function' ? val(selectedModelNameByKey) : val
+  });
+  const setSelectedDatabricksTables = (val) => {
+    const prev = new Set(selectedDatabricksTablesRaw || []);
+    const next = typeof val === 'function' ? val(prev) : val;
+    setWizardState({ selectedDatabricksTables: Array.from(next || []) });
+  };
+  const setDatabricksQuery = (val) => setWizardState({ databricksQuery: val });
 
   // Step 4
-  const [autoRelationships, setAutoRelationships] = useState(true);
-  const [generateDescriptions, setGenerateDescriptions] = useState(true);
+  const setAutoRelationships = (val) => setWizardState({ autoRelationships: !!val });
+  const setGenerateDescriptions = (val) => setWizardState({ generateDescriptions: !!val });
   const [detectedMappings, setDetectedMappings] = useState([]);
   const [detectedEntityMappings, setDetectedEntityMappings] = useState([]);
   const [mappingLoading, setMappingLoading] = useState(false);
@@ -607,7 +671,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [isDeploying, setIsDeploying] = useState(false);
   const [deployError, setDeployError] = useState('');
-  
+
   // Edit mode mapping options
   const [mappingMode, setMappingMode] = useState('saved');
 
@@ -648,7 +712,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         setSelectedModels(nextSelectedModels);
         setSelectedModelNameByKey(nextModelNameByKey);
       }
-      
+
       if (mappingMode === 'saved' && Array.isArray(initialData.mappings) && initialData.mappings.length > 0) {
         setDetectedMappings(initialData.mappings);
         setMappingDryRunStatus('success');
@@ -659,86 +723,19 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     }
   }, [editMode, initialData, mappingMode]);
 
-  // --- Hydrate form when user clicks "Resume" on the draft banner ---
-  useEffect(() => {
-    if (!resumedDraft) return;
-    const d = resumedDraft;
-    if (d.step != null) setStep(d.step);
-    if (d.name != null) setName(d.name);
-    if (d.description != null) setDescription(d.description);
-    if (d.sourceConnector != null) setSourceConnector(d.sourceConnector);
-    if (d.targetConnectors) setTargetConnectors(new Set(d.targetConnectors));
-    if (d.intermediateFormat != null) setIntermediateFormat(d.intermediateFormat);
-    if (d.tags) setTags(new Set(d.tags));
-    if (d.tagInput != null) setTagInput(d.tagInput);
-    if (d.fabricAccountId != null) setFabricAccountId(d.fabricAccountId);
-    if (d.selectedConnectionId != null) setSelectedConnectionId(d.selectedConnectionId);
-    if (d.snowflakeAccountId != null) setSnowflakeAccountId(d.snowflakeAccountId);
-    if (d.databricksAccountId != null) setDatabricksAccountId(d.databricksAccountId);
-    if (d.fabricWorkspaceId != null) setFabricWorkspaceId(d.fabricWorkspaceId);
-    if (d.snowflakeDatabase != null) setSnowflakeDatabase(d.snowflakeDatabase);
-    if (d.snowflakeSchema != null) setSnowflakeSchema(d.snowflakeSchema);
-    if (d.targetDatabase != null) setTargetDatabase(d.targetDatabase);
-    if (d.targetSchema != null) setTargetSchema(d.targetSchema);
-    if (d.targetAccount != null) setTargetAccount(d.targetAccount);
-    if (d.targetWarehouse != null) setTargetWarehouse(d.targetWarehouse);
-    if (d.pbixSourceMode != null) setPbixSourceMode(d.pbixSourceMode);
-    if (d.selectedLocalFolderId != null) setSelectedLocalFolderId(d.selectedLocalFolderId);
-    if (d.selectedPbixFilePath != null) setSelectedPbixFilePath(d.selectedPbixFilePath);
-    if (d.expandedWs != null) setExpandedWs(d.expandedWs);
-    if (d.selectedModels) setSelectedModels(new Set(d.selectedModels));
-    if (d.selectedModelNameByKey != null) setSelectedModelNameByKey(d.selectedModelNameByKey);
-    if (d.selectedDatabricksTables) setSelectedDatabricksTables(new Set(d.selectedDatabricksTables));
-    if (d.databricksQuery != null) setDatabricksQuery(d.databricksQuery);
-    if (d.autoRelationships != null) setAutoRelationships(d.autoRelationships);
-    if (d.generateDescriptions != null) setGenerateDescriptions(d.generateDescriptions);
-    if (Array.isArray(d.detectedMappings)) setDetectedMappings(d.detectedMappings);
-    if (Array.isArray(d.detectedEntityMappings)) setDetectedEntityMappings(d.detectedEntityMappings);
-    if (d.mappingDryRunStatus != null) setMappingDryRunStatus(d.mappingDryRunStatus);
-    if (d.mappingDryRunSignature != null) setMappingDryRunSignature(d.mappingDryRunSignature);
-    if (d.mappingDryRunError != null) setMappingDryRunError(d.mappingDryRunError);
-    if (d.unmappedAcknowledged != null) setUnmappedAcknowledged(Boolean(d.unmappedAcknowledged));
-  }, [resumedDraft]);
 
-  // --- Save draft (debounced) on every form field change ---
-  useEffect(() => {
-    // Don't save a draft when the form is still in its pristine state
-    // (no name, no source selected) to avoid creating empty drafts.
-    if (!name && !sourceConnector) return;
-    saveDraft({
-      step, name, description, sourceConnector, targetConnectors: Array.from(targetConnectors),
-      intermediateFormat, tags: Array.from(tags), tagInput,
-      fabricAccountId, selectedConnectionId, snowflakeAccountId, databricksAccountId,
-      fabricWorkspaceId, snowflakeDatabase, snowflakeSchema,
-      targetDatabase, targetSchema, targetAccount, targetWarehouse,
-      pbixSourceMode, selectedLocalFolderId, selectedPbixFilePath,
-      expandedWs, selectedModels: Array.from(selectedModels), selectedModelNameByKey,
-      selectedDatabricksTables: Array.from(selectedDatabricksTables), databricksQuery,
-      autoRelationships, generateDescriptions,
-      detectedMappings, detectedEntityMappings,
-      mappingDryRunStatus, mappingDryRunSignature, mappingDryRunError, unmappedAcknowledged,
-    });
-  }, [
-    step, name, description, sourceConnector, targetConnectors,
-    intermediateFormat, tags, tagInput,
-    fabricAccountId, selectedConnectionId, snowflakeAccountId, databricksAccountId,
-    fabricWorkspaceId, snowflakeDatabase, snowflakeSchema,
-    targetDatabase, targetSchema, targetAccount, targetWarehouse,
-    pbixSourceMode, selectedLocalFolderId, selectedPbixFilePath,
-    expandedWs, selectedModels, selectedModelNameByKey,
-    selectedDatabricksTables, databricksQuery,
-    autoRelationships, generateDescriptions, detectedMappings, detectedEntityMappings,
-    mappingDryRunStatus, mappingDryRunSignature, mappingDryRunError, unmappedAcknowledged, saveDraft,
-  ]);
+
+
+
 
   /* ─── HP search for model browser ─── */
-  const allModels = useMemo(() => 
+  const allModels = useMemo(() =>
     Object.entries(wsModels).flatMap(([wsid, models]) =>
       models.map(m => ({ ...m, wsid, _id: `${wsid}::${m.id}` }))
     ),
     [wsModels]
   );
-  
+
   const searchFields = useMemo(() => ['name', 'description', 'wsid'], []);
   const searchOptions = useMemo(() => ({ idField: '_id' }), []);
 
@@ -751,8 +748,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     // the list fetched explicitly for the selected account in Step 2.
     // Fallback to availableWorkspaces (global default) only if we haven't
     // fetched the account-specific list yet.
-    const baseList = allWorkspacesFromApi.length > 0 
-      ? allWorkspacesFromApi 
+    const baseList = allWorkspacesFromApi.length > 0
+      ? allWorkspacesFromApi
       : (fabricAccountId ? [] : availableWorkspaces);
 
     const normalized = (baseList || [])
@@ -835,38 +832,6 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     setDetectedEntityMappings([]);
   }, [currentMappingSignature, mappingDryRunSignature]);
 
-  const refreshLocalFolders = useCallback(async () => {
-    setLocalFoldersLoading(true);
-    try {
-      const data = await api.listLocalFolders();
-      setLocalFolders(Array.isArray(data) ? data : []);
-    } catch {
-      setLocalFolders([]);
-    } finally {
-      setLocalFoldersLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (sourceConnector === 'pbix') {
-      refreshLocalFolders();
-    }
-  }, [refreshLocalFolders, sourceConnector, step]);
-
-  useEffect(() => {
-    if (sourceConnector !== 'pbix') {
-      clearCreateProjectDraft();
-      return;
-    }
-
-    setCreateProjectDraft({
-      sourceConnector,
-      sourceMode: pbixSourceMode,
-      folder_id: pbixSourceMode === 'TAG' ? (selectedLocalFolderId || '') : '',
-      folder_tag: pbixSourceMode === 'TAG' ? selectedLocalFolderTag : '',
-      pbix_path: resolvedPbixPath,
-    });
-  }, [clearCreateProjectDraft, pbixSourceMode, resolvedPbixPath, selectedLocalFolderId, selectedLocalFolderTag, setCreateProjectDraft, sourceConnector]);
 
   useEffect(() => {
     if (pbixSourceMode !== 'TAG' || sourceConnector !== 'pbix' || !selectedLocalFolderTag) {
@@ -1199,7 +1164,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     try {
       const source = buildSourceConfig();
       const targets = buildTargetConfigs();
-      
+
       // Get stored relationships
       let relationships = [];
       try {
@@ -1345,8 +1310,6 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         }
       }
 
-      // Clear the session draft upon successful project creation
-      clearDraft();
     } catch (err) {
       setCreatedProject(null);
       setCreateError(err?.message || 'Create project failed.');
@@ -1488,7 +1451,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     } catch {
       relationships = [];
     }
-    
+
     if (relationships.length > 0 && autoRelationships) {
       lines.push('relationships:');
       relationships.forEach((rel) => {
@@ -1552,12 +1515,12 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     setMappingLoading(true);
     try {
       const projectId = createdProject?.id || createdProject?.project_id || 'preview';
-      
+
       // We must access state directly or recreate the config builder logic since we are in useCallback
       const sourceConfig = { type: sourceConnector };
       if (sourceConnector === 'fabric' && fabricWorkspaceId) sourceConfig.workspace_id = fabricWorkspaceId;
       if (sourceConnector === 'snowflake' && snowflakeDatabase) sourceConfig.database = snowflakeDatabase;
-      
+
       const targetConfig = { type: [...targetConnectors][0] || '' };
       if (targetConfig.type === 'snowflake' && targetDatabase) targetConfig.database = targetDatabase;
       if (targetConfig.type === 'fabric' && fabricWorkspaceId) targetConfig.workspace_id = fabricWorkspaceId;
@@ -1575,7 +1538,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       } else {
         response = await api.rerunAutoMap(projectId, payload);
       }
-      
+
       console.log('[Dry Run] Raw response:', JSON.stringify(response, null, 2));
 
       if (response?.entity_mappings) {
@@ -1589,7 +1552,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       // If we don't have mappings array, we can use entityMappings directly for our table
       setDetectedMappings(response?.mappings || []);
       setDetectedEntityMappings(entityMappings);
-      
+
       if (dryRun) {
         setMappingDryRunStatus('success');
         setMappingDryRunSignature(currentMappingSignature);
@@ -1700,12 +1663,12 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         prev.map(row =>
           row.id === rowId
             ? {
-                ...row,
-                target_field: updates.target_name,
-                target_type: updates.target_data_type,
-                status: 'manual',
-                isDirty: true,
-              }
+              ...row,
+              target_field: updates.target_name,
+              target_type: updates.target_data_type,
+              status: 'manual',
+              isDirty: true,
+            }
             : row
         )
       );
@@ -1817,7 +1780,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     try {
       const projectId = createdProject?.id || createdProject?.project_id || 'preview';
       const result = await api.deployMappings(projectId, fieldMappings);
-      
+
       if (result.success) {
         if (result.project_id && projectId === 'preview') {
           // Store the created project so we use it moving forward
@@ -1897,62 +1860,71 @@ export default function CreateProjectPage({ editMode = false, initialData = null
 
   /* ─── Render ─── */
   return (
-    <div style={{ padding: '28px 16px', minHeight: '100%', maxWidth: 1400, margin: '0 auto', display: 'flex', flexDirection: 'column' }} className="md:px-10">
+    <div style={{ padding: '0', minHeight: '100%', display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
       {/* Top bar */}
       <div style={{
-        padding: '16px 32px', borderBottom: '1px solid var(--border-main)',
-        display: 'flex', alignItems: 'center', gap: 16,
-        position: 'sticky', top: 0, zIndex: 70, background: 'var(--bg-main)',
+        borderBottom: '1px solid var(--border-main)', background: 'var(--bg-main)',
       }}>
-        <button onClick={() => navigate('/projects')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 5, fontSize: 13 }}>
-          <ArrowLeft size={14} /> Projects
-        </button>
-        <span style={{ color: 'var(--border-main)' }}>|</span>
-        <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
-          {name.trim() ? `New Project: ${name.trim()}` : 'New Project'}
-        </span>
+        <div style={{
+          padding: '16px 24px',
+          display: 'flex', alignItems: 'center', gap: 16
+        }}>
+          <button onClick={() => navigate('/projects')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 5, fontSize: 13 }}>
+            <ArrowLeft size={14} /> Projects
+          </button>
+          <span style={{ color: 'var(--border-main)' }}>|</span>
+          <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
+            {name.trim() ? `New Project: ${name.trim()}` : 'New Project'}
+          </span>
+        </div>
       </div>
 
       {/* Step indicator */}
-      <div style={{ padding: '24px 32px 0', display: 'flex', alignItems: 'center', gap: 0, position: 'sticky', top: 66, zIndex: 65, background: 'var(--bg-main)' }}>
-        {STEPS.map((s, i) => (
-          <div key={s.id} style={{ display: 'flex', alignItems: 'center' }}>
-            <div
-              style={{
-                display: 'flex', alignItems: 'center', gap: 8, cursor: s.id < step ? 'pointer' : 'default',
-              }}
-              onClick={() => s.id < step && setStep(s.id)}
-            >
-              <div style={{
-                width: 26, height: 26, borderRadius: '50%',
-                background: s.id < step ? 'var(--color-success)' : s.id === step ? 'var(--accent-blue)' : 'var(--bg-surface-raised)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: s.id <= step ? '#fff' : 'var(--text-tertiary)',
-                fontSize: 11, fontWeight: 700,
-                border: s.id === step ? '2px solid var(--accent-blue)' : '2px solid transparent',
-              }}>
-                {s.id < step ? <Check size={12} /> : s.id}
+      <div style={{ background: 'var(--bg-main)', borderBottom: '1px solid var(--border-main)' }}>
+        <div style={{
+          padding: '24px 24px 16px',
+          display: 'flex', alignItems: 'center', gap: 0
+        }}>
+          {STEPS.map((s, i) => (
+            <div key={s.id} style={{ display: 'flex', alignItems: 'center' }}>
+              <div
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8, cursor: s.id < step ? 'pointer' : 'default',
+                }}
+                onClick={() => s.id < step && setStep(s.id)}
+              >
+                <div style={{
+                  width: 26, height: 26, borderRadius: '50%',
+                  background: s.id < step ? 'var(--color-success)' : s.id === step ? 'var(--accent-blue)' : 'var(--bg-surface-raised)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: s.id <= step ? '#fff' : 'var(--text-tertiary)',
+                  fontSize: 11, fontWeight: 700,
+                  border: s.id === step ? '2px solid var(--accent-blue)' : '2px solid transparent',
+                }}>
+                  {s.id < step ? <Check size={12} /> : s.id}
+                </div>
+                <span style={{ fontSize: 12, fontWeight: s.id === step ? 600 : 400, color: s.id === step ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
+                  {s.label}
+                </span>
               </div>
-              <span style={{ fontSize: 12, fontWeight: s.id === step ? 600 : 400, color: s.id === step ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
-                {s.label}
-              </span>
+              {i < STEPS.length - 1 && (
+                <div style={{ width: 32, height: 1, background: 'var(--border-main)', margin: '0 8px' }} />
+              )}
             </div>
-            {i < STEPS.length - 1 && (
-              <div style={{ width: 32, height: 1, background: 'var(--border-main)', margin: '0 8px' }} />
-            )}
-          </div>
-        ))}
+          ))}
+          <DraftToast
+            visible={hasRestoredDraft}
+            onStartFresh={() => {
+              clearWizardState();
+              window.location.reload();
+            }}
+            onDismiss={() => setHasRestoredDraft(false)}
+          />
+        </div>
       </div>
 
-      {/* Draft resume banner — shown when a saved draft exists and user hasn't resumed yet */}
-      <DraftBanner
-        visible={hasDraft && !resumedDraft}
-        onResume={resumeDraft}
-        onDiscard={discardDraft}
-      />
-
       {/* Step content */}
-      <div style={{ flex: 1, padding: '44px 32px 32px', maxWidth: step === 4 ? 1100 : 700 }}>
+      <div style={{ flex: 1, padding: '44px 24px 32px', }}>
         {step === 1 && (
           <StepBasicInfo
             name={name} setName={setName}
@@ -2125,11 +2097,6 @@ export default function CreateProjectPage({ editMode = false, initialData = null
             intermediateFormat={intermediateFormat}
             selectedWorkspace={selectedWorkspace}
             navigate={navigate}
-            editMode={editMode}
-            diff={currentDiff}
-            selectedModels={selectedModels}
-            selectedModelNameByKey={selectedModelNameByKey}
-            initialSelectedModels={initialSelectedModels}
           />
         )}
       </div>
@@ -2180,6 +2147,14 @@ export default function CreateProjectPage({ editMode = false, initialData = null
           {syncError || 'An unexpected sync error occurred.'}
         </div>
       </Modal>
+      <DraftToast
+        visible={hasRestoredDraft}
+        onStartFresh={() => {
+          clearWizardState();
+          window.location.reload();
+        }}
+        onDismiss={() => setHasRestoredDraft(false)}
+      />
     </div>
   );
 }
@@ -2301,7 +2276,7 @@ function StepBasicInfo({
         {/* SOURCE CONNECTOR - Single Selection */}
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <label style={{...LABEL, margin: 0}}>Source Connector</label>
+            <label style={{ ...LABEL, margin: 0 }}>Source Connector</label>
             <span style={{
               fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 4,
               background: 'var(--accent-blue)20', color: 'var(--accent-blue)', textTransform: 'uppercase'
@@ -2364,7 +2339,7 @@ function StepBasicInfo({
         {/* TARGET CONNECTORS - Multiple Selection */}
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <label style={{...LABEL, margin: 0}}>Target Connectors</label>
+            <label style={{ ...LABEL, margin: 0 }}>Target Connectors</label>
             <span style={{
               fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 4,
               background: 'var(--color-success-bg)', color: 'var(--color-success)', textTransform: 'uppercase'
@@ -2620,8 +2595,8 @@ function StepConnectorConfig({
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                 <label style={{ ...LABEL, margin: 0 }}>Fabric Workspace</label>
                 <div style={{ flex: 1 }} />
-                <button 
-                  onClick={() => fetchFabricWorkspaces(fabricAccountId)} 
+                <button
+                  onClick={() => fetchFabricWorkspaces(fabricAccountId)}
                   disabled={isRefreshingWorkspaces}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 4,
@@ -2630,8 +2605,8 @@ function StepConnectorConfig({
                     borderRadius: 4, transition: 'all 0.2s ease',
                     opacity: isRefreshingWorkspaces ? 0.6 : 1
                   }}
-                  onMouseEnter={e => { if(!isRefreshingWorkspaces) e.currentTarget.style.color = 'var(--text-primary)'; }}
-                  onMouseLeave={e => { if(!isRefreshingWorkspaces) e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+                  onMouseEnter={e => { if (!isRefreshingWorkspaces) e.currentTarget.style.color = 'var(--text-primary)'; }}
+                  onMouseLeave={e => { if (!isRefreshingWorkspaces) e.currentTarget.style.color = 'var(--text-tertiary)'; }}
                   title="Refresh workspaces"
                 >
                   <RefreshCw size={12} style={{ animation: isRefreshingWorkspaces ? 'spin 1s linear infinite' : 'none' }} />
@@ -2876,7 +2851,7 @@ function StepConnectorConfig({
                   }}
                 >
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                      <SourceIcon source={targetMeta.value ?? target} size={16} />
+                    <SourceIcon source={targetMeta.value ?? target} size={16} />
                     {targetMeta.label} Target Configuration
                   </span>
                   <ChevronDown size={14} />
@@ -3069,16 +3044,16 @@ function StepSourceBrowser({
   pbixFilesLoading = false,
   pbixFilesError = '',
   selectedPbixFilePath = '',
-  onSelectPbixFile = () => {},
+  onSelectPbixFile = () => { },
   // Databricks props
   databricksObjects = [],
   databricksLoading = false,
   selectedDatabricksTables = new Set(),
-  setSelectedDatabricksTables = () => {},
+  setSelectedDatabricksTables = () => { },
   databricksQuery = '',
-  setDatabricksQuery = () => {},
+  setDatabricksQuery = () => { },
   databricksQueryRegex = false,
-  setDatabricksQueryRegex = () => {},
+  setDatabricksQueryRegex = () => { },
   savedModels = new Set(),
 }) {
 
@@ -3178,12 +3153,12 @@ function StepSourceBrowser({
     const fabricModels = wsModels[selectedWorkspace.id] || [];
     const displayModels = modelQuery
       ? fabricModels.filter(m =>
-          matchesSmartQuery(
-            `${m.name || ''} ${m.id || ''} ${m.description || ''}`,
-            modelQuery,
-            modelQueryRegex,
-          )
+        matchesSmartQuery(
+          `${m.name || ''} ${m.id || ''} ${m.description || ''}`,
+          modelQuery,
+          modelQueryRegex,
         )
+      )
       : fabricModels.map(m => ({ ...m, _id: m.id }));
 
     // Show loader if loading
@@ -3263,12 +3238,12 @@ function StepSourceBrowser({
     );
     const filteredTables = databricksQuery
       ? allTables.filter(t =>
-          matchesSmartQuery(
-            `${t.table || ''} ${t.schema || ''} ${t.catalog || ''}`,
-            databricksQuery,
-            databricksQueryRegex,
-          )
+        matchesSmartQuery(
+          `${t.table || ''} ${t.schema || ''} ${t.catalog || ''}`,
+          databricksQuery,
+          databricksQueryRegex,
         )
+      )
       : allTables;
 
     return (
@@ -3350,12 +3325,12 @@ function StepSourceBrowser({
     const fabricModels = wsModels[selectedWorkspace.id] || [];
     const displayModels = modelQuery
       ? fabricModels.filter(m =>
-          matchesSmartQuery(
-            `${m.name || ''} ${m.id || ''} ${m.description || ''}`,
-            modelQuery,
-            modelQueryRegex,
-          )
+        matchesSmartQuery(
+          `${m.name || ''} ${m.id || ''} ${m.description || ''}`,
+          modelQuery,
+          modelQueryRegex,
         )
+      )
       : fabricModels.map(m => ({ ...m, _id: m.id }));
 
     // Show loader if loading
@@ -3533,21 +3508,21 @@ function StepSourceBrowser({
               No workspaces found. Check your Fabric connector credentials in Settings.
             </div>
           ) : workspaces.map((ws) => {
-              const wsid = ws.workspace_id || ws.id;
-              const wsName = ws.display_name || ws.name || wsid;
-              if (!wsid) return null;
-              return (
-            <WorkspaceRow
-              key={wsid}
-              ws={{ ...ws, id: wsid, name: wsName }}
-              expanded={!!expandedWs[wsid]}
-              models={wsModels[wsid]}
-              selectedModels={selectedModels}
-              savedModels={savedModels}
-              onToggle={() => toggleWorkspace(wsid)}
-              onModelToggle={(mid, modelName) => toggleModel(`${wsid}::${mid}`, modelName)}
-            />
-              );
+            const wsid = ws.workspace_id || ws.id;
+            const wsName = ws.display_name || ws.name || wsid;
+            if (!wsid) return null;
+            return (
+              <WorkspaceRow
+                key={wsid}
+                ws={{ ...ws, id: wsid, name: wsName }}
+                expanded={!!expandedWs[wsid]}
+                models={wsModels[wsid]}
+                selectedModels={selectedModels}
+                savedModels={savedModels}
+                onToggle={() => toggleWorkspace(wsid)}
+                onModelToggle={(mid, modelName) => toggleModel(`${wsid}::${mid}`, modelName)}
+              />
+            );
           })}
         </div>
       )}
@@ -3887,331 +3862,331 @@ function StepMappingOptionsOld({
       {!dryRunCompleted ? null : (
         <>
 
-      {/* TABLE MAPPINGS SECTION */}
-      <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)' }}>
-        <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 10px' }}>
-          Scope Verification
-        </h3>
-        <p style={{ fontSize: 11, color: 'var(--text-tertiary)', margin: '0 0 10px' }}>
-          Extraction will only include explicitly selected models/tables and will always block internal/system patterns.
-        </p>
-        <div style={{ display: 'grid', gap: 8 }}>
-          <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-            <strong>Explicitly selected:</strong> {explicitTables.length > 0 ? explicitTables.join(', ') : 'None'}
-          </div>
-          <div style={{ fontSize: 11, color: inferredTables.length > 0 ? 'var(--accent-orange)' : 'var(--text-secondary)' }}>
-            <strong>Inferred from mapping:</strong> {inferredTables.length > 0 ? inferredTables.join(', ') : 'None'}
-          </div>
-        </div>
-      </div>
-
-      {mappingLoading && (
-        <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)', fontSize: 12, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
-          Generating mappings from backend...
-        </div>
-      )}
-
-      {mappingError && !mappingLoading && (
-        <div style={{ borderRadius: 10, border: '1px solid var(--color-error)', padding: 16, background: 'var(--color-error-bg)', fontSize: 12, color: 'var(--text-primary)' }}>
-          {mappingError}
-        </div>
-      )}
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
-        <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)', padding: '14px 16px', display: 'grid', gap: 6 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Source Model</div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{explicitTables[0] || 'Selected Sources'}</div>
-          <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{fieldCounts.all} fields</div>
-        </div>
-        <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)', padding: '14px 16px', display: 'grid', gap: 6 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Target Model</div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{primaryTargetConnector || 'Target Connector'}</div>
-          <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{fieldRows.filter(row => String(row.column?.target || '').trim()).length} mapped fields</div>
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        {MAPPING_FILTERS.map((filter) => {
-          const count = fieldCounts[filter.id] ?? fieldCounts.all;
-          const active = activeFieldFilter === filter.id;
-          const isCollision = filter.id === 'collision' && count > 0;
-          return (
-            <button
-              key={filter.id}
-              type="button"
-              onClick={() => {
-                setActiveFieldFilter(filter.id);
-                if (filter.id === 'collision') setShowOnlyCollisions(count > 0);
-                else setShowOnlyCollisions(false);
-              }}
-              style={{
-                ...filterButtonStyle,
-                borderRadius: 999,
-                background: active ? (isCollision ? 'rgba(239, 68, 68, 0.16)' : 'var(--accent-blue)20') : 'var(--bg-surface-raised)',
-                color: isCollision ? 'var(--color-error)' : (active ? 'var(--accent-blue)' : 'var(--text-primary)'),
-                border: isCollision ? '1px solid rgba(239, 68, 68, 0.45)' : filterButtonStyle.border,
-              }}
-            >
-              {filter.label} ({count})
-            </button>
-          );
-        })}
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <div style={{ width: 240 }}>
-            <SmartSearchBar
-              value={mappingSearch}
-              onChange={setMappingSearch}
-              placeholder="Search fields..."
-            />
-          </div>
-          <button type="button" onClick={runDryRun} disabled={mappingLoading} style={{ ...filterButtonStyle }}>
-            {mappingLoading ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={13} />}
-            Run Auto-Map
-          </button>
-        </div>
-      </div>
-
-      {detectedMappings.length > 0 && !mappingLoading && (
-        <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 12 }}>
-            <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <Table2 size={16} color="var(--accent-blue)" />
-              Table Mappings
-            </span>
-            <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--accent-blue)', background: 'var(--accent-blue)20', padding: '2px 8px', borderRadius: 4 }}>
-              {filteredMappings.length} visible
-            </span>
-            <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-secondary)', background: 'var(--border-main)20', padding: '2px 8px', borderRadius: 4 }}>
-              {detectedMappings.length} total
-            </span>
-            {editedCount > 0 && (
-              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-success)', background: 'var(--color-success-bg)', padding: '2px 8px', borderRadius: 4 }}>
-                {editedCount} edited
-              </span>
-            )}
-            {collisionCount > 0 && (
-              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent-orange)', background: 'rgba(245, 158, 11, 0.14)', padding: '2px 8px', borderRadius: 4 }}>
-                {collisionCount} collisions auto-resolved
-              </span>
-            )}
+          {/* TABLE MAPPINGS SECTION */}
+          <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)' }}>
+            <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 10px' }}>
+              Scope Verification
             </h3>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, alignItems: 'center' }}>
-              <SmartSearchBar
-                value={mappingSearch}
-                onChange={setMappingSearch}
-                placeholder="Search tables, columns, targets..."
-              />
-              <button
-                type="button"
-                onClick={() => setShowOnlyCollisions((prev) => !prev)}
-                style={{
-                  ...filterButtonStyle,
-                  background: showOnlyCollisions ? 'rgba(245, 158, 11, 0.14)' : 'transparent',
-                  color: showOnlyCollisions ? 'var(--accent-orange)' : 'var(--text-secondary)',
-                  border: showOnlyCollisions ? '1px solid rgba(245, 158, 11, 0.35)' : filterButtonStyle.border,
-                }}
-              >
-                Only Collisions
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowOnlyEdited((prev) => !prev)}
-                style={{
-                  ...filterButtonStyle,
-                  background: showOnlyEdited ? 'var(--color-success-bg)' : 'transparent',
-                  color: showOnlyEdited ? 'var(--color-success)' : 'var(--text-secondary)',
-                  border: showOnlyEdited ? '1px solid rgba(34, 197, 94, 0.35)' : filterButtonStyle.border,
-                }}
-              >
-                Only Edited
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowOnlyExpandedColumns((prev) => !prev)}
-                style={filterButtonStyle}
-              >
-                {showOnlyExpandedColumns ? 'Compact Columns' : 'Show All Columns'}
-              </button>
+            <p style={{ fontSize: 11, color: 'var(--text-tertiary)', margin: '0 0 10px' }}>
+              Extraction will only include explicitly selected models/tables and will always block internal/system patterns.
+            </p>
+            <div style={{ display: 'grid', gap: 8 }}>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                <strong>Explicitly selected:</strong> {explicitTables.length > 0 ? explicitTables.join(', ') : 'None'}
+              </div>
+              <div style={{ fontSize: 11, color: inferredTables.length > 0 ? 'var(--accent-orange)' : 'var(--text-secondary)' }}>
+                <strong>Inferred from mapping:</strong> {inferredTables.length > 0 ? inferredTables.join(', ') : 'None'}
+              </div>
             </div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {filteredMappings.map(mapping => (
-              <div key={mapping.id}>
-                <button
-                  onClick={() => setExpandedMapping(expandedMapping === mapping.id ? null : mapping.id)}
-                  style={{
-                    width: '100%', textAlign: 'left',
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '12px 14px', borderRadius: 8, cursor: 'pointer',
-                    background: 'var(--bg-main)', border: '1.5px solid var(--border-main)',
-                    color: 'var(--text-primary)', transition: 'all 0.2s ease',
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent-blue)40'; }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-main)'; }}
-                >
-                  <div style={{ flex: 1, minWidth: 180 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 3 }}>
-                      {mapping.source}
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', overflowWrap: 'anywhere' }}>
-                      <span>→</span> {mapping.target}
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <div style={{ fontSize: 10, color: 'var(--text-tertiary)', background: 'var(--border-main)20', padding: '3px 8px', borderRadius: 4 }}>
-                      {(mapping.columns || []).length} columns
-                    </div>
-                    {(mapping.collision_detected || (mapping.columns || []).some(column => getColumnStatus(mapping, column) === 'collision')) && (
-                      <div
-                        style={{
-                          padding: '3px 10px', borderRadius: 4,
-                          background: 'rgba(239, 68, 68, 0.12)', color: 'var(--color-error)',
-                          fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
-                        }}
-                      >
-                        Collision
-                      </div>
-                    )}
-                    <div
-                      style={{
-                        padding: '3px 10px', borderRadius: 4,
-                        background: 'var(--accent-blue)20', color: 'var(--accent-blue)',
-                        fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
-                      }}
-                    >
-                      {mapping.status}
-                    </div>
-                    <ChevronDown
-                      size={14} color="var(--text-tertiary)"
-                      style={{ transform: expandedMapping === mapping.id ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
-                    />
-                  </div>
-                </button>
 
-                {/* Column Details */}
-                {expandedMapping === mapping.id && mapping.columns && (
-                  <div style={{
-                    marginTop: 8, padding: '12px', borderRadius: 6,
-                    background: 'var(--bg-main)', border: '1px solid var(--accent-blue)20',
-                  }}>
-                    {mapping.collision_detected && (
-                      <div style={{ marginBottom: 10, fontSize: 11, color: 'var(--accent-orange)', lineHeight: 1.4 }}>
-                        Destination table name collided after sanitization, so a deterministic hash suffix was added automatically.
-                      </div>
-                    )}
-                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8, textTransform: 'uppercase' }}>
-                      Column Mappings
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
-                      <label style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>Destination table name</label>
-                      <input
-                        value={mapping.target || ''}
-                        disabled={manualEditLocked}
-                        onChange={(e) => onUpdateTableTarget?.(mapping.id, e.target.value)}
-                        style={{ ...INPUT, fontSize: 11, padding: '6px 8px', maxWidth: 320, opacity: manualEditLocked ? 0.6 : 1 }}
-                      />
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {(showOnlyExpandedColumns ? mapping.columns : mapping.columns.slice(0, 6)).map((col, idx) => (
-                        <div key={idx} style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1fr) auto minmax(180px, 1.3fr)', gap: 8, alignItems: 'center', fontSize: 11 }}>
-                          <span style={{ color: 'var(--text-secondary)', fontWeight: 500, overflowWrap: 'anywhere' }}>{col.source}</span>
-                          <span style={{ color: 'var(--text-tertiary)', textAlign: 'center' }}>→</span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                            <input
-                              value={col.target || ''}
-                              disabled={manualEditLocked}
-                              onChange={(e) => onUpdateColumnTarget?.(mapping.id, col.source, e.target.value)}
-                              style={{
-                                ...INPUT,
-                                fontSize: 11,
-                                padding: '4px 8px',
-                                minWidth: 140,
-                                flex: '1 1 180px',
-                                opacity: manualEditLocked ? 0.6 : 1,
-                                background: col.auto_resolved ? 'rgba(245, 158, 11, 0.12)' : INPUT.background,
-                                border: getColumnStatus(mapping, col) === 'collision'
-                                  ? '1px solid var(--color-error)'
-                                  : (col.auto_resolved ? '1px solid rgba(245, 158, 11, 0.55)' : INPUT.border),
-                              }}
-                            />
-                            <span style={{ fontSize: 10, color: 'var(--text-tertiary)', background: 'var(--border-main)20', padding: '1px 6px', borderRadius: 3 }}>
-                              {col.type}
-                            </span>
-                            {col.collision_detected && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--accent-orange)' }}>COLLISION</span>}
-                            {col.auto_resolved && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--accent-orange)' }}>AUTO-RESOLVED</span>}
-                            {col.key && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--accent-blue)' }}>🔑 PRIMARY KEY</span>}
-                          </div>
-                        </div>
-                      ))}
-                      {!showOnlyExpandedColumns && (mapping.columns || []).length > 6 && (
-                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
-                          +{mapping.columns.length - 6} more columns. Switch to "Show All Columns" when you need the full list.
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-          {filteredMappings.length === 0 && (
-            <div style={{ padding: 16, borderRadius: 8, background: 'var(--bg-main)', border: '1px dashed var(--border-main)', fontSize: 12, color: 'var(--text-tertiary)' }}>
-              No mappings match the current filters. Clear search or toggles to see more results.
+          {mappingLoading && (
+            <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)', fontSize: 12, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+              Generating mappings from backend...
             </div>
           )}
-          <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 12, marginBottom: 0 }}>
-            ℹ️ These mappings were automatically detected from your selected models. Review each mapping to ensure accuracy before proceeding.
-          </p>
-        </div>
-      )}
 
+          {mappingError && !mappingLoading && (
+            <div style={{ borderRadius: 10, border: '1px solid var(--color-error)', padding: 16, background: 'var(--color-error-bg)', fontSize: 12, color: 'var(--text-primary)' }}>
+              {mappingError}
+            </div>
+          )}
 
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+            <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)', padding: '14px 16px', display: 'grid', gap: 6 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Source Model</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{explicitTables[0] || 'Selected Sources'}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{fieldCounts.all} fields</div>
+            </div>
+            <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)', padding: '14px 16px', display: 'grid', gap: 6 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Target Model</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{primaryTargetConnector || 'Target Connector'}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{fieldRows.filter(row => String(row.column?.target || '').trim()).length} mapped fields</div>
+            </div>
+          </div>
 
-      {/* RELATIONSHIPS SECTION */}
-      {detectedRelationships.length > 0 && autoRelationships && (
-        <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)' }}>
-          <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span>Detected Relationships</span>
-            <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--accent-blue)', background: 'var(--accent-blue)20', padding: '2px 8px', borderRadius: 4 }}>
-              {detectedRelationships.length} relationships
-            </span>
-          </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {detectedRelationships.map(rel => (
-              <div
-                key={rel.id}
-                style={{
-                  padding: '12px 14px', borderRadius: 8,
-                  background: 'var(--bg-main)', border: '1px solid var(--border-main)',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
-                    {rel.source}
-                  </div>
-                  <span style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>{rel.joinType}</span>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
-                    {rel.target}
-                  </div>
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'monospace', padding: '8px 10px', borderRadius: 4, background: 'var(--bg-surface)', marginBottom: 6 }}>
-                  {rel.condition}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--accent-blue)', background: 'var(--accent-blue)20', padding: '2px 8px', borderRadius: 3, textTransform: 'uppercase' }}>
-                    {rel.confidence} confidence
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            {MAPPING_FILTERS.map((filter) => {
+              const count = fieldCounts[filter.id] ?? fieldCounts.all;
+              const active = activeFieldFilter === filter.id;
+              const isCollision = filter.id === 'collision' && count > 0;
+              return (
+                <button
+                  key={filter.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveFieldFilter(filter.id);
+                    if (filter.id === 'collision') setShowOnlyCollisions(count > 0);
+                    else setShowOnlyCollisions(false);
+                  }}
+                  style={{
+                    ...filterButtonStyle,
+                    borderRadius: 999,
+                    background: active ? (isCollision ? 'rgba(239, 68, 68, 0.16)' : 'var(--accent-blue)20') : 'var(--bg-surface-raised)',
+                    color: isCollision ? 'var(--color-error)' : (active ? 'var(--accent-blue)' : 'var(--text-primary)'),
+                    border: isCollision ? '1px solid rgba(239, 68, 68, 0.45)' : filterButtonStyle.border,
+                  }}
+                >
+                  {filter.label} ({count})
+                </button>
+              );
+            })}
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <div style={{ width: 240 }}>
+                <SmartSearchBar
+                  value={mappingSearch}
+                  onChange={setMappingSearch}
+                  placeholder="Search fields..."
+                />
+              </div>
+              <button type="button" onClick={runDryRun} disabled={mappingLoading} style={{ ...filterButtonStyle }}>
+                {mappingLoading ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={13} />}
+                Run Auto-Map
+              </button>
+            </div>
+          </div>
+
+          {detectedMappings.length > 0 && !mappingLoading && (
+            <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 12 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <Table2 size={16} color="var(--accent-blue)" />
+                    Table Mappings
                   </span>
+                  <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--accent-blue)', background: 'var(--accent-blue)20', padding: '2px 8px', borderRadius: 4 }}>
+                    {filteredMappings.length} visible
+                  </span>
+                  <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-secondary)', background: 'var(--border-main)20', padding: '2px 8px', borderRadius: 4 }}>
+                    {detectedMappings.length} total
+                  </span>
+                  {editedCount > 0 && (
+                    <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-success)', background: 'var(--color-success-bg)', padding: '2px 8px', borderRadius: 4 }}>
+                      {editedCount} edited
+                    </span>
+                  )}
+                  {collisionCount > 0 && (
+                    <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent-orange)', background: 'rgba(245, 158, 11, 0.14)', padding: '2px 8px', borderRadius: 4 }}>
+                      {collisionCount} collisions auto-resolved
+                    </span>
+                  )}
+                </h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, alignItems: 'center' }}>
+                  <SmartSearchBar
+                    value={mappingSearch}
+                    onChange={setMappingSearch}
+                    placeholder="Search tables, columns, targets..."
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowOnlyCollisions((prev) => !prev)}
+                    style={{
+                      ...filterButtonStyle,
+                      background: showOnlyCollisions ? 'rgba(245, 158, 11, 0.14)' : 'transparent',
+                      color: showOnlyCollisions ? 'var(--accent-orange)' : 'var(--text-secondary)',
+                      border: showOnlyCollisions ? '1px solid rgba(245, 158, 11, 0.35)' : filterButtonStyle.border,
+                    }}
+                  >
+                    Only Collisions
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowOnlyEdited((prev) => !prev)}
+                    style={{
+                      ...filterButtonStyle,
+                      background: showOnlyEdited ? 'var(--color-success-bg)' : 'transparent',
+                      color: showOnlyEdited ? 'var(--color-success)' : 'var(--text-secondary)',
+                      border: showOnlyEdited ? '1px solid rgba(34, 197, 94, 0.35)' : filterButtonStyle.border,
+                    }}
+                  >
+                    Only Edited
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowOnlyExpandedColumns((prev) => !prev)}
+                    style={filterButtonStyle}
+                  >
+                    {showOnlyExpandedColumns ? 'Compact Columns' : 'Show All Columns'}
+                  </button>
                 </div>
               </div>
-            ))}
-          </div>
-          <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 12, marginBottom: 0 }}>
-            ℹ️ Relationships were inferred from foreign keys and naming conventions. Enable "Auto-detect Relationships" toggle below to use them during mapping.
-          </p>
-        </div>
-      )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {filteredMappings.map(mapping => (
+                  <div key={mapping.id}>
+                    <button
+                      onClick={() => setExpandedMapping(expandedMapping === mapping.id ? null : mapping.id)}
+                      style={{
+                        width: '100%', textAlign: 'left',
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: '12px 14px', borderRadius: 8, cursor: 'pointer',
+                        background: 'var(--bg-main)', border: '1.5px solid var(--border-main)',
+                        color: 'var(--text-primary)', transition: 'all 0.2s ease',
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent-blue)40'; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-main)'; }}
+                    >
+                      <div style={{ flex: 1, minWidth: 180 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 3 }}>
+                          {mapping.source}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', overflowWrap: 'anywhere' }}>
+                          <span>→</span> {mapping.target}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <div style={{ fontSize: 10, color: 'var(--text-tertiary)', background: 'var(--border-main)20', padding: '3px 8px', borderRadius: 4 }}>
+                          {(mapping.columns || []).length} columns
+                        </div>
+                        {(mapping.collision_detected || (mapping.columns || []).some(column => getColumnStatus(mapping, column) === 'collision')) && (
+                          <div
+                            style={{
+                              padding: '3px 10px', borderRadius: 4,
+                              background: 'rgba(239, 68, 68, 0.12)', color: 'var(--color-error)',
+                              fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+                            }}
+                          >
+                            Collision
+                          </div>
+                        )}
+                        <div
+                          style={{
+                            padding: '3px 10px', borderRadius: 4,
+                            background: 'var(--accent-blue)20', color: 'var(--accent-blue)',
+                            fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+                          }}
+                        >
+                          {mapping.status}
+                        </div>
+                        <ChevronDown
+                          size={14} color="var(--text-tertiary)"
+                          style={{ transform: expandedMapping === mapping.id ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
+                        />
+                      </div>
+                    </button>
+
+                    {/* Column Details */}
+                    {expandedMapping === mapping.id && mapping.columns && (
+                      <div style={{
+                        marginTop: 8, padding: '12px', borderRadius: 6,
+                        background: 'var(--bg-main)', border: '1px solid var(--accent-blue)20',
+                      }}>
+                        {mapping.collision_detected && (
+                          <div style={{ marginBottom: 10, fontSize: 11, color: 'var(--accent-orange)', lineHeight: 1.4 }}>
+                            Destination table name collided after sanitization, so a deterministic hash suffix was added automatically.
+                          </div>
+                        )}
+                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8, textTransform: 'uppercase' }}>
+                          Column Mappings
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
+                          <label style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>Destination table name</label>
+                          <input
+                            value={mapping.target || ''}
+                            disabled={manualEditLocked}
+                            onChange={(e) => onUpdateTableTarget?.(mapping.id, e.target.value)}
+                            style={{ ...INPUT, fontSize: 11, padding: '6px 8px', maxWidth: 320, opacity: manualEditLocked ? 0.6 : 1 }}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {(showOnlyExpandedColumns ? mapping.columns : mapping.columns.slice(0, 6)).map((col, idx) => (
+                            <div key={idx} style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1fr) auto minmax(180px, 1.3fr)', gap: 8, alignItems: 'center', fontSize: 11 }}>
+                              <span style={{ color: 'var(--text-secondary)', fontWeight: 500, overflowWrap: 'anywhere' }}>{col.source}</span>
+                              <span style={{ color: 'var(--text-tertiary)', textAlign: 'center' }}>→</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                <input
+                                  value={col.target || ''}
+                                  disabled={manualEditLocked}
+                                  onChange={(e) => onUpdateColumnTarget?.(mapping.id, col.source, e.target.value)}
+                                  style={{
+                                    ...INPUT,
+                                    fontSize: 11,
+                                    padding: '4px 8px',
+                                    minWidth: 140,
+                                    flex: '1 1 180px',
+                                    opacity: manualEditLocked ? 0.6 : 1,
+                                    background: col.auto_resolved ? 'rgba(245, 158, 11, 0.12)' : INPUT.background,
+                                    border: getColumnStatus(mapping, col) === 'collision'
+                                      ? '1px solid var(--color-error)'
+                                      : (col.auto_resolved ? '1px solid rgba(245, 158, 11, 0.55)' : INPUT.border),
+                                  }}
+                                />
+                                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', background: 'var(--border-main)20', padding: '1px 6px', borderRadius: 3 }}>
+                                  {col.type}
+                                </span>
+                                {col.collision_detected && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--accent-orange)' }}>COLLISION</span>}
+                                {col.auto_resolved && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--accent-orange)' }}>AUTO-RESOLVED</span>}
+                                {col.key && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--accent-blue)' }}>🔑 PRIMARY KEY</span>}
+                              </div>
+                            </div>
+                          ))}
+                          {!showOnlyExpandedColumns && (mapping.columns || []).length > 6 && (
+                            <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                              +{mapping.columns.length - 6} more columns. Switch to "Show All Columns" when you need the full list.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {filteredMappings.length === 0 && (
+                <div style={{ padding: 16, borderRadius: 8, background: 'var(--bg-main)', border: '1px dashed var(--border-main)', fontSize: 12, color: 'var(--text-tertiary)' }}>
+                  No mappings match the current filters. Clear search or toggles to see more results.
+                </div>
+              )}
+              <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 12, marginBottom: 0 }}>
+                ℹ️ These mappings were automatically detected from your selected models. Review each mapping to ensure accuracy before proceeding.
+              </p>
+            </div>
+          )}
+
+
+
+          {/* RELATIONSHIPS SECTION */}
+          {detectedRelationships.length > 0 && autoRelationships && (
+            <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 16, background: 'var(--bg-surface)' }}>
+              <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>Detected Relationships</span>
+                <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--accent-blue)', background: 'var(--accent-blue)20', padding: '2px 8px', borderRadius: 4 }}>
+                  {detectedRelationships.length} relationships
+                </span>
+              </h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {detectedRelationships.map(rel => (
+                  <div
+                    key={rel.id}
+                    style={{
+                      padding: '12px 14px', borderRadius: 8,
+                      background: 'var(--bg-main)', border: '1px solid var(--border-main)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                        {rel.source}
+                      </div>
+                      <span style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>{rel.joinType}</span>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                        {rel.target}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'monospace', padding: '8px 10px', borderRadius: 4, background: 'var(--bg-surface)', marginBottom: 6 }}>
+                      {rel.condition}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--accent-blue)', background: 'var(--accent-blue)20', padding: '2px 8px', borderRadius: 3, textTransform: 'uppercase' }}>
+                        {rel.confidence} confidence
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 12, marginBottom: 0 }}>
+                ℹ️ Relationships were inferred from foreign keys and naming conventions. Enable "Auto-detect Relationships" toggle below to use them during mapping.
+              </p>
+            </div>
+          )}
         </>
       )}
 
@@ -4306,11 +4281,6 @@ function StepFinish({
   intermediateFormat,
   selectedWorkspace,
   navigate,
-  editMode,
-  diff,
-  selectedModels,
-  selectedModelNameByKey,
-  initialSelectedModels,
 }) {
   const createdProjectId = createdProject?.id || createdProject?.project_id;
 
@@ -4341,13 +4311,13 @@ function StepFinish({
           </p>
         </div>
         {runWarning && (
-          <div style={{ maxWidth: 640, margin: '0 auto', padding: '12px 14px', borderRadius: 10, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.5, textAlign: 'left' }}>
+          <div style={{ maxWidth: 640, padding: '12px 14px', borderRadius: 10, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.5, textAlign: 'left' }}>
             {runWarning}
           </div>
         )}
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
-          <button onClick={() => navigate('/projects')} style={footerBtn('secondary')}>Back to Projects</button>
+          <button onClick={() => { clearWizardState(); navigate('/projects'); }} style={footerBtn('secondary')}>Back to Projects</button>
           {createdProjectId ? (
             <button onClick={() => navigate(`/projects/${createdProjectId}/edit`)} style={footerBtn('primary')}>
               Configure Project
@@ -4384,9 +4354,9 @@ function StepFinish({
   };
 
   const showDiffs = editMode && diff && Object.keys(diff).length > 0;
-  
-  const currentSelectionNames = selectedModels?.size > 0 
-    ? Array.from(selectedModels).map(id => selectedModelNameByKey?.[id] || id.split('::').pop()).join(', ') 
+
+  const currentSelectionNames = selectedModels?.size > 0
+    ? Array.from(selectedModels).map(id => selectedModelNameByKey?.[id] || id.split('::').pop()).join(', ')
     : 'Everything (*)';
 
   const wasSelectionNames = initialSelectedModels?.size > 0

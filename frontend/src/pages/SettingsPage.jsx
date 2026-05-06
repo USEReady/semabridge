@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import usePageCache from '../hooks/usePageCache';
 import { useNavigate } from 'react-router-dom';
 import {
   PlugZap, RefreshCw, CheckCircle2, AlertCircle, Clock,
@@ -65,7 +66,15 @@ function renderConnectorIcon(connectorId, size = 18) {
 
 export default function SettingsPage() {
   const navigate = useNavigate();
-  const [env, setEnv] = useState('Dev');
+
+  // Cached UI state — survives SPA navigation within the same tab.
+  const [settingsCache, setSettingsCache] = usePageCache('settings-page', {
+    env: 'Dev',
+    selectedConnectorId: null,
+  });
+  const { env, selectedConnectorId } = settingsCache;
+  const setEnv = (v) => setSettingsCache({ env: v });
+  const setSelectedConnectorId = (v) => setSettingsCache({ selectedConnectorId: v });
   
   // Timezone state
   const [timezone, setTimezone] = useState(() => {
@@ -76,7 +85,6 @@ export default function SettingsPage() {
   const [connectors, setConnectors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [manageOpen, setManageOpen] = useState(false);
-  const [selectedConnectorId, setSelectedConnectorId] = useState(null);
   const [localFolders, setLocalFolders] = useState([]);
   const [localFoldersLoading, setLocalFoldersLoading] = useState(false);
   const [localFolderModalOpen, setLocalFolderModalOpen] = useState(false);
