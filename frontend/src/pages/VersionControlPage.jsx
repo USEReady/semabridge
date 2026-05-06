@@ -888,6 +888,7 @@ export default function VersionControlPage() {
             const snapId = version.after_tgt_snapshots?.[0] || version.before_tgt_snapshots?.[0];
             await api.restoreProjectVersion(selectedProjectId, {
                 restore_snapshot_id: snapId,
+                sync_mode: version.sync_mode || 'copy',
                 comment: 'Rollback to ' + version.run_id
             });
             addLog('success', 'VC', 'Rollback initiated successfully');

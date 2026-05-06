@@ -365,6 +365,7 @@ class SnapshotRow(Base):
     deleted_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
     connector_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     trigger: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    sync_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="copy")
 
     # Relationships
     project: Mapped["Project"] = relationship(back_populates="snapshots")
@@ -375,7 +376,7 @@ class SnapshotRow(Base):
     def __repr__(self) -> str:
         return (
             f"<SnapshotRow(snapshot_id={self.snapshot_id!r}, "
-            f"project_id={self.project_id!r}, status={self.status!r})>"
+            f"project_id={self.project_id!r}, status={self.status!r}, sync_mode={self.sync_mode!r})>"
         )
 
 

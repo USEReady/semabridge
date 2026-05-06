@@ -197,6 +197,75 @@ def _compat_version_metadata() -> Dict[str, Any]:
     return {"semabridge_version": "unknown", "connector_versions": {}, "rule_pack_version": "unknown"}
 
 
+def _compat_normalize_sync_mode(value: Any) -> Optional[str]:
+    sync_mode = str(value or "").strip().lower()
+    return sync_mode if sync_mode in {"copy", "upsert"} else None
+
+
+def _compat_sync_mode_for_restore_snapshot(project_id: str, snapshot_id: str, payload: Optional[Dict[str, Any]] = None) -> str:
+    explicit = _compat_normalize_sync_mode((payload or {}).get("sync_mode"))
+    if explicit:
+        return explicit
+
+    snapshot_run_id = ""
+    for snap in _compat_project_snapshots.get(project_id, []):
+        if not isinstance(snap, dict) or str(snap.get("snapshot_id") or "") != snapshot_id:
+            continue
+        stored = _compat_normalize_sync_mode(snap.get("sync_mode"))
+        if stored:
+            return stored
+        snapshot_run_id = str(snap.get("run_id") or "").strip()
+        break
+
+    if snapshot_run_id:
+        for run in _compat_project_runs.get(project_id, []):
+            if isinstance(run, dict) and str(run.get("run_id") or run.get("id") or "") == snapshot_run_id:
+                stored = _compat_normalize_sync_mode(run.get("sync_mode"))
+                if stored:
+                    return stored
+
+    try:
+        from sqlalchemy import select
+        from semabridge.repository.orm.models import Run, SnapshotRow
+        from semabridge.repository.orm.session_factory import db_manager
+
+        session = db_manager._session()
+        try:
+            snapshot = session.get(SnapshotRow, snapshot_id)
+            if snapshot is not None:
+                stored = _compat_normalize_sync_mode(getattr(snapshot, "sync_mode", None))
+                if stored:
+                    return stored
+                snapshot_run_id = str(getattr(snapshot, "run_id", "") or "").strip()
+
+            if snapshot_run_id:
+                run = session.get(Run, snapshot_run_id)
+                stored = _compat_normalize_sync_mode(getattr(run, "sync_mode", None) if run else None)
+                if stored:
+                    return stored
+
+            rows = session.execute(select(Run).where(Run.project_id == project_id)).scalars().all()
+            for run in rows:
+                for attr_name in ("before_target_snapshot_ids", "after_target_snapshot_ids"):
+                    raw_value = getattr(run, attr_name, None)
+                    if not raw_value:
+                        continue
+                    try:
+                        ids = json.loads(raw_value) if isinstance(raw_value, str) else raw_value
+                    except Exception:
+                        ids = []
+                    if snapshot_id in (ids or []):
+                        stored = _compat_normalize_sync_mode(getattr(run, "sync_mode", None))
+                        if stored:
+                            return stored
+        finally:
+            session.close()
+    except Exception as exc:
+        logger.debug("Could not infer restore sync_mode for %s/%s: %s", project_id, snapshot_id, exc)
+
+    return "copy"
+
+
 def _compat_capture_snapshots_for_run(
     *,
     project_id: str,
@@ -235,6 +304,7 @@ def _compat_capture_snapshots_for_run(
         "artifact": state_blob,
         "version_metadata": _compat_version_metadata(),
         "project_config_yaml": project_cfg,
+        "sync_mode": _compat_normalize_sync_mode(run.get("sync_mode")) or "copy",
         "created_at": _compat_now_iso(),
     }
     _compat_project_snapshots[project_id].insert(0, source_row)
@@ -265,6 +335,7 @@ def _compat_capture_snapshots_for_run(
             "artifact": state_blob,
             "version_metadata": _compat_version_metadata(),
             "project_config_yaml": project_cfg,
+            "sync_mode": _compat_normalize_sync_mode(run.get("sync_mode")) or "copy",
             "created_at": _compat_now_iso(),
         })
     run[f"{stage}_target_snapshot_ids"] = target_ids
@@ -598,6 +669,7 @@ async def get_project_runs_compat(project_id: str):
                     "id": row.run_id,
                     "project_id": row.project_id,
                     "run_type": getattr(row, "run_type", "SYNC") or "SYNC",
+                    "sync_mode": _compat_normalize_sync_mode(getattr(row, "sync_mode", None)) or "copy",
                     "status": row.status or "unknown",
                     "started_at": row.started_at.isoformat() if row.started_at else None,
                     "completed_at": row.completed_at.isoformat() if row.completed_at else None,
@@ -818,7 +890,15 @@ async def restore_project_version_compat(project_id: str, payload: Dict[str, Any
         config_yaml = _compat_apply_restore_overrides(config_yaml, overrides)
     _compat_project_configs[project_id] = config_yaml
     _compat_projects[project_id]["updated_at"] = _compat_now_iso()
-    restore_run, restore_cfg, restore_started = _create_project_run(project_id, "Manual", run_type="RESTORE", project_cfg_override=config_yaml, restore_snapshot_id=snapshot_id)
+    sync_mode = _compat_sync_mode_for_restore_snapshot(project_id, snapshot_id, payload)
+    restore_run, restore_cfg, restore_started = _create_project_run(
+        project_id,
+        "Manual",
+        run_type="RESTORE",
+        project_cfg_override=config_yaml,
+        restore_snapshot_id=snapshot_id,
+        sync_mode=sync_mode,
+    )
     background_tasks.add_task(_perform_project_run, restore_run, restore_cfg, restore_started)
     _compat_save_store()
     return {"status": "restored", "project_id": project_id, "snapshot_id": snapshot_id, "run_id": restore_run.get("id"), "run_type": "RESTORE", "intermediate_format": snapshot_row.get("intermediate_format") or "sml", "message": "Project configuration restored and restore run started.", "config_yaml": config_yaml}
@@ -842,7 +922,11 @@ async def run_project_now_compat(project_id: str, background_tasks: BackgroundTa
     run_type = str((payload or {}).get("run_type") or "SYNC").upper()
     if run_type not in {"SYNC", "RESTORE"}:
         run_type = "SYNC"
-    restore_snapshot_id = str((payload or {}).get("restore_snapshot_id") or "").strip() or None
+    restore_snapshot_id = str(
+        (payload or {}).get("restore_snapshot_id")
+        or (payload or {}).get("snapshot_id")
+        or ""
+    ).strip() or None
     config_override = None
     if run_type == "SYNC":
         modular_bundle = project_shared._compat_load_modular_project(project_id)
@@ -860,7 +944,11 @@ async def run_project_now_compat(project_id: str, background_tasks: BackgroundTa
         run_type=run_type,
         project_cfg_override=config_override,
         restore_snapshot_id=restore_snapshot_id,
-        sync_mode=str((payload or {}).get("sync_mode") or "copy").lower(),
+        sync_mode=(
+            _compat_sync_mode_for_restore_snapshot(project_id, restore_snapshot_id, payload)
+            if run_type == "RESTORE" and restore_snapshot_id
+            else (_compat_normalize_sync_mode((payload or {}).get("sync_mode")) or "copy")
+        ),
     )
     user_id = (payload or {}).get("user_id")
     force = bool((payload or {}).get("force", False))

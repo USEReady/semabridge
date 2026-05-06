@@ -221,6 +221,8 @@ class ModelRepository:
                             conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN connector_id VARCHAR(36)")
                         if "trigger" not in snapshot_columns:
                             conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN trigger VARCHAR(50)")
+                        if "sync_mode" not in snapshot_columns:
+                            conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN sync_mode VARCHAR(20) NOT NULL DEFAULT 'copy'")
                     if "runs" in inspector.get_table_names():
                         run_columns = {col["name"] for col in inspector.get_columns("runs")}
                         if "sync_mode" not in run_columns:
@@ -296,6 +298,7 @@ class ModelRepository:
             error_message=row.error_message,
             initiated_by=row.initiated_by,
             run_id=row.run_id,
+            sync_mode=getattr(row, 'sync_mode', 'copy'),
         )
 
     # ------------------------------------------------------------------
@@ -411,8 +414,12 @@ class ModelRepository:
         run_id: Optional[str] = None,
         connector_id: Optional[str] = None,
         trigger: Optional[str] = None,
+        sync_mode: str = "copy",
     ) -> Tuple[bool, str]:
         """Commit a new version of the model.
+
+        Args:
+            sync_mode: Sync mode used (copy, upsert, etc.) - v4.3 rollback metadata
 
         Returns:
             ``(committed: bool, snapshot_id: str)``
@@ -446,6 +453,7 @@ class ModelRepository:
                     run_id=run_id,
                     connector_id=connector_id,
                     trigger=trigger,
+                    sync_mode=sync_mode,
                 )
             )
 
@@ -469,7 +477,7 @@ class ModelRepository:
             session.commit()
 
         logger.info(
-            "Committed snapshot %s with %d changes", snapshot_id, len(changes)
+            "Committed snapshot %s with %d changes (sync_mode=%s)", snapshot_id, len(changes), sync_mode
         )
         return True, snapshot_id
 

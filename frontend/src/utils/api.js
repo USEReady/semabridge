@@ -897,10 +897,15 @@ export const api = {
     },
 
     async restoreProjectVersion(projectId, payload) {
+        const body = {
+            ...payload,
+            restore_snapshot_id: payload?.restore_snapshot_id || payload?.snapshot_id,
+            run_type: 'restore',
+        };
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...payload, run_type: 'restore' })
+            body: JSON.stringify(body)
         });
         return handleResponse(res);
     },

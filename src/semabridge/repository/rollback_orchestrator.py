@@ -19,6 +19,7 @@ from semabridge.repository.interfaces.adapter_rollback_interface import (
 from semabridge.repository.semantic_version_manager import SemanticVersionManager
 from semabridge.repository.semantic_snapshot_manager import SemanticSnapshotManager
 from semabridge.repository.semantic_diff_engine import SemanticDiffEngine
+from semabridge.repository.model_repository import ModelRepository
 from semabridge.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -271,7 +272,13 @@ class RollbackOrchestrator:
         start_time = time.time()
         
         try:
-            # Step 1: Create pre-rollback snapshot
+            # Step 1: Retrieve sync_mode from target snapshot in database
+            model_repo = ModelRepository()
+            target_snapshot = model_repo.get_snapshot(target_version_id)
+            sync_mode = target_snapshot.sync_mode if target_snapshot and hasattr(target_snapshot, 'sync_mode') else 'copy'
+            logger.info(f"[{operation_id}] Rolling back to version {target_version_id} (sync_mode={sync_mode})")
+            
+            # Step 2: Create pre-rollback snapshot
             logger.info(f"[{operation_id}] Creating pre-rollback snapshot...")
             current_state = adapter.get_current_state()
             
@@ -279,15 +286,16 @@ class RollbackOrchestrator:
                 adapter=adapter_name,
                 semantic_state=current_state,
                 change_description=f"Pre-rollback snapshot before reverting to {target_version_id}",
+                sync_mode=sync_mode,
             )
             operation.pre_rollback_snapshot_id = pre_snapshot.snapshot_id
-            logger.debug(f"[{operation_id}] Pre-rollback snapshot: {pre_snapshot.snapshot_id}")
+            logger.debug(f"[{operation_id}] Pre-rollback snapshot: {pre_snapshot.snapshot_id} (sync_mode={sync_mode})")
             
-            # Step 2: Get rollback artifacts
+            # Step 3: Get rollback artifacts
             logger.info(f"[{operation_id}] Retrieving rollback artifacts...")
             artifacts = adapter.get_rollback_artifacts(target_version_id)
             
-            # Step 3: Execute rollback
+            # Step 4: Execute rollback
             logger.info(f"[{operation_id}] Executing rollback...")
             result = adapter.execute_rollback(
                 version_id=target_version_id,
@@ -297,7 +305,7 @@ class RollbackOrchestrator:
             operation.result = result
             
             if result.success:
-                # Step 4: Create post-rollback snapshot
+                # Step 5: Create post-rollback snapshot (inherits sync_mode from rollback context)
                 logger.info(f"[{operation_id}] Creating post-rollback snapshot...")
                 new_state = adapter.get_current_state()
                 
@@ -306,6 +314,7 @@ class RollbackOrchestrator:
                     semantic_state=new_state,
                     change_description=f"Rollback completed to {target_version_id}",
                     parent_snapshot_id=pre_snapshot.snapshot_id,
+                    sync_mode=sync_mode,
                 )
                 operation.post_rollback_snapshot_id = post_snapshot.snapshot_id
                 
