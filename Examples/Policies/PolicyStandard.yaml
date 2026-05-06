@@ -1,5 +1,4 @@
-# Standard Production Policy
-# Recommended for new deployments.
+# Standard production policy
 
 snowflake:
   query_tag: "Semabridge_Prod"

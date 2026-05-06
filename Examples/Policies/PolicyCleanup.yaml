@@ -1,9 +1,8 @@
-# Legacy Cleanup Policy
-# Use this to clean up old views and experimental features.
+# Legacy cleanup policy
 
 snowflake:
-  create_missing_tables: false # Don't create anything
-  
+  create_missing_tables: false
+
 legacy:
   drop_deprecated_views: true
 

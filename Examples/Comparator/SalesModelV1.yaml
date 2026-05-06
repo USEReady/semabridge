@@ -1,0 +1,163 @@
+# Sales semantic model - version 1 (OSI)
+
+datasets:
+  - unique_name: Fact_Sales
+    description: "Core sales transactions fact table"
+    source_table: "sales_db.public.fact_sales"
+    columns:
+      - unique_name: sale_id
+        data_type: integer
+        is_key: true
+      - unique_name: order_date
+        data_type: date
+      - unique_name: customer_id
+        data_type: integer
+      - unique_name: product_id
+        data_type: integer
+      - unique_name: region_id
+        data_type: integer
+      - unique_name: gross_amount
+        data_type: decimal
+      - unique_name: discount_amount
+        data_type: decimal
+      - unique_name: tax_amount
+        data_type: decimal
+      - unique_name: quantity
+        data_type: integer
+      - unique_name: cost_amount
+        data_type: decimal
+
+  - unique_name: Dim_Customer
+    description: "Customer dimension"
+    source_table: "sales_db.public.dim_customer"
+    columns:
+      - unique_name: customer_id
+        data_type: integer
+        is_key: true
+      - unique_name: customer_name
+        data_type: varchar
+      - unique_name: customer_segment
+        data_type: varchar
+      - unique_name: country
+        data_type: varchar
+      - unique_name: acquisition_date
+        data_type: date
+
+  - unique_name: Dim_Product
+    description: "Product dimension"
+    source_table: "sales_db.public.dim_product"
+    columns:
+      - unique_name: product_id
+        data_type: integer
+        is_key: true
+      - unique_name: product_name
+        data_type: varchar
+      - unique_name: category
+        data_type: varchar
+      - unique_name: unit_cost
+        data_type: decimal
+
+  - unique_name: Dim_Region
+    description: "Regional dimension"
+    source_table: "sales_db.public.dim_region"
+    columns:
+      - unique_name: region_id
+        data_type: integer
+        is_key: true
+      - unique_name: region_name
+        data_type: varchar
+      - unique_name: country
+        data_type: varchar
+
+metrics:
+  - unique_name: Total_Revenue
+    description: "Total gross revenue before discounts and tax"
+    dataset: Fact_Sales
+    source_column: gross_amount
+    aggregation: sum
+
+  - unique_name: Net_Revenue
+    description: "Revenue after discounts, before tax"
+    dataset: Fact_Sales
+    expression: "SUM(gross_amount) - SUM(discount_amount)"
+
+  - unique_name: Total_Tax
+    description: "Total tax collected on all sales"
+    dataset: Fact_Sales
+    source_column: tax_amount
+    aggregation: sum
+
+  - unique_name: Revenue_After_Tax
+    description: "Net revenue inclusive of tax"
+    dataset: Fact_Sales
+    expression: "SUM(gross_amount) - SUM(discount_amount) + SUM(tax_amount)"
+
+  - unique_name: Gross_Profit
+    description: "Gross profit: revenue minus cost"
+    dataset: Fact_Sales
+    expression: "SUM(gross_amount) - SUM(cost_amount)"
+
+  - unique_name: Gross_Margin_Pct
+    description: "Gross margin percentage"
+    dataset: Fact_Sales
+    expression: "ROUND((SUM(gross_amount) - SUM(cost_amount)) / NULLIF(SUM(gross_amount), 0) * 100, 2)"
+
+  - unique_name: Profit_After_Discount
+    description: "Profit after discounts"
+    dataset: Fact_Sales
+    expression: "SUM(gross_amount - discount_amount - cost_amount)"
+
+  - unique_name: Total_Units_Sold
+    description: "Total quantity of units sold"
+    dataset: Fact_Sales
+    source_column: quantity
+    aggregation: sum
+
+  - unique_name: Total_Orders
+    description: "Count of distinct sales orders"
+    dataset: Fact_Sales
+    source_column: sale_id
+    aggregation: count
+
+  - unique_name: Avg_Order_Value
+    description: "Average revenue per order"
+    dataset: Fact_Sales
+    expression: "SUM(gross_amount) / NULLIF(COUNT(sale_id), 0)"
+
+  - unique_name: Avg_Discount_Rate
+    description: "Average discount rate"
+    dataset: Fact_Sales
+    expression: "AVG(discount_amount / NULLIF(gross_amount, 0)) * 100"
+
+  - unique_name: Unique_Customers
+    description: "Distinct customers"
+    dataset: Fact_Sales
+    source_column: customer_id
+    aggregation: count_distinct
+
+  - unique_name: Revenue_Per_Customer
+    description: "Revenue per customer"
+    dataset: Fact_Sales
+    expression: "SUM(gross_amount) / NULLIF(COUNT(DISTINCT customer_id), 0)"
+
+relationships:
+  - unique_name: sales_to_customer
+    from_dataset: Fact_Sales
+    from_columns: [customer_id]
+    to_dataset: Dim_Customer
+    to_columns: [customer_id]
+    cardinality: many-to-one
+
+  - unique_name: sales_to_product
+    from_dataset: Fact_Sales
+    from_columns: [product_id]
+    to_dataset: Dim_Product
+    to_columns: [product_id]
+    cardinality: many-to-one
+
+  - unique_name: sales_to_region
+    from_dataset: Fact_Sales
+    from_columns: [region_id]
+    to_dataset: Dim_Region
+    to_columns: [region_id]
+    cardinality: many-to-one
