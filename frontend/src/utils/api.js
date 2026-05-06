@@ -1121,6 +1121,15 @@ export const api = {
         return handleResponse(res);
     },
 
+    async bulkResolve(collisions) {
+        const res = await authFetch(`${API_BASE_URL}/mapping/bulk-resolve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ collisions }),
+        });
+        return handleResponse(res);
+    },
+
     // ── Projects: enhanced CRUD ───────────────────────────────────────────
 
     async patchProject(projectId, data) {
@@ -1529,4 +1538,3 @@ function _triggerDownload(blob, filename) {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
-

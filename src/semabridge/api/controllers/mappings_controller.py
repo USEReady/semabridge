@@ -20,7 +20,7 @@ class DryRunRequest(BaseModel):
     selected_sources: List[str]
 
 class UpdateMappingRequest(BaseModel):
-    target_name: str
+    target_name: Optional[str] = None
     target_data_type: Optional[str] = None
     status: Optional[str] = "manual"
 
@@ -110,6 +110,7 @@ async def dry_run_mapping(
         _compat_serialize_auto_map_entity_mappings,
     )
     import semabridge.api.services.project_shared as project_shared
+    from semabridge.api.services.project_mapping_engine import sanitize_identifier
 
     try:
         # ── 1. Resolve or create a stable preview project in the compat store ──
@@ -305,7 +306,7 @@ async def update_mapping(
     """
     result = await service.update_mapping_compat(
         mapping_id=mapping_id,
-        target_name=request.target_name,
+        target_name=request.target_name or "",
         target_data_type=request.target_data_type,
         status="manual"
     )
@@ -372,12 +373,25 @@ async def deploy_mappings(
             raise HTTPException(status_code=500, detail="Failed to create actual project for deploy.")
 
     # ── 2. Persist the user-edited field mappings into the compat store ───────
+    target_connector_type = ""
+    try:
+        cfg = str(project_shared._compat_project_configs.get(actual_project_id) or project_shared._compat_project_configs.get(project_id) or "")
+        if cfg:
+            parsed_cfg = yaml.safe_load(cfg) if isinstance(cfg, str) else {}
+            targets = parsed_cfg.get("targets") if isinstance(parsed_cfg, dict) else []
+            if isinstance(targets, list) and targets:
+                target_connector_type = str((targets[0] or {}).get("type") or "").strip().lower()
+    except Exception:
+        target_connector_type = ""
+
     for idx, mapping in enumerate(request.field_mappings):
         if not isinstance(mapping, dict):
             continue
         source_path = str(mapping.get("source_path") or "").strip()
         source_name = str(mapping.get("source_name") or "").strip()
         target_name = str(mapping.get("target_name") or "").strip()
+        if target_connector_type == "snowflake" and target_name:
+            target_name = sanitize_identifier(target_name).upper()
         mapping_id = str(mapping.get("id") or "").strip()
         if not mapping_id:
             seed = source_path or source_name or f"row-{idx}"

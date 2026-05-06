@@ -315,18 +315,191 @@ class SnowflakeConnectionManager:
                     f"USE WAREHOUSE {self._quote_ident(warehouse)}",
                     context="USE WAREHOUSE",
                 )
-            self._execute_sql(
-                cur,
-                f"USE DATABASE {self._quote_ident(db_name)}",
-                context="USE DATABASE",
-            )
+            
+            # Try to use the database - if it fails, provide helpful diagnostics
+            try:
+                self._execute_sql(
+                    cur,
+                    f"USE DATABASE {self._quote_ident(db_name)}",
+                    context="USE DATABASE",
+                )
+                logger.info(f"✓ Successfully connected to database: {db_name}")
+            except Exception as db_error:
+                error_msg = str(db_error).lower()
+                
+                # Check if database exists
+                if "object does not exist" in error_msg or "does not exist" in error_msg:
+                    logger.error(f"✗ Cannot USE DATABASE {db_name}")
+                    logger.error(f"  Error: {db_error}")
+                    
+                    # Try to list available databases for debugging
+                    try:
+                        self._execute_sql(cur, "SHOW DATABASES", context="SHOW DATABASES")
+                        available_dbs = [row[1] for row in cur.fetchall()]
+                        logger.error(f"  Available databases: {', '.join(available_dbs)}")
+                    except:
+                        pass
+                    
+                    raise Exception(
+                        f"Database '{db_name}' not found or not accessible. "
+                        f"Ensure it exists and user '{self.config.user}' has USAGE privilege."
+                    ) from db_error
+                
+                # Check if it's a permissions issue
+                elif "permission" in error_msg or "insufficient" in error_msg or "denied" in error_msg:
+                    logger.error(f"✗ Permission denied to USE DATABASE {db_name}")
+                    logger.error(f"  User: {self.config.user}")
+                    logger.error(f"  Error: {db_error}")
+                    
+                    raise Exception(
+                        f"Permission denied accessing database '{db_name}'. "
+                        f"User '{self.config.user}' needs USAGE privilege. "
+                        f"Run in Snowflake:\n"
+                        f"  GRANT USAGE ON DATABASE {db_name} TO USER {self.config.user};\n"
+                        f"  GRANT USAGE ON SCHEMA {db_name}.{schema_name} TO USER {self.config.user};"
+                    ) from db_error
+                
+                else:
+                    raise
+            
             self._execute_sql(
                 cur,
                 f"USE SCHEMA {self._quote_ident(db_name)}.{self._quote_ident(schema_name)}",
                 context="USE SCHEMA",
             )
+            logger.info(f"✓ Successfully set schema: {db_name}.{schema_name}")
         finally:
             try:
                 cur.close()
             except Exception:
                 pass
+
+    def _database_exists(self, cur: Any, db_name: str) -> bool:
+        """Check if a database exists in Snowflake."""
+        try:
+            self._execute_sql(
+                cur,
+                f"SHOW DATABASES LIKE '{db_name}'",
+                context="SHOW DATABASES",
+            )
+            result = cur.fetchall()
+            exists = len(result) > 0
+            
+            if exists:
+                logger.info(f"✓ Database '{db_name}' found in Snowflake")
+            else:
+                logger.warning(f"✗ Database '{db_name}' NOT found in Snowflake")
+                logger.info("Available databases:")
+                self._execute_sql(cur, "SHOW DATABASES", context="SHOW DATABASES")
+                for row in cur.fetchall():
+                    logger.info(f"  - {row[1]}")  # Database name is typically in column 1
+            
+            return exists
+        except Exception as e:
+            logger.error(f"Error checking database existence: {e}")
+            return False
+
+    def test_connection(self) -> Dict[str, Any]:
+        """
+        Test Snowflake connection and permissions.
+        Returns diagnostic information.
+        """
+        logger.info("=" * 60)
+        logger.info("Testing Snowflake Connection & Permissions")
+        logger.info("=" * 60)
+        
+        result = {
+            "status": "unknown",
+            "connection": False,
+            "warehouse": False,
+            "database": False,
+            "schema": False,
+            "errors": []
+        }
+        
+        try:
+            # Test basic connection
+            logger.info(f"1. Testing connection to {self.config.account}...")
+            kwargs = get_snowflake_connect_kwargs(self.config)
+            conn = snowflake.connector.connect(**kwargs)
+            result["connection"] = True
+            logger.info("   ✓ Connection successful")
+            
+            cur = conn.cursor()
+            
+            # Test warehouse access
+            warehouse = str(getattr(self.config, "warehouse", "") or "").strip()
+            if warehouse:
+                logger.info(f"2. Testing warehouse access: {warehouse}")
+                try:
+                    self._execute_sql(cur, f"USE WAREHOUSE {self._quote_ident(warehouse)}", context="USE WAREHOUSE")
+                    result["warehouse"] = True
+                    logger.info(f"   ✓ Warehouse '{warehouse}' accessible")
+                except Exception as e:
+                    result["warehouse"] = False
+                    result["errors"].append(f"Warehouse error: {e}")
+                    logger.error(f"   ✗ Warehouse error: {e}")
+            
+            # Test database access
+            db_name, schema_name = self._resolved_db_schema()
+            logger.info(f"3. Testing database access: {db_name}")
+            try:
+                self._execute_sql(cur, f"USE DATABASE {self._quote_ident(db_name)}", context="USE DATABASE")
+                result["database"] = True
+                logger.info(f"   ✓ Database '{db_name}' accessible")
+            except Exception as e:
+                result["database"] = False
+                result["errors"].append(f"Database error: {e}")
+                logger.error(f"   ✗ Database error: {e}")
+                logger.info("   Attempting to list available databases...")
+                try:
+                    self._execute_sql(cur, "SHOW DATABASES", context="SHOW DATABASES")
+                    dbs = [row[1] for row in cur.fetchall()]
+                    logger.info(f"   Available: {', '.join(dbs)}")
+                except:
+                    pass
+            
+            # Test schema access
+            logger.info(f"4. Testing schema access: {schema_name}")
+            try:
+                self._execute_sql(cur, f"USE SCHEMA {self._quote_ident(db_name)}.{self._quote_ident(schema_name)}", context="USE SCHEMA")
+                result["schema"] = True
+                logger.info(f"   ✓ Schema '{db_name}.{schema_name}' accessible")
+            except Exception as e:
+                result["schema"] = False
+                result["errors"].append(f"Schema error: {e}")
+                logger.error(f"   ✗ Schema error: {e}")
+            
+            cur.close()
+            conn.close()
+            
+            # Determine overall status
+            if all([result["connection"], result["database"], result["schema"]]):
+                result["status"] = "success"
+                logger.info("\n✓ All tests passed! Ready to deploy.")
+            else:
+                result["status"] = "failed"
+                logger.error("\n✗ Some tests failed. See errors above.")
+            
+        except Exception as e:
+            result["status"] = "error"
+            result["errors"].append(f"Connection test failed: {e}")
+            logger.error(f"Connection test error: {e}")
+        
+        logger.info("=" * 60)
+        return result
+
+    def _create_database_if_missing(self, cur: Any, db_name: str) -> None:
+        """Auto-create database if it doesn't exist."""
+        try:
+            self._execute_sql(
+                cur,
+                f"CREATE DATABASE IF NOT EXISTS {self._quote_ident(db_name)}",
+                context="CREATE DATABASE",
+            )
+            logger.info(f"Successfully created database: {db_name}")
+        except Exception as e:
+            raise Exception(
+                f"Failed to auto-create database '{db_name}': {e}. "
+                f"Ensure your Snowflake user has CREATE DATABASE permission."
+            ) from e

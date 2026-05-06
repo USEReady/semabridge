@@ -30,6 +30,7 @@ from semabridge.api.services.project_mapping_engine import (
     build_entity_mappings,
     sanitize_identifier,
 )
+from semabridge.utils.identifiers import IdentifierSanitizer
 
 
 AUTO_MAP_SNOWFLAKE_RESERVED = {
@@ -38,6 +39,7 @@ AUTO_MAP_SNOWFLAKE_RESERVED = {
     "DROP", "HAVING", "LIMIT", "OFFSET", "INTO", "PRIMARY", "FOREIGN",
     "KEY", "REFERENCES", "DATABASE", "SCHEMA", "WAREHOUSE", "ACCOUNT",
 }
+_SNOWFLAKE_SANITIZER = IdentifierSanitizer(force_uppercase=True, suppress_reserved=True)
 
 
 def _compat_parse_project_cfg_dict(project_cfg: str) -> Dict[str, Any]:
@@ -1063,7 +1065,10 @@ def _compat_collect_manual_mapping_overrides(project_id: str) -> List[Dict[str, 
         if not bool(mapping.get("is_user_edited")):
             continue
         source_path = str(mapping.get("source_path") or "").strip()
-        target_name = str(mapping.get("target_name") or "").strip()
+        target_name = _compat_sanitize_target_name_for_project(
+            project_id,
+            str(mapping.get("target_name") or "").strip(),
+        )
         if not source_path or not target_name:
             continue
         overrides.append({
@@ -1073,6 +1078,30 @@ def _compat_collect_manual_mapping_overrides(project_id: str) -> List[Dict[str, 
             "source_name": str(mapping.get("source_name") or "").strip(),
         })
     return overrides
+
+
+def _compat_project_target_type(project_id: str) -> str:
+    cfg = str(_compat_project_configs.get(project_id) or "").strip()
+    if not cfg:
+        return ""
+    parsed = _compat_parse_project_cfg_dict(cfg)
+    if not isinstance(parsed, dict):
+        return ""
+    target = parsed.get("target") if isinstance(parsed.get("target"), dict) else {}
+    if not target:
+        targets = parsed.get("targets")
+        if isinstance(targets, list) and targets and isinstance(targets[0], dict):
+            target = targets[0]
+    return str((target or {}).get("type") or "").strip().lower()
+
+
+def _compat_sanitize_target_name_for_project(project_id: str, target_name: str) -> str:
+    raw = str(target_name or "").strip()
+    if not raw:
+        return raw
+    if _compat_project_target_type(project_id) != "snowflake":
+        return raw
+    return _SNOWFLAKE_SANITIZER.sanitize_alias(raw)
 
 
 def _compat_apply_manual_mapping_overrides_to_cfg(config_yaml: str, project_id: str) -> str:
@@ -1269,7 +1298,10 @@ def _compat_build_project_entity_mappings(
         existing = _compat_mappings.get(mapping_id, {})
         merged = {**existing, **mapping}
         if existing.get("is_user_edited"):
-            manual_target = str(existing.get("target_name") or "").strip()
+            manual_target = _compat_sanitize_target_name_for_project(
+                project_id,
+                str(existing.get("target_name") or "").strip(),
+            )
             if manual_target:
                 merged["target_name"] = manual_target
                 merged["status"] = "manual"
@@ -1552,9 +1584,8 @@ def _compat_is_field_entity(mapping: Dict[str, Any]) -> bool:
 
 
 def _compat_hash_suffix(value: str) -> str:
-    import hashlib
-
-    return hashlib.md5(str(value or "").encode("utf-8")).hexdigest()[:4]
+    from semabridge.api.services.project_mapping_engine import deterministic_hash_suffix
+    return deterministic_hash_suffix(str(value or ""), size=4)
 
 
 def _compat_collision_fallback_name(source_name: str) -> str:
@@ -1626,9 +1657,11 @@ def _compat_serialize_auto_map_entity_mappings(
             first["validation_code"] = "COLLISION"
             first["validation_message"] = "Duplicate target name detected."
             first["suggested_target_name"] = str(first.get("suggested_target_name") or first.get("target_name") or "").strip() or _compat_collision_fallback_name(str(first.get("source_name") or ""))
-            suffix = _compat_hash_suffix(str(mapping.get("source_path") or mapping.get("source_name") or ""))
-            base_target = str(mapping.get("target_name") or "").strip()
-            mapping["target_name"] = f"{base_target}_{suffix}"
+            entity_seed = str(mapping.get("parent_source_path") or mapping.get("source_table") or "").strip()
+            field_seed = str(mapping.get("source_name") or "").strip()
+            suffix = _compat_hash_suffix(f"{entity_seed}::{field_seed}")
+            base_target = sanitize_identifier(str(mapping.get("target_name") or "").strip())
+            mapping["target_name"] = f"{base_target}_{suffix}".upper()
             mapping["collision_detected"] = True
             mapping["validation_status"] = "invalid"
             mapping["validation_code"] = "COLLISION"
@@ -1828,7 +1861,11 @@ async def update_mapping_compat(mapping_id: str, payload: dict):
     existing.update(incoming)
     existing["id"] = mapping_id
     if "target_name" in incoming:
-        existing["target_name"] = str(incoming.get("target_name") or "").strip()
+        project_id = str(existing.get("project_id") or incoming.get("project_id") or "").strip()
+        existing["target_name"] = _compat_sanitize_target_name_for_project(
+            project_id,
+            str(incoming.get("target_name") or "").strip(),
+        )
         existing["status"] = "manual"
         existing["is_user_edited"] = True
     existing["updated_at"] = _compat_now_iso()

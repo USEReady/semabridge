@@ -1657,6 +1657,26 @@ export default function CreateProjectPage() {
     }
   }, [targetConnectors, detectedMappings, createdProject]);
 
+  const handleBulkResolved = useCallback((resolvedMap) => {
+    if (!resolvedMap || typeof resolvedMap !== 'object') return;
+
+    setDetectedMappings((prev) => prev.map((row) => {
+      const nextTarget = resolvedMap[row.id];
+      if (!nextTarget) return row;
+      return {
+        ...row,
+        target_field: nextTarget,
+        status: 'auto_resolved',
+        validation_status: 'valid',
+        validation_code: 'OK',
+        validation_message: '',
+        collision_detected: false,
+        auto_resolved: true,
+        isDirty: true,
+      };
+    }));
+  }, []);
+
   // ── handleDeploy — deploys finalized mappings and advances to Step 5 ─────────
   const handleDeploy = useCallback(async () => {
     const blockingRows = detectedMappings.filter(row => isDryRunBlockingRow(row));
@@ -1995,6 +2015,7 @@ export default function CreateProjectPage() {
               onFieldEdit={handleFieldEdit}
               onDeployMappings={handleDeploy}
               targetConnectors={targetConnectors}
+              onBulkResolved={handleBulkResolved}
             />
           </ErrorBoundary>
         )}
@@ -3628,7 +3649,7 @@ function StepMappingOptionsOld({
   }, [onRunDryRun]);
 
   const filteredMappings = useMemo(() => {
-    const query = String(mappingSearch || '').trim().toLowerCase();
+    const query = String(mappingSearch || '').trim();
 
     return (detectedMappings || []).filter((mapping) => {
       const mappingText = [
@@ -3639,10 +3660,9 @@ function StepMappingOptionsOld({
           : []),
       ]
         .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
+        .join(' ');
 
-      if (query && !mappingText.includes(query)) return false;
+      if (query && !matchesSmartQuery(mappingText, query)) return false;
       if (showOnlyCollisions) {
         const hasCollision = Boolean(mapping?.collision_detected)
           || (mapping?.columns || []).some((column) => getColumnStatus(mapping, column) === 'collision');
@@ -3832,13 +3852,11 @@ function StepMappingOptionsOld({
           );
         })}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <div style={{ position: 'relative' }}>
-            <Search size={13} style={{ position: 'absolute', left: 8, top: 10, color: 'var(--text-tertiary)' }} />
-            <input
+          <div style={{ width: 240 }}>
+            <SmartSearchBar
               value={mappingSearch}
-              onChange={(e) => setMappingSearch(e.target.value)}
+              onChange={setMappingSearch}
               placeholder="Search fields..."
-              style={{ ...INPUT, width: 240, paddingLeft: 28 }}
             />
           </div>
           <button type="button" onClick={runDryRun} disabled={mappingLoading} style={{ ...filterButtonStyle }}>
@@ -3874,11 +3892,10 @@ function StepMappingOptionsOld({
             )}
             </h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, alignItems: 'center' }}>
-              <input
+              <SmartSearchBar
                 value={mappingSearch}
-                onChange={(e) => setMappingSearch(e.target.value)}
+                onChange={setMappingSearch}
                 placeholder="Search tables, columns, targets..."
-                style={{ ...INPUT, minWidth: 0 }}
               />
               <button
                 type="button"
@@ -4411,6 +4428,7 @@ function StepMappingOptions({
   onFieldEdit,
   onDeployMappings,
   targetConnectors,
+  onBulkResolved,
 }) {
   const [autoMappingMode, setAutoMappingMode] = useState(true);
   const [rows, setRows] = useState([]);
@@ -4862,6 +4880,7 @@ function StepMappingOptions({
               const row = detectedMappings.find(r => r.id === rowId);
               if (row) setEditingRow(row);
             }}
+            onBulkResolved={onBulkResolved}
           />
         </div>
       )}
@@ -4923,4 +4942,3 @@ function StepMappingOptions({
     </div>
   );
 }
-

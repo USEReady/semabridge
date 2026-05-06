@@ -311,7 +311,7 @@ class Project(Base):
 
     __tablename__ = "projects"
 
-    project_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     account_id: Mapped[Optional[str]] = mapped_column(ForeignKey("accounts.id"), nullable=True)
     workspace_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -346,6 +346,8 @@ class SnapshotRow(Base):
     __tablename__ = "snapshots"
     __table_args__ = (
         Index("ix_snapshots_project_ts", "project_id", "timestamp"),
+        Index("ix_snapshots_connector", "connector_id"),
+        Index("ix_snapshots_trigger", "trigger"),
     )
 
     snapshot_id: Mapped[str] = mapped_column(String(36), primary_key=True)

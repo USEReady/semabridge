@@ -14,6 +14,7 @@ across emitter, translator, and validator modules.
 from __future__ import annotations
 
 import re
+import hashlib
 import logging
 from dataclasses import dataclass, field
 from typing import Set, Optional, Dict, List, Tuple
@@ -497,14 +498,14 @@ class IdentifierRegistry:
         # Check for collision
         final_name = sanitized
         if sanitized in self._collision_count:
-            # Collision detected - use occurrence number for suffix
-            # First occurrence: counter=0, suffix=_2
-            # Second occurrence: counter=1, suffix=_3
-            occurrence_num = self._collision_count[sanitized] + 2
-            final_name = f"{sanitized}_{occurrence_num}"
+            # Collision detected — use a deterministic hash to produce a
+            # stable, Snowflake-safe suffix (e.g. REGION_A1B2) that does
+            # not change across re-deploys of the same model.
+            collision_hash = self._generate_deterministic_hash(name, sanitized)
+            final_name = f"{sanitized}_{collision_hash}"
             self._collision_count[sanitized] += 1
         else:
-            # First occurrence of this sanitized name - track it
+            # First occurrence of this sanitized name — track it
             self._collision_count[sanitized] = 0
 
         # Cache the result
@@ -556,3 +557,13 @@ class IdentifierRegistry:
             for original, final in self._transformations:
                 logger.debug(f"  '{original}' → '{final}'")
 
+    @staticmethod
+    def _generate_deterministic_hash(original_name: str, sanitized_base: str) -> str:
+        """Generate a stable 4-character uppercase hash for a collision suffix.
+
+        Seeds the hash with the original identifier so that two different
+        source fields that both sanitize to the same base (e.g. "REGION")
+        will still produce distinct hashes (e.g. "A1B2" vs "7F3C").
+        """
+        seed = f"{original_name}{sanitized_base}".encode("utf-8")
+        return hashlib.sha256(seed).hexdigest()[:4].upper()

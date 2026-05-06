@@ -996,7 +996,40 @@ class SnowflakeSchemaManager:
             f'SELECT {col_refs} FROM {self.config.schema_name}."{safe_table_name}" '
             f'LIMIT {sample_limit}'
         )
-        self._execute_sql(cursor, sample_sql, context=f"SAMPLE QUERY {safe_table_name}")
+        # Be resilient to stale/mismatched identifiers in mixed mapping flows:
+        # drop the offending projected column and retry sampling remaining columns.
+        while True:
+            try:
+                self._execute_sql(cursor, sample_sql, context=f"SAMPLE QUERY {safe_table_name}")
+                break
+            except Exception as exc:
+                text = str(exc or "")
+                match = re.search(r"invalid identifier '([^']+)'", text, flags=re.IGNORECASE)
+                invalid = str(match.group(1) if match else "").strip().replace('"', "")
+                invalid_upper = invalid.upper()
+                if not invalid_upper:
+                    raise
+                before = len(resolved_pairs)
+                resolved_pairs = [
+                    (req, src) for (req, src) in resolved_pairs
+                    if str(req).upper() != invalid_upper and str(src).upper() != invalid_upper
+                ]
+                if len(resolved_pairs) == before:
+                    raise
+                fallback_logs.append(
+                    f"Dropped invalid sampled identifier {safe_table_name}.{invalid_upper} and retried."
+                )
+                if not resolved_pairs:
+                    logger.warning(
+                        "Skipping sample type inference for %s after dropping invalid sampled identifiers",
+                        safe_table_name,
+                    )
+                    return [], fallback_logs
+                col_refs = ", ".join([f"{_q(src)} AS {_q(req)}" for req, src in resolved_pairs])
+                sample_sql = (
+                    f'SELECT {col_refs} FROM {self.config.schema_name}."{safe_table_name}" '
+                    f'LIMIT {sample_limit}'
+                )
         rows = cursor.fetchall() or []
         logger.info("Sample rows fetched for %s: %s", safe_table_name, len(rows))
 
@@ -1574,4 +1607,3 @@ class SnowflakeSchemaManager:
             )
 
         return history_view_ddls, dataset_source_overrides
-

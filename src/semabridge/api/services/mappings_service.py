@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Optional
-import hashlib
+
+from semabridge.api.services.project_mapping_engine import deterministic_hash_suffix, sanitize_identifier
 
 from semabridge.api.services.project_domain_service import (
     auto_map_compat,
@@ -60,10 +61,11 @@ class MappingService:
             if len(group) > 1:
                 for mapping in group:
                     mapping["mapping_status"] = "collision"
-                    # Generate hash suffix from source qualified path
-                    source_path = mapping.get("source_path", mapping.get("source_name", ""))
-                    hash_suffix = hashlib.md5(source_path.encode()).hexdigest()[:4]
-                    mapping["suggested_target_name"] = f"{mapping.get('target_name', '')}_{hash_suffix}"
+                    entity_name = str(mapping.get("source_table") or mapping.get("parent_source_path") or "").strip()
+                    field_name = str(mapping.get("source_name") or "").strip()
+                    hash_suffix = deterministic_hash_suffix(entity_name, field_name, size=4)
+                    base_target = sanitize_identifier(mapping.get("target_name") or mapping.get("source_name") or "")
+                    mapping["suggested_target_name"] = f"{base_target}_{hash_suffix}".upper()
                     mapping["target_name"] = mapping["suggested_target_name"]
         
         return mappings
