@@ -269,8 +269,13 @@ class ExecutionEngine:
             # Step 5: Validate and Parse Source Format
             self._step5_validate_source(context)
             
-            # Step 6: Convert to Canonical SML
+            # Step 6a: Extract Target Model for UPSERT (if applicable) - BEFORE Step 6
+            if hasattr(context, 'sync_mode') and context.sync_mode == "upsert" and target:
+                self._step6a_extract_target_for_upsert(context, target)
+            
+            # Step 6: Convert to Canonical SML (with target context if UPSERT)
             sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id, force=force)
+            
             self._apply_mapping_overrides_from_config(sml_model, Path(config_path), config_payload=config_dict)
             context.sml_model = sml_model
             
@@ -383,6 +388,7 @@ from semabridge.core.engine.extraction import snowflake as _ext_sf
 from semabridge.core.engine.extraction import fabric as _ext_fab
 from semabridge.core.engine.extraction import pbix as _ext_pbix
 ExecutionEngine._step4_extract                    = _ext_base._step4_extract
+ExecutionEngine._step6a_extract_target_for_upsert = _ext_base._step6a_extract_target_for_upsert
 ExecutionEngine._extract_snowflake                = _ext_sf._extract_snowflake
 ExecutionEngine._extract_snowflake_scoped         = _ext_sf._extract_snowflake_scoped
 ExecutionEngine._extract_snowflake_unscoped       = _ext_sf._extract_snowflake_unscoped

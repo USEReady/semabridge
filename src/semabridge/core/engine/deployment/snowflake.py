@@ -113,7 +113,10 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
 
     # ── DDL path ─────────────────────────────────────────────────────────
     if deployment_method in ("ddl", "both"):
-        deployed = emitter.deploy(context.sml_model)
+        deployed = emitter.deploy(
+            context.sml_model,
+            sync_mode=getattr(context, "sync_mode", "copy"),
+        )
         if not deployed:
             raise DeploymentError(
                 f"Snowflake DDL deployment returned unsuccessful status: "
