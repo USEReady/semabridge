@@ -207,7 +207,8 @@ async def _run_local(
                 targets=[TargetConfig(type=TargetType.SNOWFLAKE, database=database, schema_name=schema)]
             )
 
-            engine = SemaBridgeEngine(config)
+            # v4.3: Legacy path uses default COPY mode
+            engine = SemaBridgeEngine(config, sync_mode="copy")
             result = engine.execute()
 
             deployed = result.targets_succeeded > 0

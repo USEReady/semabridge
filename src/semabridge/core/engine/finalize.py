@@ -80,6 +80,7 @@ def _step7_persist_artifacts(
 
         # Commit SML to DuckDB
         sml_dict = context.sml_model.model_dump(mode='json') if context.sml_model else {}
+        sync_mode = getattr(context, 'sync_mode', 'copy')
 
         committed, snapshot_id = self.db_manager.commit_model(
             project_id=context.project_id,
@@ -88,6 +89,7 @@ def _step7_persist_artifacts(
             status="success",
             duration_ms=int((time.time() - context.start_time) * 1000),
             run_id=context.run_id,
+            sync_mode=sync_mode,
         )
 
         context.sml_snapshot_id = snapshot_id

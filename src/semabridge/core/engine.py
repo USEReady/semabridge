@@ -159,6 +159,7 @@ class SemaBridgeEngine:
         source_connector: Optional[SourceConnectorBase] = None,
         target_connectors: Optional[Dict[str, TargetConnectorBase]] = None,
         duckdb_manager: Optional[Any] = None,
+        sync_mode: str = "copy",
     ):
         """
         Initialize the engine.
@@ -168,11 +169,13 @@ class SemaBridgeEngine:
             source_connector: Optional pre-configured source connector
             target_connectors: Optional dict of target type -> connector
             duckdb_manager: Optional DuckDB manager for versioning
+            sync_mode: Sync mode (copy, upsert, etc.) - v4.3 rollback metadata
         """
         self.config = config
         self.source_connector = source_connector
         self.target_connectors = target_connectors or {}
         self.duckdb_manager = duckdb_manager
+        self.sync_mode = sync_mode
         
         # Semaphores for load shedding (per target type)
         self._target_semaphores: Dict[str, Semaphore] = {}
@@ -387,10 +390,11 @@ class SemaBridgeEngine:
                                 project_id=model_id,
                                 sml_json=sml_dict,
                                 tag=self.config.version_tag,
-                                initiated_by="engine"
+                                initiated_by="engine",
+                                sync_mode=self.sync_mode,
                             )
                             if committed:
-                                logger.info(f"Snapshot committed for {model_id}: {snapshot_id}")
+                                logger.info(f"Snapshot committed for {model_id}: {snapshot_id} (sync_mode={self.sync_mode})")
                                 changed_models.append(model_id)
                         except Exception as e:
                             logger.error(f"Failed to version model {model_id}: {e}")
