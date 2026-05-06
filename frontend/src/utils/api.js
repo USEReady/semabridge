@@ -963,7 +963,7 @@ export const api = {
 
     async updateProject(projectId, data) {
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}`, {
-            method: 'PUT',
+            method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
         });

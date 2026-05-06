@@ -1843,7 +1843,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     }
   }, [step, showStep1Validation]);
 
-  const currentDiff = useMemo(() => {
+  const projectDiff = useMemo(() => {
     if (!editMode || !initialData) return null;
     const diff = {};
     if (name !== initialData.name) diff.name = { old: initialData.name, new: name };
@@ -2097,6 +2097,11 @@ export default function CreateProjectPage({ editMode = false, initialData = null
             intermediateFormat={intermediateFormat}
             selectedWorkspace={selectedWorkspace}
             navigate={navigate}
+            editMode={editMode}
+            diff={projectDiff}
+            selectedModels={selectedModels}
+            initialSelectedModels={initialSelectedModels}
+            selectedModelNameByKey={selectedModelNameByKey}
           />
         )}
       </div>
@@ -4281,6 +4286,11 @@ function StepFinish({
   intermediateFormat,
   selectedWorkspace,
   navigate,
+  editMode,
+  diff,
+  selectedModels,
+  initialSelectedModels,
+  selectedModelNameByKey,
 }) {
   const createdProjectId = createdProject?.id || createdProject?.project_id;
 
