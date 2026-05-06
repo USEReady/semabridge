@@ -1,0 +1,58 @@
+lockfile_version: '1'
+generated_at: '2026-05-06T09:30:50.777833+00:00'
+apm_version: 0.12.2
+dependencies:
+- repo_url: addyosmani/agent-skills
+  host: github.com
+  resolved_commit: f504276d8e074912f4763e6163b436a4ffc74d0d
+  package_type: marketplace_plugin
+  deployed_files:
+  - .agents/skills/api-and-interface-design
+  - .agents/skills/browser-testing-with-devtools
+  - .agents/skills/ci-cd-and-automation
+  - .agents/skills/code-review-and-quality
+  - .agents/skills/code-simplification
+  - .agents/skills/context-engineering
+  - .agents/skills/debugging-and-error-recovery
+  - .agents/skills/deprecation-and-migration
+  - .agents/skills/documentation-and-adrs
+  - .agents/skills/frontend-ui-engineering
+  - .agents/skills/git-workflow-and-versioning
+  - .agents/skills/idea-refine
+  - .agents/skills/incremental-implementation
+  - .agents/skills/performance-optimization
+  - .agents/skills/planning-and-task-breakdown
+  - .agents/skills/security-and-hardening
+  - .agents/skills/shipping-and-launch
+  - .agents/skills/source-driven-development
+  - .agents/skills/spec-driven-development
+  - .agents/skills/test-driven-development
+  - .agents/skills/using-agent-skills
+  - .github/agents/README.agent.md
+  - .github/agents/code-reviewer.agent.md
+  - .github/agents/security-auditor.agent.md
+  - .github/agents/test-engineer.agent.md
+  - .github/hooks/agent-skills-hooks.json
+  - .github/hooks/scripts/agent-skills/hooks/session-start.sh
+  - .github/prompts/build.prompt.md
+  - .github/prompts/code-simplify.prompt.md
+  - .github/prompts/plan.prompt.md
+  - .github/prompts/review.prompt.md
+  - .github/prompts/ship.prompt.md
+  - .github/prompts/spec.prompt.md
+  - .github/prompts/test.prompt.md
+  deployed_file_hashes:
+    .github/agents/README.agent.md: sha256:69988408802646d47a377e611f3fa8583203a9920b52a3d272db763867a66317
+    .github/agents/code-reviewer.agent.md: sha256:23b8da087132f01accbf64522d652fa6146881c61b609d5cdb00adfa2880952d
+    .github/agents/security-auditor.agent.md: sha256:cfce362c05161cd1bdcc0a1b1e0b3a7e111efaf11abb8de8ed43c78c9d3a39e4
+    .github/agents/test-engineer.agent.md: sha256:e7a950b19e8204074db467f8a335a16db9289caca97d04f89693a9a21a947b65
+    .github/hooks/agent-skills-hooks.json: sha256:6e9f28cd955c3ec2a82cb5920593d440e24d4aac49700eb90b3f7de63c664896
+    .github/hooks/scripts/agent-skills/hooks/session-start.sh: sha256:9f3ab636c164463b26bc93af82626d42b184ce323a6b64c9a9aec873dd2c7cb7
+    .github/prompts/build.prompt.md: sha256:4e2df3d4ed93adffa03c66004e09e58ea9e7505fe02dc9e25e9e30daa77346f5
+    .github/prompts/code-simplify.prompt.md: sha256:108efe728fe4fe60264353bf5890822147aba87d2c5f8570bfdbce98139309f1
+    .github/prompts/plan.prompt.md: sha256:4b7f63bee84b3b99474746dee6fb447ed81d3c824eeedb62d90ec04e010967be
+    .github/prompts/review.prompt.md: sha256:8b438e341142787b9f7ecb6276103bab59b01c0d7d10c6ad26f50607a3dfa214
+    .github/prompts/ship.prompt.md: sha256:8e7198233105890cdb26dc8dacbd9008e1f52c076c327a0e3c3ca89df9320c27
+    .github/prompts/spec.prompt.md: sha256:a755af54310a3eccc51680f3c01944060a1864450020aabb3be3eef4b40e153e
+    .github/prompts/test.prompt.md: sha256:e80b6c801a2507e8f6eb7a53c62f78a0dd5e8e2a18d8482c470b5381f91e0874
+  content_hash: sha256:2bae9e0dbf9f5037771033d4d59948c3bedfb8d797ec1888e8446e33eda6ab01

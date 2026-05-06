@@ -196,3 +196,7 @@ Vagrantfile
 
 
 Config/projects/*
+
+
+# APM dependencies
+apm_modules/

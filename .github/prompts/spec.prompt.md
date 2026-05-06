@@ -1,12 +1,15 @@
 ---
-mode: agent
-description: Create a specification before significant implementation.
+description: Start spec-driven development — write a structured specification before writing code
 ---
 
-Run the specification workflow for this repository.
+Invoke the agent-skills:spec-driven-development skill.
 
-Required steps:
-1. Follow the skill at [spec-driven-development](../skills/spec-driven-development/SKILL.md).
-2. Define scope, assumptions, constraints, and acceptance criteria.
-3. Identify risks and non-goals.
-4. Produce an implementation-ready spec that can be handed to planning.
+Begin by understanding what the user wants to build. Ask clarifying questions about:
+1. The objective and target users
+2. Core features and acceptance criteria
+3. Tech stack preferences and constraints
+4. Known boundaries (what to always do, ask first about, and never do)
+
+Then generate a structured spec covering all six core areas: objective, commands, project structure, code style, testing strategy, and boundaries.
+
+Save the spec as SPEC.md in the project root and confirm with the user before proceeding.
