@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import usePageCache from '../hooks/usePageCache';
 import { Play, RefreshCw, Clock, CalendarClock, ChevronDown, ChevronRight, BarChart3, Cloud, Snowflake, Database, Link2 } from 'lucide-react';
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
@@ -179,10 +180,19 @@ export default function ProjectJobsPage() {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [scheduleDeletingId, setScheduleDeletingId] = useState('');
-  const [search, setSearch] = useState('');
-  const [searchUseRegex, setSearchUseRegex] = useState(false);
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [expandedRunId, setExpandedRunId] = useState(null);
+
+  // Cached UI state — survives SPA navigation within the same tab.
+  const [jobsCache, setJobsCache] = usePageCache('jobs-page', {
+    search: '',
+    searchUseRegex: false,
+    statusFilter: 'all',
+    expandedRunId: null,
+  });
+  const { search, searchUseRegex, statusFilter, expandedRunId } = jobsCache;
+  const setSearch = (v) => setJobsCache({ search: typeof v === 'function' ? v(search) : v });
+  const setSearchUseRegex = (v) => setJobsCache({ searchUseRegex: typeof v === 'function' ? v(searchUseRegex) : v });
+  const setStatusFilter = (v) => setJobsCache({ statusFilter: typeof v === 'function' ? v(statusFilter) : v });
+  const setExpandedRunId = (v) => setJobsCache({ expandedRunId: typeof v === 'function' ? v(expandedRunId) : v });
 
   useEffect(() => {
     let cancelled = false;

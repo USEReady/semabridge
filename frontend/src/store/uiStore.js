@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { createJSONStorage, persist } from 'zustand/middleware';
 
 const DEFAULT_FILTER_OPTIONS = {
   selectedFolder: null,
@@ -79,12 +80,13 @@ function areFilterOptionsEqual(a, b) {
 }
 
 export const useUIStore = create(
-  (set) => ({
-    ...DEFAULT_UI_STATE,
-    hasHydrated: true,
-    setHasHydrated: (hasHydrated) => set((state) => (
-      state.hasHydrated === hasHydrated ? state : { hasHydrated }
-    )),
+  persist(
+    (set) => ({
+      ...DEFAULT_UI_STATE,
+      hasHydrated: false,
+      setHasHydrated: (hasHydrated) => set((state) => (
+        state.hasHydrated === hasHydrated ? state : { hasHydrated }
+      )),
 
     setActiveProjectId: (activeProjectId) => set((state) => (
       state.activeProjectId === activeProjectId ? state : { activeProjectId }
@@ -168,9 +170,31 @@ export const useUIStore = create(
       return { ...DEFAULT_UI_STATE, hasHydrated: true };
     }),
   }),
+  {
+    name: 'semabridge-ui-state',
+    storage: createJSONStorage(() => sessionStorage),
+    // Only persist non-ephemeral UI state — omit hasHydrated itself.
+    partialize: (state) => ({
+      activeProjectId: state.activeProjectId,
+      searchQuery: state.searchQuery,
+      filterOptions: state.filterOptions,
+      lastNavigatedPath: state.lastNavigatedPath,
+      sidebarCollapsed: state.sidebarCollapsed,
+      projectListScrollTop: state.projectListScrollTop,
+      createProjectDraft: state.createProjectDraft,
+      projectConfigDrafts: state.projectConfigDrafts,
+    }),
+    onRehydrateStorage: () => (state) => {
+      // Mark hydration complete after sessionStorage has been read.
+      if (state) state.setHasHydrated(true);
+    },
+  },
+  ),
 );
 
 export function clearUIStoreStorage() {
+  // Clear persisted sessionStorage entry and reset in-memory state.
+  useUIStore.persist?.clearStorage();
   useUIStore.setState({
     ...DEFAULT_UI_STATE,
     hasHydrated: true,

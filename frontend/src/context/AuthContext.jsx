@@ -1,4 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { clearUIStoreStorage } from '../store/uiStore';
+
 
 const AUTH_BASE = (import.meta.env.VITE_AUTH_BASE_URL || '/auth').replace(/\/$/, '');
 const TOKEN_KEY = 'semabridge-token';
@@ -285,6 +287,8 @@ export function AuthProvider({ children }) {
       // Network error — still clear local state
     }
     clearAuth();
+    clearUIStoreStorage();
+    sessionStorage.clear();
   }, [clearAuth]);
 
   const value = useMemo(() => ({

@@ -27,7 +27,8 @@ import { useWorkspace } from '../context/WorkspaceContext';
 import Modal from '../components/common/Modal';
 import { useLogs } from '../context/LogsContext';
 import { useUIStore } from '../store/uiStore';
-import useSessionDraft from '../hooks/useSessionDraft';
+import { useProjectWizardStore } from '../store/projectWizardStore';
+import DraftToast from '../components/common/DraftToast';
 import DraftBanner from '../components/common/DraftBanner';
 import ErrorBoundary from '../components/ErrorBoundary';
 import DryRunMappingTable, { isBlockingRow as isDryRunBlockingRow } from '../components/DryRunMappingTable';
@@ -492,8 +493,26 @@ export default function CreateProjectPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { addLog } = useLogs();
-  const setCreateProjectDraft = useUIStore(state => state.setCreateProjectDraft);
-  const clearCreateProjectDraft = useUIStore(state => state.clearCreateProjectDraft);
+  const setWizardState = useProjectWizardStore(state => state.setWizardState);
+  const clearWizardState = useProjectWizardStore(state => state.clearWizardState);
+  const hasRestoredDraft = useProjectWizardStore(state => state.hasRestoredDraft);
+  const setHasRestoredDraft = useProjectWizardStore(state => state.setHasRestoredDraft);
+  const hasMeaningfulData = useProjectWizardStore(state => state.hasMeaningfulData);
+
+  // Destructure wizard state for local usage
+  const {
+    name, description, sourceConnector, targetConnectors: targetConnectorsRaw,
+    intermediateFormat, tags: tagsRaw, tagInput,
+    fabricAccountId, selectedConnectionId, snowflakeAccountId, databricksAccountId,
+    fabricWorkspaceId, snowflakeDatabase, snowflakeSchema,
+    targetDatabase, targetSchema, targetAccount, targetWarehouse,
+    domainHint, modelQueryRegex, pbixSourceMode,
+    selectedLocalFolderId, selectedPbixFilePath,
+    expandedWs, selectedModels: selectedModelsRaw, selectedModelNameByKey,
+    selectedDatabricksTables: selectedDatabricksTablesRaw, databricksQuery,
+    autoRelationships, generateDescriptions,
+    currentStepIndex: step,
+  } = useProjectWizardStore(state => state.wizard);
   const {
     workspaces: availableWorkspaces,
     activeWorkspaceId,
@@ -501,96 +520,141 @@ export default function CreateProjectPage() {
     isLoading: workspacesLoading,
   } = useWorkspace();
 
-  // --- Intent-aware draft hook ---
-  const {
-    hasDraft, draft: resumedDraft, saveDraft,
-    resumeDraft, discardDraft, clearDraft,
-  } = useSessionDraft('createProjectDraft');
-
-  const [step, setStep] = useState(() => {
-    const requestedStep = Number(new URLSearchParams(location.search || '').get('step'));
-    return requestedStep >= 1 && requestedStep <= 5 ? requestedStep : 1;
-  });
   const [showStep1Validation, setShowStep1Validation] = useState(false);
   const [saving, setSaving] = useState(false);
   const [createError, setCreateError] = useState('');
   const [runWarning, setRunWarning] = useState('');
 
+  const refreshLocalFolders = useCallback(async () => {
+    setLocalFoldersLoading(true);
+    try {
+      const data = await api.listLocalFolders();
+      setLocalFolders(Array.isArray(data) ? data : []);
+    } catch {
+      setLocalFolders([]);
+    } finally {
+      setLocalFoldersLoading(false);
+    }
+  }, []);
+
+  // Detection logic for resumed draft on mount
+  useEffect(() => {
+    if (sourceConnector === 'pbix') {
+      refreshLocalFolders();
+    }
+  }, [refreshLocalFolders, sourceConnector, step]);
+
+  useEffect(() => {
+    if (hasMeaningfulData()) {
+      setHasRestoredDraft(true);
+    }
+  }, []); // Only on initial mount
+
+  const setStep = useCallback((nextStep) => {
+    const val = typeof nextStep === 'function' ? nextStep(step) : nextStep;
+    setWizardState({ currentStepIndex: val });
+  }, [step, setWizardState]);
+
   // Step 1
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [sourceConnector, setSourceConnector] = useState('');
-  const [targetConnectors, setTargetConnectors] = useState(new Set());
-  const [intermediateFormat, setIntermediateFormat] = useState('osi');
   const configMode = 'form';
-  const [tags, setTags] = useState(new Set());
-  const [tagInput, setTagInput] = useState('');
+  const targetConnectors = useMemo(() => new Set(targetConnectorsRaw || []), [targetConnectorsRaw]);
+  const tags = useMemo(() => new Set(tagsRaw || []), [tagsRaw]);
+
+  const setName = useCallback((nextName) => {
+    setWizardState({ name: String(nextName ?? '') });
+  }, [setWizardState]);
+  const setDescription = useCallback((nextDescription) => {
+    setWizardState({ description: String(nextDescription ?? '') });
+  }, [setWizardState]);
+  const setSourceConnector = useCallback((nextConnector) => {
+    setWizardState({ sourceConnector: String(nextConnector ?? '') });
+  }, [setWizardState]);
+  const setIntermediateFormat = useCallback((nextFormat) => {
+    setWizardState({ intermediateFormat: String(nextFormat ?? 'osi') });
+  }, [setWizardState]);
+  const setTagInput = useCallback((nextTagInput) => {
+    setWizardState({ tagInput: String(nextTagInput ?? '') });
+  }, [setWizardState]);
+  const setTargetConnectors = useCallback((nextValue) => {
+    const prev = new Set(useProjectWizardStore.getState()?.wizard?.targetConnectors || []);
+    const resolved = typeof nextValue === 'function' ? nextValue(prev) : nextValue;
+    setWizardState({ targetConnectors: Array.from(resolved || []) });
+  }, [setWizardState]);
+  const setTags = useCallback((nextValue) => {
+    const prev = new Set(useProjectWizardStore.getState()?.wizard?.tags || []);
+    const resolved = typeof nextValue === 'function' ? nextValue(prev) : nextValue;
+    setWizardState({ tags: Array.from(resolved || []) });
+  }, [setWizardState]);
 
   // Step 2
-  const [fabricAccountId, setFabricAccountId] = useState('');
-  const [selectedConnectionId, setSelectedConnectionId] = useState('');
-  const [fabricAccounts, setFabricAccounts] = useState([]);
-  // Snowflake & Databricks multi-account
-  const [snowflakeAccountId, setSnowflakeAccountId] = useState('');
-  const [snowflakeAccounts, setSnowflakeAccounts] = useState([]);
-  const [databricksAccountId, setDatabricksAccountId] = useState('');
-  const [databricksAccounts, setDatabricksAccounts] = useState([]);
-  const [fabricWorkspaceId, setFabricWorkspaceId] = useState('');
-  const [snowflakeDatabase, setSnowflakeDatabase] = useState('');
-  const [snowflakeSchema, setSnowflakeSchema] = useState('');
-  const [targetDatabase, setTargetDatabase] = useState('');
-  const [targetSchema, setTargetSchema] = useState('');
-  const [targetAccount, setTargetAccount] = useState('');
-  const [targetWarehouse, setTargetWarehouse] = useState('');
-  const [domainHint, setDomainHint] = useState('');
-  const [modelQueryRegex, setModelQueryRegex] = useState(false);
+  const selectedModels = useMemo(() => new Set(selectedModelsRaw || []), [selectedModelsRaw]);
+  const selectedDatabricksTables = useMemo(() => new Set(selectedDatabricksTablesRaw || []), [selectedDatabricksTablesRaw]);
+
+  // Setters bound to store
+  const setFabricAccountId = (val) => setWizardState({ fabricAccountId: val });
+  const setSelectedConnectionId = (val) => setWizardState({ selectedConnectionId: val });
+  const setSnowflakeAccountId = (val) => setWizardState({ snowflakeAccountId: val });
+  const setDatabricksAccountId = (val) => setWizardState({ databricksAccountId: val });
+  const setFabricWorkspaceId = (val) => setWizardState({ fabricWorkspaceId: val });
+  const setSnowflakeDatabase = (val) => setWizardState({ snowflakeDatabase: val });
+  const setSnowflakeSchema = (val) => setWizardState({ snowflakeSchema: val });
+  const setTargetDatabase = (val) => setWizardState({ targetDatabase: val });
+  const setTargetSchema = (val) => setWizardState({ targetSchema: val });
+  const setTargetAccount = (val) => setWizardState({ targetAccount: val });
+  const setTargetWarehouse = (val) => setWizardState({ targetWarehouse: val });
+  const setDomainHint = (val) => setWizardState({ domainHint: val });
+  const setModelQueryRegex = (val) => setWizardState({ modelQueryRegex: !!val });
+  const setPbixSourceMode = (val) => setWizardState({ pbixSourceMode: val });
+
   const [pbixFile, setPbixFile] = useState(null);
   const [pbixUploadPath, setPbixUploadPath] = useState('');
   const [pbixUploading, setPbixUploading] = useState(false);
-  const [pbixSourceMode, setPbixSourceMode] = useState('TAG');
+  const [fabricAccounts, setFabricAccounts] = useState([]);
+  const [snowflakeAccounts, setSnowflakeAccounts] = useState([]);
+  const [databricksAccounts, setDatabricksAccounts] = useState([]);
+
   const [localFolders, setLocalFolders] = useState([]);
   const [localFoldersLoading, setLocalFoldersLoading] = useState(false);
-  const [selectedLocalFolderId, setSelectedLocalFolderId] = useState('');
   const [pbixFiles, setPbixFiles] = useState([]);
   const [pbixFilesLoading, setPbixFilesLoading] = useState(false);
   const [pbixFilesError, setPbixFilesError] = useState('');
-  const [selectedPbixFilePath, setSelectedPbixFilePath] = useState('');
+
+  const setSelectedLocalFolderId = (val) => setWizardState({ selectedLocalFolderId: val });
+  const setSelectedPbixFilePath = (val) => setWizardState({ selectedPbixFilePath: val });
+
   const [syncJob, setSyncJob] = useState(null);
   const [syncStarting, setSyncStarting] = useState(false);
   const [syncError, setSyncError] = useState('');
   const [syncErrorOpen, setSyncErrorOpen] = useState(false);
-
-  // Workspace list returned by the backend when the selected account changes.
   const [allWorkspacesFromApi, setAllWorkspacesFromApi] = useState([]);
 
   // Step 3
   const [workspaces, setWorkspaces] = useState([]);
   const [wsLoading, setWsLoading] = useState(false);
-  const [expandedWs, setExpandedWs] = useState({});
   const [wsModels, setWsModels] = useState({}); // wsid → [{id, name}]
-  const [selectedModels, setSelectedModels] = useState(new Set());
-  const [selectedModelNameByKey, setSelectedModelNameByKey] = useState({});
-  // Databricks Step 3 state
   const [databricksObjects, setDatabricksObjects] = useState([]); // [{catalog, schema, table}]
   const [databricksLoading, setDatabricksLoading] = useState(false);
-  const [selectedDatabricksTables, setSelectedDatabricksTables] = useState(new Set());
-  const [databricksQuery, setDatabricksQuery] = useState('');
   const [databricksQueryRegex, setDatabricksQueryRegex] = useState(false);
-  // Fetch Databricks sources when selected in Step 3
-  useEffect(() => {
-    if (step !== 3 || sourceConnector !== 'databricks') return;
-    setDatabricksLoading(true);
-    api.getDatabricksSources()
-      .then(data => {
-        setDatabricksObjects(Array.isArray(data) ? data : []);
-      })
-      .catch(() => setDatabricksObjects([]))
-      .finally(() => setDatabricksLoading(false));
-  }, [step, sourceConnector]);
+
+  const setExpandedWs = (val) => setWizardState({ expandedWs: typeof val === 'function' ? val(expandedWs) : val });
+  const setSelectedModels = (val) => {
+    const prev = new Set(selectedModelsRaw || []);
+    const next = typeof val === 'function' ? val(prev) : val;
+    setWizardState({ selectedModels: Array.from(next || []) });
+  };
+  const setSelectedModelNameByKey = (val) => setWizardState({ 
+    selectedModelNameByKey: typeof val === 'function' ? val(selectedModelNameByKey) : val 
+  });
+  const setSelectedDatabricksTables = (val) => {
+    const prev = new Set(selectedDatabricksTablesRaw || []);
+    const next = typeof val === 'function' ? val(prev) : val;
+    setWizardState({ selectedDatabricksTables: Array.from(next || []) });
+  };
+  const setDatabricksQuery = (val) => setWizardState({ databricksQuery: val });
 
   // Step 4
-  const [autoRelationships, setAutoRelationships] = useState(true);
-  const [generateDescriptions, setGenerateDescriptions] = useState(true);
+  const setAutoRelationships = (val) => setWizardState({ autoRelationships: !!val });
+  const setGenerateDescriptions = (val) => setWizardState({ generateDescriptions: !!val });
   const [detectedMappings, setDetectedMappings] = useState([]);
   const [detectedEntityMappings, setDetectedEntityMappings] = useState([]);
   const [mappingLoading, setMappingLoading] = useState(false);
@@ -612,77 +676,10 @@ export default function CreateProjectPage() {
   const [createReverseProject, setCreateReverseProject] = useState(false);
   const [createdProject, setCreatedProject] = useState(null);
 
-  // --- Hydrate form when user clicks "Resume" on the draft banner ---
-  useEffect(() => {
-    if (!resumedDraft) return;
-    const d = resumedDraft;
-    if (d.step != null) setStep(d.step);
-    if (d.name != null) setName(d.name);
-    if (d.description != null) setDescription(d.description);
-    if (d.sourceConnector != null) setSourceConnector(d.sourceConnector);
-    if (d.targetConnectors) setTargetConnectors(new Set(d.targetConnectors));
-    if (d.intermediateFormat != null) setIntermediateFormat(d.intermediateFormat);
-    if (d.tags) setTags(new Set(d.tags));
-    if (d.tagInput != null) setTagInput(d.tagInput);
-    if (d.fabricAccountId != null) setFabricAccountId(d.fabricAccountId);
-    if (d.selectedConnectionId != null) setSelectedConnectionId(d.selectedConnectionId);
-    if (d.snowflakeAccountId != null) setSnowflakeAccountId(d.snowflakeAccountId);
-    if (d.databricksAccountId != null) setDatabricksAccountId(d.databricksAccountId);
-    if (d.fabricWorkspaceId != null) setFabricWorkspaceId(d.fabricWorkspaceId);
-    if (d.snowflakeDatabase != null) setSnowflakeDatabase(d.snowflakeDatabase);
-    if (d.snowflakeSchema != null) setSnowflakeSchema(d.snowflakeSchema);
-    if (d.targetDatabase != null) setTargetDatabase(d.targetDatabase);
-    if (d.targetSchema != null) setTargetSchema(d.targetSchema);
-    if (d.targetAccount != null) setTargetAccount(d.targetAccount);
-    if (d.targetWarehouse != null) setTargetWarehouse(d.targetWarehouse);
-    if (d.pbixSourceMode != null) setPbixSourceMode(d.pbixSourceMode);
-    if (d.selectedLocalFolderId != null) setSelectedLocalFolderId(d.selectedLocalFolderId);
-    if (d.selectedPbixFilePath != null) setSelectedPbixFilePath(d.selectedPbixFilePath);
-    if (d.expandedWs != null) setExpandedWs(d.expandedWs);
-    if (d.selectedModels) setSelectedModels(new Set(d.selectedModels));
-    if (d.selectedModelNameByKey != null) setSelectedModelNameByKey(d.selectedModelNameByKey);
-    if (d.selectedDatabricksTables) setSelectedDatabricksTables(new Set(d.selectedDatabricksTables));
-    if (d.databricksQuery != null) setDatabricksQuery(d.databricksQuery);
-    if (d.autoRelationships != null) setAutoRelationships(d.autoRelationships);
-    if (d.generateDescriptions != null) setGenerateDescriptions(d.generateDescriptions);
-    if (Array.isArray(d.detectedMappings)) setDetectedMappings(d.detectedMappings);
-    if (Array.isArray(d.detectedEntityMappings)) setDetectedEntityMappings(d.detectedEntityMappings);
-    if (d.mappingDryRunStatus != null) setMappingDryRunStatus(d.mappingDryRunStatus);
-    if (d.mappingDryRunSignature != null) setMappingDryRunSignature(d.mappingDryRunSignature);
-    if (d.mappingDryRunError != null) setMappingDryRunError(d.mappingDryRunError);
-    if (d.unmappedAcknowledged != null) setUnmappedAcknowledged(Boolean(d.unmappedAcknowledged));
-  }, [resumedDraft]);
 
-  // --- Save draft (debounced) on every form field change ---
-  useEffect(() => {
-    // Don't save a draft when the form is still in its pristine state
-    // (no name, no source selected) to avoid creating empty drafts.
-    if (!name && !sourceConnector) return;
-    saveDraft({
-      step, name, description, sourceConnector, targetConnectors: Array.from(targetConnectors),
-      intermediateFormat, tags: Array.from(tags), tagInput,
-      fabricAccountId, selectedConnectionId, snowflakeAccountId, databricksAccountId,
-      fabricWorkspaceId, snowflakeDatabase, snowflakeSchema,
-      targetDatabase, targetSchema, targetAccount, targetWarehouse,
-      pbixSourceMode, selectedLocalFolderId, selectedPbixFilePath,
-      expandedWs, selectedModels: Array.from(selectedModels), selectedModelNameByKey,
-      selectedDatabricksTables: Array.from(selectedDatabricksTables), databricksQuery,
-      autoRelationships, generateDescriptions,
-      detectedMappings, detectedEntityMappings,
-      mappingDryRunStatus, mappingDryRunSignature, mappingDryRunError, unmappedAcknowledged,
-    });
-  }, [
-    step, name, description, sourceConnector, targetConnectors,
-    intermediateFormat, tags, tagInput,
-    fabricAccountId, selectedConnectionId, snowflakeAccountId, databricksAccountId,
-    fabricWorkspaceId, snowflakeDatabase, snowflakeSchema,
-    targetDatabase, targetSchema, targetAccount, targetWarehouse,
-    pbixSourceMode, selectedLocalFolderId, selectedPbixFilePath,
-    expandedWs, selectedModels, selectedModelNameByKey,
-    selectedDatabricksTables, databricksQuery,
-    autoRelationships, generateDescriptions, detectedMappings, detectedEntityMappings,
-    mappingDryRunStatus, mappingDryRunSignature, mappingDryRunError, unmappedAcknowledged, saveDraft,
-  ]);
+
+
+
 
   /* ─── HP search for model browser ─── */
   const allModels = useMemo(() => 
@@ -788,38 +785,6 @@ export default function CreateProjectPage() {
     setDetectedEntityMappings([]);
   }, [currentMappingSignature, mappingDryRunSignature]);
 
-  const refreshLocalFolders = useCallback(async () => {
-    setLocalFoldersLoading(true);
-    try {
-      const data = await api.listLocalFolders();
-      setLocalFolders(Array.isArray(data) ? data : []);
-    } catch {
-      setLocalFolders([]);
-    } finally {
-      setLocalFoldersLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (sourceConnector === 'pbix') {
-      refreshLocalFolders();
-    }
-  }, [refreshLocalFolders, sourceConnector, step]);
-
-  useEffect(() => {
-    if (sourceConnector !== 'pbix') {
-      clearCreateProjectDraft();
-      return;
-    }
-
-    setCreateProjectDraft({
-      sourceConnector,
-      sourceMode: pbixSourceMode,
-      folder_id: pbixSourceMode === 'TAG' ? (selectedLocalFolderId || '') : '',
-      folder_tag: pbixSourceMode === 'TAG' ? selectedLocalFolderTag : '',
-      pbix_path: resolvedPbixPath,
-    });
-  }, [clearCreateProjectDraft, pbixSourceMode, resolvedPbixPath, selectedLocalFolderId, selectedLocalFolderTag, setCreateProjectDraft, sourceConnector]);
 
   useEffect(() => {
     if (pbixSourceMode !== 'TAG' || sourceConnector !== 'pbix' || !selectedLocalFolderTag) {
@@ -1284,8 +1249,6 @@ export default function CreateProjectPage() {
         }
       }
 
-      // Clear the session draft upon successful project creation
-      clearDraft();
     } catch (err) {
       setCreatedProject(null);
       setCreateError(err?.message || 'Create project failed.');
@@ -1821,62 +1784,71 @@ export default function CreateProjectPage() {
 
   /* ─── Render ─── */
   return (
-    <div style={{ padding: '28px 16px', minHeight: '100%', maxWidth: 1400, margin: '0 auto', display: 'flex', flexDirection: 'column' }} className="md:px-10">
+    <div style={{ padding: '0', minHeight: '100%', display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
       {/* Top bar */}
       <div style={{
-        padding: '16px 32px', borderBottom: '1px solid var(--border-main)',
-        display: 'flex', alignItems: 'center', gap: 16,
-        position: 'sticky', top: 0, zIndex: 70, background: 'var(--bg-main)',
+        borderBottom: '1px solid var(--border-main)', background: 'var(--bg-main)',
       }}>
-        <button onClick={() => navigate('/projects')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 5, fontSize: 13 }}>
-          <ArrowLeft size={14} /> Projects
-        </button>
-        <span style={{ color: 'var(--border-main)' }}>|</span>
-        <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
-          {name.trim() ? `New Project: ${name.trim()}` : 'New Project'}
-        </span>
+        <div style={{ 
+          padding: '16px 24px', 
+          display: 'flex', alignItems: 'center', gap: 16
+        }}>
+          <button onClick={() => navigate('/projects')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 5, fontSize: 13 }}>
+            <ArrowLeft size={14} /> Projects
+          </button>
+          <span style={{ color: 'var(--border-main)' }}>|</span>
+          <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
+            {name.trim() ? `New Project: ${name.trim()}` : 'New Project'}
+          </span>
+        </div>
       </div>
 
       {/* Step indicator */}
-      <div style={{ padding: '24px 32px 0', display: 'flex', alignItems: 'center', gap: 0, position: 'sticky', top: 66, zIndex: 65, background: 'var(--bg-main)' }}>
-        {STEPS.map((s, i) => (
-          <div key={s.id} style={{ display: 'flex', alignItems: 'center' }}>
-            <div
-              style={{
-                display: 'flex', alignItems: 'center', gap: 8, cursor: s.id < step ? 'pointer' : 'default',
-              }}
-              onClick={() => s.id < step && setStep(s.id)}
-            >
-              <div style={{
-                width: 26, height: 26, borderRadius: '50%',
-                background: s.id < step ? 'var(--color-success)' : s.id === step ? 'var(--accent-blue)' : 'var(--bg-surface-raised)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: s.id <= step ? '#fff' : 'var(--text-tertiary)',
-                fontSize: 11, fontWeight: 700,
-                border: s.id === step ? '2px solid var(--accent-blue)' : '2px solid transparent',
-              }}>
-                {s.id < step ? <Check size={12} /> : s.id}
+      <div style={{ background: 'var(--bg-main)', borderBottom: '1px solid var(--border-main)' }}>
+        <div style={{ 
+          padding: '24px 24px 16px', 
+          display: 'flex', alignItems: 'center', gap: 0
+        }}>
+          {STEPS.map((s, i) => (
+            <div key={s.id} style={{ display: 'flex', alignItems: 'center' }}>
+              <div
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8, cursor: s.id < step ? 'pointer' : 'default',
+                }}
+                onClick={() => s.id < step && setStep(s.id)}
+              >
+                <div style={{
+                  width: 26, height: 26, borderRadius: '50%',
+                  background: s.id < step ? 'var(--color-success)' : s.id === step ? 'var(--accent-blue)' : 'var(--bg-surface-raised)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: s.id <= step ? '#fff' : 'var(--text-tertiary)',
+                  fontSize: 11, fontWeight: 700,
+                  border: s.id === step ? '2px solid var(--accent-blue)' : '2px solid transparent',
+                }}>
+                  {s.id < step ? <Check size={12} /> : s.id}
+                </div>
+                <span style={{ fontSize: 12, fontWeight: s.id === step ? 600 : 400, color: s.id === step ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
+                  {s.label}
+                </span>
               </div>
-              <span style={{ fontSize: 12, fontWeight: s.id === step ? 600 : 400, color: s.id === step ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
-                {s.label}
-              </span>
+              {i < STEPS.length - 1 && (
+                <div style={{ width: 32, height: 1, background: 'var(--border-main)', margin: '0 8px' }} />
+              )}
             </div>
-            {i < STEPS.length - 1 && (
-              <div style={{ width: 32, height: 1, background: 'var(--border-main)', margin: '0 8px' }} />
-            )}
-          </div>
-        ))}
+          ))}
+          <DraftToast 
+            visible={hasRestoredDraft} 
+            onStartFresh={() => {
+              clearWizardState();
+              window.location.reload();
+            }}
+            onDismiss={() => setHasRestoredDraft(false)}
+          />
+        </div>
       </div>
 
-      {/* Draft resume banner — shown when a saved draft exists and user hasn't resumed yet */}
-      <DraftBanner
-        visible={hasDraft && !resumedDraft}
-        onResume={resumeDraft}
-        onDiscard={discardDraft}
-      />
-
       {/* Step content */}
-      <div style={{ flex: 1, padding: '44px 32px 32px', maxWidth: step === 4 ? 1100 : 700 }}>
+      <div style={{ flex: 1, padding: '44px 24px 32px',  }}>
         {step === 1 && (
           <StepBasicInfo
             name={name} setName={setName}
@@ -2033,6 +2005,7 @@ export default function CreateProjectPage() {
             intermediateFormat={intermediateFormat}
             selectedWorkspace={selectedWorkspace}
             navigate={navigate}
+            clearWizardState={clearWizardState}
           />
         )}
       </div>
@@ -2083,6 +2056,14 @@ export default function CreateProjectPage() {
           {syncError || 'An unexpected sync error occurred.'}
         </div>
       </Modal>
+      <DraftToast 
+        visible={hasRestoredDraft} 
+        onStartFresh={() => {
+          clearWizardState();
+          window.location.reload();
+        }}
+        onDismiss={() => setHasRestoredDraft(false)}
+      />
     </div>
   );
 }
@@ -4200,6 +4181,7 @@ function StepFinish({
   intermediateFormat,
   selectedWorkspace,
   navigate,
+  clearWizardState,
 }) {
   const createdProjectId = createdProject?.id || createdProject?.project_id;
 
@@ -4230,13 +4212,13 @@ function StepFinish({
         </p>
         </div>
         {runWarning && (
-          <div style={{ maxWidth: 640, margin: '0 auto', padding: '12px 14px', borderRadius: 10, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.5, textAlign: 'left' }}>
+          <div style={{ maxWidth: 640,  padding: '12px 14px', borderRadius: 10, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.5, textAlign: 'left' }}>
             {runWarning}
           </div>
         )}
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
-          <button onClick={() => navigate('/projects')} style={footerBtn('secondary')}>Back to Projects</button>
+          <button onClick={() => { clearWizardState(); navigate('/projects'); }} style={footerBtn('secondary')}>Back to Projects</button>
           {createdProjectId ? (
             <button onClick={() => navigate(`/projects/${createdProjectId}/edit`)} style={footerBtn('primary')}>
               Configure Project
