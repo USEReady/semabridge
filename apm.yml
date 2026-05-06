@@ -1,9 +1,82 @@
 name: semabridge
 version: 1.0.0
-description: APM project for semabridge
+description: APM project for semabridge - Multi-cloud semantic modeling platform
 author: Premasai
+license: Proprietary
+
+# Architectural Standards Reference
+architecture:
+  standards: .github/agents/semabridge-architect.agent.md
+  instructions: .copilot-instructions.md
+  enforced: true
+  governance:
+    - separation_of_concerns
+    - plugin_first_extensibility
+    - secrets_in_environment_only
+    - deterministic_builds
+    - fail_fast_validation
+    - pascalcase_files
+    - lowercase_folders
+
+# Repository Structure Validation
+validation:
+  naming:
+    files: PascalCase
+    folders: lowercase
+  secrets:
+    allowed_sources:
+      - environment_variables
+    forbidden_locations:
+      - yaml_files
+      - source_code
+      - logs
+      - artifacts
+  structure:
+    required_folders:
+      - src
+      - tests
+      - docs
+      - examples
+      - scripts
+    root_only:
+      - README.md
+      - pyproject.toml
+      - .gitignore
+      - .github
+
+# Agent Skills & Dependencies
 dependencies:
   apm:
-  - addyosmani/agent-skills
+    - addyosmani/agent-skills
+    - semabridge-architect (internal)
   mcp: []
-scripts: {}
+  required_tools:
+    - semabridge-architect
+    - code-reviewer
+    - security-auditor
+
+# Development Practices
+development:
+  git:
+    merge_hygiene: true
+    require_feature_branch: true
+  commits:
+    require_session_notes: true
+    session_notes_path: session_notes.md
+    update_docs: true
+  code_review:
+    auto_invoke_agent: semabridge-architect
+    required_for_merge: true
+    check_violations:
+      - naming_conventions
+      - secrets_in_code
+      - separation_of_concerns
+      - plugin_contamination
+
+# Scripts for enforcement
+scripts:
+  validate-architecture: "python Scripts/ValidateArchitecture.py"
+  check-naming: "python Scripts/CheckNaming.py"
+  check-secrets: "python Scripts/CheckSecrets.py"
+  check-structure: "python Scripts/CheckStructure.py"
+  pre-commit: "python Scripts/PreCommitValidation.py"
