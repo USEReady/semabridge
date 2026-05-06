@@ -15,7 +15,7 @@ import {
   ChevronDown, ChevronRight, CheckSquare, Square, RefreshCw,
   Table2, AlertTriangle, Play, Search,
   Cloud, Database, Snowflake,
-  Info, Settings,
+  Info, Settings, Settings2,
 } from 'lucide-react';
 import { api } from '../utils/api';
 import { useHPSearch } from '../hooks/useHPSearch';
@@ -488,7 +488,7 @@ function getConnectorPresentation(type) {
   return { label: normalized || 'Connector', icon: <Database size={14} />, accent: '#94a3b8' };
 }
 
-export default function CreateProjectPage() {
+export default function CreateProjectPage({ editMode = false, initialData = null, onSaveConfig = null }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { addLog } = useLogs();
@@ -607,10 +607,57 @@ export default function CreateProjectPage() {
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [isDeploying, setIsDeploying] = useState(false);
   const [deployError, setDeployError] = useState('');
+  
+  // Edit mode mapping options
+  const [mappingMode, setMappingMode] = useState('saved');
 
   // Step 5
   const [createReverseProject, setCreateReverseProject] = useState(false);
   const [createdProject, setCreatedProject] = useState(null);
+
+  const initialSelectedModels = useMemo(() => {
+    if (!editMode || !initialData) return new Set();
+    const models = initialData.models || initialData.model || [];
+    return new Set(Array.isArray(models) ? models : [models]);
+  }, [editMode, initialData]);
+
+  // --- Hydrate form when editMode is active and initialData changes ---
+  useEffect(() => {
+    if (editMode && initialData) {
+      if (initialData.name != null) setName(initialData.name);
+      if (initialData.description != null) setDescription(initialData.description);
+      if (initialData.source_type != null) setSourceConnector(initialData.source_type);
+      if (initialData.target_type != null) setTargetConnectors(new Set([initialData.target_type]));
+      if (initialData.output_format != null) setIntermediateFormat(initialData.output_format);
+      if (Array.isArray(initialData.tags)) setTags(new Set(initialData.tags));
+      if (initialData.workspace_id != null) setFabricWorkspaceId(initialData.workspace_id);
+      if (initialData.identity_id != null) setFabricAccountId(initialData.identity_id);
+      if (initialData.database != null) setSnowflakeDatabase(initialData.database);
+      if (initialData.schema != null) setSnowflakeSchema(initialData.schema);
+      if (initialData.target_database != null) setTargetDatabase(initialData.target_database);
+      if (initialData.target_schema != null) setTargetSchema(initialData.target_schema);
+      if (initialData.target_identity_id != null) setFabricAccountId(initialData.target_identity_id);
+      if (initialData.target_workspace_id != null) setFabricWorkspaceId(initialData.target_workspace_id);
+
+      if (initialData.source_type === 'fabric') {
+        const models = initialData.models || initialData.model || [];
+        const modelNames = Array.isArray(models) ? models : [models];
+        const nextSelectedModels = new Set(modelNames);
+        const nextModelNameByKey = {};
+        modelNames.forEach(n => { nextModelNameByKey[n] = n; });
+        setSelectedModels(nextSelectedModels);
+        setSelectedModelNameByKey(nextModelNameByKey);
+      }
+      
+      if (mappingMode === 'saved' && Array.isArray(initialData.mappings) && initialData.mappings.length > 0) {
+        setDetectedMappings(initialData.mappings);
+        setMappingDryRunStatus('success');
+      } else if (mappingMode === 'auto') {
+        setDetectedMappings([]);
+        setMappingDryRunStatus('idle');
+      }
+    }
+  }, [editMode, initialData, mappingMode]);
 
   // --- Hydrate form when user clicks "Resume" on the draft banner ---
   useEffect(() => {
@@ -1164,6 +1211,20 @@ export default function CreateProjectPage() {
       } catch {
         relationships = [];
       }
+
+      if (editMode && onSaveConfig) {
+        const configYaml = buildConfigYaml(source, targets);
+        await onSaveConfig(configYaml, {
+          name: name.trim(),
+          description: description.trim(),
+          tags: Array.from(tags),
+        });
+        // Show success in the wizard finish step
+        setCreatedProject({ id: initialData?.id, name: name.trim(), _editSave: true });
+        setSaving(false);
+        return;
+      }
+
 
       const payload = {
         name: name.trim(),
@@ -1819,6 +1880,21 @@ export default function CreateProjectPage() {
     }
   }, [step, showStep1Validation]);
 
+  const currentDiff = useMemo(() => {
+    if (!editMode || !initialData) return null;
+    const diff = {};
+    if (name !== initialData.name) diff.name = { old: initialData.name, new: name };
+    if (description !== initialData.description) diff.description = { old: initialData.description, new: description };
+    const oldTags = Array.isArray(initialData.tags) ? initialData.tags : [];
+    const newTags = Array.from(tags);
+    if (JSON.stringify(oldTags.sort()) !== JSON.stringify(newTags.sort())) {
+      diff.tags = { old: oldTags.join(', '), new: newTags.join(', ') };
+    }
+    if (sourceConnector !== initialData.source_type) diff.sourceConnector = { old: initialData.source_type, new: sourceConnector };
+    if (!targetConnectors.has(initialData.target_type)) diff.targetConnectors = { old: initialData.target_type, new: Array.from(targetConnectors).join(', ') };
+    return Object.keys(diff).length > 0 ? diff : null;
+  }, [editMode, initialData, name, description, tags, sourceConnector, targetConnectors]);
+
   /* ─── Render ─── */
   return (
     <div style={{ padding: '28px 16px', minHeight: '100%', maxWidth: 1400, margin: '0 auto', display: 'flex', flexDirection: 'column' }} className="md:px-10">
@@ -1966,10 +2042,26 @@ export default function CreateProjectPage() {
             pbixFilesError={pbixFilesError}
             selectedPbixFilePath={selectedPbixFilePath}
             onSelectPbixFile={setSelectedPbixFilePath}
+            savedModels={initialSelectedModels}
           />
         )}
         {step === 4 && (
           <ErrorBoundary>
+            {editMode && (
+              <div style={{ marginBottom: 16, padding: '16px', background: 'var(--bg-surface)', border: '1px solid var(--border-main)', borderRadius: '8px' }}>
+                <div style={{ fontWeight: 600, marginBottom: '8px' }}>Mapping Mode</div>
+                <div style={{ display: 'flex', gap: '16px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                    <input type="radio" value="saved" checked={mappingMode === 'saved'} onChange={() => setMappingMode('saved')} />
+                    Use Last Saved Mapping
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                    <input type="radio" value="auto" checked={mappingMode === 'auto'} onChange={() => setMappingMode('auto')} />
+                    Auto-Detect Again
+                  </label>
+                </div>
+              </div>
+            )}
             <StepMappingOptions
               autoRelationships={autoRelationships} setAutoRelationships={setAutoRelationships}
               generateDescriptions={generateDescriptions} setGenerateDescriptions={setGenerateDescriptions}
@@ -2033,6 +2125,11 @@ export default function CreateProjectPage() {
             intermediateFormat={intermediateFormat}
             selectedWorkspace={selectedWorkspace}
             navigate={navigate}
+            editMode={editMode}
+            diff={currentDiff}
+            selectedModels={selectedModels}
+            selectedModelNameByKey={selectedModelNameByKey}
+            initialSelectedModels={initialSelectedModels}
           />
         )}
       </div>
@@ -2068,7 +2165,7 @@ export default function CreateProjectPage() {
             }}
           >
             {(saving || mappingLoading) && <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />}
-            {step === 5 ? (saving ? 'Creating…' : 'Create Project') : <>Continue <ArrowRight size={13} /></>}
+            {step === 5 ? (saving ? 'Saving…' : (editMode ? 'Save Changes' : 'Create Project')) : <>Continue <ArrowRight size={13} /></>}
           </button>
         </div>
       )}
@@ -2982,6 +3079,7 @@ function StepSourceBrowser({
   setDatabricksQuery = () => {},
   databricksQueryRegex = false,
   setDatabricksQueryRegex = () => {},
+  savedModels = new Set(),
 }) {
 
   if (sourceConnector === 'pbix') {
@@ -3133,6 +3231,7 @@ function StepSourceBrowser({
                   key={modelId}
                   model={{ ...m, _id: modelId }}
                   selected={selectedModels.has(modelId)}
+                  isSaved={savedModels.has(modelId)}
                   onToggle={() => toggleModel(modelId, m.name || m.id)}
                 />
               );
@@ -3304,6 +3403,7 @@ function StepSourceBrowser({
                   key={modelId}
                   model={{ ...m, _id: modelId }}
                   selected={selectedModels.has(modelId)}
+                  isSaved={savedModels.has(modelId) || (m.name && savedModels.has(m.name))}
                   onToggle={() => toggleModel(modelId, m.name || m.id)}
                 />
               );
@@ -3371,6 +3471,7 @@ function StepSourceBrowser({
                   key={modelId}
                   model={{ ...m, _id: modelId }}
                   selected={selectedModels.has(modelId)}
+                  isSaved={savedModels.has(modelId) || (m.name && savedModels.has(m.name))}
                   onToggle={() => toggleModel(modelId, m.name || m.id)}
                 />
               );
@@ -3414,7 +3515,7 @@ function StepSourceBrowser({
       {displayModels && (
         <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
           {displayModels.map(m => (
-            <ModelRow key={m._id} model={m} selected={selectedModels.has(m._id)} onToggle={() => toggleModel(m._id, m.name || m.id)} showWs />
+            <ModelRow key={m._id} model={m} selected={selectedModels.has(m._id)} isSaved={savedModels.has(m._id)} onToggle={() => toggleModel(m._id, m.name || m.id)} showWs />
           ))}
         </div>
       )}
@@ -3442,6 +3543,7 @@ function StepSourceBrowser({
               expanded={!!expandedWs[wsid]}
               models={wsModels[wsid]}
               selectedModels={selectedModels}
+              savedModels={savedModels}
               onToggle={() => toggleWorkspace(wsid)}
               onModelToggle={(mid, modelName) => toggleModel(`${wsid}::${mid}`, modelName)}
             />
@@ -3453,7 +3555,7 @@ function StepSourceBrowser({
   );
 }
 
-function WorkspaceRow({ ws, expanded, models, selectedModels, onToggle, onModelToggle }) {
+function WorkspaceRow({ ws, expanded, models, selectedModels, savedModels, onToggle, onModelToggle }) {
   return (
     <div>
       <div
@@ -3480,6 +3582,7 @@ function WorkspaceRow({ ws, expanded, models, selectedModels, onToggle, onModelT
               key={m.id}
               model={{ ...m, _id: `${ws.id}::${m.id}` }}
               selected={selectedModels.has(`${ws.id}::${m.id}`)}
+              isSaved={savedModels?.has(`${ws.id}::${m.id}`)}
               onToggle={() => onModelToggle(m.id, m.name || m.id)}
               indent
             />
@@ -3496,7 +3599,7 @@ function WorkspaceRow({ ws, expanded, models, selectedModels, onToggle, onModelT
   );
 }
 
-function ModelRow({ model, selected, onToggle, indent, showWs }) {
+function ModelRow({ model, selected, onToggle, indent, showWs, isSaved }) {
   return (
     <div
       onClick={onToggle}
@@ -3514,6 +3617,9 @@ function ModelRow({ model, selected, onToggle, indent, showWs }) {
         ? <CheckSquare size={14} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />
         : <Square size={14} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />}
       <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>{model.name || model.id}</span>
+      {isSaved && (
+        <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-secondary)', background: 'var(--border-main)40', padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', marginLeft: 4 }}>Saved</span>
+      )}
       {showWs && <span style={{ fontSize: 10, color: 'var(--text-tertiary)', marginLeft: 'auto' }}>{model.wsid}</span>}
     </div>
   );
@@ -4200,6 +4306,11 @@ function StepFinish({
   intermediateFormat,
   selectedWorkspace,
   navigate,
+  editMode,
+  diff,
+  selectedModels,
+  selectedModelNameByKey,
+  initialSelectedModels,
 }) {
   const createdProjectId = createdProject?.id || createdProject?.project_id;
 
@@ -4209,9 +4320,9 @@ function StepFinish({
         <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--accent-blue)20', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
           <Loader2 size={28} style={{ color: 'var(--accent-blue)', animation: 'spin 1s linear infinite' }} />
         </div>
-        <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Creating Project</h2>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>{editMode ? 'Saving Changes' : 'Creating Project'}</h2>
         <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 24 }}>
-          Setting up configurations and initializing "{name}"...
+          {editMode ? `Updating configuration for "${name}"...` : `Setting up configurations and initializing "${name}"...`}
         </p>
       </div>
     );
@@ -4224,10 +4335,10 @@ function StepFinish({
           <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--color-success)20', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
             <Check size={28} style={{ color: 'var(--color-success)' }} />
           </div>
-          <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Project Created!</h2>
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>{editMode ? 'Project Updated!' : 'Project Created!'}</h2>
           <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 24 }}>
-            {`Project "${name}" has been created successfully. You can now review your configuration or start your first sync.`}
-        </p>
+            {editMode ? `Project "${name}" has been updated successfully. You can now review your configuration or start your first sync.` : `Project "${name}" has been created successfully. You can now review your configuration or start your first sync.`}
+          </p>
         </div>
         {runWarning && (
           <div style={{ maxWidth: 640, margin: '0 auto', padding: '12px 14px', borderRadius: 10, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.5, textAlign: 'left' }}>
@@ -4251,23 +4362,98 @@ function StepFinish({
     );
   }
 
+  const renderDiff = (key, label) => {
+    if (!diff || !diff[key]) return null;
+    return (
+      <div style={{ padding: '12px 14px', borderRadius: 8, background: 'var(--bg-surface-raised)', border: '1px solid var(--accent-blue)40', marginBottom: 12 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent-blue)', textTransform: 'uppercase', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Settings2 size={12} /> Edited: {label}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+          <div>
+            <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 2 }}>Original</div>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', textDecoration: 'line-through' }}>{diff[key].old || <span style={{ fontStyle: 'italic', opacity: 0.5 }}>Empty</span>}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 2 }}>New</div>
+            <div style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 500 }}>{diff[key].new || <span style={{ fontStyle: 'italic', opacity: 0.5 }}>Empty</span>}</div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const showDiffs = editMode && diff && Object.keys(diff).length > 0;
+  
+  const currentSelectionNames = selectedModels?.size > 0 
+    ? Array.from(selectedModels).map(id => selectedModelNameByKey?.[id] || id.split('::').pop()).join(', ') 
+    : 'Everything (*)';
+
+  const wasSelectionNames = initialSelectedModels?.size > 0
+    ? Array.from(initialSelectedModels).map(id => selectedModelNameByKey?.[id] || id.split('::').pop()).join(', ')
+    : 'Everything (*)';
+
+  const modelsChanged = editMode && currentSelectionNames !== wasSelectionNames;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div>
-        <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Ready to Create</h2>
+        <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>
+          {editMode ? 'Review Changes' : 'Ready to Create'}
+        </h2>
         <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
-          Review your choices and create the project.
+          {editMode ? 'Review your changes and save the project configuration.' : 'Review your choices and create the project.'}
         </p>
       </div>
 
-      <div style={{ padding: '16px', borderRadius: 10, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>{name}</div>
-        <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.6 }}>
-          Source: {sourceConnector} <br />
-          Targets: {Array.from(targetConnectors).join(', ')} <br />
-          Intermediate Format: {intermediateFormat} <br />
-          Preferred Interface: UI Form <br />
-          Workspace: {selectedWorkspace?.name || 'Will use saved defaults'}
+      {showDiffs && (
+        <div style={{ padding: '16px', borderRadius: 10, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12, textTransform: 'uppercase' }}>Configuration Changes</div>
+          {renderDiff('name', 'Project Name')}
+          {renderDiff('description', 'Description')}
+          {renderDiff('tags', 'Tags')}
+          {renderDiff('sourceConnector', 'Source Connector')}
+          {renderDiff('targetConnectors', 'Target Connector(s)')}
+        </div>
+      )}
+
+      {/* The beautiful summary layout */}
+      <div style={{ padding: '16px', borderRadius: 10, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', display: 'grid', gap: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 4 }}>Project Name</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{name}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 4 }}>Source</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{sourceConnector}</div>
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 4 }}>Intermediate Format</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{intermediateFormat}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 4 }}>Workspace</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{selectedWorkspace?.name || 'My workspace'}</div>
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 4 }}>Selected Models</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{currentSelectionNames}</span>
+              {!modelsChanged && editMode && (
+                <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent-blue)', background: 'var(--accent-blue)20', padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase' }}>Saved</span>
+              )}
+            </div>
+            {modelsChanged && (
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', textDecoration: 'line-through' }}>
+                Was: {wasSelectionNames}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -4277,12 +4463,14 @@ function StepFinish({
         </div>
       )}
 
-      <ToggleOption
-        label="Create Reverse Project"
-        description={`Also create ${name || 'the project'}_${Array.from(targetConnectors)[0] || 'target'}_to_${sourceConnector} using reversed source/target roles.`}
-        checked={createReverseProject}
-        onChange={setCreateReverseProject}
-      />
+      {!editMode && (
+        <ToggleOption
+          label="Create Reverse Project"
+          description={`Also create ${name || 'the project'}_${Array.from(targetConnectors)[0] || 'target'}_to_${sourceConnector} using reversed source/target roles.`}
+          checked={createReverseProject}
+          onChange={setCreateReverseProject}
+        />
+      )}
     </div>
   );
 }

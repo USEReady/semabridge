@@ -15,6 +15,7 @@ import { api } from '../utils/api';
 import { buildMockRunLogs, saveRunLogs } from '../utils/runLogs';
 import { useUIStore } from '../store/uiStore';
 
+import ProjectWizard from './CreateProjectPage';
 import Modal from '../components/common/Modal';
 
 const INPUT = {
@@ -130,15 +131,7 @@ export default function ProjectConfigPage() {
     auto_relationships: true,
     generate_descriptions: true,
   });
-  const [fabricAccounts, setFabricAccounts] = useState([]);
-  const [fabricWorkspaces, setFabricWorkspaces] = useState([]);
-  const [fabricLoading, setFabricLoading] = useState(false);
 
-  // Target Fabric state (independent from source)
-  const [targetFabricAccounts, setTargetFabricAccounts] = useState([]);
-  const [targetFabricWorkspaces, setTargetFabricWorkspaces] = useState([]);
-  const [targetFabricLoading, setTargetFabricLoading] = useState(false);
-  const [databricksAccounts, setDatabricksAccounts] = useState([]);
 
   const [globalOpen, setGlobalOpen] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
@@ -390,127 +383,9 @@ export default function ProjectConfigPage() {
     };
   }, [id, isInvalidProjectId, loading]);
 
-  useEffect(() => {
-    if (configForm.source_type !== 'fabric') {
-      setFabricAccounts([]);
-      setFabricWorkspaces([]);
-      return;
-    }
 
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await api.getAccounts('FABRIC');
-        const list = Array.isArray(res) ? res : (res?.accounts || []);
-        if (!cancelled) {
-          setFabricAccounts(list);
-          if (!configForm.identity_id) {
-            const preferred = list.find(acc => acc.id === project?.account_id);
-            if (preferred?.id) {
-              setConfigForm(prev => ({ ...prev, identity_id: prev.identity_id || preferred.id }));
-            }
-          }
-        }
-      } catch {
-        if (!cancelled) setFabricAccounts([]);
-      }
-    })();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [configForm.source_type, configForm.identity_id, project?.account_id]);
-
-  const refreshFabricWorkspaces = async (identityId = configForm.identity_id) => {
-    if (!identityId) {
-      setFabricWorkspaces([]);
-      return;
-    }
-    setFabricLoading(true);
-    try {
-      const data = await api.fabricListWorkspaces(identityId);
-      const list = Array.isArray(data?.workspaces) ? data.workspaces : (Array.isArray(data) ? data : []);
-      setFabricWorkspaces(list);
-      if (!configForm.workspace_id && list[0]) {
-        setConfigForm(prev => ({
-          ...prev,
-          workspace_id: prev.workspace_id || String(list[0].id || list[0].workspace_id || ''),
-        }));
-      }
-    } catch {
-      setFabricWorkspaces([]);
-    } finally {
-      setFabricLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (configForm.source_type === 'fabric' && configForm.identity_id) {
-      refreshFabricWorkspaces(configForm.identity_id);
-    }
-  }, [configForm.source_type, configForm.identity_id]);
-
-  // ── Target Fabric: fetch accounts when target is fabric ──────────────────
-  useEffect(() => {
-    if (configForm.target_type !== 'fabric') {
-      setTargetFabricAccounts([]);
-      setTargetFabricWorkspaces([]);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await api.getAccounts('FABRIC');
-        const list = Array.isArray(res) ? res : (res?.accounts || []);
-        if (!cancelled) setTargetFabricAccounts(list);
-      } catch {
-        if (!cancelled) setTargetFabricAccounts([]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [configForm.target_type]);
-
-  const refreshTargetFabricWorkspaces = async (identityId = configForm.target_identity_id) => {
-    if (!identityId) {
-      setTargetFabricWorkspaces([]);
-      return;
-    }
-    setTargetFabricLoading(true);
-    try {
-      const data = await api.fabricListWorkspaces(identityId);
-      const list = Array.isArray(data?.workspaces) ? data.workspaces : (Array.isArray(data) ? data : []);
-      setTargetFabricWorkspaces(list);
-    } catch {
-      setTargetFabricWorkspaces([]);
-    } finally {
-      setTargetFabricLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (configForm.target_type === 'fabric' && configForm.target_identity_id) {
-      refreshTargetFabricWorkspaces(configForm.target_identity_id);
-    }
-  }, [configForm.target_type, configForm.target_identity_id]);
-
-  // ── Target Databricks: fetch accounts when target is databricks ──────────────────
-  useEffect(() => {
-    if (configForm.target_type !== 'databricks') {
-      setDatabricksAccounts([]);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await api.getAccounts('DATABRICKS');
-        const list = Array.isArray(res) ? res : (res?.accounts || []);
-        if (!cancelled) setDatabricksAccounts(list);
-      } catch {
-        if (!cancelled) setDatabricksAccounts([]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [configForm.target_type]);
+  // Unused useEffects removed from here
 
   const isLikelyBinaryOrGarbage = (text) => {
     const t = String(text || '').trim();
@@ -671,65 +546,67 @@ export default function ProjectConfigPage() {
     setConfigForm(parsed.form);
   };
 
-  const buildYamlFromForm = () => {
-    const allow = configForm.allow_models.split(',').map(s => s.trim()).filter(Boolean);
-    const block = configForm.block_models.split(',').map(s => s.trim()).filter(Boolean);
+  const buildYamlFromForm = (overrideForm = null, overrideProjectName = null) => {
+    const formToUse = overrideForm || configForm;
+    const projName = overrideProjectName !== null ? overrideProjectName : (project?.name || '');
+    const allow = (formToUse.allow_models || '').split(',').map(s => s.trim()).filter(Boolean);
+    const block = (formToUse.block_models || '').split(',').map(s => s.trim()).filter(Boolean);
 
     const nextTree = {
       ...(configTree && typeof configTree === 'object' ? configTree : {}),
-      project_name: project?.name || '',
+      project_name: projName,
       source: {
         ...((configTree?.source && typeof configTree.source === 'object') ? configTree.source : {}),
-        type: configForm.source_type,
+        type: formToUse.source_type,
       },
       target: {
         ...((configTree?.target && typeof configTree.target === 'object') ? configTree.target : {}),
-        type: configForm.target_type,
+        type: formToUse.target_type,
       },
       ui: {
         ...((configTree?.ui && typeof configTree.ui === 'object') ? configTree.ui : {}),
-        output_format: configForm.output_format,
+        output_format: formToUse.output_format,
       },
       options: {
         ...((configTree?.options && typeof configTree.options === 'object') ? configTree.options : {}),
-        auto_relationships: Boolean(configForm.auto_relationships),
-        generate_descriptions: Boolean(configForm.generate_descriptions),
+        auto_relationships: Boolean(formToUse.auto_relationships),
+        generate_descriptions: Boolean(formToUse.generate_descriptions),
       },
     };
 
-    if (configForm.source_type === 'fabric') {
-      if (configForm.identity_id) nextTree.source.identity_id = configForm.identity_id;
+    if (formToUse.source_type === 'fabric') {
+      if (formToUse.identity_id) nextTree.source.identity_id = formToUse.identity_id;
       else delete nextTree.source.identity_id;
-      nextTree.source.workspace_id = configForm.workspace_id || '';
+      nextTree.source.workspace_id = formToUse.workspace_id || '';
       delete nextTree.source.pbix_path;
       delete nextTree.source.pbix_folder;
       delete nextTree.source.source_path;
       delete nextTree.source.file_path;
       delete nextTree.source.database;
       delete nextTree.source.schema;
-    } else if (configForm.source_type === 'snowflake') {
+    } else if (formToUse.source_type === 'snowflake') {
       delete nextTree.source.identity_id;
-      nextTree.source.database = configForm.database || '';
-      nextTree.source.schema = configForm.schema || '';
+      nextTree.source.database = formToUse.database || '';
+      nextTree.source.schema = formToUse.schema || '';
       delete nextTree.source.pbix_path;
       delete nextTree.source.pbix_folder;
       delete nextTree.source.source_path;
       delete nextTree.source.file_path;
       delete nextTree.source.workspace_id;
-    } else if (configForm.source_type === 'pbix') {
+    } else if (formToUse.source_type === 'pbix') {
       delete nextTree.source.identity_id;
       delete nextTree.source.workspace_id;
       delete nextTree.source.database;
       delete nextTree.source.schema;
-      if (configForm.pbix_path?.trim()) {
-        nextTree.source.pbix_path = configForm.pbix_path.trim();
-        nextTree.source.pbix_file_path = configForm.pbix_path.trim();
+      if (formToUse.pbix_path?.trim()) {
+        nextTree.source.pbix_path = formToUse.pbix_path.trim();
+        nextTree.source.pbix_file_path = formToUse.pbix_path.trim();
       } else {
         delete nextTree.source.pbix_path;
         delete nextTree.source.pbix_file_path;
       }
-      if (configForm.pbix_folder?.trim()) {
-        nextTree.source.pbix_folder = configForm.pbix_folder.trim();
+      if (formToUse.pbix_folder?.trim()) {
+        nextTree.source.pbix_folder = formToUse.pbix_folder.trim();
       } else {
         delete nextTree.source.pbix_folder;
       }
@@ -746,11 +623,11 @@ export default function ProjectConfigPage() {
       delete nextTree.source.file_path;
     }
 
-    if (configForm.source_type === 'pbix') {
+    if (formToUse.source_type === 'pbix') {
       // PBIX extraction resolves model from file path/folder; do not force model fields.
       delete nextTree.source.model;
       delete nextTree.source.models;
-    } else if (configForm.source_type === 'fabric') {
+    } else if (formToUse.source_type === 'fabric') {
       if (allow.length) {
         nextTree.source.models = allow;
       } else {
@@ -765,17 +642,17 @@ export default function ProjectConfigPage() {
       delete nextTree.source.models;
     }
 
-    if (configForm.target_type === 'snowflake') {
-      if (configForm.target_database) nextTree.target.database = configForm.target_database;
+    if (formToUse.target_type === 'snowflake') {
+      if (formToUse.target_database) nextTree.target.database = formToUse.target_database;
       else delete nextTree.target.database;
-      if (configForm.target_schema) nextTree.target.schema = configForm.target_schema;
+      if (formToUse.target_schema) nextTree.target.schema = formToUse.target_schema;
       else delete nextTree.target.schema;
       delete nextTree.target.identity_id;
       delete nextTree.target.workspace_id;
-    } else if (configForm.target_type === 'fabric') {
-      if (configForm.target_identity_id) nextTree.target.identity_id = configForm.target_identity_id;
+    } else if (formToUse.target_type === 'fabric') {
+      if (formToUse.target_identity_id) nextTree.target.identity_id = formToUse.target_identity_id;
       else delete nextTree.target.identity_id;
-      if (configForm.target_workspace_id) nextTree.target.workspace_id = configForm.target_workspace_id;
+      if (formToUse.target_workspace_id) nextTree.target.workspace_id = formToUse.target_workspace_id;
       else delete nextTree.target.workspace_id;
       delete nextTree.target.database;
       delete nextTree.target.schema;
@@ -795,12 +672,16 @@ export default function ProjectConfigPage() {
     return stringifyYaml(normalized, { lineWidth: 0 });
   };
 
-  const handleSave = async () => {
+  const handleSave = async (wizardPayload = null) => {
     setSaving(true);
     setSaveInfo('');
     try {
       let nextYaml = '';
-      if (viewMode === 'yaml') {
+      if (wizardPayload && typeof wizardPayload === 'object' && wizardPayload.name) {
+        const { name, description, tags, configForm: updatedConfigForm } = wizardPayload;
+        await api.updateProject(project.id, { name, description, tags: Array.from(tags || []) });
+        nextYaml = buildYamlFromForm(updatedConfigForm, name);
+      } else if (viewMode === 'yaml') {
         const parsed = parseProjectYaml(yamlText, project);
         const normalizedTree = normalizeConfigTreeForApi(parsed.tree || {});
         setConfigTree(normalizedTree);
@@ -823,6 +704,13 @@ export default function ProjectConfigPage() {
       }
 
       const response = await api.saveProjectConfig(id, nextYaml);
+      
+      if (wizardPayload && typeof wizardPayload === 'object' && wizardPayload.name) {
+        setSaveInfo('Config saved successfully.');
+        navigate('/projects');
+        return;
+      }
+      
       setYamlText(nextYaml);
       if (response?.yaml_path) setYamlPath(response.yaml_path);
       if (Array.isArray(response?.warnings) && response.warnings.length) {
@@ -1371,6 +1259,17 @@ export default function ProjectConfigPage() {
       ? 'Sync Successful'
       : 'Sync Now';
 
+  const wizardInitialData = useMemo(() => {
+    return {
+      id: project?.id || project?.project_id,
+      name: project?.name || '',
+      description: project?.description || '',
+      tags: project?.tags || [],
+      mappings: projectMappings || [],
+      ...configForm,
+    };
+  }, [project, configForm, projectMappings]);
+
   if (loading) {
     return (
       <div style={{ padding: 36, color: 'var(--text-tertiary)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1391,12 +1290,14 @@ export default function ProjectConfigPage() {
     );
   }
 
+
+
   return (
     <div style={{ padding: '28px 16px', minHeight: '100%', maxWidth: 1400, margin: '0 auto', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} className="md:px-10">
       <div style={{ padding: '18px 28px', borderBottom: '1px solid var(--border-main)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <button
           onClick={() => navigate('/projects')}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 5, fontSize: 13 }}
         >
           <ArrowLeft size={14} /> Projects
         </button>
@@ -1446,18 +1347,10 @@ export default function ProjectConfigPage() {
               error={projectMappingsError}
             />
             {viewMode === 'form' ? (
-              <FormEditor
-                value={configForm}
-                onChange={setConfigForm}
-                fabricAccounts={fabricAccounts}
-                fabricWorkspaces={fabricWorkspaces}
-                fabricLoading={fabricLoading}
-                onRefreshFabricWorkspaces={() => refreshFabricWorkspaces()}
-                targetFabricAccounts={targetFabricAccounts}
-                targetFabricWorkspaces={targetFabricWorkspaces}
-                targetFabricLoading={targetFabricLoading}
-                onRefreshTargetFabricWorkspaces={() => refreshTargetFabricWorkspaces()}
-                databricksAccounts={databricksAccounts}
+              <ProjectWizard
+                editMode={true}
+                initialData={wizardInitialData}
+                onSaveConfig={handleSave}
               />
             ) : (
               <div style={{ height: '100%', minHeight: 420 }}>
