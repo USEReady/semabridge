@@ -252,6 +252,9 @@ def _step2_init_identifiers(
     """
     self._current_step = 2
     logger.info("Step 2: Initializing identifiers")
+    sync_mode = str(sync_mode or "copy").strip().lower()
+    if sync_mode not in {"copy", "upsert"}:
+        sync_mode = "copy"
 
     # Determine project_id
     if dataset_id:

@@ -16,6 +16,7 @@ from semabridge.connectors.snowflake_emitter import MissingSourceTableWarning
 from semabridge.core.settings import Settings, get_settings
 from semabridge.core.config_loader import get_project_file_path
 from semabridge.core.behavior import ConnectorBehavior
+from semabridge.core.sync_modes import apply_sync_mode
 from semabridge.core.run_summary import (
     STEP_NAMES,
     RunStatus,
@@ -107,26 +108,38 @@ def _step6_convert_to_sml(
         # target conversions and deployments operate on the same final model.
         self._normalize_relationships_for_target(sml_model)
         
-        # Apply sync_mode logic: v4.3 rollback - UPSERT now source-only (like COPY)
-        sync_mode = getattr(context, 'sync_mode', 'copy')
+        # Apply sync_mode logic after source conversion so target-only Snowflake
+        # objects are preserved before target-format generation/deployment.
+        sync_mode = str(getattr(context, 'sync_mode', 'copy') or 'copy').strip().lower()
         target_model = getattr(context, 'target_sml_model', None)
-        
-        # ROLLBACK v4.3: UPSERT merge disabled - target-only entities must be deleted
-        # See: Semabridge Version Control Rollback Verification Report v4.3
-        # Both COPY and UPSERT now use source-only deployment
-        # if sync_mode == "upsert" and target_model is not None:
-        #     from semabridge.core.sync_modes import apply_sync_mode
-        #     logger.info(f"=== UPSERT MERGE START ===")
-        #     logger.info(f"Source: {len(sml_model.datasets)} datasets, {len(sml_model.metrics)} metrics, {len(sml_model.dimensions)} dimensions")
-        #     logger.info(f"Target: {len(target_model.datasets)} datasets, {len(target_model.metrics)} metrics, {len(target_model.dimensions)} dimensions")
-        #     sml_model = apply_sync_mode(sml_model, target_model, "upsert")
-        #     logger.info(f"Merged: {len(sml_model.datasets)} datasets, {len(sml_model.metrics)} metrics, {len(sml_model.dimensions)} dimensions")
-        #     logger.info(f"=== UPSERT MERGE COMPLETE ===")
-        
+
         if sync_mode == "copy":
             logger.info(f"COPY mode: Using source only (target-only entities will be deleted)")
         elif sync_mode == "upsert":
-            logger.info(f"UPSERT mode: Using source only (rollback v4.3 - target-only entities will be deleted)")
+            logger.info("UPSERT mode: fetching live target state")
+            if target_model is not None:
+                logger.info("Live target fetched, applying merge")
+                logger.info(
+                    "UPSERT source before merge: %d datasets, %d metrics, %d dimensions",
+                    len(sml_model.datasets),
+                    len(sml_model.metrics),
+                    len(sml_model.dimensions),
+                )
+                logger.info(
+                    "UPSERT target before merge: %d datasets, %d metrics, %d dimensions",
+                    len(target_model.datasets),
+                    len(target_model.metrics),
+                    len(target_model.dimensions),
+                )
+                sml_model = apply_sync_mode(sml_model, target_model, "upsert")
+                logger.info(
+                    "Merge complete: %d datasets, %d metrics, %d dimensions",
+                    len(sml_model.datasets),
+                    len(sml_model.metrics),
+                    len(sml_model.dimensions),
+                )
+            else:
+                logger.warning("Could not fetch live target, falling back to COPY behavior")
         elif target_model is None:
             logger.info(f"No existing target found - treating as new deployment (source-only behavior)")
         
