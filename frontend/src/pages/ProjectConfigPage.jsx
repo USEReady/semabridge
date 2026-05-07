@@ -129,6 +129,7 @@ export default function ProjectConfigPage() {
     block_models: '',
     auto_relationships: true,
     generate_descriptions: true,
+    selection_model_ids: [],
   });
 
 
@@ -533,6 +534,7 @@ export default function ProjectConfigPage() {
         block_models: blockedModels.join(', '),
         auto_relationships: options.auto_relationships !== false,
         generate_descriptions: options.generate_descriptions !== false,
+        selection_model_ids: Array.isArray(tree.selection?.model_ids) ? tree.selection.model_ids : [],
       },
     };
   };
@@ -637,6 +639,15 @@ export default function ProjectConfigPage() {
     } else {
       nextTree.source.model = allow[0] || '*';
       delete nextTree.source.models;
+    }
+
+    if (Array.isArray(formToUse.selection_model_ids) && formToUse.selection_model_ids.length > 0) {
+      nextTree.selection = {
+        ...(nextTree.selection || {}),
+        model_ids: formToUse.selection_model_ids,
+      };
+    } else {
+      delete nextTree.selection;
     }
 
     if (formToUse.target_type === 'snowflake') {

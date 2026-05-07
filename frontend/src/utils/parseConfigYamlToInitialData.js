@@ -66,6 +66,7 @@ export function parseConfigYamlToInitialData(yamlText, projectMeta) {
       pbix_folder: String(parsedSource.pbix_folder || ''),
       pbix_uploaded_path: String(projectMeta?.pbix_file_path || parsedSource.pbix_file_path || parsedSource.pbix_path || ''),
       models,
+      selection_model_ids: selectionModelIds,
     };
   } catch {
     return fallback;

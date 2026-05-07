@@ -330,7 +330,7 @@ class FabricExtractor:
             }
             try:
                 logger.debug("Requesting new Azure AD access token (service principal)...")
-                response = requests.post(url, data=data)
+                response = requests.post(url, data=data, timeout=20)
                 response.raise_for_status()
                 result = response.json()
                 self._access_token = result["access_token"]
@@ -349,16 +349,16 @@ class FabricExtractor:
 
             cm = CredentialManager()
 
-            if cm.has_valid_token():
-                token_data = cm.get_msal_token()
-                self._access_token = token_data["access_token"]
-                # CredentialManager already checks expiry; use a conservative TTL.
-                self._token_expires_at = time.time() + 600
-                logger.debug("Using stored device-code access token")
-                return self._access_token
+            token_data = cm.get_msal_token()
+            if token_data and cm.has_valid_token():
+                self._access_token = token_data.get("access_token")
+                if self._access_token:
+                    # CredentialManager already checks expiry; use a conservative TTL.
+                    self._token_expires_at = time.time() + 600
+                    logger.debug("Using stored device-code access token")
+                    return self._access_token
 
             # Attempt silent refresh via stored refresh_token.
-            token_data = cm.get_msal_token()
             if token_data and token_data.get("refresh_token"):
                 import msal
                 tenant_id = token_data.get("tenant_id", "organizations")
@@ -437,7 +437,7 @@ class FabricExtractor:
         result = {}
         try:
             logger.info(f"Initiating extraction for model {dataset_id}...")
-            response = requests.post(api_url, headers=self._get_headers())
+            response = requests.post(api_url, headers=self._get_headers(), timeout=30)
             
             # Handle sync completion (rare but possible)
             if response.status_code == 200:
@@ -489,7 +489,7 @@ class FabricExtractor:
             time.sleep(retry_interval)
             
             try:
-                response = requests.get(operation_url, headers=self._get_headers())
+                response = requests.get(operation_url, headers=self._get_headers(), timeout=30)
                 response.raise_for_status()
                 
                 data = response.json()
@@ -513,7 +513,7 @@ class FabricExtractor:
                     logger.info(f"Fetching operation result from {result_url}...")
                     
                     try:
-                        res_response = requests.get(result_url, headers=self._get_headers())
+                        res_response = requests.get(result_url, headers=self._get_headers(), timeout=30)
                         res_response.raise_for_status()
                         res_data = res_response.json()
                         
@@ -596,7 +596,7 @@ class FabricExtractor:
         try:
             if not silent:
                 logger.info(f"Executing DAX query on {dataset_id}...")
-            response = requests.post(api_url, headers=self._get_headers(), json=payload)
+            response = requests.post(api_url, headers=self._get_headers(), json=payload, timeout=60)
             response.raise_for_status()
             
             # Parse response
@@ -713,7 +713,7 @@ class FabricExtractor:
         dataset_id: str,
         measure_name: str,
         group_by_dimensions: list[str],
-        filters: dict[str, Any] = None,
+        filters: Optional[dict[str, Any]] = None,
         use_fallback_pattern: bool = False,
     ) -> list[dict[str, Any]]:
         """
