@@ -526,6 +526,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const [saving, setSaving] = useState(false);
   const [createError, setCreateError] = useState('');
   const [runWarning, setRunWarning] = useState('');
+  const isHydratedRef = useRef(false);
+  const prevWorkspaceIdRef = useRef(null);
+  const prevSourceConnectorRef = useRef(null);
 
   const refreshLocalFolders = useCallback(async () => {
     setLocalFoldersLoading(true);
@@ -682,15 +685,20 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const [createReverseProject, setCreateReverseProject] = useState(false);
   const [createdProject, setCreatedProject] = useState(null);
 
-  const initialSelectedModels = useMemo(() => {
+  const savedModels = useMemo(() => {
     if (!editMode || !initialData) return new Set();
     const models = initialData.models || initialData.model || [];
-    return new Set(Array.isArray(models) ? models : [models]);
+    const modelNames = Array.isArray(models) ? models : [models];
+    const s = new Set(modelNames);
+    if (Array.isArray(initialData.selection_model_ids)) {
+      initialData.selection_model_ids.forEach(id => { if (id) s.add(id); });
+    }
+    return s;
   }, [editMode, initialData]);
 
   // --- Hydrate form when editMode is active and initialData changes ---
   useEffect(() => {
-    if (editMode && initialData) {
+    if (editMode && initialData && !isHydratedRef.current) {
       if (initialData.name != null) setName(initialData.name);
       if (initialData.description != null) setDescription(initialData.description);
       if (initialData.source_type != null) setSourceConnector(initialData.source_type);
@@ -706,12 +714,21 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       if (initialData.target_identity_id != null) setFabricAccountId(initialData.target_identity_id);
       if (initialData.target_workspace_id != null) setFabricWorkspaceId(initialData.target_workspace_id);
 
-      if (initialData.source_type === 'fabric') {
+      const st = String(initialData.source_type || '').toLowerCase();
+      if (st === 'fabric') {
         const models = initialData.models || initialData.model || [];
         const modelNames = Array.isArray(models) ? models : [models];
         const nextSelectedModels = new Set(modelNames);
         const nextModelNameByKey = {};
         modelNames.forEach(n => { nextModelNameByKey[n] = n; });
+        
+        // Also check if we have GUIDs in selection
+        if (Array.isArray(initialData.selection_model_ids)) {
+          initialData.selection_model_ids.forEach(id => {
+            if (id) nextSelectedModels.add(id);
+          });
+        }
+
         setSelectedModels(nextSelectedModels);
         setSelectedModelNameByKey(nextModelNameByKey);
       }
@@ -723,6 +740,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         setDetectedMappings([]);
         setMappingDryRunStatus('idle');
       }
+
+      isHydratedRef.current = true;
     }
   }, [editMode, initialData, mappingMode]);
 
@@ -1031,12 +1050,32 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   }, [sourceConnector]);
 
   useEffect(() => {
+    const wsChanged = fabricWorkspaceId !== prevWorkspaceIdRef.current;
+    const scChanged = sourceConnector !== prevSourceConnectorRef.current;
+
+    // During hydration or if values haven't changed, do nothing.
+    if (!isHydratedRef.current || (!wsChanged && !scChanged)) {
+      if (fabricWorkspaceId) prevWorkspaceIdRef.current = fabricWorkspaceId;
+      if (sourceConnector) prevSourceConnectorRef.current = sourceConnector;
+      return;
+    }
+
+    // If we're in editMode and the change is just setting the initial workspace, don't clear.
+    if (editMode && wsChanged && fabricWorkspaceId === initialData?.workspace_id) {
+      prevWorkspaceIdRef.current = fabricWorkspaceId;
+      return;
+    }
+
+    console.log('[SemaBridge] Source/Workspace changed, clearing selections:', { sourceConnector, fabricWorkspaceId });
     setSelectedModels(new Set());
     setSelectedModelNameByKey({});
     setExpandedWs({});
     setWsModels({});
     setModelQuery('');
-  }, [fabricWorkspaceId, sourceConnector, setModelQuery]);
+
+    prevWorkspaceIdRef.current = fabricWorkspaceId;
+    prevSourceConnectorRef.current = sourceConnector;
+  }, [fabricWorkspaceId, sourceConnector, setModelQuery, editMode, initialData?.workspace_id]);
 
 
   // Defensive: auto-select first available workspace if missing after loading
@@ -1071,7 +1110,26 @@ export default function CreateProjectPage({ editMode = false, initialData = null
           } else {
             setRunWarning('');
           }
-          setWsModels({ [fabricWorkspaceId]: data ?? [] });
+          const models = data ?? [];
+          setWsModels({ [fabricWorkspaceId]: models });
+
+          // Auto-resolve names for any selected GUIDs during hydration/edit
+          if (models.length > 0 && selectedModels.size > 0) {
+            setSelectedModelNameByKey(prev => {
+              const next = { ...prev };
+              let changed = false;
+              selectedModels.forEach(key => {
+                const id = key.includes('::') ? key.split('::')[1] : key;
+                const match = models.find(m => m.id === id);
+                if (match?.name && next[key] !== match.name) {
+                  next[key] = match.name;
+                  changed = true;
+                }
+              });
+              return changed ? next : prev;
+            });
+          }
+          
           setWsLoading(false); // Set loading to false immediately after 200 OK
         })
         .catch((err) => {
@@ -1476,9 +1534,21 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     if (selectedModels.size) {
       lines.push('selection:');
       lines.push('  model_ids:');
-      [...selectedModels]
-        .map(modelKey => modelKey.includes('::') ? modelKey.split('::')[1] : modelKey)
-        .forEach(modelId => lines.push(`    - "${escapeYamlString(modelId)}"`));
+      
+      const resolvedIds = new Set();
+      [...selectedModels].forEach(modelKey => {
+        const id = modelKey.includes('::') ? modelKey.split('::')[1] : modelKey;
+        resolvedIds.add(id);
+
+        // If it looks like a name (not a GUID), try to find its ID in the active workspace
+        const isGuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+        if (!isGuid && fabricWorkspaceId && wsModels[fabricWorkspaceId]) {
+          const match = wsModels[fabricWorkspaceId].find(m => m.name === id);
+          if (match?.id) resolvedIds.add(match.id);
+        }
+      });
+
+      [...resolvedIds].forEach(id => lines.push(`    - "${escapeYamlString(id)}"`));
     }
 
     lines.push('options:');
@@ -2062,7 +2132,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               pbixFilesError={pbixFilesError}
               selectedPbixFilePath={selectedPbixFilePath}
               onSelectPbixFile={setSelectedPbixFilePath}
-              savedModels={initialSelectedModels}
+              savedModels={savedModels}
             />
           )}
           {step === 4 && (
@@ -2148,7 +2218,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               editMode={editMode}
               diff={projectDiff}
               selectedModels={selectedModels}
-              initialSelectedModels={initialSelectedModels}
+              initialSelectedModels={savedModels}
               selectedModelNameByKey={selectedModelNameByKey}
               onClear={clearWizardState}
             />
@@ -3395,13 +3465,21 @@ function StepSourceBrowser({
           <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
             {displayModels.map(m => {
               const modelId = m._id || m.id;
+              const isSelected = selectedModels.has(modelId) || (m.name && (selectedModels.has(m.name) || selectedModels.has(m.name.trim())));
               return (
                 <ModelRow
                   key={modelId}
                   model={{ ...m, _id: modelId }}
-                  selected={selectedModels.has(modelId)}
-                  isSaved={savedModels.has(modelId) || (m.name && savedModels.has(m.name))}
-                  onToggle={() => toggleModel(modelId, m.name || m.id)}
+                  selected={isSelected}
+                  isSaved={savedModels.has(modelId) || (m.name && (savedModels.has(m.name) || savedModels.has(m.name.trim())))}
+                  onToggle={() => {
+                    if (m.name && (selectedModels.has(m.name) || selectedModels.has(m.name.trim()))) {
+                      const nameKey = selectedModels.has(m.name) ? m.name : m.name.trim();
+                      toggleModel(nameKey, nameKey);
+                    } else {
+                      toggleModel(modelId, m.name || m.id);
+                    }
+                  }}
                 />
               );
             })}
@@ -3463,13 +3541,21 @@ function StepSourceBrowser({
           ) : (
             displayModels.map(m => {
               const modelId = m._id || m.id;
+              const isSelected = selectedModels.has(modelId) || (m.name && (selectedModels.has(m.name) || selectedModels.has(m.name.trim())));
               return (
                 <ModelRow
                   key={modelId}
                   model={{ ...m, _id: modelId }}
-                  selected={selectedModels.has(modelId)}
-                  isSaved={savedModels.has(modelId) || (m.name && savedModels.has(m.name))}
-                  onToggle={() => toggleModel(modelId, m.name || m.id)}
+                  selected={isSelected}
+                  isSaved={savedModels.has(modelId) || (m.name && (savedModels.has(m.name) || savedModels.has(m.name.trim())))}
+                  onToggle={() => {
+                    if (m.name && (selectedModels.has(m.name) || selectedModels.has(m.name.trim()))) {
+                      const nameKey = selectedModels.has(m.name) ? m.name : m.name.trim();
+                      toggleModel(nameKey, nameKey);
+                    } else {
+                      toggleModel(modelId, m.name || m.id);
+                    }
+                  }}
                 />
               );
             })
@@ -3481,6 +3567,20 @@ function StepSourceBrowser({
 
   const displayModels = modelQuery ? modelResults : null;
 
+  const missingModels = useMemo(() => {
+    if (!savedModels || savedModels.size === 0) return [];
+    if (wsLoading || workspaces.length === 0 || !fabricWorkspaceId) return [];
+    if (!wsModels[fabricWorkspaceId]) return [];
+    
+    const wsNames = new Set(wsModels[fabricWorkspaceId].map(m => String(m.name || '').toLowerCase().trim()));
+    const wsIds = new Set(wsModels[fabricWorkspaceId].map(m => String(m.id || '').toLowerCase()));
+
+    return [...selectedModels].filter(selected => {
+      const s = String(selected).toLowerCase().trim();
+      return !wsNames.has(s) && !wsIds.has(s);
+    });
+  }, [selectedModels, savedModels, wsModels, fabricWorkspaceId, wsLoading, workspaces]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div>
@@ -3489,6 +3589,50 @@ function StepSourceBrowser({
           Choose which Fabric semantic models to include from {selectedWorkspace.name}. Leave all unchecked to include everything in this workspace.
         </p>
       </div>
+
+      {missingModels.length > 0 && (
+        <div style={{ padding: '12px 16px', background: 'var(--color-warning)15', border: '1px solid var(--color-warning)30', borderRadius: 8, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+          <div style={{ fontSize: 13, color: 'var(--color-warning)', marginTop: 2 }}>⚠️</div>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
+              Models previously synced but not found in workspace
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+              {missingModels.join(', ')}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedModels.size > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <CheckSquare size={12} /> Currently Selected ({selectedModels.size})
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {Array.from(selectedModels).map(key => {
+              const name = selectedModelNameByKey[key] || key.split('::').pop();
+              const isMissing = missingModels.includes(key);
+              return (
+                <div key={key} style={{ 
+                  display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', borderRadius: 6, 
+                  background: isMissing ? 'var(--color-warning)15' : 'var(--accent-blue)10', 
+                  border: `1px solid ${isMissing ? 'var(--color-warning)30' : 'var(--accent-blue)30'}`,
+                  fontSize: 11, color: isMissing ? 'var(--color-warning)' : 'var(--accent-blue)'
+                }}>
+                  {name}
+                  <button 
+                    onClick={() => toggleModel(key, name)}
+                    style={{ background: 'none', border: 'none', padding: 0, color: 'inherit', cursor: 'pointer', display: 'flex' }}
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Search */}
       <SmartSearchBar
@@ -3511,9 +3655,25 @@ function StepSourceBrowser({
       {/* Flat search results */}
       {displayModels && (
         <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
-          {displayModels.map(m => (
-            <ModelRow key={m._id} model={m} selected={selectedModels.has(m._id)} isSaved={savedModels.has(m._id)} onToggle={() => toggleModel(m._id, m.name || m.id)} showWs />
-          ))}
+          {displayModels.map(m => {
+            const isSelected = selectedModels.has(m._id) || (m.name && selectedModels.has(m.name));
+            return (
+              <ModelRow
+                key={m._id}
+                model={m}
+                selected={isSelected}
+                isSaved={savedModels.has(m._id) || (m.name && savedModels.has(m.name))}
+                onToggle={() => {
+                  if (m.name && selectedModels.has(m.name)) {
+                    toggleModel(m.name, m.name);
+                  } else {
+                    toggleModel(m._id, m.name || m.id);
+                  }
+                }}
+                showWs
+              />
+            );
+          })}
         </div>
       )}
 
@@ -3542,7 +3702,13 @@ function StepSourceBrowser({
                 selectedModels={selectedModels}
                 savedModels={savedModels}
                 onToggle={() => toggleWorkspace(wsid)}
-                onModelToggle={(mid, modelName) => toggleModel(`${wsid}::${mid}`, modelName)}
+                onModelToggle={(mid, modelName, isRemoveByName) => {
+                  if (isRemoveByName) {
+                    toggleModel(mid, modelName);
+                  } else {
+                    toggleModel(`${wsid}::${mid}`, modelName);
+                  }
+                }}
               />
             );
           })}
@@ -3574,16 +3740,27 @@ function WorkspaceRow({ ws, expanded, models, selectedModels, savedModels, onTog
       </div>
       {expanded && models && (
         <div className="custom-scrollbar" style={{ maxHeight: 250, overflowY: 'auto' }}>
-          {models.map(m => (
-            <ModelRow
-              key={m.id}
-              model={{ ...m, _id: `${ws.id}::${m.id}` }}
-              selected={selectedModels.has(`${ws.id}::${m.id}`)}
-              isSaved={savedModels?.has(`${ws.id}::${m.id}`)}
-              onToggle={() => onModelToggle(m.id, m.name || m.id)}
-              indent
-            />
-          ))}
+          {models.map(m => {
+            const modelId = `${ws.id}::${m.id}`;
+            const isSelected = selectedModels.has(modelId) || (m.name && (selectedModels.has(m.name) || selectedModels.has(m.name.trim())));
+            return (
+              <ModelRow
+                key={m.id}
+                model={{ ...m, _id: modelId }}
+                selected={isSelected}
+                isSaved={savedModels?.has(modelId) || (m.name && (savedModels?.has(m.name) || savedModels?.has(m.name.trim())))}
+                onToggle={() => {
+                  if (m.name && (selectedModels.has(m.name) || selectedModels.has(m.name.trim()))) {
+                    const nameKey = selectedModels.has(m.name) ? m.name : m.name.trim();
+                    onModelToggle(nameKey, nameKey, true);
+                  } else {
+                    onModelToggle(m.id, m.name || m.id, false);
+                  }
+                }}
+                indent
+              />
+            );
+          })}
         </div>
       )}
       {expanded && !models && (
@@ -3615,7 +3792,7 @@ function ModelRow({ model, selected, onToggle, indent, showWs, isSaved }) {
         : <Square size={14} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />}
       <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>{model.name || model.id}</span>
       {isSaved && (
-        <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-secondary)', background: 'var(--border-main)40', padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', marginLeft: 4 }}>Saved</span>
+        <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--accent-blue)', background: 'var(--accent-blue)15', border: '1px solid var(--accent-blue)30', padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', marginLeft: 4 }}>Previously Synced</span>
       )}
       {showWs && <span style={{ fontSize: 10, color: 'var(--text-tertiary)', marginLeft: 'auto' }}>{model.wsid}</span>}
     </div>
@@ -4364,7 +4541,7 @@ function StepFinish({
   editMode,
   diff,
   selectedModels,
-  initialSelectedModels,
+  savedModels,
   selectedModelNameByKey,
   onClear,
 }) {
@@ -4442,11 +4619,17 @@ function StepFinish({
   const showDiffs = editMode && diff && Object.keys(diff).length > 0;
 
   const currentSelectionNames = selectedModels?.size > 0
-    ? Array.from(selectedModels).map(id => selectedModelNameByKey?.[id] || id.split('::').pop()).join(', ')
+    ? Array.from(selectedModels)
+        .map(id => selectedModelNameByKey?.[id] || id.split('::').pop())
+        .sort()
+        .join(', ')
     : 'Everything (*)';
 
-  const wasSelectionNames = initialSelectedModels?.size > 0
-    ? Array.from(initialSelectedModels).map(id => selectedModelNameByKey?.[id] || id.split('::').pop()).join(', ')
+  const wasSelectionNames = savedModels?.size > 0
+    ? Array.from(savedModels)
+        .map(id => selectedModelNameByKey?.[id] || id.split('::').pop())
+        .sort()
+        .join(', ')
     : 'Everything (*)';
 
   const modelsChanged = editMode && currentSelectionNames !== wasSelectionNames;

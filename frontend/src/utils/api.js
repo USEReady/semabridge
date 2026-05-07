@@ -1174,7 +1174,11 @@ export const api = {
 
     async getProjectConfig(projectId, options = {}) {
         const preferRepo = Boolean(options?.preferRepo);
-        const query = preferRepo ? '?prefer_repo=true' : '';
+        const noCache = Boolean(options?.noCache);
+        const params = new URLSearchParams();
+        if (preferRepo) params.set('prefer_repo', 'true');
+        if (noCache) params.set('refresh', Date.now().toString());
+        const query = params.toString() ? `?${params.toString()}` : '';
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/config${query}`);
         return handleResponse(res);
     },

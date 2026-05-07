@@ -54,6 +54,9 @@ def _convert_to_snowflake_target(self, context: RunContext) -> None:
     config = context.config
     emitter = SnowflakeEmitter(config.snowflake, behavior=context.behavior)
 
+    if not context.sml_model:
+        raise ConversionError("No SML model available for target conversion. Ensure Stage 6 completed successfully.")
+
     output_dir = self._model_output_dir("reverse", model_name=context.project_id)
 
     ddls = emitter.generate_ddls(context.sml_model)
@@ -63,9 +66,9 @@ def _convert_to_snowflake_target(self, context: RunContext) -> None:
     ddl_path = output_dir / "semantic_view.sql"
     yaml_path = output_dir / "cortex_analyst.yaml"
 
-    with open(ddl_path, "w") as f:
+    with open(ddl_path, "w", encoding="utf-8") as f:
         f.write(full_ddl)
-    with open(yaml_path, "w") as f:
+    with open(yaml_path, "w", encoding="utf-8") as f:
         f.write(yaml_out)
 
     context.target_artifact_path = str(ddl_path)

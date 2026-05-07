@@ -13,6 +13,7 @@ import { Loader2, ArrowLeft } from 'lucide-react';
 
 import { api } from '../utils/api';
 import { parseConfigYamlToInitialData } from '../utils/parseConfigYamlToInitialData';
+import { useUIStore } from '../store/uiStore';
 import CreateProjectPage from './CreateProjectPage';
 
 export default function EditProjectPage() {
@@ -79,6 +80,8 @@ export default function EditProjectPage() {
       tags: meta?.tags || project?.tags || [],
     });
     await api.saveProjectConfig(id, yamlText);
+    // Clear stale draft so ProjectConfigPage loads fresh data from backend
+    useUIStore.getState().setProjectConfigDraft(id, null);
     // Navigation is handled after createdProject state is set in the wizard
   };
 

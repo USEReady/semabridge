@@ -448,6 +448,7 @@ export default function ProjectConfigPage() {
     auto_relationships: true,
     generate_descriptions: true,
     write_strategy: 'copy',
+    selection_model_ids: [],
   });
 
 
@@ -972,6 +973,15 @@ export default function ProjectConfigPage() {
     } else {
       nextTree.source.model = allow[0] || '*';
       delete nextTree.source.models;
+    }
+
+    if (Array.isArray(formToUse.selection_model_ids) && formToUse.selection_model_ids.length > 0) {
+      nextTree.selection = {
+        ...(nextTree.selection || {}),
+        model_ids: formToUse.selection_model_ids,
+      };
+    } else {
+      delete nextTree.selection;
     }
 
     if (formToUse.target_type === 'snowflake') {
