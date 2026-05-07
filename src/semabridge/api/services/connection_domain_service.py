@@ -1077,7 +1077,8 @@ async def fabric_list_workspaces(
         return {"workspaces": result}
 
     except httpx.RequestError as exc:
-        raise HTTPException(status_code=502, detail=f"Network error reaching Fabric API: {exc}")
+        logger.warning("fabric_list_workspaces: Fabric API request failed, returning empty workspace list: %s", exc)
+        return {"workspaces": []}
 
 
 async def debug_token_header(

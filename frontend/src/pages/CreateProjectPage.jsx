@@ -14,7 +14,7 @@ import {
   ArrowLeft, ArrowRight, Check, X, Loader2,
   ChevronDown, ChevronRight, CheckSquare, Square, RefreshCw,
   Table2, AlertTriangle, Play, Search,
-  Cloud, Database, Snowflake,
+  Cloud, Database, Snowflake, Zap, Save,
   Info, Settings, Settings2,
 } from 'lucide-react';
 import { api } from '../utils/api';
@@ -33,6 +33,7 @@ import DraftBanner from '../components/common/DraftBanner';
 import ErrorBoundary from '../components/ErrorBoundary';
 import DryRunMappingTable, { isBlockingRow as isDryRunBlockingRow } from '../components/DryRunMappingTable';
 import FieldMappingEditor from '../components/FieldMappingEditor';
+import { buildDryRunPayload } from '../utils/dryRunPayload';
 
 const STEPS = [
   { id: 1, label: 'Basic Info' },
@@ -493,6 +494,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const navigate = useNavigate();
   const location = useLocation();
   const { addLog } = useLogs();
+  const sidebarCollapsed = useUIStore(s => s.sidebarCollapsed);
   const setWizardState = useProjectWizardStore(state => state.setWizardState);
   const clearWizardState = useProjectWizardStore(state => state.clearWizardState);
   const hasRestoredDraft = useProjectWizardStore(state => state.hasRestoredDraft);
@@ -1518,15 +1520,15 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     setMappingLoading(true);
     try {
       const projectId = createdProject?.id || createdProject?.project_id || 'preview';
-
-      // We must access state directly or recreate the config builder logic since we are in useCallback
-      const sourceConfig = { type: sourceConnector };
-      if (sourceConnector === 'fabric' && fabricWorkspaceId) sourceConfig.workspace_id = fabricWorkspaceId;
-      if (sourceConnector === 'snowflake' && snowflakeDatabase) sourceConfig.database = snowflakeDatabase;
-
-      const targetConfig = { type: [...targetConnectors][0] || '' };
-      if (targetConfig.type === 'snowflake' && targetDatabase) targetConfig.database = targetDatabase;
-      if (targetConfig.type === 'fabric' && fabricWorkspaceId) targetConfig.workspace_id = fabricWorkspaceId;
+      const { sourceConfig, targetConfig } = buildDryRunPayload({
+        sourceConnector,
+        targetConnectors,
+        fabricAccountId,
+        fabricWorkspaceId,
+        snowflakeDatabase,
+        targetDatabase,
+        selectedModelNames,
+      });
 
       const payload = {
         source_config: sourceConfig,
@@ -1587,18 +1589,15 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     setMappingError('');
 
     const projectId = createdProject?.id || createdProject?.project_id || 'preview';
-
-    const sourceConfig = { type: sourceConnector };
-    if (sourceConnector === 'fabric') {
-      if (fabricWorkspaceId) sourceConfig.workspace_id = fabricWorkspaceId;
-    }
-    if (sourceConnector === 'snowflake') {
-      if (snowflakeDatabase) sourceConfig.database = snowflakeDatabase;
-    }
-
-    const targetConfig = { type: Array.from(targetConnectors)[0] || '' };
-    if (targetConfig.type === 'snowflake' && targetDatabase) targetConfig.database = targetDatabase;
-    if (targetConfig.type === 'fabric' && fabricWorkspaceId) targetConfig.workspace_id = fabricWorkspaceId;
+    const { sourceConfig, targetConfig } = buildDryRunPayload({
+      sourceConnector,
+      targetConnectors,
+      fabricAccountId,
+      fabricWorkspaceId,
+      snowflakeDatabase,
+      targetDatabase,
+      selectedModelNames,
+    });
 
     const selectedSources = selectedModelNames;
 
@@ -1863,286 +1862,360 @@ export default function CreateProjectPage({ editMode = false, initialData = null
 
   /* ─── Render ─── */
   return (
-    <div style={{ padding: '0', minHeight: '100%', display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-      {/* Top bar */}
+    <div style={{ padding: '0', minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-main)', position: 'relative' }}>
+      {/* Modern Premium Top Header */}
       <div style={{
-        borderBottom: '1px solid var(--border-main)', background: 'var(--bg-main)',
+        height: 72,
+        padding: '0 48px',
+        background: 'rgba(18, 20, 28, 0.95)',
+        backdropFilter: 'blur(12px)',
+        borderBottom: '1px solid var(--border-main)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        position: 'sticky',
+        top: 0,
+        zIndex: 100,
+        boxShadow: '0 4px 20px rgba(0, 0, 0, 0.15)'
       }}>
-        <div style={{
-          padding: '16px 24px',
-          display: 'flex', alignItems: 'center', gap: 16
-        }}>
-          <button onClick={() => navigate('/projects')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 5, fontSize: 13 }}>
-            <ArrowLeft size={14} /> Projects
+        <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+          <button
+            onClick={() => {
+              if (hasMeaningfulData && !editMode) {
+                if (window.confirm('Discard project draft?')) {
+                  clearWizardState();
+                  navigate('/projects');
+                }
+              } else {
+                navigate('/projects');
+              }
+            }}
+            style={{
+              background: 'var(--bg-surface-raised)',
+              border: '1px solid var(--border-main)',
+              borderRadius: 10,
+              width: 38,
+              height: 38,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              color: 'var(--text-secondary)',
+              transition: 'all 0.2s'
+            }}
+            title="Exit Wizard"
+          >
+            <X size={18} />
           </button>
-          <span style={{ color: 'var(--border-main)' }}>|</span>
-          <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
-            {name.trim() ? `New Project: ${name.trim()}` : 'New Project'}
-          </span>
-        </div>
-      </div>
 
-      {/* Step indicator */}
-      <div style={{ background: 'var(--bg-main)', borderBottom: '1px solid var(--border-main)' }}>
-        <div style={{
-          padding: '24px 24px 16px',
-          display: 'flex', alignItems: 'center', gap: 0
-        }}>
-          {STEPS.map((s, i) => (
-            <div key={s.id} style={{ display: 'flex', alignItems: 'center' }}>
-              <div
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 8, cursor: s.id < step ? 'pointer' : 'default',
-                }}
-                onClick={() => s.id < step && setStep(s.id)}
-              >
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <h1 style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.01em' }}>
+                {editMode ? 'Modernize Project' : 'New Semantic Project'}
+              </h1>
+              {name.trim() && (
                 <div style={{
-                  width: 26, height: 26, borderRadius: '50%',
-                  background: s.id < step ? 'var(--color-success)' : s.id === step ? 'var(--accent-blue)' : 'var(--bg-surface-raised)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: s.id <= step ? '#fff' : 'var(--text-tertiary)',
-                  fontSize: 11, fontWeight: 700,
-                  border: s.id === step ? '2px solid var(--accent-blue)' : '2px solid transparent',
+                  background: 'var(--accent-blue)15',
+                  color: 'var(--accent-blue)',
+                  padding: '2px 10px',
+                  borderRadius: 6,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  border: '1px solid var(--accent-blue)30'
                 }}>
-                  {s.id < step ? <Check size={12} /> : s.id}
+                  {name}
                 </div>
-                <span style={{ fontSize: 12, fontWeight: s.id === step ? 600 : 400, color: s.id === step ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
-                  {s.label}
-                </span>
-              </div>
-              {i < STEPS.length - 1 && (
-                <div style={{ width: 32, height: 1, background: 'var(--border-main)', margin: '0 8px' }} />
               )}
             </div>
-          ))}
-          <DraftToast
-            visible={hasRestoredDraft}
-            onStartFresh={() => {
-              clearWizardState();
-              window.location.reload();
-            }}
-            onDismiss={() => setHasRestoredDraft(false)}
-          />
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Settings size={10} />
+              Step {step} of 5 — {STEPS[step - 1].label}
+            </div>
+          </div>
+        </div>
+
+        {/* Wizard Progress Stepper (Compact) */}
+        <div style={{ display: 'flex', gap: 4 }}>
+          {STEPS.map((s, idx) => {
+            const isCompleted = step > idx + 1;
+            const isActive = step === idx + 1;
+            return (
+              <div
+                key={s.id}
+                style={{
+                  width: 40,
+                  height: 4,
+                  borderRadius: 2,
+                  background: isActive ? 'var(--accent-blue)' : (isCompleted ? 'var(--color-success)' : 'var(--border-main)'),
+                  transition: 'all 0.3s'
+                }}
+                title={s.label}
+              />
+            );
+          })}
         </div>
       </div>
 
-      {/* Step content */}
-      <div style={{ flex: 1, padding: '44px 24px 32px', }}>
-        {step === 1 && (
-          <StepBasicInfo
-            name={name} setName={setName}
-            description={description} setDescription={setDescription}
-            sourceConnector={sourceConnector} setSourceConnector={setSourceConnector}
-            targetConnectors={targetConnectors} setTargetConnectors={setTargetConnectors}
-            intermediateFormat={intermediateFormat} setIntermediateFormat={setIntermediateFormat}
-            tags={tags} setTags={setTags}
-            tagInput={tagInput} setTagInput={setTagInput}
-            showValidation={showStep1Validation}
-          />
-        )}
-        {step === 2 && (
-          <StepConnectorConfig
-            sourceConnector={sourceConnector}
-            targetConnectors={targetConnectors}
-            fabricAccountId={selectedConnectionId}
-            setFabricAccountId={(nextId) => {
-              setSelectedConnectionId(nextId);
-              setFabricAccountId(nextId);
-            }}
-            fabricAccounts={fabricAccounts}
-            fabricWorkspaceId={fabricWorkspaceId}
-            setFabricWorkspaceId={setFabricWorkspaceId}
-            snowflakeAccountId={snowflakeAccountId}
-            setSnowflakeAccountId={setSnowflakeAccountId}
-            snowflakeAccounts={snowflakeAccounts}
-            databricksAccountId={databricksAccountId}
-            setDatabricksAccountId={setDatabricksAccountId}
-            databricksAccounts={databricksAccounts}
-            snowflakeDatabase={snowflakeDatabase} setSnowflakeDatabase={setSnowflakeDatabase}
-            snowflakeSchema={snowflakeSchema} setSnowflakeSchema={setSnowflakeSchema}
-            targetDatabase={targetDatabase} setTargetDatabase={setTargetDatabase}
-            targetSchema={targetSchema} setTargetSchema={setTargetSchema}
-            targetAccount={targetAccount} setTargetAccount={setTargetAccount}
-            targetWarehouse={targetWarehouse} setTargetWarehouse={setTargetWarehouse}
-            domainHint={domainHint} setDomainHint={setDomainHint}
-            pbixFile={pbixFile}
-            setPbixFile={setPbixFile}
-            pbixUploadPath={pbixUploadPath}
-            pbixUploading={pbixUploading}
-            setPbixUploading={setPbixUploading}
-            pbixSourceMode={pbixSourceMode}
-            setPbixSourceMode={setPbixSourceMode}
-            localFolders={localFolders}
-            localFoldersLoading={localFoldersLoading}
-            selectedLocalFolderId={selectedLocalFolderId}
-            setSelectedLocalFolderId={setSelectedLocalFolderId}
-            onUploadSuccess={({ file, path }) => {
-              if (file) setPbixFile(file);
-              setPbixUploadPath(String(path || '').trim());
-            }}
-            workspaces={liveFabricWorkspaces}
-            workspacesLoading={workspacesLoading}
-            isRefreshingWorkspaces={isRefreshingWorkspaces}
-            fetchFabricWorkspaces={() => fetchFabricWorkspaces(selectedConnectionId)}
-            runWarning={runWarning}
-          />
-        )}
-        {step === 3 && (
-          <StepSourceBrowser
-            sourceConnector={sourceConnector}
-            selectedWorkspace={selectedWorkspace}
-            workspaces={workspaces} wsLoading={wsLoading}
-            expandedWs={expandedWs} toggleWorkspace={toggleWorkspace}
-            wsModels={wsModels}
-            selectedModels={selectedModels} toggleModel={toggleModel}
-            clearSelectedModels={clearSelectedModels}
-            modelQuery={modelQuery} setModelQuery={setModelQuery}
-            modelQueryRegex={modelQueryRegex}
-            setModelQueryRegex={setModelQueryRegex}
-            modelResults={modelResultsByConnector.fabric}
-            snowflakeResults={modelResultsByConnector.snowflake}
-            databricksQuery={databricksQuery}
-            setDatabricksQuery={setDatabricksQuery}
-            databricksQueryRegex={databricksQueryRegex}
-            setDatabricksQueryRegex={setDatabricksQueryRegex}
-            databricksObjects={databricksObjects}
-            databricksLoading={databricksLoading}
-            selectedDatabricksTables={selectedDatabricksTables}
-            setSelectedDatabricksTables={setSelectedDatabricksTables}
-            allModels={allModels}
-            pbixSourceMode={pbixSourceMode}
-            selectedLocalFolderTag={selectedLocalFolderTag}
-            pbixFiles={pbixFiles}
-            pbixFilesLoading={pbixFilesLoading}
-            pbixFilesError={pbixFilesError}
-            selectedPbixFilePath={selectedPbixFilePath}
-            onSelectPbixFile={setSelectedPbixFilePath}
-            savedModels={initialSelectedModels}
-          />
-        )}
-        {step === 4 && (
-          <ErrorBoundary>
-            {editMode && (
-              <div style={{ marginBottom: 16, padding: '16px', background: 'var(--bg-surface)', border: '1px solid var(--border-main)', borderRadius: '8px' }}>
-                <div style={{ fontWeight: 600, marginBottom: '8px' }}>Mapping Mode</div>
-                <div style={{ display: 'flex', gap: '16px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                    <input type="radio" value="saved" checked={mappingMode === 'saved'} onChange={() => setMappingMode('saved')} />
-                    Use Last Saved Mapping
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                    <input type="radio" value="auto" checked={mappingMode === 'auto'} onChange={() => setMappingMode('auto')} />
-                    Auto-Detect Again
-                  </label>
-                </div>
-              </div>
-            )}
-            <StepMappingOptions
-              autoRelationships={autoRelationships} setAutoRelationships={setAutoRelationships}
-              generateDescriptions={generateDescriptions} setGenerateDescriptions={setGenerateDescriptions}
-              detectedMappings={detectedMappings}
-              mappingLoading={mappingLoading}
-              mappingError={mappingError}
-              dryRunStatus={mappingDryRunStatus}
-              dryRunError={mappingDryRunError}
-              unmappedAcknowledged={unmappedAcknowledged}
-              setUnmappedAcknowledged={setUnmappedAcknowledged}
-              selectedModelNames={selectedModelNames}
-              sourceConnector={sourceConnector}
-              onUpdateTableTarget={updateTableMappingTarget}
-              onUpdateColumnTarget={updateColumnMappingTarget}
-              onRunDryRun={handleDryRun}
-              onClearMappings={() => {
-                setDetectedMappings([]);
-                setDetectedEntityMappings([]);
-              }}
-              onRowsChange={(rows) => {
-                setDetectedEntityMappings(
-                  rows
-                    .filter(r => r.isDirty)
-                    .map(r => ({
-                      id: r.id,
-                      source_path: r.source_path,
-                      entity_kind: r.entity_kind,
-                      source_name: r.source_field,
-                      target_name: r.target_field,
-                      status: r.status,
-                    }))
-                );
-              }}
-              onDeploy={handleDeployMapping}
-              onProceedStateChange={setMappingReadyToProceed}
-              primaryTargetConnector={[...targetConnectors][0] || ''}
-              dryRunData={dryRunData}
-              editingRow={editingRow}
-              setEditingRow={setEditingRow}
-              isSavingEdit={isSavingEdit}
-              isDeploying={isDeploying}
-              deployError={deployError}
-              onFieldEdit={handleFieldEdit}
-              onDeployMappings={handleDeploy}
-              targetConnectors={targetConnectors}
-              onBulkResolved={handleBulkResolved}
+      {/* Main Content Area */}
+      <div style={{
+        flex: 1,
+        padding: '48px',
+        paddingBottom: 140, // Space for the fixed footer
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        overflowY: 'auto'
+      }}>
+        <div style={{ 
+          width: '100%', 
+          maxWidth: (step === 3 || step === 4) ? 1400 : 900,
+          transition: 'max-width 0.3s ease'
+        }}>
+          {/* Step content */}
+          {step === 1 && (
+            <StepBasicInfo
+              name={name} setName={setName}
+              description={description} setDescription={setDescription}
+              sourceConnector={sourceConnector} setSourceConnector={setSourceConnector}
+              targetConnectors={targetConnectors} setTargetConnectors={setTargetConnectors}
+              intermediateFormat={intermediateFormat} setIntermediateFormat={setIntermediateFormat}
+              tags={tags} setTags={setTags}
+              tagInput={tagInput} setTagInput={setTagInput}
+              showValidation={showStep1Validation}
+              editMode={editMode}
             />
-          </ErrorBoundary>
-        )}
-        {step === 5 && (
-          <StepFinish
-            name={name}
-            saving={saving}
-            createdProject={createdProject}
-            createError={createError}
-            runWarning={runWarning}
-            createReverseProject={createReverseProject}
-            setCreateReverseProject={setCreateReverseProject}
-            sourceConnector={sourceConnector}
-            targetConnectors={targetConnectors}
-            intermediateFormat={intermediateFormat}
-            selectedWorkspace={selectedWorkspace}
-            navigate={navigate}
-            editMode={editMode}
-            diff={projectDiff}
-            selectedModels={selectedModels}
-            initialSelectedModels={initialSelectedModels}
-            selectedModelNameByKey={selectedModelNameByKey}
-            onClear={clearWizardState}
-          />
-        )}
+          )}
+          {step === 2 && (
+            <StepConnectorConfig
+              sourceConnector={sourceConnector}
+              targetConnectors={targetConnectors}
+              fabricAccountId={selectedConnectionId}
+              setFabricAccountId={(nextId) => {
+                setSelectedConnectionId(nextId);
+                setFabricAccountId(nextId);
+              }}
+              fabricAccounts={fabricAccounts}
+              fabricWorkspaceId={fabricWorkspaceId}
+              setFabricWorkspaceId={setFabricWorkspaceId}
+              snowflakeAccountId={snowflakeAccountId}
+              setSnowflakeAccountId={setSnowflakeAccountId}
+              snowflakeAccounts={snowflakeAccounts}
+              databricksAccountId={databricksAccountId}
+              setDatabricksAccountId={setDatabricksAccountId}
+              databricksAccounts={databricksAccounts}
+              snowflakeDatabase={snowflakeDatabase} setSnowflakeDatabase={setSnowflakeDatabase}
+              snowflakeSchema={snowflakeSchema} setSnowflakeSchema={setSnowflakeSchema}
+              targetDatabase={targetDatabase} setTargetDatabase={setTargetDatabase}
+              targetSchema={targetSchema} setTargetSchema={setTargetSchema}
+              targetAccount={targetAccount} setTargetAccount={setTargetAccount}
+              targetWarehouse={targetWarehouse} setTargetWarehouse={setTargetWarehouse}
+              domainHint={domainHint} setDomainHint={setDomainHint}
+              pbixFile={pbixFile}
+              setPbixFile={setPbixFile}
+              pbixUploadPath={pbixUploadPath}
+              pbixUploading={pbixUploading}
+              setPbixUploading={setPbixUploading}
+              pbixSourceMode={pbixSourceMode}
+              setPbixSourceMode={setPbixSourceMode}
+              localFolders={localFolders}
+              localFoldersLoading={localFoldersLoading}
+              selectedLocalFolderId={selectedLocalFolderId}
+              setSelectedLocalFolderId={setSelectedLocalFolderId}
+              onUploadSuccess={({ file, path }) => {
+                if (file) setPbixFile(file);
+                setPbixUploadPath(String(path || '').trim());
+              }}
+              workspaces={liveFabricWorkspaces}
+              workspacesLoading={workspacesLoading}
+              isRefreshingWorkspaces={isRefreshingWorkspaces}
+              fetchFabricWorkspaces={() => fetchFabricWorkspaces(selectedConnectionId)}
+              runWarning={runWarning}
+            />
+          )}
+          {step === 3 && (
+            <StepSourceBrowser
+              sourceConnector={sourceConnector}
+              selectedWorkspace={selectedWorkspace}
+              workspaces={workspaces} wsLoading={wsLoading}
+              expandedWs={expandedWs} toggleWorkspace={toggleWorkspace}
+              wsModels={wsModels}
+              selectedModels={selectedModels} toggleModel={toggleModel}
+              clearSelectedModels={clearSelectedModels}
+              modelQuery={modelQuery} setModelQuery={setModelQuery}
+              modelQueryRegex={modelQueryRegex}
+              setModelQueryRegex={setModelQueryRegex}
+              modelResults={modelResultsByConnector.fabric}
+              snowflakeResults={modelResultsByConnector.snowflake}
+              databricksQuery={databricksQuery}
+              setDatabricksQuery={setDatabricksQuery}
+              databricksQueryRegex={databricksQueryRegex}
+              setDatabricksQueryRegex={setDatabricksQueryRegex}
+              databricksObjects={databricksObjects}
+              databricksLoading={databricksLoading}
+              selectedDatabricksTables={selectedDatabricksTables}
+              setSelectedDatabricksTables={setSelectedDatabricksTables}
+              allModels={allModels}
+              pbixSourceMode={pbixSourceMode}
+              selectedLocalFolderTag={selectedLocalFolderTag}
+              pbixFiles={pbixFiles}
+              pbixFilesLoading={pbixFilesLoading}
+              pbixFilesError={pbixFilesError}
+              selectedPbixFilePath={selectedPbixFilePath}
+              onSelectPbixFile={setSelectedPbixFilePath}
+              savedModels={initialSelectedModels}
+            />
+          )}
+          {step === 4 && (
+            <ErrorBoundary>
+              {editMode && (
+                <div style={{ marginBottom: 20, padding: '16px', background: 'var(--bg-surface)', border: '1px solid var(--border-main)', borderRadius: '12px' }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Mapping Mode</div>
+                  <div style={{ display: 'flex', gap: '24px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: 13, color: 'var(--text-secondary)' }}>
+                      <input type="radio" value="saved" checked={mappingMode === 'saved'} onChange={() => setMappingMode('saved')} style={{ accentColor: 'var(--accent-blue)' }} />
+                      Use Last Saved Mapping
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: 13, color: 'var(--text-secondary)' }}>
+                      <input type="radio" value="auto" checked={mappingMode === 'auto'} onChange={() => setMappingMode('auto')} style={{ accentColor: 'var(--accent-blue)' }} />
+                      Auto-Detect Again
+                    </label>
+                  </div>
+                </div>
+              )}
+              <StepMappingOptions
+                autoRelationships={autoRelationships} setAutoRelationships={setAutoRelationships}
+                generateDescriptions={generateDescriptions} setGenerateDescriptions={setGenerateDescriptions}
+                detectedMappings={detectedMappings}
+                mappingLoading={mappingLoading}
+                mappingError={mappingError}
+                dryRunStatus={mappingDryRunStatus}
+                dryRunError={mappingDryRunError}
+                unmappedAcknowledged={unmappedAcknowledged}
+                setUnmappedAcknowledged={setUnmappedAcknowledged}
+                selectedModelNames={selectedModelNames}
+                sourceConnector={sourceConnector}
+                onUpdateTableTarget={updateTableMappingTarget}
+                onUpdateColumnTarget={updateColumnMappingTarget}
+                onRunDryRun={handleDryRun}
+                onClearMappings={() => {
+                  setDetectedMappings([]);
+                  setDetectedEntityMappings([]);
+                }}
+                onRowsChange={(rows) => {
+                  setDetectedEntityMappings(
+                    rows
+                      .filter(r => r.isDirty)
+                      .map(r => ({
+                        id: r.id,
+                        source_path: r.source_path,
+                        entity_kind: r.entity_kind,
+                        source_name: r.source_field,
+                        target_name: r.target_field,
+                        status: r.status,
+                      }))
+                  );
+                }}
+                onDeploy={handleDeployMapping}
+                onProceedStateChange={setMappingReadyToProceed}
+                primaryTargetConnector={[...targetConnectors][0] || ''}
+                dryRunData={dryRunData}
+                editingRow={editingRow}
+                setEditingRow={setEditingRow}
+                isSavingEdit={isSavingEdit}
+                isDeploying={isDeploying}
+                deployError={deployError}
+                onFieldEdit={handleFieldEdit}
+                onDeployMappings={handleDeploy}
+                targetConnectors={targetConnectors}
+                onBulkResolved={handleBulkResolved}
+              />
+            </ErrorBoundary>
+          )}
+          {step === 5 && (
+            <StepFinish
+              name={name}
+              saving={saving}
+              createdProject={createdProject}
+              createError={createError}
+              runWarning={runWarning}
+              createReverseProject={createReverseProject}
+              setCreateReverseProject={setCreateReverseProject}
+              sourceConnector={sourceConnector}
+              targetConnectors={targetConnectors}
+              intermediateFormat={intermediateFormat}
+              selectedWorkspace={selectedWorkspace}
+              navigate={navigate}
+              editMode={editMode}
+              diff={projectDiff}
+              selectedModels={selectedModels}
+              initialSelectedModels={initialSelectedModels}
+              selectedModelNameByKey={selectedModelNameByKey}
+              onClear={clearWizardState}
+            />
+          )}
+        </div>
       </div>
-      {/* Footer nav */}
+
+      {/* Full-Width Sticky Footer */}
+      {/* Modern Persistent Footer */}
       {!createdProject && (
         <div style={{
-          padding: '16px 32px', borderTop: '1px solid var(--border-main)',
-          display: 'flex', justifyContent: 'space-between',
+          height: 80,
+          position: 'fixed',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          background: 'rgba(18, 20, 28, 0.95)',
+          backdropFilter: 'blur(12px)',
+          borderTop: '1px solid var(--border-main)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          boxShadow: '0 -4px 20px rgba(0, 0, 0, 0.2)'
         }}>
-          <button
-            onClick={goBack}
-            disabled={step === 1}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 5,
-              padding: '8px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600,
-              cursor: step === 1 ? 'not-allowed' : 'pointer',
-              background: 'transparent', border: '1px solid var(--border-main)',
-              color: step === 1 ? 'var(--text-tertiary)' : 'var(--text-secondary)',
-              opacity: step === 1 ? 0.5 : 1,
-            }}
-          >
-            <ArrowLeft size={13} /> Back
-          </button>
-          <button
-            onClick={goNext}
-            disabled={!canAdvance() || saving || mappingLoading}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 5,
-              padding: '8px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600,
-              cursor: !canAdvance() || saving || mappingLoading ? 'not-allowed' : 'pointer',
-              background: 'var(--accent-blue)', border: 'none', color: '#fff',
-              opacity: !canAdvance() || saving || mappingLoading ? 0.5 : 1,
-            }}
-          >
-            {(saving || mappingLoading) && <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />}
-            {step === 5 ? (saving ? 'Saving…' : (editMode ? 'Save Changes' : 'Create Project')) : <>Continue <ArrowRight size={13} /></>}
-          </button>
+          <div style={{
+            width: '100%',
+            maxWidth: (step === 3 || step === 4) ? 1400 : 900,
+            padding: '0 48px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between'
+          }}>
+            {step > 1 ? (
+              <button
+                onClick={goBack}
+                className="flex items-center gap-2 px-6 py-2.5 text-xs font-bold transition-all rounded-lg border border-[var(--border-main)] hover:bg-[var(--bg-surface-raised)] text-[var(--text-secondary)]"
+              >
+                <ArrowLeft size={14} /> BACK
+              </button>
+            ) : <div />}
+
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <button
+                onClick={goNext}
+                disabled={!canAdvance() || saving || mappingLoading}
+                className={`flex items-center gap-2 px-8 py-2.5 text-xs font-bold transition-all rounded-lg shadow-lg ${
+                  !canAdvance() || saving || mappingLoading
+                    ? 'bg-[var(--bg-surface-raised)] text-[var(--text-tertiary)] cursor-not-allowed opacity-50'
+                    : 'bg-[var(--accent-blue)] text-white hover:bg-blue-600 shadow-blue-900/20'
+                }`}
+              >
+                {(saving || mappingLoading) && <Loader2 size={14} className="animate-spin" />}
+                {step === 5 ? (
+                  <>
+                    <Save size={14} />
+                    {saving ? 'SAVING…' : (editMode ? 'SAVE CHANGES' : 'CREATE PROJECT')}
+                  </>
+                ) : (
+                  <>
+                    CONTINUE
+                    <ArrowRight size={14} />
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -2168,273 +2241,227 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   );
 }
 
-/* ─── Step 1: Basic Info ─── */
 function StepBasicInfo({
-  name,
-  setName,
-  description,
-  setDescription,
-  sourceConnector,
-  setSourceConnector,
-  targetConnectors,
-  setTargetConnectors,
-  intermediateFormat,
-  setIntermediateFormat,
-  tags,
-  setTags,
-  tagInput,
-  setTagInput,
-  showValidation,
+  name, setName, description, setDescription,
+  sourceConnector, setSourceConnector,
+  targetConnectors, setTargetConnectors,
+  intermediateFormat, setIntermediateFormat,
+  tags, setTags, tagInput, setTagInput,
+  showValidation, editMode
 }) {
-  // Validation state
-  const isNameEmpty = name.trim().length === 0;
   const isSourceMissing = !sourceConnector;
   const isTargetsMissing = targetConnectors.size === 0;
   const isFormatMissing = !intermediateFormat;
 
+  const LABEL = {
+    display: 'block', fontSize: 11, fontWeight: 700,
+    color: 'var(--text-tertiary)', marginBottom: 8,
+    textTransform: 'uppercase', letterSpacing: '0.05em'
+  };
+  const INPUT_STYLE = {
+    width: '100%', padding: '10px 14px', borderRadius: 8,
+    background: 'var(--bg-surface-raised)', border: '1px solid var(--border-main)',
+    color: 'var(--text-primary)', fontSize: 13, outline: 'none',
+    transition: 'all 0.2s ease',
+  };
+  const SECTION_CARD = {
+    border: '1px solid rgba(255, 255, 255, 0.05)',
+    borderRadius: 16,
+    background: 'var(--bg-surface)',
+    padding: 24,
+    boxShadow: '0 4px 20px rgba(0, 0, 0, 0.2)',
+  };
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20, paddingBottom: 80 }}>
-      <div>
-        <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Project Details</h2>
-        <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
-          Name your project, choose where data comes from, where it should sync, and what format you want the generated assets in.
-        </p>
-      </div>
-
-      <div>
-        <label style={LABEL}>Project Name *</label>
-        <input
-          autoFocus type="text"
-          value={name} onChange={e => setName(e.target.value)}
-          placeholder="e.g. Sales Analytics Q4"
-          style={{
-            ...INPUT,
-            borderColor: showValidation && isNameEmpty ? 'var(--color-error)' : 'var(--border-main)',
-          }}
-          onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-          onBlur={e => { e.target.style.borderColor = showValidation && isNameEmpty ? 'var(--color-error)' : 'var(--border-main)'; }}
-        />
-        {showValidation && isNameEmpty && (
-          <p style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 4 }}>
-            Project name is required to continue.
-          </p>
-        )}
-      </div>
-
-      <div>
-        <label style={LABEL}>Description</label>
-        <textarea
-          value={description} onChange={e => setDescription(e.target.value)}
-          placeholder="Describe the project's purpose…"
-          rows={3}
-          style={{ ...INPUT, resize: 'vertical', minHeight: 72 }}
-          onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-          onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-        />
-      </div>
-
-      <div>
-        <label style={LABEL}>Project Tags</label>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-          {[...tags].map(tag => (
-            <div
-              key={tag}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '4px 10px', borderRadius: 4,
-                background: 'var(--accent-blue)20', color: 'var(--accent-blue)',
-                fontSize: 12, fontWeight: 500,
-              }}
-            >
-              {tag}
-              <button
-                type="button"
-                onClick={() => { const newTags = new Set(tags); newTags.delete(tag); setTags(newTags); }}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', padding: 0 }}
-              >
-                <X size={13} />
-              </button>
-            </div>
-          ))}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 32, paddingBottom: 40 }}>
+      {/* 1. Project Identity */}
+      <div style={SECTION_CARD}>
+        <div style={{ marginBottom: 20 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Project Identity</h3>
+          <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>Basic details to identify this synchronization pipeline.</p>
         </div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <input
-            type="text"
-            value={tagInput}
-            onChange={e => setTagInput(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter' && tagInput.trim()) {
-                const newTags = new Set(tags);
-                newTags.add(tagInput.trim());
-                setTags(newTags);
-                setTagInput('');
-              }
-            }}
-            placeholder="Type and press Enter to add…"
-            style={{ ...INPUT, flex: 1 }}
-            onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-            onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-          />
-        </div>
-        <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
-          Add tags to help organize and categorize your project for easier discovery.
-        </p>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        {/* SOURCE CONNECTOR - Single Selection */}
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <label style={{ ...LABEL, margin: 0 }}>Source Connector</label>
-            <span style={{
-              fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 4,
-              background: 'var(--accent-blue)20', color: 'var(--accent-blue)', textTransform: 'uppercase'
-            }}>
-              Single Selection
-            </span>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {CONNECTOR_TYPES.map(c => {
-              const isSelected = sourceConnector === c.value;
-              const shouldDim = Boolean(sourceConnector) && !isSelected;
-              return (
-                <button
-                  key={c.value}
-                  type="button"
-                  onClick={() => setSourceConnector(c.value)}
-                  className={`transition-all duration-300 ${shouldDim ? 'text-slate-500' : ''}`}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-                    padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
-                    background: isSelected ? 'var(--accent-blue)14' : 'var(--bg-surface)',
-                    border: isSelected ? '1.5px solid var(--accent-blue)' : '1px solid var(--border-main)',
-                    color: isSelected ? 'var(--accent-blue)' : shouldDim ? 'var(--text-tertiary)' : 'var(--text-secondary)',
-                    fontSize: 12, fontWeight: isSelected ? 600 : 400,
-                    textAlign: 'left', transition: 'all 0.2s ease',
-                    opacity: shouldDim ? 0.4 : 1,
-                    filter: shouldDim ? 'grayscale(100%)' : 'none',
-                  }}
-                  onMouseEnter={e => {
-                    if (!isSelected) e.target.style.borderColor = 'var(--accent-blue)40';
-                  }}
-                  onMouseLeave={e => {
-                    if (!isSelected) e.target.style.borderColor = 'var(--border-main)';
-                  }}
-                >
-                  {/* Radio button indicator */}
-                  <div style={{
-                    width: 16, height: 16, borderRadius: '50%', flexShrink: 0,
-                    border: isSelected ? '5px solid var(--accent-blue)' : '2px solid var(--text-tertiary)',
-                    background: isSelected ? 'var(--accent-blue)20' : 'transparent',
-                    transition: 'all 0.2s ease',
-                  }} />
-                  <SourceIcon source={c.value} size={16} />
-                  <span style={{ flex: 1 }}>{c.label}</span>
-                  {isSelected && <Check size={14} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />}
-                </button>
-              );
-            })}
-          </div>
-          {showValidation && isSourceMissing && (
-            <p style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 8 }}>
-              Please select one source connector to continue.
-            </p>
-          )}
-          <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 8 }}>
-            Choose one source. Data will be read from this connector only.
-          </p>
-        </div>
-
-        {/* TARGET CONNECTORS - Multiple Selection */}
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <label style={{ ...LABEL, margin: 0 }}>Target Connectors</label>
-            <span style={{
-              fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 4,
-              background: 'var(--color-success-bg)', color: 'var(--color-success)', textTransform: 'uppercase'
-            }}>
-              Multiple Selection
-            </span>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {TARGET_CONNECTOR_TYPES.map(t => {
-              const isSelected = targetConnectors.has(t.value);
-              const isDisabledBySource = Boolean(sourceConnector) && t.value === sourceConnector;
-              const handleTargetClick = () => {
-                if (isDisabledBySource) return;
-                const newTargets = new Set(targetConnectors);
-                if (newTargets.has(t.value)) {
-                  newTargets.delete(t.value);
-                } else {
-                  newTargets.add(t.value);
-                }
-                setTargetConnectors(newTargets);
-              };
-              return (
-                <button
-                  key={t.value}
-                  type="button"
-                  onClick={handleTargetClick}
-                  disabled={isDisabledBySource}
-                  className={`transition-all duration-300 ${isDisabledBySource ? 'text-slate-500' : ''}`}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '10px 14px', borderRadius: 8,
-                    cursor: isDisabledBySource ? 'not-allowed' : 'pointer',
-                    background: isSelected ? 'var(--accent-blue)14' : 'var(--bg-surface)',
-                    border: isSelected ? '1.5px solid var(--accent-blue)' : '1px solid var(--border-main)',
-                    color: isSelected ? 'var(--accent-blue)' : isDisabledBySource ? 'var(--text-tertiary)' : 'var(--text-secondary)',
-                    fontSize: 12, fontWeight: isSelected ? 600 : 400,
-                    textAlign: 'left', transition: 'all 0.2s ease',
-                    opacity: isDisabledBySource ? 0.2 : 1,
-                    filter: isDisabledBySource ? 'grayscale(100%)' : 'none',
-                    pointerEvents: isDisabledBySource ? 'none' : 'auto',
-                  }}
-                  onMouseEnter={e => {
-                    if (!isSelected && !isDisabledBySource) e.target.style.borderColor = 'var(--accent-blue)40';
-                  }}
-                  onMouseLeave={e => {
-                    if (!isSelected && !isDisabledBySource) e.target.style.borderColor = 'var(--border-main)';
-                  }}
-                >
-                  {/* Checkbox indicator */}
-                  <div style={{
-                    width: 16, height: 16, borderRadius: 4, flexShrink: 0,
-                    border: isSelected ? 'none' : '2px solid var(--text-tertiary)',
-                    background: isSelected ? 'var(--accent-blue)' : 'transparent',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    transition: 'all 0.2s ease',
-                  }}>
-                    {isSelected && <Check size={12} color="white" />}
-                  </div>
-                  <SourceIcon source={t.value} size={16} />
-                  <span style={{ flex: 1 }}>{t.label}</span>
-                  {isSelected && <Check size={14} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />}
-                </button>
-              );
-            })}
-          </div>
-          <p style={{ fontSize: 11, color: showValidation && isTargetsMissing ? 'var(--color-error)' : 'var(--text-tertiary)', marginTop: 8 }}>
-            {isTargetsMissing ? 'Select at least one target to continue.' : 'Choose one or more targets. Data will be synced to all selected connectors.'}
-          </p>
-        </div>
-      </div>
-      <div>
-        <label style={LABEL}>Intermediate Format</label>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {INTERMEDIATE_FORMAT_TYPES.map(t => (
-            <ConnectorChip
-              key={t.value} label={t.label}
-              selected={intermediateFormat === t.value}
-              onClick={() => setIntermediateFormat(t.value)}
+        
+        <div style={{ display: 'grid', gap: 24 }}>
+          <div>
+            <label style={LABEL}>Project Name</label>
+            <input
+              type="text" value={name} onChange={e => setName(e.target.value)}
+              placeholder="e.g. Sales Analytics Sync"
+              style={{ ...INPUT_STYLE, maxWidth: 500 }}
+              disabled={editMode}
             />
-          ))}
+            {showValidation && !name && (
+              <p style={{ color: 'var(--color-error)', fontSize: 11, marginTop: 4 }}>Name is required</p>
+            )}
+          </div>
+          <div>
+            <label style={LABEL}>Description (optional)</label>
+            <textarea
+              value={description} onChange={e => setDescription(e.target.value)}
+              placeholder="Describe the purpose of this data pipeline..."
+              style={{ ...INPUT_STYLE, minHeight: 80, resize: 'vertical' }}
+            />
+          </div>
+
+          <div>
+            <label style={LABEL}>Project Tags</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+              {[...tags].map(tag => (
+                <div
+                  key={tag}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    padding: '4px 10px', borderRadius: 6,
+                    background: 'rgba(59, 130, 246, 0.1)', color: 'var(--accent-blue)',
+                    fontSize: 12, fontWeight: 600,
+                  }}
+                >
+                  {tag}
+                  <button
+                    type="button"
+                    onClick={() => { const next = new Set(tags); next.delete(tag); setTags(next); }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', padding: 0, display: 'flex' }}
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <input
+              type="text" value={tagInput} onChange={e => setTagInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && tagInput.trim()) {
+                  const next = new Set(tags);
+                  next.add(tagInput.trim());
+                  setTags(next);
+                  setTagInput('');
+                }
+              }}
+              placeholder="Add tag and press Enter..."
+              style={INPUT_STYLE}
+            />
+          </div>
         </div>
-        <p style={{ fontSize: 11, color: showValidation && isFormatMissing ? 'var(--color-error)' : 'var(--text-tertiary)', marginTop: 6 }}>
-          {isFormatMissing ? 'Choose an intermediate format to continue.' : 'The target connector is used for sync. The intermediate format controls which semantic artifacts are generated for review or deployment.'}
-        </p>
       </div>
 
+      {/* 2. Unified Pipeline Configuration Island */}
+      <div style={SECTION_CARD}>
+        <div style={{ marginBottom: 24 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Pipeline Configuration</h3>
+          <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>Define how data flows from your source to the target destinations.</p>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
+          {/* Source & Target Row */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32, alignItems: 'stretch' }}>
+            {/* Source Column */}
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                <div style={LABEL}>Source Connector</div>
+                <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4, background: 'rgba(59, 130, 246, 0.1)', color: 'var(--accent-blue)' }}>SINGLE</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, flex: 1 }}>
+                {CONNECTOR_TYPES.map(c => {
+                  const isSelected = sourceConnector === c.value;
+                  const shouldDim = Boolean(sourceConnector) && !isSelected;
+                  return (
+                    <button
+                      key={c.value} type="button" onClick={() => setSourceConnector(c.value)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderRadius: 10, cursor: 'pointer',
+                        background: isSelected ? 'rgba(59, 130, 246, 0.08)' : 'var(--bg-surface-raised)',
+                        border: `1.5px solid ${isSelected ? 'var(--accent-blue)' : 'transparent'}`,
+                        color: isSelected ? 'var(--accent-blue)' : shouldDim ? 'var(--text-tertiary)' : 'var(--text-secondary)',
+                        fontSize: 13, fontWeight: isSelected ? 600 : 400, opacity: shouldDim ? 0.4 : 1, transition: 'all 0.2s ease',
+                        boxShadow: isSelected ? '0 0 0 1px rgba(59, 130, 246, 0.2)' : 'none',
+                      }}
+                    >
+                      <div style={{ 
+                        width: 16, height: 16, borderRadius: '50%', 
+                        border: isSelected ? '5px solid var(--accent-blue)' : '2px solid var(--border-main)',
+                        background: 'transparent',
+                        transition: 'all 0.2s ease'
+                      }} />
+                      <SourceIcon source={c.value} size={18} />
+                      <span style={{ flex: 1, textAlign: 'left' }}>{c.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {showValidation && isSourceMissing && (
+                <p style={{ color: 'var(--color-error)', fontSize: 11, marginTop: 12 }}>Please select a source</p>
+              )}
+            </div>
+
+            {/* Target Column */}
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                <div style={LABEL}>Target Connector(s)</div>
+                <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4, background: 'rgba(34, 197, 94, 0.1)', color: 'var(--color-success)' }}>MULTIPLE</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, flex: 1 }}>
+                {TARGET_CONNECTOR_TYPES.map(t => {
+                  const isSelected = targetConnectors.has(t.value);
+                  const isDisabled = sourceConnector === t.value;
+                  return (
+                    <button
+                      key={t.value} type="button" disabled={isDisabled}
+                      onClick={() => {
+                        const next = new Set(targetConnectors);
+                        if (next.has(t.value)) next.delete(t.value);
+                        else next.add(t.value);
+                        setTargetConnectors(next);
+                      }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderRadius: 10,
+                        cursor: isDisabled ? 'not-allowed' : 'pointer',
+                        background: isSelected ? 'rgba(59, 130, 246, 0.08)' : 'var(--bg-surface-raised)',
+                        border: `1.5px solid ${isSelected ? 'var(--accent-blue)' : 'transparent'}`,
+                        color: isSelected ? 'var(--accent-blue)' : isDisabled ? 'var(--text-tertiary)' : 'var(--text-secondary)',
+                        fontSize: 13, fontWeight: isSelected ? 600 : 400, opacity: isDisabled ? 0.2 : 1, transition: 'all 0.2s ease',
+                        boxShadow: isSelected ? '0 0 0 1px rgba(59, 130, 246, 0.2)' : 'none',
+                      }}
+                    >
+                      <div style={{ 
+                        width: 16, height: 16, borderRadius: 4, 
+                        background: isSelected ? 'var(--accent-blue)' : 'transparent', 
+                        border: isSelected ? 'none' : '2px solid var(--border-main)', 
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        transition: 'all 0.2s ease'
+                      }}>
+                        {isSelected && <Check size={12} color="white" strokeWidth={3} />}
+                      </div>
+                      <SourceIcon source={t.value} size={18} />
+                      <span style={{ flex: 1, textAlign: 'left' }}>{t.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {showValidation && isTargetsMissing && (
+                <p style={{ color: 'var(--color-error)', fontSize: 11, marginTop: 12 }}>Select at least one target</p>
+              )}
+            </div>
+          </div>
+
+          {/* Format Selection (Bottom Row) */}
+          <div style={{ borderTop: '1px solid rgba(255, 255, 255, 0.05)', paddingTop: 24 }}>
+            <label style={LABEL}>Intermediate Format</label>
+            <div style={{ display: 'flex', gap: 12, marginTop: 12 }}>
+              {INTERMEDIATE_FORMAT_TYPES.map(t => (
+                <ConnectorChip
+                  key={t.value} label={t.label}
+                  selected={intermediateFormat === t.value}
+                  onClick={() => setIntermediateFormat(t.value)}
+                />
+              ))}
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 16, lineHeight: 1.5 }}>
+              The intermediate format determines the schema representation used during the synchronization process. 
+              This is critical for cross-platform semantic translation.
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2444,18 +2471,17 @@ function ConnectorChip({ icon, label, selected, onClick }) {
     <button
       onClick={onClick}
       style={{
-        display: 'flex', alignItems: 'center', gap: 8,
-        padding: '8px 12px', borderRadius: 8, cursor: 'pointer',
-        background: selected ? 'var(--accent-blue)14' : 'var(--bg-surface)',
-        border: selected ? '1.5px solid var(--accent-blue)' : '1px solid var(--border-main)',
+        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 20px', borderRadius: 12, cursor: 'pointer',
+        background: selected ? 'rgba(59, 130, 246, 0.1)' : 'var(--bg-surface-raised)',
+        border: `1.5px solid ${selected ? 'var(--accent-blue)' : 'rgba(255, 255, 255, 0.05)'}`,
         color: selected ? 'var(--accent-blue)' : 'var(--text-secondary)',
-        fontSize: 12, fontWeight: selected ? 600 : 400,
-        textAlign: 'left',
+        fontSize: 13, fontWeight: selected ? 600 : 500, transition: 'all 0.2s ease',
+        boxShadow: selected ? '0 0 0 1px rgba(59, 130, 246, 0.2)' : 'none',
       }}
     >
-      {icon && <span>{icon}</span>}
+      {icon && <div style={{ display: 'flex' }}>{icon}</div>}
       {label}
-      {selected && <Check size={12} style={{ marginLeft: 'auto' }} />}
+      {selected && <Check size={14} strokeWidth={3} />}
     </button>
   );
 }
@@ -2540,147 +2566,72 @@ function StepConnectorConfig({
     const droppedFile = event.dataTransfer?.files?.[0] || null;
     if (droppedFile) await uploadPbixFile(droppedFile);
   };
-
   const selectedTargets = [...targetConnectors];
   const sourceLabel = CONNECTOR_TYPES.find(c => c.value === sourceConnector)?.label || sourceConnector;
   const activeLocalFolders = (localFolders || []).filter(folder => folder?.is_active !== false);
 
   const SECTION_CARD = {
-    border: '1px solid var(--border-main)',
-    borderRadius: 12,
+    border: '1px solid rgba(255, 255, 255, 0.05)',
+    borderRadius: 16,
     background: 'var(--bg-surface)',
-    padding: 16,
+    padding: 24,
+    boxShadow: '0 4px 20px rgba(0, 0, 0, 0.2)',
+  };
+
+  const LABEL = {
+    display: 'block', fontSize: 11, fontWeight: 700,
+    color: 'var(--text-tertiary)', marginBottom: 6,
+    textTransform: 'uppercase', letterSpacing: '0.05em'
+  };
+  const INPUT = {
+    width: '100%', padding: '10px 14px', borderRadius: 8,
+    background: 'var(--bg-surface-raised)', border: '1px solid var(--border-main)',
+    color: 'var(--text-primary)', fontSize: 13, outline: 'none',
+    transition: 'all 0.2s ease',
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20, paddingBottom: 320 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24, paddingBottom: 40 }}>
       <div>
         <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Connector Configuration</h2>
         <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
-          Configure source first, then review one or more target connectors. Credentials are managed globally in Settings and are not entered here.
+          Configure the source and target connectors for your project.
         </p>
       </div>
 
       <div style={SECTION_CARD}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>1. Source Configuration</div>
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 3 }}>
-              Select source location and defaults used for discovery.
-            </div>
-          </div>
-          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent-blue)', background: 'var(--accent-blue)14', border: '1px solid var(--accent-blue)30', padding: '3px 8px', borderRadius: 999 }}>
-            {sourceLabel}
-          </span>
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>1. Source Configuration: {sourceLabel}</div>
         </div>
 
-        {sourceConnector === 'fabric' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {/* Account Selection */}
-            <div>
-              <label style={LABEL}>Fabric Account</label>
-              <select
-                value={fabricAccountId}
-                onChange={e => {
-                  setFabricAccountId(e.target.value);
-                  setFabricWorkspaceId(''); // reset workspace when account changes
-                }}
-                style={INPUT}
-              >
-                {fabricAccounts.length === 0 && <option value="" disabled>No accounts available</option>}
-                {fabricAccounts.length > 0 && fabricAccounts.map(acc => (
-                  <option key={acc.id} value={acc.id}>
-                    {(acc.tag || acc.identity_email || acc.id)} ({acc.identity_email || 'N/A'})
-                  </option>
-                ))}
-              </select>
-              <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
-                Select an authenticated identity to use for discovery and synchronization.
-              </p>
-            </div>
-
-            {/* Workspace Selection */}
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                <label style={{ ...LABEL, margin: 0 }}>Fabric Workspace</label>
-                <div style={{ flex: 1 }} />
-                <button
-                  onClick={() => fetchFabricWorkspaces(fabricAccountId)}
-                  disabled={isRefreshingWorkspaces}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 4,
-                    background: 'none', border: 'none', cursor: isRefreshingWorkspaces ? 'not-allowed' : 'pointer',
-                    fontSize: 11, color: 'var(--text-tertiary)', padding: '2px 6px',
-                    borderRadius: 4, transition: 'all 0.2s ease',
-                    opacity: isRefreshingWorkspaces ? 0.6 : 1
-                  }}
-                  onMouseEnter={e => { if (!isRefreshingWorkspaces) e.currentTarget.style.color = 'var(--text-primary)'; }}
-                  onMouseLeave={e => { if (!isRefreshingWorkspaces) e.currentTarget.style.color = 'var(--text-tertiary)'; }}
-                  title="Refresh workspaces"
-                >
-                  <RefreshCw size={12} style={{ animation: isRefreshingWorkspaces ? 'spin 1s linear infinite' : 'none' }} />
-                  Refresh
-                </button>
-              </div>
-              <SearchableSelect
-                items={workspaces}
-                displayKey="name"
-                valueKey="id"
-                searchFields={['name', 'id', 'workspace_id']}
-                placeholder={isRefreshingWorkspaces ? "Refreshing..." : "Choose a workspace"}
-                value={fabricWorkspaceId}
-                onChange={item => {
-                  const newId = item?.id || '';
-                  setFabricWorkspaceId(newId);
-                }}
-                loading={workspacesLoading || isRefreshingWorkspaces}
-                clearable={false}
-              />
-              <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
-                Pick one workspace here. Step 3 will show models from this workspace only.
-              </p>
-              {!workspacesLoading && !isRefreshingWorkspaces && workspaces.length === 0 && fabricAccountId && (
-                <p style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 8 }}>
-                  No Fabric workspaces were found for this account.
-                </p>
-              )}
-              {runWarning && (
-                <p style={{ fontSize: 12, color: 'var(--color-error)', marginTop: 8 }}>
-                  {runWarning}
-                </p>
-              )}
-            </div>
-          </div>
-        )}
-
         {sourceConnector === 'snowflake' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {/* Snowflake Account Selection */}
-            {snowflakeAccounts.length > 0 && (
-              <div>
-                <label style={LABEL}>Snowflake Account</label>
-                <select
-                  value={snowflakeAccountId}
-                  onChange={e => setSnowflakeAccountId(e.target.value)}
-                  style={INPUT}
-                >
-                  {snowflakeAccounts.map(acc => (
-                    <option key={acc.id} value={acc.id}>
-                      {(acc.tag || acc.identity_email || acc.id)} ({acc.identity_email || 'N/A'})
-                    </option>
-                  ))}
-                </select>
-                <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
-                  Select which Snowflake identity to use for discovery and sync.
-                </p>
-              </div>
-            )}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={LABEL}>Source Account (override)</label>
+              <input
+                type="text" value={snowflakeAccountId} onChange={e => setSnowflakeAccountId(e.target.value)}
+                placeholder="Use saved Snowflake account"
+                style={INPUT}
+                onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
+                onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
+              />
+            </div>
+            <div>
+              <label style={LABEL}>Source Warehouse (override)</label>
+              <input
+                type="text" value={targetWarehouse} onChange={e => setTargetWarehouse(e.target.value)}
+                placeholder="Use saved Snowflake warehouse"
+                style={INPUT}
+                onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
+                onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
+              />
+            </div>
+            <div style={{ gridColumn: 'span 2', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
                 <label style={LABEL}>Source Database</label>
                 <input
                   type="text" value={snowflakeDatabase} onChange={e => setSnowflakeDatabase(e.target.value)}
-                  placeholder="e.g. ANALYTICS_DB"
+                  placeholder="e.g. SNOWFLAKE_SAMPLE_DATA"
                   style={INPUT}
                   onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
                   onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
@@ -2696,6 +2647,68 @@ function StepConnectorConfig({
                   onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
                 />
               </div>
+            </div>
+          </div>
+        )}
+
+        {sourceConnector === 'fabric' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div>
+              <label style={LABEL}>Fabric Account</label>
+              <select
+                value={fabricAccountId}
+                onChange={e => {
+                  const nextAccountId = e.target.value;
+                  setFabricAccountId(nextAccountId);
+                  setFabricWorkspaceId('');
+                  fetchFabricWorkspaces(nextAccountId);
+                }}
+                style={INPUT}
+              >
+                <option value="" disabled>Select Fabric connection</option>
+                {fabricAccounts.length === 0 && <option value="" disabled>No accounts available</option>}
+                {fabricAccounts.length > 0 && fabricAccounts.map(acc => (
+                  <option key={acc.id} value={acc.id}>
+                    {(acc.tag || acc.identity_email || acc.id)} ({acc.identity_email || 'N/A'})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <label style={{ ...LABEL, margin: 0 }}>Source Fabric Workspace</label>
+                <div style={{ flex: 1 }} />
+                <button
+                  onClick={() => fetchFabricWorkspaces(fabricAccountId)}
+                  disabled={isRefreshingWorkspaces || !fabricAccountId}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 4,
+                    background: 'none', border: 'none', cursor: (isRefreshingWorkspaces || !fabricAccountId) ? 'not-allowed' : 'pointer',
+                    fontSize: 11, color: 'var(--text-tertiary)', padding: '2px 6px',
+                    borderRadius: 4, transition: 'all 0.2s ease',
+                    opacity: (isRefreshingWorkspaces || !fabricAccountId) ? 0.6 : 1
+                  }}
+                  title="Refresh workspaces"
+                >
+                  <RefreshCw size={12} style={{ animation: isRefreshingWorkspaces ? 'spin 1s linear infinite' : 'none' }} />
+                  Refresh
+                </button>
+              </div>
+              <SearchableSelect
+                items={workspaces}
+                displayKey="name"
+                valueKey="id"
+                searchFields={['name', 'id', 'workspace_id']}
+                placeholder={isRefreshingWorkspaces ? 'Refreshing...' : "Choose a workspace"}
+                value={fabricWorkspaceId}
+                onChange={item => setFabricWorkspaceId(item?.id || '')}
+                loading={workspacesLoading || isRefreshingWorkspaces}
+                clearable={false}
+              />
+              <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
+                Select the workspace containing the semantic models you want to migrate.
+              </p>
             </div>
           </div>
         )}
@@ -3902,16 +3915,74 @@ function StepMappingOptionsOld({
             </div>
           )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
-            <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)', padding: '14px 16px', display: 'grid', gap: 6 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Source Model</div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{explicitTables[0] || 'Selected Sources'}</div>
-              <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{fieldCounts.all} fields</div>
+          {/* Modern High-Density Summary Cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16 }}>
+            <div style={{ 
+              background: 'var(--bg-surface-raised)', 
+              borderRadius: 12, 
+              border: '1px solid var(--border-main)', 
+              padding: 20,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12,
+              position: 'relative',
+              overflow: 'hidden'
+            }}>
+              <div style={{ position: 'absolute', top: -10, right: -10, opacity: 0.05 }}>
+                <Database size={80} />
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Source Identity
+              </div>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 4 }}>
+                  {explicitTables[0] || 'Selected Sources'}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-secondary)' }}>
+                  <Cloud size={14} style={{ color: 'var(--accent-blue)' }} />
+                  {sourceConnector.toUpperCase()} Connector
+                </div>
+              </div>
+              <div style={{ height: 1, background: 'var(--border-main)', margin: '4px 0' }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Total Fields</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{fieldCounts.all}</span>
+              </div>
             </div>
-            <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)', padding: '14px 16px', display: 'grid', gap: 6 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Target Model</div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{primaryTargetConnector || 'Target Connector'}</div>
-              <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{fieldRows.filter(row => String(row.column?.target || '').trim()).length} mapped fields</div>
+
+            <div style={{ 
+              background: 'var(--bg-surface-raised)', 
+              borderRadius: 12, 
+              border: '1px solid var(--border-main)', 
+              padding: 20,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12,
+              position: 'relative',
+              overflow: 'hidden'
+            }}>
+              <div style={{ position: 'absolute', top: -10, right: -10, opacity: 0.05 }}>
+                <Snowflake size={80} />
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Target Architecture
+              </div>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 4 }}>
+                  {primaryTargetConnector.toUpperCase() || 'Target System'}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-secondary)' }}>
+                  <Zap size={14} style={{ color: 'var(--accent-orange)' }} />
+                  Verification Strategy: OSI Strict
+                </div>
+              </div>
+              <div style={{ height: 1, background: 'var(--border-main)', margin: '4px 0' }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Mapped Fields</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent-blue)' }}>
+                  {fieldRows.filter(row => String(row.column?.target || '').trim()).length}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -4812,7 +4883,8 @@ function StepMappingOptions({
         </p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: 16 }}>
+        {/* Top Row: Connectors (Left) & Settings/Stats (Right) */}
         <div style={{ gridColumn: 'span 8', display: 'grid', gap: 12 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 12, alignItems: 'center' }}>
             <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)', padding: 12, display: 'grid', gap: 6 }}>
@@ -4860,81 +4932,6 @@ function StepMappingOptions({
               </div>
             </div>
           </div>
-
-          <div style={{ border: '1px solid var(--border-main)', borderRadius: 12, background: 'linear-gradient(135deg, rgba(30,41,59,0.7), rgba(15,23,42,0.9))', padding: 16, display: 'grid', gap: 12, minHeight: 160 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>Pre-migration Integrity Check</div>
-                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Simulate sync and validate schema mappings before writing data.</div>
-              </div>
-            </div>
-            <div style={{ display: 'grid', gap: 8 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                <span style={{ fontSize: 11, color: 'var(--accent-blue)', fontWeight: 700 }}>
-                  {checkState === 'pending' && 'Status: Pending'}
-                  {checkState === 'running' && 'Status: Validating Schema...'}
-                  {checkState === 'issues' && `Status: ${counts.collision} Schema Conflict${counts.collision === 1 ? '' : 's'}`}
-                  {checkState === 'success' && 'Status: Ready to Sync'}
-                </span>
-                <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-tertiary)', fontWeight: 700 }}>
-                  Checking: {explicitTables.length || 1} Source, {primaryTargetConnector ? 1 : 0} Target
-                </span>
-              </div>
-              <div style={{ height: 8, borderRadius: 999, background: '#2A2A35', position: 'relative', overflow: 'hidden', border: '1px solid rgba(71,85,105,0.35)' }}>
-                {checkState === 'running' && (
-                  <div style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '35%',
-                    height: '100%',
-                    borderRadius: 999,
-                    background: 'linear-gradient(90deg, rgba(59,130,246,0.2), rgba(59,130,246,0.9), rgba(59,130,246,0.2))',
-                    animation: 'pulse 1s ease-in-out infinite',
-                  }} />
-                )}
-                {checkState === 'success' && (
-                  <div style={{ position: 'absolute', inset: 0, background: 'rgba(34,197,94,0.85)', borderRadius: 999 }} />
-                )}
-                {checkState === 'issues' && (
-                  <div style={{ position: 'absolute', inset: 0, background: 'rgba(239,68,68,0.75)', borderRadius: 999 }} />
-                )}
-              </div>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'center', gap: 10, flexWrap: 'wrap' }}>
-              {checkState === 'pending' || checkState === 'running' ? (
-                <button
-                  type="button"
-                  onClick={runDryRun}
-                  disabled={mappingLoading}
-                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 16px', minWidth: 220, borderRadius: 8, border: '1px solid var(--accent-blue)', background: 'var(--accent-blue)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: mappingLoading ? 'not-allowed' : 'pointer', opacity: mappingLoading ? 0.65 : 1 }}
-                >
-                  {mappingLoading ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={14} />}
-                  {mappingLoading ? 'Running Check...' : 'Run Check'}
-                </button>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={runDryRun}
-                    disabled={mappingLoading}
-                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 16px', minWidth: 170, borderRadius: 8, border: '1px solid var(--border-main)', background: 'transparent', color: 'var(--text-primary)', fontSize: 12, fontWeight: 700, cursor: mappingLoading ? 'not-allowed' : 'pointer', opacity: mappingLoading ? 0.65 : 1 }}
-                  >
-                    <RefreshCw size={14} />
-                    Re-run Check
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!readyToProceed}
-                    onClick={() => onProceedStateChange?.(true)}
-                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 16px', minWidth: 170, borderRadius: 8, border: '1px solid var(--accent-blue)', background: 'var(--accent-blue)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: !readyToProceed ? 'not-allowed' : 'pointer', opacity: !readyToProceed ? 0.6 : 1 }}
-                  >
-                    Proceed
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
         </div>
 
         <div style={{ gridColumn: 'span 4', display: 'grid', gap: 12 }}>
@@ -4972,7 +4969,8 @@ function StepMappingOptions({
               </div>
             </div>
           </div>
-          <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 14, background: 'var(--bg-surface)' }}>
+
+          <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 14, background: 'var(--bg-surface)', height: '100%' }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', textTransform: 'uppercase', marginBottom: 10 }}>Scope Verification</div>
             <div style={{ display: 'grid', gap: 8 }}>
               <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}><strong>Explicitly selected:</strong> {explicitTables.length > 0 ? explicitTables.join(', ') : 'None'}</div>
@@ -4990,6 +4988,85 @@ function StepMappingOptions({
               </div>
               <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}><strong>Unsupported types:</strong> 0</div>
               <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}><strong>Estimated Volume:</strong> {estimatedVolume}</div>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ gridColumn: 'span 12' }}>
+          <div style={{ border: '1px solid var(--border-main)', borderRadius: 12, background: 'linear-gradient(135deg, rgba(30,41,59,0.7), rgba(15,23,42,0.9))', padding: 20, display: 'grid', gap: 16, minHeight: 160 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+              <div style={{ display: 'grid', gap: 4 }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>Pre-migration Integrity Check</div>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Simulate sync and validate schema mappings before writing data.</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 11, color: 'var(--accent-blue)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  {checkState === 'pending' && 'Status: Pending'}
+                  {checkState === 'running' && 'Status: Validating...'}
+                  {checkState === 'issues' && `Status: ${counts.collision} Conflict${counts.collision === 1 ? '' : 's'}`}
+                  {checkState === 'success' && 'Status: Ready'}
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 2 }}>
+                  {explicitTables.length || 1} Sources · {primaryTargetConnector ? 1 : 0} Target
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gap: 8 }}>
+              <div style={{ height: 8, borderRadius: 999, background: '#2A2A35', position: 'relative', overflow: 'hidden', border: '1px solid rgba(71,85,105,0.35)' }}>
+                {checkState === 'running' && (
+                  <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '35%',
+                    height: '100%',
+                    borderRadius: 999,
+                    background: 'linear-gradient(90deg, rgba(59,130,246,0.2), rgba(59,130,246,0.9), rgba(59,130,246,0.2))',
+                    animation: 'pulse 1s ease-in-out infinite',
+                  }} />
+                )}
+                {checkState === 'success' && (
+                  <div style={{ position: 'absolute', inset: 0, background: 'rgba(34,197,94,0.85)', borderRadius: 999 }} />
+                )}
+                {checkState === 'issues' && (
+                  <div style={{ position: 'absolute', inset: 0, background: 'rgba(239,68,68,0.75)', borderRadius: 999 }} />
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap', marginTop: 8 }}>
+              {checkState === 'pending' || checkState === 'running' ? (
+                <button
+                  type="button"
+                  onClick={runDryRun}
+                  disabled={mappingLoading}
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 16px', minWidth: 200, borderRadius: 8, border: '1px solid var(--accent-blue)', background: 'var(--accent-blue)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: mappingLoading ? 'not-allowed' : 'pointer', opacity: mappingLoading ? 0.65 : 1 }}
+                >
+                  {mappingLoading ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={14} />}
+                  {mappingLoading ? 'Running Check...' : 'Run Check'}
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={runDryRun}
+                    disabled={mappingLoading}
+                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 16px', minWidth: 160, borderRadius: 8, border: '1px solid var(--border-main)', background: 'transparent', color: 'var(--text-primary)', fontSize: 12, fontWeight: 700, cursor: mappingLoading ? 'not-allowed' : 'pointer', opacity: mappingLoading ? 0.65 : 1 }}
+                  >
+                    <RefreshCw size={14} />
+                    Re-run Check
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!readyToProceed}
+                    onClick={() => onProceedStateChange?.(true)}
+                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 16px', minWidth: 160, borderRadius: 8, border: '1px solid var(--accent-blue)', background: 'var(--accent-blue)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: !readyToProceed ? 'not-allowed' : 'pointer', opacity: !readyToProceed ? 0.6 : 1 }}
+                  >
+                    Proceed
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -5092,24 +5169,10 @@ function StepMappingOptions({
         </label>
       )}
 
-      <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 45, background: readiness.background, borderTop: readiness.border, padding: '10px 16px' }}>
-        <p style={{ fontSize: 11, color: readiness.color, margin: 0, lineHeight: 1.6, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10, color: 'var(--text-secondary)', fontWeight: 600 }}>
-            <span>API Connected</span>
-            <span style={{ opacity: 0.6 }}>|</span>
-            <span>Branch: local/dev</span>
-          </span>
-          <span style={{ textAlign: 'center', flex: '1 1 auto' }}>{readiness.message}</span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
-            {counts.collision > 0 && (
-              <span style={{ fontSize: 10, fontWeight: 700, borderRadius: 999, padding: '2px 8px', border: '1px solid rgba(239, 68, 68, 0.45)', background: 'rgba(239, 68, 68, 0.12)', color: 'var(--color-error)' }}>
-                Attention: Comparator
-              </span>
-            )}
-            <button type="button" onClick={() => onProceedStateChange?.(readyToProceed)} style={{ border: '1px solid var(--border-main)', borderRadius: 6, padding: '4px 10px', fontSize: 10, fontWeight: 700, background: 'var(--bg-surface)', color: 'var(--text-primary)' }}>
-              NEXT STEP
-            </button>
-          </span>
+      {/* Readiness indicator moved to main footer when on this step */}
+      <div style={{ padding: 12, borderRadius: 8, background: readiness.background, border: readiness.border }}>
+        <p style={{ fontSize: 11, color: readiness.color, margin: 0, lineHeight: 1.6, fontWeight: 700, textAlign: 'center' }}>
+          {readiness.message}
         </p>
       </div>
     </div>

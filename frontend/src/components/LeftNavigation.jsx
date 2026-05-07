@@ -55,8 +55,6 @@ export default function LeftNavigation({ onEmergencyReset }) {
         When unpinned (floating), we need a 64px spacer to prevent 
         the main content from sliding under the collapsed sidebar.
       */}
-      {!isPinned && <div className="sidebar-spacer" />}
-
       <aside className={`sidebar ${isPinned ? 'pinned' : 'unpinned'}`}>
         {/* Top Logo Area */}
         <div className="nav-item logo-area">
@@ -134,6 +132,7 @@ export default function LeftNavigation({ onEmergencyReset }) {
           </button>
         </div>
       </aside>
+      {!isPinned && <div className="sidebar-spacer" />}
     </>
   );
 }

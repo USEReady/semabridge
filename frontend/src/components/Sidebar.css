@@ -3,6 +3,7 @@
   width: 64px;
   flex-shrink: 0;
   border-right: 1px solid var(--border-main);
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Base Sidebar Styles */
@@ -46,6 +47,10 @@
   width: 240px;
   /* Add a shadow so it visually lifts off the dashboard */
   box-shadow: 8px 0 16px rgba(0, 0, 0, 0.4); 
+}
+
+.sidebar.unpinned:hover + .sidebar-spacer {
+  width: 240px;
 }
 
 /* Hide text by default when unpinned */

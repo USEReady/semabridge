@@ -89,7 +89,7 @@ function TableHeader() {
   return (
     <div style={{
       display: 'grid',
-      gridTemplateColumns: '1.5fr 1.5fr 0.9fr 0.7fr',
+      gridTemplateColumns: '1.5fr 1.5fr 120px 100px',
       gap: '1rem',
       padding: '10px 14px',
       background: 'var(--bg-surface-raised)',
@@ -102,8 +102,8 @@ function TableHeader() {
     }}>
       <div>Source Field</div>
       <div>Target Field</div>
-      <div>Status</div>
-      <div>Action</div>
+      <div style={{ textAlign: 'center' }}>Status</div>
+      <div style={{ textAlign: 'right' }}>Action</div>
     </div>
   );
 }
@@ -119,7 +119,7 @@ function MappingRow({ row, onEdit }) {
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: '1.5fr 1.5fr 0.9fr 0.7fr',
+        gridTemplateColumns: '1.5fr 1.5fr 120px 100px',
         gap: '1rem',
         padding: '10px 14px',
         borderBottom: '1px solid var(--border-main)',
@@ -128,7 +128,7 @@ function MappingRow({ row, onEdit }) {
       }}
     >
       {/* Source Field */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
         <div style={{
           fontSize: 12,
           fontWeight: 600,
@@ -136,10 +136,11 @@ function MappingRow({ row, onEdit }) {
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
+          flexShrink: 0,
         }}>
           {row.source_field}
         </div>
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center', minWidth: 0 }}>
           {isMeasure ? <MeasureBadge /> : <TypeBadge type={row.source_type} />}
           {!isMeasure && row.source_table_name && (
             <span style={{
@@ -151,40 +152,18 @@ function MappingRow({ row, onEdit }) {
               color: '#7dd3fc',
               border: '1px solid rgba(56, 189, 248, 0.35)',
               whiteSpace: 'nowrap',
-              maxWidth: 140,
+              maxWidth: 120,
               overflow: 'hidden',
               textOverflow: 'ellipsis',
             }}>
               {row.source_table_name}
             </span>
           )}
-          {isMeasure && row.measure_source_tables?.length > 0 && (
-            <span style={{
-              fontSize: 10,
-              color: 'var(--text-tertiary)',
-              fontStyle: 'italic',
-            }}>
-              {row.measure_source_tables.join(', ')}
-            </span>
-          )}
         </div>
-        {isMeasure && row.measure_expression && (
-          <div style={{
-            fontSize: 10,
-            color: 'var(--text-tertiary)',
-            fontFamily: 'monospace',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            maxWidth: 220,
-          }}>
-            {row.measure_expression}
-          </div>
-        )}
       </div>
 
       {/* Target Field */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
         <div style={{
           fontSize: 12,
           fontWeight: 600,
@@ -193,28 +172,29 @@ function MappingRow({ row, onEdit }) {
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
           fontStyle: row.target_field ? 'normal' : 'italic',
+          flexShrink: 0,
         }}>
           {row.target_field || '— unmapped —'}
         </div>
         {row.target_type && !isMeasure && (
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             <TypeBadge type={row.target_type} />
           </div>
         )}
         {isCollision && row.suggested_target_name && (
-          <div style={{ fontSize: 10, color: 'var(--color-error)', lineHeight: 1.4 }}>
-            Suggestion: <span style={{ fontWeight: 700 }}>{row.suggested_target_name}</span>
+          <div style={{ fontSize: 10, color: 'var(--color-error)', fontWeight: 600, marginLeft: 8 }}>
+            (Suggestion: {row.suggested_target_name})
           </div>
         )}
       </div>
 
       {/* Status */}
-      <div>
+      <div style={{ display: 'flex', justifyContent: 'center' }}>
         <StatusBadge status={badgeCfg.status} label={badgeCfg.label} size="sm" />
       </div>
 
       {/* Action */}
-      <div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <button
           type="button"
           onClick={() => onEdit?.(row.id)}
@@ -222,7 +202,7 @@ function MappingRow({ row, onEdit }) {
             display: 'inline-flex',
             alignItems: 'center',
             gap: 5,
-            padding: '5px 10px',
+            padding: '4px 10px',
             borderRadius: 6,
             border: isCollision
               ? '1px solid rgba(239, 68, 68, 0.45)'
@@ -235,6 +215,7 @@ function MappingRow({ row, onEdit }) {
             fontWeight: 600,
             cursor: 'pointer',
             whiteSpace: 'nowrap',
+            transition: 'all 0.2s',
           }}
         >
           <Edit2 size={11} />
@@ -515,7 +496,7 @@ export default function DryRunMappingTable({
       </div>
 
       {/* ── Controls row: filter tabs + search + Resolve All ─────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
         <div className="filter-tabs" style={{ marginBottom: 0 }}>
           {MAPPING_FILTERS.map((filter) => {
             const count = counts[filter.id] ?? counts.all;
@@ -533,55 +514,58 @@ export default function DryRunMappingTable({
             );
           })}
         </div>
-        <div style={{ flex: '1 1 200px', minWidth: 160, maxWidth: 320 }}>
-          <SmartSearchBar
-            value={search}
-            onChange={setSearch}
-            useRegex={useRegex}
-            onToggleRegex={setUseRegex}
-            placeholder="Search fields..."
-          />
-        </div>
 
-        {/* ── Resolve All button — only shown when collisions exist ─────── */}
-        {counts.collision > 0 && (
-          <button
-            id="bulk-resolve-btn"
-            type="button"
-            disabled={bulkResolving}
-            onClick={handleBulkResolve}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '6px 14px',
-              borderRadius: 7,
-              border: '1px solid rgba(251,191,36,0.55)',
-              background: bulkResolving
-                ? 'rgba(251,191,36,0.06)'
-                : 'rgba(251,191,36,0.12)',
-              color: '#fbbf24',
-              fontSize: 12,
-              fontWeight: 700,
-              cursor: bulkResolving ? 'not-allowed' : 'pointer',
-              whiteSpace: 'nowrap',
-              transition: 'background 0.15s, opacity 0.15s',
-              opacity: bulkResolving ? 0.7 : 1,
-            }}
-          >
-            {bulkResolving
-              ? <>
-                  <span style={{
-                    width: 11, height: 11, border: '2px solid #fbbf24',
-                    borderTopColor: 'transparent', borderRadius: '50%',
-                    display: 'inline-block',
-                    animation: 'spin 0.7s linear infinite',
-                  }} />
-                  Resolving…
-                </>
-              : <><Zap size={12} /> Resolve All ({counts.collision})</>}
-          </button>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* ── Resolve All button — only shown when collisions exist ─────── */}
+          {counts.collision > 0 && (
+            <button
+              id="bulk-resolve-btn"
+              type="button"
+              disabled={bulkResolving}
+              onClick={handleBulkResolve}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 14px',
+                borderRadius: 7,
+                border: '1px solid rgba(251,191,36,0.55)',
+                background: bulkResolving
+                  ? 'rgba(251,191,36,0.06)'
+                  : 'rgba(251,191,36,0.12)',
+                color: '#fbbf24',
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: bulkResolving ? 'not-allowed' : 'pointer',
+                whiteSpace: 'nowrap',
+                transition: 'background 0.15s, opacity 0.15s',
+                opacity: bulkResolving ? 0.7 : 1,
+              }}
+            >
+              {bulkResolving
+                ? <>
+                    <span style={{
+                      width: 11, height: 11, border: '2px solid #fbbf24',
+                      borderTopColor: 'transparent', borderRadius: '50%',
+                      display: 'inline-block',
+                      animation: 'spin 0.7s linear infinite',
+                    }} />
+                    Resolving…
+                  </>
+                : <><Zap size={12} /> Resolve All ({counts.collision})</>}
+            </button>
+          )}
+
+          <div style={{ width: 300 }}>
+            <SmartSearchBar
+              value={search}
+              onChange={setSearch}
+              useRegex={useRegex}
+              onToggleRegex={setUseRegex}
+              placeholder="Search fields..."
+            />
+          </div>
+        </div>
       </div>
 
       {/* ── Bulk-resolve toast ───────────────────────────────────────────────── */}
@@ -627,17 +611,21 @@ export default function DryRunMappingTable({
         <>
           {/* Columns section */}
           {columns.length > 0 && (
-            <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, overflow: 'hidden', background: 'var(--bg-surface)' }}>
+            <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, overflow: 'hidden', background: 'var(--bg-surface)', marginBottom: 16 }}>
               <div style={{
-                padding: '8px 14px',
-                background: 'var(--bg-surface-raised)',
+                padding: '10px 14px',
+                background: 'rgba(255, 255, 255, 0.03)',
                 borderBottom: '1px solid var(--border-main)',
                 fontSize: 11,
-                fontWeight: 700,
-                color: 'var(--text-secondary)',
+                fontWeight: 800,
+                color: 'var(--text-primary)',
                 textTransform: 'uppercase',
-                letterSpacing: '0.06em',
+                letterSpacing: '0.08em',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8
               }}>
+                <div style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--accent-blue)' }} />
                 Columns ({columns.length})
               </div>
               <TableHeader />
@@ -655,22 +643,22 @@ export default function DryRunMappingTable({
 
           {/* Measures section */}
           {measures.length > 0 && (
-            <div style={{ border: '1px solid rgba(56, 189, 248, 0.35)', borderRadius: 10, overflow: 'hidden', background: 'var(--bg-surface)' }}>
+            <div style={{ border: '1px solid rgba(56, 189, 248, 0.3)', borderRadius: 10, overflow: 'hidden', background: 'var(--bg-surface)' }}>
               <div style={{
-                padding: '8px 14px',
-                background: 'rgba(56, 189, 248, 0.08)',
-                borderBottom: '1px solid rgba(56, 189, 248, 0.25)',
+                padding: '10px 14px',
+                background: 'rgba(56, 189, 248, 0.05)',
+                borderBottom: '1px solid rgba(56, 189, 248, 0.2)',
                 fontSize: 11,
-                fontWeight: 700,
+                fontWeight: 800,
                 color: '#7dd3fc',
                 textTransform: 'uppercase',
-                letterSpacing: '0.06em',
+                letterSpacing: '0.08em',
                 display: 'flex',
                 alignItems: 'center',
-                gap: 6,
+                gap: 8,
               }}>
-                <span>fx</span>
-                <span>Measures ({measures.length})</span>
+                <div style={{ fontSize: 14, color: '#7dd3fc' }}>fx</div>
+                Measures ({measures.length})
               </div>
               <TableHeader />
               {filteredMeasures.length === 0 ? (
