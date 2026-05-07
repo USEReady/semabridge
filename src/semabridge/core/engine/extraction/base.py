@@ -107,6 +107,7 @@ def _step6a_extract_target_for_upsert(self, context: RunContext, target: str) ->
         view_name_raw = (
             context.semantic_view_name_override
             or getattr(getattr(context, "source_format", None), "semantic_view_name", None)
+            or getattr(getattr(context, "source_format", None), "dataset_name", None)
             or context.project_id
         )
         view_name = get_target_deployment_name(view_name_raw, "snowflake")

@@ -222,7 +222,10 @@ def _extract_fabric(
         dataset_id=resolved_dataset_id,
         row_counts=row_counts,
     )
+    
+    # Ensure display name is explicitly resolved and stored for naming resolution
+    source_format.dataset_name = extractor.get_model_display_name(resolved_dataset_id)
 
-    self._record_step(4, StepStatus.SUCCESS, f"Extracted TMSL definition")
+    self._record_step(4, StepStatus.SUCCESS, f"Extracted TMSL definition for '{source_format.dataset_name}'")
 
     return source_format
