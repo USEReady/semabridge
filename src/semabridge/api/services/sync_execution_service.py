@@ -186,6 +186,18 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
         else:
             model_list = source_cfg.get("models") or []
             if not model_list:
+                single = (
+                    source_cfg.get("model")
+                    or config.get("model_name")
+                    or source_cfg.get("view")
+                    or source_cfg.get("table")
+                )
+                if single:
+                    if isinstance(single, str) and "," in single:
+                        model_list = [part.strip() for part in single.split(",") if part.strip()]
+                    else:
+                        model_list = [single]
+            if not model_list:
                 raise HTTPException(status_code=400, detail="No models specified in source.models")
             for model_id in model_list:
                 resolved_id = str(model_id).strip()

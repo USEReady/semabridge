@@ -13,6 +13,9 @@ class _EmitterWithoutCortexMethod:
     def generate_ddls(self, _sml):
         return ["CREATE OR REPLACE VIEW test_view AS SELECT 1"]
 
+    def generate_cortex_yaml(self, _sml):
+        return "name: demo-model\n"
+
 
 class _EmitterWithDeploymentFailure:
     def __init__(self, *_args, **_kwargs):
@@ -21,8 +24,34 @@ class _EmitterWithDeploymentFailure:
             "invalid identifier 'ORDERS.QUANTITY'"
         )
 
-    def deploy(self, _sml):
+    def deploy(self, _sml, **_kwargs):
         return False
+
+
+class _EmptyScalarsResult:
+    def scalars(self):
+        return self
+
+    def first(self):
+        return None
+
+
+class _EmptySession:
+    def execute(self, _query):
+        return _EmptyScalarsResult()
+
+
+class _EmptySessionContext:
+    def __enter__(self):
+        return _EmptySession()
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+class _EmptyDbManager:
+    def get_session(self):
+        return _EmptySessionContext()
 
 
 def test_convert_to_snowflake_target_falls_back_when_emitter_lacks_cortex_method(
@@ -99,6 +128,47 @@ def test_snowflake_deploy_error_includes_root_cause(
         engine._do_snowflake_deploy(context, context.config.snowflake)
 
     message = str(exc_info.value)
-    assert "SnowflakeEmitter.deploy() returned False for model 'Core_Finance_v1'." in message
+    assert "Snowflake DDL deployment returned unsuccessful status:" in message
     assert "invalid identifier 'ORDERS.QUANTITY'" in message
     assert "DDL[0] failed" in message
+
+
+def test_deploy_to_snowflake_falls_back_when_target_identity_is_unlinked(
+    monkeypatch,
+):
+    engine = ExecutionEngine()
+    context = RunContext(
+        project_id="Demo Model",
+        run_id="run-1",
+        config=SimpleNamespace(
+            snowflake=SimpleNamespace(
+                account="acct",
+                warehouse="wh",
+                database="db",
+                schema_name="schema",
+            ),
+            targets=[{"type": "snowflake", "identity_id": "missing-account"}],
+            target=None,
+        ),
+        start_time=0.0,
+        source_type="fabric",
+        target_type="snowflake",
+        behavior=ConnectorBehavior(),
+    )
+    context.sml_model = SimpleNamespace(datasets=[], metrics=[])
+
+    monkeypatch.setattr(
+        "semabridge.repository.orm.session_factory.db_manager",
+        _EmptyDbManager(),
+    )
+
+    deployed_configs = []
+
+    def _record_deploy(self, run_context, snowflake_config):
+        deployed_configs.append(snowflake_config)
+
+    monkeypatch.setattr(ExecutionEngine, "_do_snowflake_deploy", _record_deploy)
+
+    engine._deploy_to_snowflake(context)
+
+    assert deployed_configs == [context.config.snowflake]

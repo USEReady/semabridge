@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from semabridge.converter.measure_triage import TriageResult
 from semabridge.core.settings import SnowflakeConfig
 from semabridge.core.behavior import ConnectorBehavior, SnowflakeBehavior
+from semabridge.core.exceptions import ConnectorError
 from semabridge.formats.sml.models import SMLModel, SMLDataset, SMLMetric, SMLDimension, SMLRelationship, AggregationType, DataType
 from semabridge.utils.identifiers import IdentifierSanitizer
 from semabridge.connectors.snowflake_emitter_parts.exceptions import MissingSourceTableWarning
@@ -361,26 +362,15 @@ class SnowflakeSchemaManager:
             self._execute_sql(cursor, f'DESC TABLE {self.config.schema_name}."{table_name}"', context=f"DESC TABLE {table_name}")
             total_cols = {row[0] for row in cursor.fetchall()}
             if extra_columns >= total_cols:
-                # Mandate 2: Idempotent DDL â€” auto-recreate instead of silent return
-                if self.sf_behavior.ddl_strategy.value == "idempotent" and dataset:
-                    logger.info(
-                        f"Idempotent DDL: recreating {table_name} via CREATE OR REPLACE "
-                        f"(would drop all {len(total_cols)} columns)"
-                    )
-                    create_ddl = self._generate_create_or_replace_table_ddl(dataset, table_name)
-                    try:
-                        self._execute_sql(cursor, create_ddl, context=f"CREATE OR REPLACE TABLE {table_name}")
-                        logger.info(f"Successfully recreated table: {table_name}")
-                    except Exception as e:
-                        logger.error(f"Failed to recreate table {table_name}: {e}")
-                    return
-                else:
-                    logger.warning(
-                        f"Skipping column drops for {table_name}: would drop "
-                        f"all {len(total_cols)} columns. Table needs full recreation."
-                    )
-                    return
+                message = (
+                    f"Refusing to drop all columns from existing table {table_name}; "
+                    "full table recreation is disabled to preserve user data."
+                )
+                logger.warning(message)
+                raise ConnectorError(message)
         except Exception as e:
+            if isinstance(e, ConnectorError):
+                raise
             logger.warning(f"Could not check column count for {table_name}: {e}")
         
         for col_name in extra_columns:
@@ -392,37 +382,6 @@ class SnowflakeSchemaManager:
             except Exception as e:
                 logger.warning(f"Could not drop column {col_name} from {table_name}: {e}")
 
-    def _generate_create_or_replace_table_ddl(self, dataset: SMLDataset, table_name: str) -> str:
-        """Generate CREATE OR REPLACE TABLE DDL for idempotent deployment (Mandate 2).
-
-        This bypasses Snowflake's restrictive metadata rules regarding
-        single-column drops by atomically replacing the entire table definition.
-        """
-        type_map = {
-            "STRING": "VARCHAR(500)",
-            "INTEGER": "INTEGER",
-            "FLOAT": "FLOAT",
-            "DECIMAL": "DECIMAL(18,2)",
-            "BOOLEAN": "BOOLEAN",
-            "DATETIME": "TIMESTAMP_NTZ",
-            "DATE": "DATE",
-            "BINARY": "BINARY",
-        }
-
-        safe_table = self._safe_table_name(table_name)
-        schema = self.config.schema_name
-
-        col_defs = []
-        for col_name, col in self._collect_physical_source_columns(dataset).items():
-            sf_type = type_map.get(col.data_type.value, "VARCHAR(500)")
-            col_defs.append(f'    "{col_name}" {sf_type}')
-
-        if not col_defs:
-            col_defs.append('    "ID" VARCHAR')
-
-        cols_block = ",\n".join(col_defs)
-        return f'CREATE OR REPLACE TABLE {schema}."{safe_table}" (\n{cols_block}\n);'
-    
     def _generate_date_dim_ddl(self, table_name: str) -> str:
         """
         Generate DDL for a Date Dimension using Snowflake Generator.
@@ -1235,6 +1194,14 @@ class SnowflakeSchemaManager:
             logger.info(f"Applying inferred datatypes via CTAS for table: {safe_table_name}")
             logger.debug(f"Generated CTAS SQL:\n{ctas_sql}")
             self._execute_sql(cursor, ctas_sql, context=f"CTAS {safe_table_name}")
+            self._execute_sql(cursor, f"SELECT COUNT(*) FROM {full_table}", context=f"COUNT {safe_table_name}")
+            original_count = cursor.fetchone()[0]
+            self._execute_sql(cursor, f"SELECT COUNT(*) FROM {fixed_table}", context=f"COUNT {fixed_table_name}")
+            fixed_count = cursor.fetchone()[0]
+            if original_count != fixed_count:
+                raise ConnectorError(
+                    f"CTAS safety check failed for {safe_table_name}: original row count {original_count} does not match fixed row count {fixed_count}. Aborting swap."
+                )
             self._execute_sql(cursor, f"ALTER TABLE {full_table} SWAP WITH {fixed_table}", context=f"SWAP TABLE {safe_table_name}")
             logger.info("Table swapped successfully: %s", safe_table_name)
             self._execute_sql(cursor, f"DROP TABLE IF EXISTS {fixed_table}", context=f"DROP TABLE {fixed_table_name}")
@@ -1287,6 +1254,14 @@ class SnowflakeSchemaManager:
             logger.info(f"Applying inferred datatypes via CTAS for table: {safe_table_name}")
             logger.debug(f"Generated CTAS SQL:\n{ctas_sql}")
             self._execute_sql(cursor, ctas_sql, context=f"CTAS {safe_table_name}")
+            self._execute_sql(cursor, f"SELECT COUNT(*) FROM {full_table}", context=f"COUNT {safe_table_name}")
+            original_count = cursor.fetchone()[0]
+            self._execute_sql(cursor, f"SELECT COUNT(*) FROM {fixed_table}", context=f"COUNT {fixed_table_name}")
+            fixed_count = cursor.fetchone()[0]
+            if original_count != fixed_count:
+                raise ConnectorError(
+                    f"CTAS safety check failed for {safe_table_name}: original row count {original_count} does not match fixed row count {fixed_count}. Aborting swap."
+                )
             self._execute_sql(cursor, f"ALTER TABLE {full_table} SWAP WITH {fixed_table}", context=f"SWAP TABLE {safe_table_name}")
             logger.info("Table swapped successfully: %s", safe_table_name)
             self._execute_sql(cursor, f"DROP TABLE IF EXISTS {fixed_table}", context=f"DROP TABLE {fixed_table_name}")

@@ -1186,6 +1186,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         });
         // Show success in the wizard finish step
         setCreatedProject({ id: initialData?.id, name: name.trim(), _editSave: true });
+        if (initialData?.id) {
+          navigate(`/projects/${initialData.id}`);
+        }
         setSaving(false);
         return;
       }
@@ -1310,6 +1313,10 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         }
       }
 
+      if (projectId) {
+        navigate(`/projects/${projectId}`);
+      }
+
     } catch (err) {
       setCreatedProject(null);
       setCreateError(err?.message || 'Create project failed.');
@@ -1328,8 +1335,6 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       if (selectedWorkspace?.name) source.workspace = selectedWorkspace.name;
       if (selectedModelNames.length > 0) {
         source.models = selectedModelNames;
-      } else if (selectedModels.size === 0) {
-        source.model = '*';
       }
     }
 
@@ -1339,8 +1344,6 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       if (snowflakeSchema.trim()) source.schema = snowflakeSchema.trim();
       if (selectedModelNames.length > 0) {
         source.models = selectedModelNames;
-      } else if (selectedModels.size === 0) {
-        source.model = '*';
       }
     }
 

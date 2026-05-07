@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from semabridge.api.services import sync_execution_service as ses
 
 
@@ -19,9 +21,8 @@ def _make_routing_summary() -> dict[str, int]:
 def test_execute_sync_request_exposes_routing_summary(monkeypatch) -> None:
     routing_summary = _make_routing_summary()
 
-    monkeypatch.setattr(ses, "_write_content_if_provided", lambda payload, normalizer: None)
     monkeypatch.setattr(ses, "reload_settings", lambda: None)
-    monkeypatch.setattr(ses, "_load_config", lambda normalizer: ("semabridge.yaml", {}))
+    monkeypatch.setattr(ses, "_load_config", lambda payload, normalizer: ("semabridge.yaml", {}))
     monkeypatch.setattr(
         ses,
         "_build_sync_jobs",
@@ -60,7 +61,7 @@ def test_execute_sync_request_exposes_routing_summary(monkeypatch) -> None:
         ],
     )
 
-    result = ses.execute_sync_request({}, lambda content: content)
+    result = ses.execute_sync_request({}, lambda content, *args: content)
 
     assert result["status"] == "success"
     assert result["routing_summary"] == routing_summary
@@ -69,9 +70,8 @@ def test_execute_sync_request_exposes_routing_summary(monkeypatch) -> None:
 
 
 def test_execute_sync_request_returns_none_routing_summary_when_missing(monkeypatch) -> None:
-    monkeypatch.setattr(ses, "_write_content_if_provided", lambda payload, normalizer: None)
     monkeypatch.setattr(ses, "reload_settings", lambda: None)
-    monkeypatch.setattr(ses, "_load_config", lambda normalizer: ("semabridge.yaml", {}))
+    monkeypatch.setattr(ses, "_load_config", lambda payload, normalizer: ("semabridge.yaml", {}))
     monkeypatch.setattr(
         ses,
         "_build_sync_jobs",
@@ -110,7 +110,26 @@ def test_execute_sync_request_returns_none_routing_summary_when_missing(monkeypa
         ],
     )
 
-    result = ses.execute_sync_request({}, lambda content: content)
+    result = ses.execute_sync_request({}, lambda content, *args: content)
 
     assert result["status"] == "success"
     assert result["routing_summary"] is None
+
+
+@pytest.mark.parametrize(
+    "source_cfg, expected_models",
+    [
+        ({"type": "fabric", "model": "LegacyModel"}, ["LegacyModel"]),
+        ({"type": "fabric", "models": ["ModelA", "ModelB"]}, ["ModelA", "ModelB"]),
+    ],
+)
+def test_build_sync_jobs_accepts_fabric_model_fallbacks(source_cfg, expected_models):
+    jobs, source_type, target_type, resolved_source_cfg, resolved_target_cfg = ses._build_sync_jobs(
+        {"source": source_cfg, "targets": [{"type": "snowflake"}]}
+    )
+
+    assert source_type == "fabric"
+    assert target_type == "snowflake"
+    assert resolved_source_cfg == source_cfg
+    assert resolved_target_cfg == {"type": "snowflake"}
+    assert [job["dataset_id"] for job in jobs] == expected_models

@@ -748,7 +748,7 @@ class SnowflakeEmitter(BaseEmitter):
         """
         Check which base tables from the model already exist in Snowflake.
         
-        Returns: dict mapping table_name -> {'exists': True/False, 'columns': [...]}
+        Returns: dict mapping table_name -> {'exists': True/False, 'columns': [...], 'column_types': {...}}
         """
         try:
             existing_tables = {}
@@ -765,7 +765,7 @@ class SnowflakeEmitter(BaseEmitter):
                 
                 # Check if table exists in INFORMATION_SCHEMA
                 query = f"""
-                    SELECT COLUMN_NAME FROM "{str(self.config.database).replace('"', '""')}".INFORMATION_SCHEMA.COLUMNS
+                    SELECT COLUMN_NAME, DATA_TYPE FROM "{str(self.config.database).replace('"', '""')}".INFORMATION_SCHEMA.COLUMNS
                     WHERE UPPER(TABLE_CATALOG) = UPPER('{str(self.config.database).replace("'", "''")}')
                     AND UPPER(TABLE_SCHEMA) = UPPER('{str(self.config.schema_name).replace("'", "''")}')
                     AND UPPER(TABLE_NAME) = UPPER('{safe_table_name.replace("'", "''")}')
@@ -778,6 +778,7 @@ class SnowflakeEmitter(BaseEmitter):
                     existing_tables[dataset_name] = {
                         'exists': True,
                         'columns': [row[0] for row in rows],
+                        'column_types': {row[0].upper(): row[1] for row in rows},
                         'table_name': f'{self.config.schema_name}.{safe_table_name}'
                     }
                     logger.info("Table for dataset '%s' exists: %s (%d columns)", 
@@ -806,6 +807,36 @@ class SnowflakeEmitter(BaseEmitter):
         errors = []
         
         try:
+            def resolve_table_columns(dataset_name: str) -> set[str]:
+                table_info = existing_tables.get(dataset_name) or {}
+                return {str(col).upper() for col in table_info.get('columns', [])}
+
+            def resolve_table_column_types(dataset_name: str) -> dict[str, str]:
+                table_info = existing_tables.get(dataset_name) or {}
+                return {str(col).upper(): str(dtype).upper() for col, dtype in (table_info.get('column_types') or {}).items()}
+
+            def dataset_label(dataset_name: str) -> str:
+                table_info = existing_tables.get(dataset_name) or {}
+                return table_info.get('table_name', dataset_name)
+
+            def expected_dataset(dataset_name: str) -> Any:
+                if hasattr(model, 'get_dataset'):
+                    return model.get_dataset(dataset_name)
+                for dataset in getattr(model, 'datasets', []) or []:
+                    if str(getattr(dataset, 'unique_name', '')).upper() == str(dataset_name).upper():
+                        return dataset
+                return None
+
+            def expected_column_type(dataset_name: str, column_name: str) -> Optional[str]:
+                dataset = expected_dataset(dataset_name)
+                if not dataset:
+                    return None
+                column = getattr(dataset, 'get_column', lambda _name: None)(column_name)
+                if not column:
+                    return None
+                data_type = getattr(column, 'data_type', None)
+                return str(getattr(data_type, 'value', data_type)).upper() if data_type else None
+
             # Check relationships
             relationships = getattr(model, 'relationships', []) or []
             for rel in relationships:
@@ -814,14 +845,46 @@ class SnowflakeEmitter(BaseEmitter):
                 
                 from_dataset = getattr(rel, 'from_dataset', None)
                 to_dataset = getattr(rel, 'to_dataset', None)
+                from_columns = [str(col).upper() for col in (getattr(rel, 'from_columns', []) or [])]
+                to_columns = [str(col).upper() for col in (getattr(rel, 'to_columns', []) or [])]
                 
                 if from_dataset and from_dataset in existing_tables:
                     if not existing_tables[from_dataset]['exists']:
                         errors.append(f"Relationship {rel.unique_name}: from_dataset '{from_dataset}' table does not exist")
+                    else:
+                        available_columns = resolve_table_columns(from_dataset)
+                        available_column_types = resolve_table_column_types(from_dataset)
+                        missing_from = [col for col in from_columns if col not in available_columns]
+                        if missing_from:
+                            errors.append(
+                                f"Relationship {rel.unique_name}: missing from_columns {missing_from} in {dataset_label(from_dataset)}"
+                            )
+                        for col in from_columns:
+                            expected_type = expected_column_type(from_dataset, col)
+                            actual_type = available_column_types.get(col)
+                            if expected_type and actual_type and expected_type != actual_type:
+                                errors.append(
+                                    f"Relationship {rel.unique_name}: column type mismatch for {dataset_label(from_dataset)}.{col} (expected {expected_type}, found {actual_type})"
+                                )
                 
                 if to_dataset and to_dataset in existing_tables:
                     if not existing_tables[to_dataset]['exists']:
                         errors.append(f"Relationship {rel.unique_name}: to_dataset '{to_dataset}' table does not exist")
+                    else:
+                        available_columns = resolve_table_columns(to_dataset)
+                        available_column_types = resolve_table_column_types(to_dataset)
+                        missing_to = [col for col in to_columns if col not in available_columns]
+                        if missing_to:
+                            errors.append(
+                                f"Relationship {rel.unique_name}: missing to_columns {missing_to} in {dataset_label(to_dataset)}"
+                            )
+                        for col in to_columns:
+                            expected_type = expected_column_type(to_dataset, col)
+                            actual_type = available_column_types.get(col)
+                            if expected_type and actual_type and expected_type != actual_type:
+                                errors.append(
+                                    f"Relationship {rel.unique_name}: column type mismatch for {dataset_label(to_dataset)}.{col} (expected {expected_type}, found {actual_type})"
+                                )
                 
                 logger.info("Relationship validation: %s (from=%s, to=%s)", 
                           rel.unique_name, from_dataset, to_dataset)
@@ -830,9 +893,24 @@ class SnowflakeEmitter(BaseEmitter):
             metrics = getattr(model, 'metrics', []) or []
             for metric in metrics:
                 metric_dataset = getattr(metric, 'dataset', None)
+                source_column = getattr(metric, 'source_column', None)
                 if metric_dataset and metric_dataset in existing_tables:
                     if not existing_tables[metric_dataset]['exists']:
                         errors.append(f"Metric {metric.unique_name}: dataset '{metric_dataset}' table does not exist")
+                    elif source_column:
+                        available_columns = resolve_table_columns(metric_dataset)
+                        available_column_types = resolve_table_column_types(metric_dataset)
+                        if str(source_column).upper() not in available_columns:
+                            errors.append(
+                                f"Metric {metric.unique_name}: source_column '{source_column}' missing in {dataset_label(metric_dataset)}"
+                            )
+                        else:
+                            expected_type = expected_column_type(metric_dataset, source_column)
+                            actual_type = available_column_types.get(str(source_column).upper())
+                            if expected_type and actual_type and expected_type != actual_type:
+                                errors.append(
+                                    f"Metric {metric.unique_name}: source_column type mismatch for {dataset_label(metric_dataset)}.{source_column} (expected {expected_type}, found {actual_type})"
+                                )
                 
                 logger.info("Metric validation: %s (dataset=%s)", metric.unique_name, metric_dataset)
             
@@ -878,7 +956,8 @@ class SnowflakeEmitter(BaseEmitter):
                 for dataset_name, table_info in existing_tables.items():
                     if table_info['exists']:
                         # Check if this DDL is for an existing table
-                        if table_info['table_name'].upper() in ddl_upper:
+                        target_name = str(table_info['table_name']).split('.')[-1].strip('"').upper()
+                        if f'"{target_name}"' in ddl_upper or f'."{target_name}"' in ddl_upper:
                             logger.info("Skipping CREATE TABLE for existing table: %s", table_info['table_name'])
                             skip = True
                             break

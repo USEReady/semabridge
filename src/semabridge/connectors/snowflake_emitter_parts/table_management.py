@@ -261,7 +261,7 @@ def generate_create_or_replace_table_ddl(
     dataset,
     table_name: str,
 ) -> str:
-    """Generate CREATE OR REPLACE TABLE DDL for idempotent deployment (Mandate 2)."""
+    """Generate safe CREATE TABLE DDL that preserves any existing table."""
     type_map = {
         "STRING": "VARCHAR(500)",
         "INTEGER": "INTEGER",
@@ -285,7 +285,7 @@ def generate_create_or_replace_table_ddl(
         col_defs.append('    "ID" VARCHAR')
 
     cols_block = ",\n".join(col_defs)
-    return f'CREATE OR REPLACE TABLE {schema}."{safe_table}" (\n{cols_block}\n);'
+    return f'CREATE TABLE IF NOT EXISTS {schema}."{safe_table}" (\n{cols_block}\n);'
 
 
 def generate_sample_insert(

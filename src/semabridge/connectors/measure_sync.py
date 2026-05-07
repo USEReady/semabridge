@@ -218,9 +218,20 @@ class MeasureSynchronizer:
                 # Create or replace table based on write mode
                 if write_mode == "overwrite":
                     col_defs = ", ".join([f'"{self._id.sanitize_column(c[0])}" {c[1]}' for c in type_map])
-                    create_ddl = f"CREATE OR REPLACE TABLE {full_table} ({col_defs})"
-                    logger.debug(f"Creating table: {create_ddl}")
-                    self.connection_manager._execute_sql(cur, create_ddl, context=f"CREATE TABLE {full_table}")
+                    try:
+                        self.connection_manager._execute_sql(cur, f"DESC TABLE {full_table}", context=f"DESC TABLE {full_table}")
+                        existing_columns = {row[0].upper() for row in cur.fetchall()}
+                        expected_columns = {self._id.sanitize_column(c[0]).upper() for c in type_map}
+                        if existing_columns and existing_columns != expected_columns:
+                            raise ConnectorError(
+                                f"Refusing to overwrite {full_table}: existing columns {sorted(existing_columns)} do not match expected columns {sorted(expected_columns)}."
+                            )
+                        self.connection_manager._execute_sql(cur, f"TRUNCATE TABLE {full_table}", context=f"TRUNCATE TABLE {full_table}")
+                    except ConnectorError:
+                        raise
+                    except Exception:
+                        self.connection_manager._execute_sql(cur, f"CREATE TABLE IF NOT EXISTS {full_table} ({col_defs})", context=f"CREATE TABLE IF NOT EXISTS {full_table}")
+                        self.connection_manager._execute_sql(cur, f"TRUNCATE TABLE {full_table}", context=f"TRUNCATE TABLE {full_table}")
                 elif write_mode == "append":
                     # Check if table exists, create if not
                     try:

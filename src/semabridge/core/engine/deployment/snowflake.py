@@ -82,10 +82,13 @@ def _deploy_to_snowflake(self, context: RunContext) -> None:
             ).scalars().first()
 
             if not account:
-                raise DeploymentError(
-                    f"No Snowflake account found for identity_id '{identity_id}'. "
-                    "Please link this account in the Connections panel."
+                logger.warning(
+                    "No linked Snowflake account found for identity_id %s; falling back to global Snowflake settings",
+                    identity_id,
                 )
+                sf_cfg = context.config.snowflake
+                self._do_snowflake_deploy(context, sf_cfg)
+                return
 
             with scoped_account_env(account, session):
                 logger.info(

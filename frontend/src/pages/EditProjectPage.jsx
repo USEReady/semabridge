@@ -10,78 +10,10 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Loader2, ArrowLeft } from 'lucide-react';
-import { parseDocument as parseYamlDocument } from 'yaml';
 
 import { api } from '../utils/api';
+import { parseConfigYamlToInitialData } from '../utils/parseConfigYamlToInitialData';
 import CreateProjectPage from './CreateProjectPage';
-
-/** Parse a semabridge.yaml string into a flat form object matching initialData shape */
-function parseConfigYamlToInitialData(yamlText, projectMeta) {
-  const raw = String(yamlText || '').trim();
-  const fallback = {
-    source_type: projectMeta?.source || 'fabric',
-    target_type: projectMeta?.target_type || 'snowflake',
-    output_format: 'osi',
-    identity_id: '',
-    workspace_id: '',
-    database: '',
-    schema: '',
-    target_database: '',
-    target_schema: '',
-    target_account: '',
-    target_warehouse: '',
-    target_identity_id: '',
-    target_workspace_id: '',
-    models: [],
-  };
-
-  if (!raw) return fallback;
-
-  try {
-    const doc = parseYamlDocument(raw, { uniqueKeys: false, prettyErrors: true });
-    const tree = doc.toJS ? doc.toJS() : {};
-
-    const source = tree?.source && typeof tree.source === 'object' ? tree.source : {};
-    const targets = Array.isArray(tree?.targets) ? tree.targets : (tree?.target ? [tree.target] : []);
-    const firstTarget = targets[0] && typeof targets[0] === 'object' ? targets[0] : {};
-    const ui = tree?.ui && typeof tree.ui === 'object' ? tree.ui : {};
-
-    // Models — could be source.models (array), source.model (string or '*')
-    let models = [];
-    if (Array.isArray(source.models)) {
-      models = source.models.filter(m => m && m !== '*');
-    } else if (typeof source.model === 'string' && source.model && source.model !== '*') {
-      models = [source.model];
-    }
-
-    // Also check selection block (written by the wizard itself)
-    const selectionModelIds = Array.isArray(tree?.selection?.model_ids)
-      ? tree.selection.model_ids
-      : [];
-    if (selectionModelIds.length > 0 && models.length === 0) {
-      models = selectionModelIds;
-    }
-
-    return {
-      source_type: String(source.type || fallback.source_type),
-      target_type: String(firstTarget.type || fallback.target_type),
-      output_format: String(ui.intermediate_format || fallback.output_format),
-      identity_id: String(source.identity_id || ''),
-      workspace_id: String(source.workspace_id || ''),
-      database: String(source.database || ''),
-      schema: String(source.schema || ''),
-      target_database: String(firstTarget.database || ''),
-      target_schema: String(firstTarget.schema || ''),
-      target_account: String(firstTarget.account || ''),
-      target_warehouse: String(firstTarget.warehouse || ''),
-      target_identity_id: String(firstTarget.identity_id || ''),
-      target_workspace_id: String(firstTarget.workspace_id || ''),
-      models,
-    };
-  } catch {
-    return fallback;
-  }
-}
 
 export default function EditProjectPage() {
   const { id } = useParams();
