@@ -686,8 +686,13 @@ class SnowflakeSchemaManager:
         quoted_source = f'{schema}."{table_name}"'
         fixed_name = fixed_table_name or f"{table_name}__FIXED"
         quoted_fixed = f'{schema}."{fixed_name}"'
+        
+        # Use explicit DROP + CREATE instead of CREATE OR REPLACE for safer table lifecycle
+        # This ensures we're creating a fresh temporary table, not potentially wiping
+        # an existing user table if someone manually created a __FIXED table
         return (
-            f"CREATE OR REPLACE TABLE {quoted_fixed} AS\n"
+            f"DROP TABLE IF EXISTS {quoted_fixed};\n"
+            f"CREATE TABLE {quoted_fixed} AS\n"
             f"SELECT\n    {select_sql}\n"
             f"FROM {quoted_source};"
         )
