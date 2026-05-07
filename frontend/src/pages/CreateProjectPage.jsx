@@ -537,18 +537,19 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     }
   }, []);
 
-  // Detection logic for resumed draft on mount
+  // On CREATE mode mount — always wipe stale state so every new project starts blank.
+  useEffect(() => {
+    if (!editMode) {
+      clearWizardState();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Detection logic for resumed draft on mount (only relevant in edit mode)
   useEffect(() => {
     if (sourceConnector === 'pbix') {
       refreshLocalFolders();
     }
   }, [refreshLocalFolders, sourceConnector, step]);
-
-  useEffect(() => {
-    if (hasMeaningfulData()) {
-      setHasRestoredDraft(true);
-    }
-  }, []); // Only on initial mount
 
   const setStep = useCallback((nextStep) => {
     const val = typeof nextStep === 'function' ? nextStep(step) : nextStep;
@@ -1184,10 +1185,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
           description: description.trim(),
           tags: Array.from(tags),
         });
-        // Show success in the wizard finish step
-        setCreatedProject({ id: initialData?.id, name: name.trim(), _editSave: true });
+        // Navigate directly to config/sync page after saving edits
         if (initialData?.id) {
-          navigate(`/projects/${initialData.id}`);
+          navigate(`/projects/${initialData.id}/config`);
         }
         setSaving(false);
         return;
@@ -1314,7 +1314,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       }
 
       if (projectId) {
-        navigate(`/projects/${projectId}`);
+        navigate(`/projects/${projectId}/config`);
       }
 
     } catch (err) {
@@ -2105,6 +2105,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
             selectedModels={selectedModels}
             initialSelectedModels={initialSelectedModels}
             selectedModelNameByKey={selectedModelNameByKey}
+            onClear={clearWizardState}
           />
         )}
       </div>
@@ -4294,6 +4295,7 @@ function StepFinish({
   selectedModels,
   initialSelectedModels,
   selectedModelNameByKey,
+  onClear,
 }) {
   const createdProjectId = createdProject?.id || createdProject?.project_id;
 
@@ -4330,10 +4332,10 @@ function StepFinish({
         )}
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
-          <button onClick={() => { clearWizardState(); navigate('/projects'); }} style={footerBtn('secondary')}>Back to Projects</button>
+          <button onClick={() => { onClear?.(); navigate('/projects'); }} style={footerBtn('secondary')}>Back to Projects</button>
           {createdProjectId ? (
-            <button onClick={() => navigate(`/projects/${createdProjectId}/edit`)} style={footerBtn('primary')}>
-              Configure Project
+            <button onClick={() => navigate(`/projects/${createdProjectId}/config`)} style={footerBtn('primary')}>
+              Go to Config &amp; Sync
             </button>
           ) : (
             <button disabled style={{ ...footerBtn('secondary'), opacity: 0.6, cursor: 'not-allowed' }}>
