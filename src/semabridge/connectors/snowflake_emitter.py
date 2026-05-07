@@ -189,7 +189,7 @@ class SnowflakeEmitter(BaseEmitter):
 
                 # Step 2a: UPSERT bootstrap/preserve decision
                 from semabridge.utils.name_translator import get_target_deployment_name
-                view_name_raw = getattr(model, "unique_name", None) or getattr(model, "label", None) or "model"
+                view_name_raw = getattr(model, "label", None) or getattr(model, "unique_name", None) or "model"
                 safe_view_name = get_target_deployment_name(view_name_raw, "snowflake")
                 full_view_name = f'"{self.config.database}"."{self.config.schema_name}"."{safe_view_name}"'
 
@@ -755,13 +755,13 @@ class SnowflakeEmitter(BaseEmitter):
             datasets = getattr(model, 'datasets', []) or []
             
             for dataset in datasets:
-                dataset_name = getattr(dataset, 'unique_name', None)
+                dataset_name = getattr(dataset, 'label', None) or getattr(dataset, 'unique_name', None)
                 if not dataset_name:
                     continue
                 
                 from semabridge.utils.name_translator import get_target_deployment_name
                 source_table = getattr(dataset, "source_table", None) or dataset_name
-                safe_table_name = get_target_deployment_name(source_table, "snowflake")
+                safe_table_name = get_target_deployment_name(source_table)
                 
                 # Check if table exists in INFORMATION_SCHEMA
                 query = f"""
@@ -953,9 +953,8 @@ class SnowflakeEmitter(BaseEmitter):
             
             # Check if this is a CREATE TABLE statement
             if ddl_upper.startswith('CREATE TABLE') or 'CREATE OR REPLACE TABLE' in ddl_upper:
-                # Extract the table name from the DDL using regex
-                # Pattern: CREATE [OR REPLACE] TABLE [schema.]"table_name"
-                match = re.search(r'(?:CREATE\s+(?:OR\s+REPLACE\s+)?TABLE)\s+(?:[\w]+\.)?["\']?(\w+)["\']?', ddl, re.IGNORECASE)
+                # Extract the table name from the DDL using regex (handles quoted identifiers)
+                match = re.search(r'(?:CREATE\s+(?:OR\s+REPLACE\s+)?TABLE)\s+(?:[^.\s]+\.)?["\']?([^"\'\s]+)["\']?', ddl, re.IGNORECASE)
                 ddl_table_name = match.group(1).upper() if match else None
                 
                 skip = False
