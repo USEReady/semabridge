@@ -935,6 +935,8 @@ class SnowflakeEmitter(BaseEmitter):
         2. Keep the semantic view definition (CREATE OR REPLACE SEMANTIC VIEW)
         3. This allows relationships/measures to bind to existing tables
         """
+        import re
+        
         filtered_ddls = []
         
         for ddl in ddls:
@@ -951,16 +953,22 @@ class SnowflakeEmitter(BaseEmitter):
             
             # Check if this is a CREATE TABLE statement
             if ddl_upper.startswith('CREATE TABLE') or 'CREATE OR REPLACE TABLE' in ddl_upper:
-                # Try to extract table name
+                # Extract the table name from the DDL using regex
+                # Pattern: CREATE [OR REPLACE] TABLE [schema.]"table_name"
+                match = re.search(r'(?:CREATE\s+(?:OR\s+REPLACE\s+)?TABLE)\s+(?:[\w]+\.)?["\']?(\w+)["\']?', ddl, re.IGNORECASE)
+                ddl_table_name = match.group(1).upper() if match else None
+                
                 skip = False
-                for dataset_name, table_info in existing_tables.items():
-                    if table_info['exists']:
-                        # Check if this DDL is for an existing table
-                        target_name = str(table_info['table_name']).split('.')[-1].strip('"').upper()
-                        if f'"{target_name}"' in ddl_upper or f'."{target_name}"' in ddl_upper:
-                            logger.info("Skipping CREATE TABLE for existing table: %s", table_info['table_name'])
-                            skip = True
-                            break
+                if ddl_table_name:
+                    for dataset_name, table_info in existing_tables.items():
+                        if table_info['exists']:
+                            # Extract just the table name from fully qualified name
+                            target_name = str(table_info['table_name']).split('.')[-1].strip('"').upper()
+                            # Exact match (not substring)
+                            if ddl_table_name == target_name:
+                                logger.info("Skipping CREATE TABLE for existing table: %s", table_info['table_name'])
+                                skip = True
+                                break
                 
                 if not skip:
                     logger.info("Including CREATE TABLE DDL (table doesn't exist yet)")
