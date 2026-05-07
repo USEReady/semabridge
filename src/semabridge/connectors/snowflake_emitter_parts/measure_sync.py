@@ -1,8 +1,11 @@
 """Measure sync and materialization utilities for Snowflake."""
 
-from typing import Optional, Dict, Any
+import json
+from typing import Optional, Dict, Any, Set
 
 from semabridge.utils.logger import get_logger
+from semabridge.core.exceptions import ConnectorError
+from semabridge.connectors.schema_compatibility_validator import SchemaCompatibilityValidator
 
 logger = get_logger(__name__)
 
@@ -82,30 +85,71 @@ def sync_measure_data(
         cur = conn.cursor()
         
         try:
-            # Create or replace table based on write mode
+            # Build schema type map for this measure
+            type_map = []
+            for col in columns:
+                val = first_row[col]
+                if isinstance(val, bool):
+                    type_map.append((col, "BOOLEAN"))
+                elif isinstance(val, int):
+                    type_map.append((col, "INTEGER"))
+                elif isinstance(val, float):
+                    type_map.append((col, "FLOAT"))
+                elif isinstance(val, (list, dict)):
+                    type_map.append((col, "VARIANT"))
+                else:
+                    # Check if it looks like a date
+                    str_val = str(val) if val else ""
+                    if len(str_val) == 10 and "-" in str_val:
+                        type_map.append((col, "DATE"))
+                    else:
+                        type_map.append((col, "VARCHAR(500)"))
+            
+            # Prepare expected column info for validation
+            expected_columns = {emitter._sanitize_col_name(c[0]): c[1] for c in type_map}
+            col_defs = ", ".join([f'"{emitter._sanitize_col_name(c[0])}" {c[1]}' for c in type_map])
+            
+            # Check if table exists and validate compatibility
+            validator = SchemaCompatibilityValidator(cur, emitter.config)
+            validation_result = validator.validate_table(
+                table_name=safe_table,
+                join_columns=set(expected_columns.keys()),
+                join_column_types=expected_columns
+            )
+            
             if write_mode == "overwrite":
-                col_defs = ", ".join([f'"{emitter._sanitize_col_name(c[0])}" {c[1]}' for c in type_map])
-                try:
-                    emitter._execute_sql(cur, f"DESC TABLE {full_table}", context=f"DESC TABLE {full_table}")
-                    existing_columns = {row[0].upper() for row in cur.fetchall()}
-                    expected_columns = {emitter._sanitize_col_name(c[0]).upper() for c in type_map}
-                    if existing_columns and existing_columns != expected_columns:
-                        raise ConnectorError(
-                            f"Refusing to overwrite {full_table}: existing columns {sorted(existing_columns)} do not match expected columns {sorted(expected_columns)}."
+                if validation_result.table_exists:
+                    # Table exists - check if it's compatible
+                    if not validation_result.is_compatible:
+                        # Schema mismatch - abort to preserve data
+                        error_msg = (
+                            f"Cannot overwrite {full_table}: existing table has incompatible schema.\n"
+                            f"{validation_result.error_message()}\n"
+                            f"To proceed, manually drop the table or change the target table name."
                         )
+                        raise ConnectorError(error_msg)
+                    # Compatible - truncate and reuse
+                    logger.info(f"Existing table {full_table} is compatible. Truncating and reusing.")
                     emitter._execute_sql(cur, f"TRUNCATE TABLE {full_table}", context=f"TRUNCATE TABLE {full_table}")
-                except ConnectorError:
-                    raise
-                except Exception:
+                else:
+                    # Table doesn't exist - create it
+                    logger.info(f"Creating new table {full_table}")
                     emitter._execute_sql(cur, f"CREATE TABLE IF NOT EXISTS {full_table} ({col_defs})", context=f"CREATE TABLE IF NOT EXISTS {full_table}")
-                    emitter._execute_sql(cur, f"TRUNCATE TABLE {full_table}", context=f"TRUNCATE TABLE {full_table}")
+                    
             elif write_mode == "append":
-                # Check if table exists, create if not
-                try:
-                    emitter._execute_sql(cur, f"DESC TABLE {full_table}", context=f"DESC TABLE {full_table}")
-                except:
-                    col_defs = ", ".join([f'"{emitter._sanitize_col_name(c[0])}" {c[1]}' for c in type_map])
+                if not validation_result.table_exists:
+                    # Create table if it doesn't exist
+                    logger.info(f"Creating new table {full_table} for append mode")
                     emitter._execute_sql(cur, f"CREATE TABLE IF NOT EXISTS {full_table} ({col_defs})", context=f"CREATE TABLE IF NOT EXISTS {full_table}")
+                elif not validation_result.is_compatible:
+                    # In append mode, also validate for compatibility
+                    error_msg = (
+                        f"Cannot append to {full_table}: existing table has incompatible schema.\n"
+                        f"{validation_result.error_message()}"
+                    )
+                    raise ConnectorError(error_msg)
+                else:
+                    logger.info(f"Appending to existing compatible table {full_table}")
             
             # Insert data in batches for performance
             batch_size = 10000
@@ -130,7 +174,6 @@ def sync_measure_data(
                         elif isinstance(val, (int, float)):
                             vals.append(str(val))
                         elif isinstance(val, (list, dict)):
-                            import json
                             vals.append(f"PARSE_JSON('{json.dumps(val)}')")
                         else:
                             # Escape single quotes in strings
@@ -147,6 +190,7 @@ def sync_measure_data(
                     logger.debug(f"Inserted batch {i//batch_size + 1}: {len(batch)} rows")
             
             logger.info(f"Successfully synced {total_inserted} rows to {full_table}")
+
             
             # Add metadata about sync time
             try:
