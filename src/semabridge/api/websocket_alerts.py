@@ -90,7 +90,9 @@ class AlertConnectionManager:
         disconnected: Set[WebSocket] = set()
         payload = json.dumps(message)
 
-        for connection in self._active_connections:
+        # Snapshot the active connections so disconnects during send do not
+        # mutate the set we are iterating over.
+        for connection in list(self._active_connections):
             try:
                 await connection.send_text(payload)
             except Exception:

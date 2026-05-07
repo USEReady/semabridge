@@ -686,15 +686,11 @@ class SnowflakeSchemaManager:
         quoted_source = f'{schema}."{table_name}"'
         fixed_name = fixed_table_name or f"{table_name}__FIXED"
         quoted_fixed = f'{schema}."{fixed_name}"'
-        
-        # Use explicit DROP + CREATE instead of CREATE OR REPLACE for safer table lifecycle
-        # This ensures we're creating a fresh temporary table, not potentially wiping
-        # an existing user table if someone manually created a __FIXED table
+
         return (
-            f"DROP TABLE IF EXISTS {quoted_fixed};\n"
             f"CREATE TABLE {quoted_fixed} AS\n"
             f"SELECT\n    {select_sql}\n"
-            f"FROM {quoted_source};"
+            f"FROM {quoted_source}"
         )
 
     def _dataset_columns_for_ctas_sml(self, dataset: SMLDataset) -> list[dict[str, str]]:
@@ -1198,6 +1194,7 @@ class SnowflakeSchemaManager:
             )
             logger.info(f"Applying inferred datatypes via CTAS for table: {safe_table_name}")
             logger.debug(f"Generated CTAS SQL:\n{ctas_sql}")
+            self._execute_sql(cursor, f"DROP TABLE IF EXISTS {fixed_table}", context=f"DROP TABLE {fixed_table_name}")
             self._execute_sql(cursor, ctas_sql, context=f"CTAS {safe_table_name}")
             self._execute_sql(cursor, f"SELECT COUNT(*) FROM {full_table}", context=f"COUNT {safe_table_name}")
             original_count = cursor.fetchone()[0]
@@ -1258,6 +1255,7 @@ class SnowflakeSchemaManager:
             )
             logger.info(f"Applying inferred datatypes via CTAS for table: {safe_table_name}")
             logger.debug(f"Generated CTAS SQL:\n{ctas_sql}")
+            self._execute_sql(cursor, f"DROP TABLE IF EXISTS {fixed_table}", context=f"DROP TABLE {fixed_table_name}")
             self._execute_sql(cursor, ctas_sql, context=f"CTAS {safe_table_name}")
             self._execute_sql(cursor, f"SELECT COUNT(*) FROM {full_table}", context=f"COUNT {safe_table_name}")
             original_count = cursor.fetchone()[0]

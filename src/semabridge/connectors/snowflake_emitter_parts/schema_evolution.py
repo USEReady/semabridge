@@ -278,15 +278,11 @@ def generate_ctas_sql(
     schema = schema_name or emitter.config.schema_name
     quoted_source = f'{schema}."{table_name}"'
     quoted_fixed = f'{schema}."{table_name}__FIXED"'
-    
-    # Use explicit DROP + CREATE instead of CREATE OR REPLACE for safer table lifecycle
-    # This ensures we're creating a fresh temporary table, not potentially wiping
-    # an existing user table if someone manually created a __FIXED table
+
     return (
-        f"DROP TABLE IF EXISTS {quoted_fixed};\n"
         f"CREATE TABLE {quoted_fixed} AS\n"
         f"SELECT\n    {select_sql}\n"
-        f"FROM {quoted_source};"
+        f"FROM {quoted_source}"
     )
 
 

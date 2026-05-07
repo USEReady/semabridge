@@ -53,6 +53,25 @@ def test_drop_extra_columns_refuses_full_recreate() -> None:
     assert not any("CREATE OR REPLACE TABLE" in sql.upper() for sql in executed_sql)
 
 
+def test_generate_ctas_sql_emits_single_statement() -> None:
+    config = build_config()
+    behavior = ConnectorBehavior()
+    connection_manager = MagicMock()
+    schema_manager = SnowflakeSchemaManager(config, behavior, IdentifierSanitizer(), connection_manager)
+
+    sql = schema_manager.generate_ctas_sql(
+        "DIM_DATE",
+        [{"name": "MONTH", "type": "INTEGER"}],
+        schema_name="PUBLIC",
+        source_types={"MONTH": "VARCHAR"},
+        fixed_table_name="DIM_DATE__FIXED",
+    )
+
+    assert "DROP TABLE IF EXISTS" not in sql.upper()
+    assert sql.upper().startswith("CREATE TABLE PUBLIC.\"DIM_DATE__FIXED\" AS")
+    assert sql.count(";") == 0
+
+
 def test_filter_ddls_for_existing_tables_uses_exact_table_name_match() -> None:
     config = build_config()
     emitter = SnowflakeEmitter(config, ConnectorBehavior())
