@@ -25,3 +25,24 @@ target:
   assert.equal(result.pbix_folder, 'C:/data/reports');
   assert.equal(result.pbix_uploaded_path, 'C:/uploads/sales.pbix');
 });
+
+test('preserves sync mode from project metadata when hydrating edit data', () => {
+  const yamlText = `
+source:
+  type: fabric
+target:
+  type: snowflake
+options:
+  write_strategy: copy
+`;
+
+  const result = parseConfigYamlToInitialData(yamlText, {
+    id: 42,
+    source: { type: 'fabric' },
+    target_type: 'snowflake',
+    sync_mode: 'upsert',
+  });
+
+  assert.equal(result.sync_mode, 'upsert');
+  assert.equal(result.write_strategy, 'upsert');
+});

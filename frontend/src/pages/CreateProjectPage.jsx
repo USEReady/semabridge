@@ -75,6 +75,14 @@ const INPUT = {
 
 const LABEL = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 };
 
+const SECTION_CARD = {
+  border: '1px solid rgba(255, 255, 255, 0.05)',
+  borderRadius: 16,
+  background: 'var(--bg-surface)',
+  padding: 24,
+  boxShadow: '0 4px 20px rgba(0, 0, 0, 0.2)',
+};
+
 const MAPPING_FILTERS = [
   { id: 'all', label: 'All' },
   { id: 'auto', label: 'Auto' },
@@ -713,6 +721,13 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       if (initialData.target_schema != null) setTargetSchema(initialData.target_schema);
       if (initialData.target_identity_id != null) setFabricAccountId(initialData.target_identity_id);
       if (initialData.target_workspace_id != null) setFabricWorkspaceId(initialData.target_workspace_id);
+      // sync/write strategy (copy | upsert)
+      if (initialData.write_strategy != null) {
+        setWizardState({ write_strategy: String(initialData.write_strategy).toLowerCase() });
+      } else if (initialData.sync_mode != null) {
+        // Some project records store sync_mode at the project level (copy|upsert)
+        setWizardState({ write_strategy: String(initialData.sync_mode).toLowerCase() });
+      }
 
       const st = String(initialData.source_type || '').toLowerCase();
       if (st === 'fabric') {
@@ -1240,10 +1255,13 @@ export default function CreateProjectPage({ editMode = false, initialData = null
 
       if (editMode && onSaveConfig) {
         const configYaml = buildConfigYaml(source, targets);
+        // include current sync/write strategy so EditProjectPage can persist it on the project
+        const syncMode = (useProjectWizardStore.getState().wizard.write_strategy || 'copy');
         await onSaveConfig(configYaml, {
           name: name.trim(),
           description: description.trim(),
           tags: Array.from(tags),
+          sync_mode: syncMode,
         });
         // Navigate directly to config/sync page after saving edits
         if (initialData?.id) {
@@ -1554,6 +1572,14 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     lines.push('options:');
     lines.push(`  auto_relationships: ${autoRelationships}`);
     lines.push(`  generate_descriptions: ${generateDescriptions}`);
+    // include write strategy if present in wizard state
+    try {
+      const ws = useProjectWizardStore.getState().wizard;
+      const wsStrategy = String(ws?.write_strategy || 'copy').toLowerCase();
+      if (wsStrategy) lines.push(`  write_strategy: ${wsStrategy}`);
+    } catch (err) {
+      // ignore — default handled by backend
+    }
     return lines.join('\n');
   };
 
@@ -2001,7 +2027,37 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               <Settings size={10} />
               Step {step} of 5 — {STEPS[step - 1].label}
             </div>
-          </div>
+            </div>
+
+            {/* Sync Strategy control (copy | upsert) — only in edit mode */}
+            {editMode && (
+              <div style={SECTION_CARD}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Sync Strategy</div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {['copy', 'upsert'].map((opt) => {
+                    const active = (useProjectWizardStore.getState().wizard.write_strategy || 'copy') === opt;
+                    return (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() => setWizardState({ write_strategy: opt })}
+                        style={{
+                          padding: '8px 14px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                          background: active ? (opt === 'upsert' ? 'var(--accent-orange)' : 'var(--accent-blue)') : 'transparent',
+                          color: active ? '#fff' : 'var(--text-secondary)',
+                          fontWeight: 700,
+                        }}
+                      >
+                        {opt === 'copy' ? 'Copy (replace target)' : 'Upsert (preserve target)'}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 8 }}>
+                  Choose how the sync applies changes to the target: <strong>Copy</strong> fully replaces the target; <strong>Upsert</strong> preserves target-only models and overwrites conflicts.
+                </div>
+              </div>
+            )}
         </div>
 
         {/* Wizard Progress Stepper (Compact) */}
@@ -2334,13 +2390,7 @@ function StepBasicInfo({
     color: 'var(--text-primary)', fontSize: 13, outline: 'none',
     transition: 'all 0.2s ease',
   };
-  const SECTION_CARD = {
-    border: '1px solid rgba(255, 255, 255, 0.05)',
-    borderRadius: 16,
-    background: 'var(--bg-surface)',
-    padding: 24,
-    boxShadow: '0 4px 20px rgba(0, 0, 0, 0.2)',
-  };
+  
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 32, paddingBottom: 40 }}>
@@ -2640,13 +2690,7 @@ function StepConnectorConfig({
   const sourceLabel = CONNECTOR_TYPES.find(c => c.value === sourceConnector)?.label || sourceConnector;
   const activeLocalFolders = (localFolders || []).filter(folder => folder?.is_active !== false);
 
-  const SECTION_CARD = {
-    border: '1px solid rgba(255, 255, 255, 0.05)',
-    borderRadius: 16,
-    background: 'var(--bg-surface)',
-    padding: 24,
-    boxShadow: '0 4px 20px rgba(0, 0, 0, 0.2)',
-  };
+  
 
   const LABEL = {
     display: 'block', fontSize: 11, fontWeight: 700,

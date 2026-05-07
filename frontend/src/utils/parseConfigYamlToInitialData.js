@@ -3,6 +3,11 @@ import { parseDocument as parseYamlDocument } from 'yaml';
 export function parseConfigYamlToInitialData(yamlText, projectMeta) {
   const raw = String(yamlText || '').trim();
   const source = projectMeta?.source && typeof projectMeta.source === 'object' ? projectMeta.source : {};
+  const allowedSyncModes = new Set(['copy', 'upsert']);
+  const normalizeSyncMode = (value) => {
+    const candidate = String(value || '').trim().toLowerCase();
+    return allowedSyncModes.has(candidate) ? candidate : 'copy';
+  };
   const fallback = {
     source_type: String(source.type || projectMeta?.source || 'fabric'),
     target_type: String(projectMeta?.target_type || 'snowflake'),
@@ -33,6 +38,8 @@ export function parseConfigYamlToInitialData(yamlText, projectMeta) {
     const targets = Array.isArray(tree?.targets) ? tree.targets : (tree?.target ? [tree.target] : []);
     const firstTarget = targets[0] && typeof targets[0] === 'object' ? targets[0] : {};
     const ui = tree?.ui && typeof tree.ui === 'object' ? tree.ui : {};
+    const options = tree?.options && typeof tree.options === 'object' ? tree.options : {};
+    const syncMode = normalizeSyncMode(projectMeta?.sync_mode || projectMeta?.write_strategy || options.write_strategy);
 
     let models = [];
     if (Array.isArray(parsedSource.models)) {
@@ -65,6 +72,8 @@ export function parseConfigYamlToInitialData(yamlText, projectMeta) {
       pbix_path: String(parsedSource.pbix_path || parsedSource.pbix_file_path || parsedSource.source_path || parsedSource.file_path || ''),
       pbix_folder: String(parsedSource.pbix_folder || ''),
       pbix_uploaded_path: String(projectMeta?.pbix_file_path || parsedSource.pbix_file_path || parsedSource.pbix_path || ''),
+      sync_mode: syncMode,
+      write_strategy: syncMode,
       models,
       selection_model_ids: selectionModelIds,
     };

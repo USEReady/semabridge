@@ -13,6 +13,7 @@ import { Loader2, ArrowLeft } from 'lucide-react';
 
 import { api } from '../utils/api';
 import { parseConfigYamlToInitialData } from '../utils/parseConfigYamlToInitialData';
+import { normalizeSyncMode } from '../utils/syncMode';
 import { useUIStore } from '../store/uiStore';
 import CreateProjectPage from './CreateProjectPage';
 
@@ -74,11 +75,19 @@ export default function EditProjectPage() {
 
   // Called by the wizard on Step 5 "Save" — receives YAML string + meta object
   const handleSave = async (yamlText, meta = {}) => {
+    // Normalize and restrict sync_mode to allowed values
+    const nextSyncMode = meta?.sync_mode != null ? normalizeSyncMode(meta.sync_mode) : undefined;
+
     await api.updateProject(id, {
       name: meta?.name || project?.name,
       description: meta?.description ?? project?.description,
       tags: meta?.tags || project?.tags || [],
+      // persist sync mode if provided by the wizard (only copy|upsert allowed)
+      ...(nextSyncMode ? { sync_mode: nextSyncMode } : {}),
     });
+    if (nextSyncMode && typeof localStorage !== 'undefined') {
+      localStorage.setItem(`project_${id}_syncMode`, nextSyncMode);
+    }
     await api.saveProjectConfig(id, yamlText);
     // Clear stale draft so ProjectConfigPage loads fresh data from backend
     useUIStore.getState().setProjectConfigDraft(id, null);

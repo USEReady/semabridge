@@ -16,6 +16,7 @@ import ProjectDetailModal from '../components/projects/ProjectDetailModal';
 import ImportProjectModal from '../components/projects/ImportProjectModal';
 import SmartSearchBar, { matchesSmartQuery } from '../components/common/SmartSearchBar';
 import { api } from '../utils/api';
+import { resolveProjectSyncMode } from '../utils/syncMode';
 import React, { useContext } from 'react';
 import { SyncContext } from '../context/SyncContext';
 import { DEFAULT_FILTER_OPTIONS, useUIStore } from '../store/uiStore';
@@ -339,7 +340,8 @@ export default function ProjectsPage() {
 
   const handleImported = useCallback(() => { refreshData(); }, [refreshData]);
 
-  const handleRunNow = useCallback(async (projectId) => {
+  const handleRunNow = useCallback(async (projectOrId) => {
+    const projectId = typeof projectOrId === 'object' ? (projectOrId?.id || projectOrId?.project_id) : projectOrId;
     if (!projectId) return;
 
     setRunningProjectIds(prev => {
@@ -349,7 +351,13 @@ export default function ProjectsPage() {
     });
 
     try {
-      const savedSyncMode = localStorage.getItem(`project_${projectId}_syncMode`) || 'copy';
+      const project = typeof projectOrId === 'object'
+        ? projectOrId
+        : projects.find(p => String(p.id || p.project_id) === String(projectId));
+      const savedSyncMode = resolveProjectSyncMode(
+        project,
+        localStorage.getItem(`project_${projectId}_syncMode`) || 'copy',
+      );
       const result = await api.runProjectNow(projectId, { sync_mode: savedSyncMode });
       const updatedProject = result?.project;
       if (updatedProject?.id || updatedProject?.project_id) {
@@ -837,7 +845,7 @@ export default function ProjectsPage() {
                   onMenuToggle={setMenuOpen}
                   onViewDetail={() => { setActiveProjectId(project.id); setDetailProject(project); }}
                   onConfigure={() => { setActiveProjectId(project.id); navigate(`/projects/${project.id}/edit`); }}
-                  onRunNow={() => handleRunNow(project.id)}
+                  onRunNow={() => handleRunNow(project)}
                   isRunning={runningProjectIds.has(project.id)}
                   onDuplicate={() => handleDuplicate(project)}
                   onExport={() => handleExportSingle(project)}

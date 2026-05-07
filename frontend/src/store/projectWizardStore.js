@@ -39,6 +39,8 @@ const DEFAULT_WIZARD_STATE = {
   // Step 4 (Mapping)
   autoRelationships: true,
   generateDescriptions: true,
+  // Sync strategy: 'copy' (default) or 'upsert'
+  write_strategy: 'copy',
 
   // Global Progress
   currentStepIndex: 1,

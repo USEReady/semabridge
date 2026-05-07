@@ -17,6 +17,7 @@ import { useLogs } from '../context/LogsContext';
 import { useSyncStatusStore } from '../context/SyncStatusContext';
 import { api } from '../utils/api';
 import { buildMockRunLogs, saveRunLogs } from '../utils/runLogs';
+import { normalizeSyncMode } from '../utils/syncMode';
 import { useUIStore } from '../store/uiStore';
 import usePageCache from '../hooks/usePageCache';
 
@@ -588,6 +589,21 @@ export default function ProjectConfigPage() {
         setProject(p);
         setYamlText(cfg?.config_yaml || '');
         setYamlPath(cfg?.yaml_path || '');
+        // Initialize syncMode from project record or YAML options if available
+        try {
+          const yamlSync = (cfg && cfg.config_yaml) ? (parseProjectYaml(cfg.config_yaml, p)?.form?.write_strategy) : null;
+          const nextSync = normalizeSyncMode(p?.sync_mode || yamlSync || 'copy');
+          setSyncMode(nextSync);
+          if (typeof localStorage !== 'undefined') {
+            localStorage.setItem(`project_${id}_syncMode`, nextSync);
+          }
+        } catch (err) {
+          const nextSync = normalizeSyncMode(p?.sync_mode || 'copy');
+          setSyncMode(nextSync);
+          if (typeof localStorage !== 'undefined') {
+            localStorage.setItem(`project_${id}_syncMode`, nextSync);
+          }
+        }
         setAllProjects(all.filter(x => String(x.id) !== String(id)));
         setActiveProjectId(p?.id || p?.project_id || id);
         try {
@@ -713,6 +729,15 @@ export default function ProjectConfigPage() {
       cancelled = true;
     };
   }, [id, isInvalidProjectId, loading]);
+
+  // Synchronize syncMode state with configForm.write_strategy to ensure 
+  // the sync confirmation modal and execution use the correctly selected strategy.
+  useEffect(() => {
+    const strategy = configForm.write_strategy || 'copy';
+    if (strategy !== syncMode) {
+      setSyncMode(strategy);
+    }
+  }, [configForm.write_strategy, syncMode, setSyncMode]);
 
 
 
@@ -1046,6 +1071,19 @@ export default function ProjectConfigPage() {
       }
 
       const response = await api.saveProjectConfig(id, nextYaml);
+      // Persist selected sync mode on the project record if it changed
+      try {
+        const normalizedSync = String(syncMode || 'copy').toLowerCase();
+        if (project && String(project.sync_mode || '').toLowerCase() !== normalizedSync) {
+          await api.updateProject(project.id || id, { sync_mode: normalizedSync });
+          setProject(prev => ({ ...(prev || {}), sync_mode: normalizedSync }));
+        }
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem(`project_${id}_syncMode`, normalizedSync);
+        }
+      } catch (err) {
+        addLog('warning', 'Project Config', `Failed to persist sync mode: ${err?.message || err}`);
+      }
       
       if (wizardPayload && typeof wizardPayload === 'object' && wizardPayload.name) {
         setSaveInfo('Config saved successfully.');
