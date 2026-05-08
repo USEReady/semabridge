@@ -61,7 +61,10 @@ export default function DashboardLayout() {
       {/* ── Top row: Sidebar + Main ── */}
       <div className="flex flex-1 overflow-hidden min-h-0 relative">
         {/* ── Sidebar (Floating or Pinned) ── */}
-        <LeftNavigation onEmergencyReset={handleEmergencyReset} />
+        <LeftNavigation 
+          onEmergencyReset={handleEmergencyReset} 
+          searchQuery={search}
+        />
 
 
         {/* ── Main area ── */}
@@ -155,6 +158,8 @@ export default function DashboardLayout() {
                 </span>
               )}
             </button>
+
+
           </header>
 
           {/* Page content */}

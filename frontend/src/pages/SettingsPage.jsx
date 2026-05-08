@@ -13,7 +13,6 @@ import ConnectionsPanel from '../components/ConnectionsPanel';
 import ConfigEditor from '../components/ConfigEditor';
 import Modal from '../components/common/Modal';
 import SecretsPanel from '../components/SecretsPanel';
-import { ConfigurationProvider } from '../context/ConfigurationContext';
 import { api } from '../utils/api';
 
 const ENVIRONMENTS = ['Dev', 'Staging', 'Prod'];
@@ -337,8 +336,7 @@ export default function SettingsPage() {
 
   
   return (
-    <ConfigurationProvider>
-      <div style={{ padding: '28px 16px', minHeight: '100%', maxWidth: 1400, margin: '0 auto' }} className="md:px-10">
+    <div style={{ padding: '28px 16px', minHeight: '100%', maxWidth: 1400, margin: '0 auto' }} className="md:px-10">
         <PageHeader
           title="Settings"
           description="Manage connectors, integrations, and environment configuration."
@@ -803,6 +801,5 @@ export default function SettingsPage() {
         </div>
       </Modal>
       </div>
-    </ConfigurationProvider>
   );
 }

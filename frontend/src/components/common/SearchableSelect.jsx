@@ -21,7 +21,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { ChevronDown, X, Search, Loader2 } from 'lucide-react';
 import { useHPSearch } from '../../hooks/useHPSearch';
-import { getSmartQueryError, getSmartQueryMode, matchesSmartQuery } from './SmartSearchBar';
+import { getSmartQueryError, getSmartQueryMode, matchesSmartQuery } from './smartSearchQuery.js';
 
 export default function SearchableSelect({
   items = [],

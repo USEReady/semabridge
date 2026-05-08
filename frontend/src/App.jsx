@@ -10,6 +10,7 @@ import { useState } from 'react';
 
 // Layouts
 import DashboardLayout from './layouts/DashboardLayout';
+import { ConfigurationProvider } from './context/ConfigurationContext';
 
 // Pages
 import ExplorePage      from './pages/ExplorePage';
@@ -107,13 +108,15 @@ export default function App() {
         {/* Protected: All app routes — auto-login handles auth transparently */}
         <Route element={
           <ProtectedRoute>
-            <WorkspaceProvider>
-              <LogsProvider>
-                <SyncStatusProvider>
-                  <DashboardLayout />
-                </SyncStatusProvider>
-              </LogsProvider>
-            </WorkspaceProvider>
+            <ConfigurationProvider>
+              <WorkspaceProvider>
+                <LogsProvider>
+                  <SyncStatusProvider>
+                    <DashboardLayout />
+                  </SyncStatusProvider>
+                </LogsProvider>
+              </WorkspaceProvider>
+            </ConfigurationProvider>
           </ProtectedRoute>
         }>
           <Route index element={<Navigate to="/projects" replace />} />

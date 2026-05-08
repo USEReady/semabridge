@@ -1,5 +1,5 @@
 import { Search, X } from 'lucide-react';
-import { getSmartQueryError } from './SmartSearchBar';
+import { getSmartQueryError } from './smartSearchQuery.js';
 
 /**
  * SearchInput — styled search field with prepended icon.

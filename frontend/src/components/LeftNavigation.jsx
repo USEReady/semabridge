@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import {
   Map, FolderOpen, PlayCircle, Settings,
-  LogOut, Split, PanelLeftClose, PanelLeftOpen,
+  Split, PanelLeftClose, PanelLeftOpen,
   History as HistoryIcon,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import ContextBadge from './ContextBadge';
 import './Sidebar.css';
 
 function SidebarNavIcon({ icon: Icon, active }) {
@@ -25,8 +26,9 @@ function SidebarNavIcon({ icon: Icon, active }) {
   );
 }
 
-export default function LeftNavigation({ onEmergencyReset }) {
-  const { user, logout } = useAuth();
+export default function LeftNavigation({ onEmergencyReset, searchQuery = '' }) {
+  const { user } = useAuth();
+  const navigate = useNavigate();
 
   // 1. Initialize state from localStorage (default to floating/false for a cleaner first impression)
   const [isPinned, setIsPinned] = useState(() => {
@@ -59,10 +61,12 @@ export default function LeftNavigation({ onEmergencyReset }) {
         {/* Top Logo Area */}
         <div className="nav-item logo-area">
           <div className="sidebar-icon-container">
-             <img src="/favicon.svg" alt="SemaBridge" style={{ width: 30, height: 30 }} />
+             <img src="/favicon.svg" alt="SemaBridge" style={{ width: 28, height: 28 }} />
           </div>
-          <span className="nav-label font-bold text-primary" style={{ fontSize: 15, letterSpacing: '-0.01em' }}>SemaBridge</span>
+          <span className="nav-label font-black text-primary tracking-tight" style={{ fontSize: 16 }}>SemaBridge</span>
         </div>
+
+        {/* Navigation Links */}
 
         {/* Navigation Links */}
         <nav className="sidebar-nav">
@@ -86,24 +90,12 @@ export default function LeftNavigation({ onEmergencyReset }) {
 
         {/* Bottom Area */}
         <div className="sidebar-footer">
-          {/* User Info */}
-          <div className="nav-item user-info">
-            <div className="user-avatar">
-              {user?.username ? user.username[0].toUpperCase() : '?'}
-            </div>
-            <div className="nav-label user-details">
-              <p className="text-primary text-xs font-semibold truncate">{user?.username ?? 'User'}</p>
-              <p className="text-tertiary" style={{ fontSize: 10 }}>Authenticated</p>
-            </div>
-            <button 
-              onClick={logout} 
-              title="Sign out" 
-              className="logout-button nav-label"
-            >
-              <LogOut size={14} />
-            </button>
-          </div>
-
+          <ContextBadge 
+            variant="footer" 
+            isCollapsed={!isPinned} 
+            searchQuery={searchQuery}
+            onOpenSettings={() => navigate('/settings')}
+          />
           <button 
             onClick={() => setIsPinned(!isPinned)}
             className={`

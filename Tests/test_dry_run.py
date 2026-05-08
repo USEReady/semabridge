@@ -18,6 +18,7 @@ import types
 from typing import Any, Dict, List
 
 import pytest
+import yaml
 
 # ---------------------------------------------------------------------------
 # Minimal stubs so the semabridge package can be imported without a live DB
@@ -38,6 +39,7 @@ if "psycopg2" not in sys.modules:
     sys.modules["psycopg2.extras"] = types.ModuleType("psycopg2.extras")
 
 from semabridge.api.services.mappings_service import MappingService
+from semabridge.api.controllers.mappings_controller import _build_config_yaml_from_request
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -95,6 +97,26 @@ def _build_summary(filtered: List[Dict]) -> Dict[str, int]:
             if m.get("mapping_status") == "collision" or m.get("status") == "collision"
         ),
     }
+
+
+def test_build_config_yaml_from_request_preserves_fabric_identity_id():
+    """The dry-run preview config must keep the selected Fabric identity."""
+    config_yaml = _build_config_yaml_from_request(
+        source_config={
+            "type": "fabric",
+            "workspace_id": "workspace-123",
+            "identity_id": "account-456",
+        },
+        target_config={"type": "snowflake"},
+        selected_sources=["Model A"],
+    )
+
+    config = yaml.safe_load(config_yaml)
+
+    assert config["source"]["type"] == "fabric"
+    assert config["source"]["workspace_id"] == "workspace-123"
+    assert config["source"]["identity_id"] == "account-456"
+    assert config["source"]["models"] == ["Model A"]
 
 
 # ===========================================================================

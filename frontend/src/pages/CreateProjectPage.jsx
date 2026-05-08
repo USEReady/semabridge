@@ -20,7 +20,8 @@ import {
 import { api } from '../utils/api';
 import { useHPSearch } from '../hooks/useHPSearch';
 import SearchableSelect from '../components/common/SearchableSelect';
-import SmartSearchBar, { matchesSmartQuery } from '../components/common/SmartSearchBar';
+import SmartSearchBar from '../components/common/SmartSearchBar';
+import { matchesSmartQuery } from '../components/common/smartSearchQuery.js';
 import SourceIcon from '../components/common/SourceIcon';
 import StatusBadge from '../components/common/StatusBadge';
 import { useWorkspace } from '../context/WorkspaceContext';
