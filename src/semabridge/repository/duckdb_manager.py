@@ -437,6 +437,40 @@ class DuckDBManager:
         finally:
             conn.close()
     
+    def list_all_snapshots(self, limit: int = 10000) -> List[Snapshot]:
+        """List snapshots from ALL projects, newest first.
+        
+        Used by Explore page to show all historical snapshots across all projects.
+        Returns snapshots with project_id preserved in the result.
+        """
+        conn = self._get_connection()
+        try:
+            results = conn.execute("""
+                SELECT snapshot_id, project_id, timestamp, version_tag, sml_blob,
+                       status, duration_ms, error_message, initiated_by, run_id
+                FROM snapshots
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """, [limit]).fetchall()
+            
+            return [
+                Snapshot(
+                    snapshot_id=r[0],
+                    project_id=r[1],
+                    timestamp=str(r[2]),
+                    version_tag=r[3],
+                    sml_blob=json.loads(r[4]),
+                    status=r[5],
+                    duration_ms=r[6],
+                    error_message=r[7],
+                    initiated_by=r[8],
+                    run_id=r[9]
+                )
+                for r in results
+            ]
+        finally:
+            conn.close()
+    
     def rollback(self, project_id: str, target_snapshot_id: str, tag: str = None) -> Tuple[bool, str, List[ModelChange]]:
         """
         Rollback to a previous snapshot.

@@ -648,10 +648,20 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
 
 
 async def graph_snapshots_compat(model_name: str):
-    """Snapshot history for Explore time-machine (newest first)."""
+    """Snapshot history for Explore time-machine (newest first).
+    
+    When model_name='__all__', returns snapshots from ALL projects.
+    Otherwise returns snapshots for a specific project.
+    """
     try:
         logger.info("[Explore] Snapshot list requested model=%s", model_name)
-        snapshots = db_manager.list_snapshots(model_name, limit=10000)
+        
+        # Handle __all__ specially to query all projects
+        if model_name == '__all__':
+            snapshots = db_manager.list_all_snapshots(limit=10000)
+        else:
+            snapshots = db_manager.list_snapshots(model_name, limit=10000)
+        
         logger.info("[Explore] Snapshot list resolved model=%s count=%s", model_name, len(snapshots or []))
         return [
             {
@@ -660,7 +670,7 @@ async def graph_snapshots_compat(model_name: str):
                 "version_tag": s.version_tag or f"v{s.snapshot_id[:8]}",
                 "status": s.status or "success",
                 "duration_ms": s.duration_ms or 0,
-                "model_name": model_name,
+                "model_name": s.project_id,  # Preserve project_id from database
                 "run_id": s.run_id,
                 "initiated_by": s.initiated_by,
                 "connectors": _extract_snapshot_connectors(s),
