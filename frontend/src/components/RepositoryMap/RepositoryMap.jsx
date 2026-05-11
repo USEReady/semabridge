@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
     Map as MapIcon, RefreshCw,
     LayoutGrid, Waypoints,
@@ -7,6 +7,7 @@ import {
     Database, FolderOpen, PanelRight, Files, ArrowLeft,
 } from 'lucide-react';
 import { api } from '../../utils/api';
+import YAML from 'yaml';
 import ComponentTree from './ComponentTree';
 import DependencyGraph from './DependencyGraph';
 import dagre from 'dagre';
@@ -106,6 +107,212 @@ function normalizeGraphPayload(rawGraph) {
     };
 }
 
+function hasGraphNodes(payload) {
+    return Array.isArray(payload?.nodes) && payload.nodes.length > 0;
+}
+
+function looksLikeProjectId(value) {
+    const v = String(value || '').trim().toLowerCase();
+    return v.startsWith('proj-') || v.startsWith('preview-');
+}
+
+function normalizeProjectKey(value) {
+    return String(value || '').trim().toLowerCase().replace(/^proj-/, '');
+}
+
+function buildGraphFromProjectConfig(configYaml, projectId) {
+    const pid = String(projectId || '').trim();
+    const fallback = {
+        nodes: [
+            {
+                id: `model-${pid || 'project'}`,
+                type: 'modelNode',
+                position: { x: 420, y: 140 },
+                data: {
+                    label: pid || 'project',
+                    model_id: pid || 'project',
+                    nodeType: 'model',
+                    status: 'valid',
+                },
+            },
+        ],
+        edges: [],
+        meta: { reason: 'config_fallback' },
+    };
+
+    if (!configYaml || typeof configYaml !== 'string') return fallback;
+
+    let parsed;
+    try {
+        parsed = YAML.parse(configYaml);
+    } catch {
+        return fallback;
+    }
+    if (!parsed || typeof parsed !== 'object') return fallback;
+
+    const source = (parsed.source && typeof parsed.source === 'object') ? parsed.source : {};
+    const rawModels = Array.isArray(source.models) ? source.models : [];
+    const sourceType = String(source.type || parsed.source_type || 'unknown');
+    const modelLabel = String(parsed.project_id || parsed.model_name || pid || 'project');
+
+    const nodes = [
+        {
+            id: `model-${modelLabel}`,
+            type: 'modelNode',
+            position: { x: 420, y: 140 },
+            data: {
+                label: modelLabel,
+                model_id: modelLabel,
+                nodeType: 'model',
+                source_type: sourceType,
+                status: 'valid',
+            },
+        },
+    ];
+    const edges = [];
+
+    const tableNodes = new Map();
+    const upsertTable = (schema, tableName, columns = []) => {
+        const sch = String(schema || 'PUBLIC').trim() || 'PUBLIC';
+        const tbl = String(tableName || '').trim();
+        if (!tbl) return null;
+        const key = `${sch}.${tbl}`;
+        if (tableNodes.has(key)) {
+            const existing = tableNodes.get(key);
+            if ((!existing.data.columns || existing.data.columns.length === 0) && Array.isArray(columns) && columns.length) {
+                existing.data.columns = columns;
+            }
+            return existing.id;
+        }
+        const tableId = `table-${modelLabel}-${tableNodes.size}`;
+        const node = {
+            id: tableId,
+            type: 'tableNode',
+            position: { x: 120 + tableNodes.size * 240, y: 320 },
+            data: {
+                label: `${sch}.${tbl}`,
+                table_name: tbl,
+                schema: sch,
+                source_type: sourceType,
+                columns: Array.isArray(columns) ? columns : [],
+                nodeType: 'table',
+                model_id: modelLabel,
+                status: 'valid',
+            },
+        };
+        tableNodes.set(key, node);
+        nodes.push(node);
+        edges.push({
+            id: `e-model-${modelLabel}-${tableId}`,
+            source: tableId,
+            target: `model-${modelLabel}`,
+            type: 'smoothstep',
+            style: { stroke: '#10B981' },
+        });
+        return tableId;
+    };
+
+    rawModels.forEach((entry) => {
+        let tableName = '';
+        let schema = 'PUBLIC';
+        let columns = [];
+        if (typeof entry === 'string') {
+            tableName = entry;
+        } else if (entry && typeof entry === 'object') {
+            tableName = String(entry.name || entry.model || entry.table || entry.source_table || '');
+            schema = String(entry.schema || entry.source_schema || entry.database_schema || 'PUBLIC');
+            columns = Array.isArray(entry.columns) ? entry.columns : [];
+        }
+        tableName = String(tableName || '').trim();
+        if (!tableName) return;
+        upsertTable(schema, tableName, columns);
+    });
+
+    // Semantic datasets/entities fallback (often richer than source.models).
+    const semanticDatasets = Array.isArray(parsed.datasets) ? parsed.datasets : [];
+    semanticDatasets.forEach((ds, idx) => {
+        if (!ds || typeof ds !== 'object') return;
+        const schema = String(ds.source_schema || ds.schema || ds.database_schema || 'PUBLIC');
+        const table = String(ds.source_table || ds.table || ds.name || ds.unique_name || `dataset_${idx + 1}`);
+        const columns = Array.isArray(ds.columns) ? ds.columns : [];
+        upsertTable(schema, table, columns);
+    });
+
+    const entities = (parsed.entities && typeof parsed.entities === 'object') ? parsed.entities : {};
+    Object.entries(entities).forEach(([name, ent]) => {
+        if (!ent || typeof ent !== 'object') return;
+        const schema = String(ent.schema || ent.database_schema || 'PUBLIC');
+        const table = String(ent.table || name || '').trim();
+        const columns = Array.isArray(ent.columns) ? ent.columns : [];
+        upsertTable(schema, table, columns);
+    });
+
+    // Metrics/measures as measure nodes linked to model.
+    const metricRows = [
+        ...(Array.isArray(parsed.metrics) ? parsed.metrics : []),
+        ...(Array.isArray(parsed.measures) ? parsed.measures : []),
+    ];
+    metricRows.forEach((m, idx) => {
+        if (!m || typeof m !== 'object') return;
+        const label = String(m.name || m.unique_name || m.label || `metric_${idx + 1}`);
+        const metricId = `measure-${modelLabel}-${idx}`;
+        nodes.push({
+            id: metricId,
+            type: 'measureNode',
+            position: { x: 240 + idx * 200, y: 520 },
+            data: {
+                label,
+                nodeType: 'measure',
+                model_id: modelLabel,
+                data_type: String(m.data_type || m.type || 'metric'),
+                expression: String(m.expression || m.sql || ''),
+                status: 'valid',
+            },
+        });
+        edges.push({
+            id: `e-model-${modelLabel}-${metricId}`,
+            source: metricId,
+            target: `model-${modelLabel}`,
+            type: 'smoothstep',
+            style: { stroke: '#818CF8' },
+        });
+    });
+
+    // Relationships between table nodes.
+    const relRows = Array.isArray(parsed.relationships) ? parsed.relationships : [];
+    const resolveTableRef = (value) => {
+        const raw = String(value || '').trim();
+        if (!raw) return null;
+        if (tableNodes.has(raw)) return tableNodes.get(raw).id;
+        const matchByTable = [...tableNodes.values()].find((n) => String(n?.data?.table_name || '').toLowerCase() === raw.toLowerCase());
+        return matchByTable ? matchByTable.id : null;
+    };
+    relRows.forEach((r, idx) => {
+        if (!r || typeof r !== 'object') return;
+        const fromRef = r.from || r.source || r.left || r.from_table;
+        const toRef = r.to || r.target || r.right || r.to_table;
+        const fromId = resolveTableRef(fromRef);
+        const toId = resolveTableRef(toRef);
+        if (!fromId || !toId || fromId === toId) return;
+        const cardinality = String(r.cardinality || r.type || '').trim();
+        edges.push({
+            id: `rel-${modelLabel}-${idx}`,
+            source: fromId,
+            target: toId,
+            type: 'smoothstep',
+            label: cardinality || 'relationship',
+            data: {
+                cardinality: cardinality || 'unknown',
+                from_column: String(r.from_column || r.source_column || r.left_key || ''),
+                to_column: String(r.to_column || r.target_column || r.right_key || ''),
+            },
+            style: { stroke: '#818CF8', strokeDasharray: '6 3' },
+        });
+    });
+
+    return { nodes, edges, meta: { reason: 'config_fallback', source_type: sourceType } };
+}
+
 function isSystemTableName(name) {
     const v = String(name || '').trim().toLowerCase();
     if (!v) return false;
@@ -117,6 +324,13 @@ function isSystemTableName(name) {
         v.startsWith('sys.') ||
         v.startsWith('__')
     );
+}
+
+function getPrimaryModelIdFromGraph(graph, fallback = '') {
+    const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+    const modelNode = nodes.find((n) => String(n?.data?.nodeType || '') === 'model');
+    const modelId = String(modelNode?.data?.model_id || '').trim();
+    return modelId || String(fallback || '').trim();
 }
 
 /**
@@ -149,7 +363,10 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     const [showVersionBadges, setShowVersionBadges] = useState(false);
     const [includeSystemTables, setIncludeSystemTables] = usePageCache('explore:includeSystemTables', false);
     const [allSnapshots, setAllSnapshots] = useState([]);
+    const [allProjectIds, setAllProjectIds] = useState([]);
     const [selectedSnapshotId, setSelectedSnapshotId] = useState(null);
+    const [hasUserSelectedModel, setHasUserSelectedModel] = useState(false);
+    const selectedModelIdRef = useRef(selectedModelId);
 
     const [syncing, setSyncing] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -159,44 +376,101 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     const [diffReport, setDiffReport] = useState(null);
     const [inspectorResetToken, setInspectorResetToken] = useState(0);
 
+    useEffect(() => {
+        selectedModelIdRef.current = selectedModelId;
+    }, [selectedModelId]);
+
+    const makeSnapshotKey = useCallback((snap) => {
+        const modelName = String(snap?.model_name || '').trim();
+        const sid = String(snap?.snapshot_id || '').trim();
+        if (!modelName || !sid) return '';
+        return `${modelName}|${sid}`;
+    }, []);
+
     // ── initial load ────────────────────────────────
     const loadData = useCallback(async () => {
         setLoading(true);
         setTreeLoading(true);
         setGraphLoading(true);
         try {
-            const [snapshotResp, snapshotsResp] = await Promise.all([
+            const [snapshotResp, snapshotsResp, projectsResp] = await Promise.all([
                 api.getSnapshotTree().catch(() => ({ root: null })),
                 api.getGraphSnapshots('__all__').catch(() => []),
+                api.listProjects().catch(() => []),
             ]);
 
             setSnapshotTreeData(snapshotResp?.root || null);
             setTreeLoading(false);
 
             let graphResp;
-            let effectiveSnapshotId = snapshotId;
+            let effectiveSnapshotId = null;
+            let effectiveModelName = '';
             const snapshots = Array.isArray(snapshotsResp) ? snapshotsResp : [];
             setAllSnapshots(snapshots);
+            const projectIds = (Array.isArray(projectsResp) ? projectsResp : [])
+                .map((p) => String(p?.id || p?.project_id || '').trim())
+                .filter(Boolean);
+            setAllProjectIds([...new Set(projectIds)]);
+            if (snapshotId && String(snapshotId).includes('|')) {
+                const [incomingModelName, incomingSnapshotId] = String(snapshotId).split('|');
+                const matched = snapshots.find(
+                    (s) => String(s?.snapshot_id || '') === String(incomingSnapshotId || '')
+                        && String(s?.model_name || '') === String(incomingModelName || '')
+                );
+                if (matched) {
+                    effectiveSnapshotId = String(matched.snapshot_id);
+                    effectiveModelName = String(matched.model_name || '');
+                }
+            } else if (snapshotId) {
+                const matched = snapshots.find((s) => String(s?.snapshot_id || '') === String(snapshotId));
+                if (matched) {
+                    effectiveSnapshotId = String(matched.snapshot_id);
+                    effectiveModelName = String(matched.model_name || '');
+                }
+            }
+
+            if (!effectiveSnapshotId) {
+                const selectedScope = String(selectedModelIdRef.current || '').trim();
+                if (selectedScope && selectedScope !== '__all__') {
+                    const selectedNorm = normalizeProjectKey(selectedScope);
+                    const scoped = snapshots.filter((s) => {
+                        const mid = String(s?.model_name || '').trim();
+                        return mid === selectedScope || normalizeProjectKey(mid) === selectedNorm;
+                    }).sort(
+                        (a, b) => new Date(b?.timestamp || 0).getTime() - new Date(a?.timestamp || 0).getTime()
+                    );
+                    if (scoped.length > 0) {
+                        effectiveSnapshotId = scoped[0]?.snapshot_id || null;
+                        effectiveModelName = String(scoped[0]?.model_name || '');
+                    }
+                }
+            }
+
             if (!effectiveSnapshotId) {
                 const sorted = [...snapshots].sort(
                     (a, b) => new Date(b?.timestamp || 0).getTime() - new Date(a?.timestamp || 0).getTime()
                 );
                 effectiveSnapshotId = sorted[0]?.snapshot_id || null;
+                effectiveModelName = String(sorted[0]?.model_name || '');
             }
             
-            // Find the snapshot and set the composite key (model_name|snapshot_id)
-            const effectiveSnapshot = snapshots.find((s) => s?.snapshot_id === effectiveSnapshotId) || null;
-            if (effectiveSnapshot) {
-                const compositeKey = `${effectiveSnapshot.model_name}|${effectiveSnapshotId}`;
-                setSelectedSnapshotId(compositeKey);
-            } else {
-                setSelectedSnapshotId(null);
-            }
+            const effectiveSnapshot = snapshots.find((s) =>
+                String(s?.snapshot_id || '') === String(effectiveSnapshotId || '')
+                && String(s?.model_name || '') === String(effectiveModelName || '')
+            ) || snapshots.find((s) => String(s?.snapshot_id || '') === String(effectiveSnapshotId || '')) || null;
+            const compositeKey = makeSnapshotKey(effectiveSnapshot);
+            setSelectedSnapshotId(compositeKey || null);
 
             const modelScope = String(effectiveSnapshot?.model_name || '').trim() || '__all__';
 
             if (effectiveSnapshotId) {
+                // Backends are mixed: some only return data when scoped to the
+                // concrete model/project, others can serve __all__. Try scoped
+                // first (guaranteed load), then broaden when available.
                 graphResp = await api.getGraphSnapshot(modelScope, effectiveSnapshotId, includeSystemTables).catch(() => null);
+                if (!hasGraphNodes(graphResp)) {
+                    graphResp = await api.getGraphSnapshot('__all__', effectiveSnapshotId, includeSystemTables).catch(() => null);
+                }
             }
 
             // Fallback only when no snapshot graph available
@@ -209,6 +483,12 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
 
             const normalizedGraph = normalizeGraphPayload(graphResp);
             setGraphData(normalizedGraph);
+            const resolvedModelId = getPrimaryModelIdFromGraph(normalizedGraph, effectiveModelName);
+            if (resolvedModelId) {
+                setSelectedModelId(resolvedModelId);
+                setHasUserSelectedModel(true);
+            }
+            setSelectedTableId('__all__');
             setGraphLoading(false);
 
             // Snowflake-only environments may have no repository graph yet.
@@ -275,7 +555,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             setGraphLoading(false);
             setLoading(false);
         }
-    }, [snapshotId, includeSystemTables]);
+    }, [snapshotId, includeSystemTables, makeSnapshotKey]);
 
     useEffect(() => { loadData(); }, [loadData]);
 
@@ -314,9 +594,78 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         }
     };
 
+    const resolveProjectIdForSelection = useCallback((rawId) => {
+        const candidate = String(rawId || '').trim();
+        if (!candidate) return '';
+        if (!Array.isArray(allProjectIds) || allProjectIds.length === 0) return candidate;
+
+        const exact = allProjectIds.find((p) => String(p) === candidate);
+        if (exact) return exact;
+
+        const prefixed = allProjectIds.find((p) => String(p) === `proj-${candidate}`);
+        if (prefixed) return prefixed;
+
+        const norm = normalizeProjectKey(candidate);
+        const normalizedMatches = allProjectIds.filter((p) => normalizeProjectKey(p) === norm);
+        if (normalizedMatches.length === 1) return normalizedMatches[0];
+
+        return candidate;
+    }, [allProjectIds]);
+
+    const loadProjectContext = useCallback(async (projectId) => {
+        const pid = String(projectId || '').trim();
+        if (!pid) return;
+
+        setGraphLoading(true);
+        try {
+            const projectSnapshots = await api.getGraphSnapshots(pid).catch(() => []);
+            const ordered = (Array.isArray(projectSnapshots) ? projectSnapshots : [])
+                .slice()
+                .map((snap) => ({
+                    ...snap,
+                    model_name: String(snap?.model_name || pid),
+                }))
+                .sort((a, b) => new Date(b?.timestamp || 0).getTime() - new Date(a?.timestamp || 0).getTime());
+            setAllSnapshots(ordered);
+
+            const latest = ordered[0] || null;
+            let graphResp = null;
+
+            if (latest?.snapshot_id) {
+                graphResp = await api.getGraphSnapshot(pid, latest.snapshot_id, includeSystemTables).catch(() => null);
+                const key = `${pid}|${latest.snapshot_id}`;
+                setSelectedSnapshotId(key);
+            }
+
+            // Fallback for projects with no snapshot history yet.
+            // Avoid /repo/models/{projectId}/graph for project-style IDs because
+            // that endpoint expects repository model IDs and returns 404 noise.
+            if (!hasGraphNodes(graphResp)) {
+                if (!looksLikeProjectId(pid)) {
+                    graphResp = await api.getModelGraph(pid).catch(() => null);
+                } else {
+                    const cfg = await api.getProjectConfig(pid).catch(() => null);
+                    const cfgYaml = String(cfg?.config_yaml || '');
+                    graphResp = buildGraphFromProjectConfig(cfgYaml, pid);
+                }
+            }
+
+            const normalizedGraph = normalizeGraphPayload(graphResp);
+            setGraphData(normalizedGraph);
+            setSelectedModelId(getPrimaryModelIdFromGraph(normalizedGraph, pid));
+            setHasUserSelectedModel(true);
+            setSelectedTableId('__all__');
+        } catch (err) {
+            console.error('Failed to load project context:', err);
+        } finally {
+            setGraphLoading(false);
+        }
+    }, [includeSystemTables]);
+
     // ── snapshot selector handler ────────────────────
     const handleSnapshotChange = async (snapshotKey) => {
         // snapshotKey format: "model_name|snapshot_id" to support multi-project snapshots
+        if (!snapshotKey || !String(snapshotKey).includes('|')) return;
         const [modelName, snapshotId] = snapshotKey.split('|');
         setSelectedSnapshotId(snapshotKey);
         setGraphLoading(true);
@@ -326,9 +675,18 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             );
             if (!selectedSnap) throw new Error('Snapshot not found');
             const modelScope = String(selectedSnap?.model_name || '').trim() || '__all__';
-            const graphResp = await api.getGraphSnapshot(modelScope, snapshotId, includeSystemTables).catch(() => null);
+            let graphResp = await api.getGraphSnapshot(modelScope, snapshotId, includeSystemTables).catch(() => null);
+            if (!hasGraphNodes(graphResp)) {
+                graphResp = await api.getGraphSnapshot('__all__', snapshotId, includeSystemTables).catch(() => null);
+            }
             const normalizedGraph = graphResp ? normalizeGraphPayload(graphResp) : { nodes: [], edges: [], meta: {} };
             setGraphData(normalizedGraph);
+            const resolvedModelId = getPrimaryModelIdFromGraph(normalizedGraph, modelScope);
+            if (resolvedModelId && resolvedModelId !== '__all__') {
+                setSelectedModelId(resolvedModelId);
+                setHasUserSelectedModel(true);
+            }
+            setSelectedTableId('__all__');
         } catch (err) {
             console.error('Failed to load snapshot:', err);
         } finally {
@@ -357,9 +715,18 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     };
 
     // ── node click ──────────────────────────────────
-    const handleNodeClick = (nodeData) => {
+    const handleNodeClick = async (nodeData) => {
         setSelectedFile(null);
         setFilePreview(null);
+        if (nodeData?.nodeType === 'model' && nodeData?.model_id) {
+            const targetModelId = String(nodeData.model_id).trim();
+            const resolvedProjectId = resolveProjectIdForSelection(targetModelId);
+            if (targetModelId) {
+                setSelectedModelId(resolvedProjectId || targetModelId);
+                setHasUserSelectedModel(true);
+            }
+            await loadProjectContext(resolvedProjectId || targetModelId);
+        }
         if (nodeData?.nodeType === 'table' && nodeData?.id) {
             setSelectedTableId(String(nodeData.id));
         }
@@ -561,6 +928,19 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         return byId.filter(m => m.connector === selectedConnector);
     }, [renderedGraphData, selectedConnector]);
 
+    const snapshotModelNames = useMemo(() => {
+        const names = new Set();
+        (allSnapshots || []).forEach((s) => {
+            const name = String(s?.model_name || '').trim();
+            if (name) names.add(name);
+        });
+        (allProjectIds || []).forEach((id) => {
+            const v = String(id || '').trim();
+            if (v) names.add(v);
+        });
+        return [...names].sort((a, b) => a.localeCompare(b));
+    }, [allSnapshots, allProjectIds]);
+
     const tableOptions = useMemo(() => {
         const nodes = Array.isArray(renderedGraphData?.nodes) ? renderedGraphData.nodes : [];
         return nodes
@@ -603,12 +983,14 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         if (selectedModelId !== '__all__' && !modelOptions.some((m) => m.id === selectedModelId)) {
             setSelectedModelId('__all__');
             setSelectedTableId('__all__');
+            setHasUserSelectedModel(false);
             return;
         }
-        if (selectedModelId === '__all__' && erMode && modelOptions.length > 1) {
+        if (!hasUserSelectedModel && selectedModelId === '__all__' && erMode && modelOptions.length === 1) {
             setSelectedModelId(modelOptions[0].id);
+            setHasUserSelectedModel(true);
         }
-    }, [erMode, modelOptions, selectedModelId]);
+    }, [erMode, hasUserSelectedModel, modelOptions, selectedModelId]);
 
     useEffect(() => {
         if (filterType === 'models' && erMode) {
@@ -687,7 +1069,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                         <option value="">No snapshots</option>
                     ) : (
                         allSnapshots.map(snap => (
-                            <option key={`${snap.model_name}|${snap.snapshot_id}`} value={snap.snapshot_id}>
+                            <option key={`${snap.model_name}|${snap.snapshot_id}`} value={`${snap.model_name}|${snap.snapshot_id}`}>
                                 {snap.model_name} • {new Date(snap.timestamp).toLocaleString()} {snap.version_tag ? `(${snap.version_tag})` : ''}
                             </option>
                         ))
@@ -744,6 +1126,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     <div style={{ flex: 1, overflow: 'hidden' }}>
                         <ComponentTree 
                             nodes={graphData.nodes}
+                            snapshotModels={snapshotModelNames}
                             onNodeClick={(node) => handleNodeClick(node.data)}
                             selectedId={selectedNode?.id}
                         />

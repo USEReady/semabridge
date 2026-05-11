@@ -1605,6 +1605,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   /* ─── Step validity ─── */
   const canAdvance = () => {
     if (step === 1) return name.trim().length > 0;
+    if (step === 3 && (sourceConnector === 'fabric' || sourceConnector === 'snowflake')) {
+      return selectedModelNames.length > 0;
+    }
     if (step === 4) return mappingReadyToProceed;
     if (step === 5) return true;
     return true;
@@ -1613,6 +1616,16 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const fetchMappings = useCallback(async ({ dryRun = false, resetManual = true } = {}) => {
     setMappingError('');
     setMappingDryRunError('');
+
+    if ((sourceConnector === 'fabric' || sourceConnector === 'snowflake') && selectedModelNames.length === 0) {
+      const msg = 'Select at least one source model before running dry run.';
+      setMappingError(msg);
+      setMappingDryRunStatus('failed');
+      setMappingDryRunError(msg);
+      addLog('warning', 'Mapping', msg);
+      return { ok: false, error: msg };
+    }
+
     if (dryRun) setMappingDryRunStatus('running');
     setMappingLoading(true);
     try {
@@ -1678,12 +1691,31 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     } finally {
       setMappingLoading(false);
     }
-  }, [addLog, currentMappingSignature, sourceConnector, targetConnectors, selectedModelNames, createdProject, fabricWorkspaceId, snowflakeDatabase, targetDatabase]);
+  }, [
+    addLog,
+    currentMappingSignature,
+    sourceConnector,
+    targetConnectors,
+    selectedModelNames,
+    createdProject,
+    fabricWorkspaceId,
+    snowflakeDatabase,
+    targetDatabase,
+  ]);
 
   // ── handleDryRun — triggers the dry-run API and populates detectedMappings ──
   const handleDryRun = useCallback(async () => {
     setMappingDryRunStatus('loading');
     setMappingError('');
+
+    if ((sourceConnector === 'fabric' || sourceConnector === 'snowflake') && selectedModelNames.length === 0) {
+      const msg = 'Select at least one source model before running dry run.';
+      setMappingError(msg);
+      setMappingDryRunError(msg);
+      setMappingDryRunStatus('error');
+      addLog('warning', 'Mapping', msg);
+      return;
+    }
 
     const projectId = createdProject?.id || createdProject?.project_id || 'preview';
     const { sourceConfig, targetConfig } = buildDryRunPayload({
@@ -1725,8 +1757,15 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       // preserve existing detectedMappings on failure
     }
   }, [
-    createdProject, sourceConnector, fabricWorkspaceId, snowflakeDatabase,
-    targetConnectors, targetDatabase, selectedModelNames, currentMappingSignature,
+    addLog,
+    createdProject,
+    sourceConnector,
+    fabricWorkspaceId,
+    snowflakeDatabase,
+    targetConnectors,
+    targetDatabase,
+    selectedModelNames,
+    currentMappingSignature,
   ]);
 
   // ── handleFieldEdit — saves a single field mapping edit via the API ──────────
@@ -1855,6 +1894,10 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       setShowStep1Validation(false);
     }
     if (step === 3) {
+      if ((sourceConnector === 'fabric' || sourceConnector === 'snowflake') && selectedModelNames.length === 0) {
+        setCreateError('Select at least one source model before continuing.');
+        return;
+      }
       setMappingError('');
       sessionStorage.removeItem('detectedRelationships');
       if (mappingDryRunSignature !== currentMappingSignature) {

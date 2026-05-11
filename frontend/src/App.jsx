@@ -119,18 +119,22 @@ export default function App() {
             </ConfigurationProvider>
           </ProtectedRoute>
         }>
-          <Route index element={<Navigate to="/projects" replace />} />
+          <Route index element={<Navigate to="/explore" replace />} />
           <Route path="/explore"       element={<ExplorePage />} />
-          <Route path="/projects"      element={<ProjectsPage />} />
+          <Route path="/relationships" element={<ComparatorPage />} />
+          <Route path="/models"        element={<ProjectsPage />} />
+          <Route path="/connectors"    element={<GlobalConfigPage />} />
+          <Route path="/deployments"   element={<ProjectJobsPage />} />
+          <Route path="/settings"      element={<SettingsPage />} />
+          
+          {/* Support legacy deep links for now */}
+          <Route path="/projects"      element={<Navigate to="/models" replace />} />
           <Route path="/projects/new"  element={<CreateProjectPage />} />
-          <Route path="/projects/:id" element={<ProjectDetailPage />} />
+          <Route path="/projects/:id"  element={<ProjectDetailPage />} />
           <Route path="/projects/:id/edit" element={<EditProjectPage />} />
           <Route path="/projects/:id/config" element={<ProjectConfigPage />} />
-          <Route path="/jobs"          element={<ProjectJobsPage />} />
-          <Route path="/model-mapping" element={<Navigate to="/projects/new?step=4" replace />} />
-          <Route path="/comparator"    element={<ComparatorPage />} />
-          <Route path="/settings"      element={<SettingsPage />} />
-          <Route path="/global-config" element={<GlobalConfigPage />} />
+          <Route path="/jobs"          element={<Navigate to="/deployments" replace />} />
+          <Route path="/global-config" element={<Navigate to="/connectors" replace />} />
           <Route path="/version-control" element={<VersionControlPage />} />
         </Route>
 

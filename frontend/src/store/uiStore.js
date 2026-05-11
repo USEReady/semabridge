@@ -88,107 +88,107 @@ export const useUIStore = create(
         state.hasHydrated === hasHydrated ? state : { hasHydrated }
       )),
 
-    setActiveProjectId: (activeProjectId) => set((state) => (
-      state.activeProjectId === activeProjectId ? state : { activeProjectId }
-    )),
-    setSearchQuery: (searchQuery) => set((state) => (
-      state.searchQuery === searchQuery ? state : { searchQuery }
-    )),
-    setFilterOptions: (partial) =>
-      set((state) => {
-        const nextFilterOptions = sanitizeFilterOptions({
-          ...state.filterOptions,
-          ...(partial && typeof partial === 'object' ? partial : {}),
-        });
+      setActiveProjectId: (activeProjectId) => set((state) => (
+        state.activeProjectId === activeProjectId ? state : { activeProjectId }
+      )),
+      setSearchQuery: (searchQuery) => set((state) => (
+        state.searchQuery === searchQuery ? state : { searchQuery }
+      )),
+      setFilterOptions: (partial) =>
+        set((state) => {
+          const nextFilterOptions = sanitizeFilterOptions({
+            ...state.filterOptions,
+            ...(partial && typeof partial === 'object' ? partial : {}),
+          });
 
-        if (areFilterOptionsEqual(state.filterOptions, nextFilterOptions)) {
-          return state;
-        }
+          if (areFilterOptionsEqual(state.filterOptions, nextFilterOptions)) {
+            return state;
+          }
 
-        return {
-          filterOptions: nextFilterOptions,
-        };
+          return {
+            filterOptions: nextFilterOptions,
+          };
+        }),
+      setLastNavigatedPath: (lastNavigatedPath) => set((state) => (
+        state.lastNavigatedPath === lastNavigatedPath ? state : { lastNavigatedPath }
+      )),
+      setSidebarCollapsed: (sidebarCollapsed) => set((state) => (
+        state.sidebarCollapsed === sidebarCollapsed ? state : { sidebarCollapsed }
+      )),
+      setProjectListScrollTop: (projectListScrollTop) => set((state) => (
+        state.projectListScrollTop === projectListScrollTop ? state : { projectListScrollTop }
+      )),
+
+      setCreateProjectDraft: (createProjectDraft) =>
+        set((state) => {
+          const prevKey = JSON.stringify(state.createProjectDraft ?? null);
+          const nextKey = JSON.stringify(createProjectDraft ?? null);
+          if (prevKey === nextKey) return state;
+          return { createProjectDraft };
+        }),
+      clearCreateProjectDraft: () =>
+        set((state) => (state.createProjectDraft === null ? state : { createProjectDraft: null })),
+
+      setProjectConfigDraft: (projectId, draft) =>
+        set((state) => {
+          const key = String(projectId);
+          const prevDraft = state.projectConfigDrafts?.[key];
+          const prevKey = JSON.stringify(prevDraft ?? null);
+          const nextKey = JSON.stringify(draft ?? null);
+
+          if (prevKey === nextKey) return state;
+
+          return {
+            projectConfigDrafts: {
+              ...state.projectConfigDrafts,
+              [key]: draft,
+            },
+          };
+        }),
+      clearProjectConfigDraft: (projectId) =>
+        set((state) => {
+          if (!Object.prototype.hasOwnProperty.call(state.projectConfigDrafts, String(projectId))) {
+            return state;
+          }
+          const next = { ...state.projectConfigDrafts };
+          delete next[String(projectId)];
+          return { projectConfigDrafts: next };
+        }),
+      resetUIState: () => set((state) => {
+        const sameState = (
+          state.activeProjectId === DEFAULT_UI_STATE.activeProjectId
+          && state.searchQuery === DEFAULT_UI_STATE.searchQuery
+          && state.lastNavigatedPath === DEFAULT_UI_STATE.lastNavigatedPath
+          && state.sidebarCollapsed === DEFAULT_UI_STATE.sidebarCollapsed
+          && state.projectListScrollTop === DEFAULT_UI_STATE.projectListScrollTop
+          && state.createProjectDraft === DEFAULT_UI_STATE.createProjectDraft
+          && Object.keys(state.projectConfigDrafts || {}).length === 0
+          && areFilterOptionsEqual(state.filterOptions, DEFAULT_UI_STATE.filterOptions)
+        );
+
+        if (sameState) return state;
+        return { ...DEFAULT_UI_STATE, hasHydrated: true };
       }),
-    setLastNavigatedPath: (lastNavigatedPath) => set((state) => (
-      state.lastNavigatedPath === lastNavigatedPath ? state : { lastNavigatedPath }
-    )),
-    setSidebarCollapsed: (sidebarCollapsed) => set((state) => (
-      state.sidebarCollapsed === sidebarCollapsed ? state : { sidebarCollapsed }
-    )),
-    setProjectListScrollTop: (projectListScrollTop) => set((state) => (
-      state.projectListScrollTop === projectListScrollTop ? state : { projectListScrollTop }
-    )),
-
-    setCreateProjectDraft: (createProjectDraft) =>
-      set((state) => {
-        const prevKey = JSON.stringify(state.createProjectDraft ?? null);
-        const nextKey = JSON.stringify(createProjectDraft ?? null);
-        if (prevKey === nextKey) return state;
-        return { createProjectDraft };
-      }),
-    clearCreateProjectDraft: () =>
-      set((state) => (state.createProjectDraft === null ? state : { createProjectDraft: null })),
-
-    setProjectConfigDraft: (projectId, draft) =>
-      set((state) => {
-        const key = String(projectId);
-        const prevDraft = state.projectConfigDrafts?.[key];
-        const prevKey = JSON.stringify(prevDraft ?? null);
-        const nextKey = JSON.stringify(draft ?? null);
-
-        if (prevKey === nextKey) return state;
-
-        return {
-          projectConfigDrafts: {
-            ...state.projectConfigDrafts,
-            [key]: draft,
-          },
-        };
-      }),
-    clearProjectConfigDraft: (projectId) =>
-      set((state) => {
-        if (!Object.prototype.hasOwnProperty.call(state.projectConfigDrafts, String(projectId))) {
-          return state;
-        }
-        const next = { ...state.projectConfigDrafts };
-        delete next[String(projectId)];
-        return { projectConfigDrafts: next };
-      }),
-    resetUIState: () => set((state) => {
-      const sameState = (
-        state.activeProjectId === DEFAULT_UI_STATE.activeProjectId
-        && state.searchQuery === DEFAULT_UI_STATE.searchQuery
-        && state.lastNavigatedPath === DEFAULT_UI_STATE.lastNavigatedPath
-        && state.sidebarCollapsed === DEFAULT_UI_STATE.sidebarCollapsed
-        && state.projectListScrollTop === DEFAULT_UI_STATE.projectListScrollTop
-        && state.createProjectDraft === DEFAULT_UI_STATE.createProjectDraft
-        && Object.keys(state.projectConfigDrafts || {}).length === 0
-        && areFilterOptionsEqual(state.filterOptions, DEFAULT_UI_STATE.filterOptions)
-      );
-
-      if (sameState) return state;
-      return { ...DEFAULT_UI_STATE, hasHydrated: true };
     }),
-  }),
-  {
-    name: 'semabridge-ui-state',
-    storage: createJSONStorage(() => sessionStorage),
-    // Only persist non-ephemeral UI state — omit hasHydrated itself.
-    partialize: (state) => ({
-      activeProjectId: state.activeProjectId,
-      searchQuery: state.searchQuery,
-      filterOptions: state.filterOptions,
-      lastNavigatedPath: state.lastNavigatedPath,
-      sidebarCollapsed: state.sidebarCollapsed,
-      projectListScrollTop: state.projectListScrollTop,
-      createProjectDraft: state.createProjectDraft,
-      projectConfigDrafts: state.projectConfigDrafts,
-    }),
-    onRehydrateStorage: () => (state) => {
-      // Mark hydration complete after sessionStorage has been read.
-      if (state) state.setHasHydrated(true);
+    {
+      name: 'semabridge-ui-state',
+      storage: createJSONStorage(() => sessionStorage),
+      // Only persist non-ephemeral UI state — omit hasHydrated itself.
+      partialize: (state) => ({
+        activeProjectId: state.activeProjectId,
+        searchQuery: state.searchQuery,
+        filterOptions: state.filterOptions,
+        lastNavigatedPath: state.lastNavigatedPath,
+        sidebarCollapsed: state.sidebarCollapsed,
+        projectListScrollTop: state.projectListScrollTop,
+        createProjectDraft: state.createProjectDraft,
+        projectConfigDrafts: state.projectConfigDrafts,
+      }),
+      onRehydrateStorage: () => (state) => {
+        // Mark hydration complete after sessionStorage has been read.
+        if (state) state.setHasHydrated(true);
+      },
     },
-  },
   ),
 );
 

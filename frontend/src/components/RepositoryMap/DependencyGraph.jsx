@@ -25,6 +25,31 @@ const nodeTypes = {
     measureNode: MeasureNode,
 };
 
+function normalizeModelKey(value) {
+    return String(value || '').trim().toLowerCase().replace(/^proj-/, '');
+}
+
+function modelMatches(nodeModelId, selectedModelId) {
+    const a = String(nodeModelId || '').trim();
+    const b = String(selectedModelId || '').trim();
+    if (!a || !b) return false;
+    return a === b || normalizeModelKey(a) === normalizeModelKey(b);
+}
+
+function isRelationshipEdge(edge, byId = null) {
+    if (!edge || !edge.source || !edge.target) return false;
+    const edgeId = String(edge.id || '').toLowerCase();
+    if (edgeId.startsWith('rel-')) return true;
+    if (edge?.data?.cardinality || edge?.data?.from_column || edge?.data?.to_column) return true;
+    if (edge?.type === 'smoothstep' && edge?.style?.strokeDasharray) return true;
+    if (byId) {
+        const s = byId.get(String(edge.source));
+        const t = byId.get(String(edge.target));
+        return s?.data?.nodeType === 'table' && t?.data?.nodeType === 'table';
+    }
+    return false;
+}
+
 const thStyle = {
     textAlign: 'left',
     padding: '10px 12px',
@@ -245,7 +270,7 @@ export default function DependencyGraph({
             rows = rows.filter(n => {
                 const mid = String(n?.data?.model_id || '').trim();
                 if (!mid) return true;
-                return mid === String(selectedModelId);
+                return modelMatches(mid, selectedModelId);
             });
         }
 
@@ -281,13 +306,13 @@ export default function DependencyGraph({
         const allEdges = Array.isArray(graphData?.edges) ? graphData.edges : [];
         const byId = new Map(allNodes.map(n => [String(n.id), n]));
 
-        let rels = allEdges.filter(e => String(e?.id || '').startsWith('rel-'));
+        let rels = allEdges.filter(e => isRelationshipEdge(e, byId));
         if (selectedModelId && selectedModelId !== '__all__') {
             rels = rels.filter(e => {
                 const s = byId.get(String(e.source));
                 const t = byId.get(String(e.target));
-                return String(s?.data?.model_id || '') === String(selectedModelId)
-                    || String(t?.data?.model_id || '') === String(selectedModelId);
+                return modelMatches(String(s?.data?.model_id || ''), selectedModelId)
+                    || modelMatches(String(t?.data?.model_id || ''), selectedModelId);
             });
         }
         if (selectedTableId && selectedTableId !== '__all__') {
@@ -336,7 +361,7 @@ export default function DependencyGraph({
         if (selectedModelId && selectedModelId !== '__all__') {
             const modelNode = filteredNodes.find(n =>
                 n?.data?.nodeType === 'model' &&
-                (String(n?.data?.model_id || '') === String(selectedModelId) || String(n?.id || '') === `model-${selectedModelId}`)
+                (modelMatches(String(n?.data?.model_id || ''), selectedModelId) || String(n?.id || '') === `model-${selectedModelId}`)
             );
 
             if (modelNode) {
@@ -348,7 +373,26 @@ export default function DependencyGraph({
                         .map(e => (e.source === modelNodeId ? e.target : e.source))
                 );
 
-                const scopedNodeIds = new Set([modelNodeId, ...attachedTableIds]);
+                // Primary scope uses model-connected edges; fallback scope uses
+                // node metadata when snapshots encode relationships table↔table
+                // without direct model↔table links.
+                const metadataTableIds = new Set(
+                    filteredNodes
+                        .filter((n) => n?.data?.nodeType === 'table' && modelMatches(String(n?.data?.model_id || ''), selectedModelId))
+                        .map((n) => n.id)
+                );
+                const metadataMeasureIds = new Set(
+                    filteredNodes
+                        .filter((n) => n?.data?.nodeType === 'measure' && modelMatches(String(n?.data?.model_id || ''), selectedModelId))
+                        .map((n) => n.id)
+                );
+
+                const scopedNodeIds = new Set([
+                    modelNodeId,
+                    ...attachedTableIds,
+                    ...metadataTableIds,
+                    ...metadataMeasureIds,
+                ]);
 
                 const scopedNodes = filteredNodes.filter(n => {
                     if (scopedNodeIds.has(n.id)) return true;
@@ -376,13 +420,34 @@ export default function DependencyGraph({
         if (erMode) {
             const tableNodes = filteredNodes.filter(n => n?.data?.nodeType === 'table');
             const tableIds = new Set(tableNodes.map(n => n.id));
+            const tableNodeById = new Map(tableNodes.map((n) => [String(n.id), n]));
             const relationshipEdges = filteredEdges.filter(e => {
-                const isRel = String(e?.id || '').startsWith('rel-');
+                const isRel = isRelationshipEdge(e, tableNodeById);
                 return isRel && tableIds.has(e.source) && tableIds.has(e.target);
             });
+            const tableToTableEdges = filteredEdges.filter((e) =>
+                tableIds.has(e.source) && tableIds.has(e.target)
+            );
+            const modelNodes = filteredNodes.filter((n) => n?.data?.nodeType === 'model');
+            const modelNodeIds = new Set(modelNodes.map((n) => n.id));
+            const modelTableEdges = filteredEdges.filter((e) => (
+                (modelNodeIds.has(e.source) && tableIds.has(e.target))
+                || (modelNodeIds.has(e.target) && tableIds.has(e.source))
+            ));
 
-            filteredNodes = tableNodes;
-            filteredEdges = relationshipEdges;
+            // Fallback: when snapshots don't carry explicit relationship metadata,
+            // keep any table-to-table links so ER view doesn't appear disconnected.
+            if (relationshipEdges.length > 0) {
+                filteredNodes = tableNodes;
+                filteredEdges = relationshipEdges;
+            } else if (tableToTableEdges.length > 0) {
+                filteredNodes = tableNodes;
+                filteredEdges = tableToTableEdges;
+            } else {
+                // Last fallback: keep model hub so tables stay connected.
+                filteredNodes = [...modelNodes, ...tableNodes];
+                filteredEdges = modelTableEdges;
+            }
 
             if (selectedTableId && selectedTableId !== '__all__') {
                 const focusedId = String(selectedTableId);
@@ -514,7 +579,7 @@ export default function DependencyGraph({
 
         const styledEdges = filteredEdges.map(e => {
             const status = e?.data?.diffStatus;
-            const isRelationship = String(e?.id || '').startsWith('rel-');
+            const isRelationship = isRelationshipEdge(e);
             if (status === 'added') {
                 return {
                     ...e,
