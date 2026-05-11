@@ -651,7 +651,7 @@ async def graph_snapshots_compat(model_name: str):
     """Snapshot history for Explore time-machine (newest first)."""
     try:
         logger.info("[Explore] Snapshot list requested model=%s", model_name)
-        snapshots = db_manager.list_snapshots(model_name, limit=200)
+        snapshots = db_manager.list_snapshots(model_name, limit=10000)
         logger.info("[Explore] Snapshot list resolved model=%s count=%s", model_name, len(snapshots or []))
         return [
             {
