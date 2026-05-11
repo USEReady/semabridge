@@ -7,7 +7,7 @@ import {
     Database, FolderOpen, PanelRight, Files, ArrowLeft,
 } from 'lucide-react';
 import { api } from '../../utils/api';
-import FileTreePanel from './FileTreePanel';
+import ComponentTree from './ComponentTree';
 import DependencyGraph from './DependencyGraph';
 import dagre from 'dagre';
 import DetailPanel from './DetailPanel';
@@ -148,6 +148,8 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     const [selectedTableId, setSelectedTableId] = usePageCache('explore:selectedTableId', '__all__');
     const [showVersionBadges, setShowVersionBadges] = useState(false);
     const [includeSystemTables, setIncludeSystemTables] = usePageCache('explore:includeSystemTables', false);
+    const [allSnapshots, setAllSnapshots] = useState([]);
+    const [selectedSnapshotId, setSelectedSnapshotId] = useState(null);
 
     const [syncing, setSyncing] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -174,12 +176,14 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             let graphResp;
             let effectiveSnapshotId = snapshotId;
             const snapshots = Array.isArray(snapshotsResp) ? snapshotsResp : [];
+            setAllSnapshots(snapshots);
             if (!effectiveSnapshotId) {
                 const sorted = [...snapshots].sort(
                     (a, b) => new Date(b?.timestamp || 0).getTime() - new Date(a?.timestamp || 0).getTime()
                 );
                 effectiveSnapshotId = sorted[0]?.snapshot_id || null;
             }
+            setSelectedSnapshotId(effectiveSnapshotId);
 
             const effectiveSnapshot = snapshots.find((s) => s?.snapshot_id === effectiveSnapshotId) || null;
             const modelScope = String(effectiveSnapshot?.model_name || '').trim() || '__all__';
@@ -300,6 +304,23 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             console.error('Sync failed:', err);
         } finally {
             setSyncing(false);
+        }
+    };
+
+    // ── snapshot selector handler ────────────────────
+    const handleSnapshotChange = async (newSnapshotId) => {
+        setSelectedSnapshotId(newSnapshotId);
+        setGraphLoading(true);
+        try {
+            const selectedSnap = allSnapshots.find(s => s?.snapshot_id === newSnapshotId);
+            const modelScope = String(selectedSnap?.model_name || '').trim() || '__all__';
+            const graphResp = await api.getGraphSnapshot(modelScope, newSnapshotId, includeSystemTables).catch(() => null);
+            const normalizedGraph = graphResp ? normalizeGraphPayload(graphResp) : { nodes: [], edges: [], meta: {} };
+            setGraphData(normalizedGraph);
+        } catch (err) {
+            console.error('Failed to load snapshot:', err);
+        } finally {
+            setGraphLoading(false);
         }
     };
 
@@ -604,26 +625,21 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             height: '100%', width: '100%',
             background: 'var(--bg-app)', color: 'var(--text-primary)',
         }}>
-            {/* ─── TOP BAR ─── */}
+            {/* ─── TOP BAR (CLEAN & TECHNICAL) ─── */}
             <div style={{
                 display: 'flex', alignItems: 'center', gap: 12,
-                padding: '8px 16px',
+                padding: '10px 16px',
                 borderBottom: '1px solid var(--border-color)',
                 background: 'var(--bg-surface)',
                 flexShrink: 0,
-                overflowX: 'auto',
-                overflowY: 'hidden',
             }}>
-                {/* Title */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <MapIcon size={16} style={{ color: '#2563EB' }} />
-                    <span style={{ fontWeight: 700, fontSize: 13 }}>Repository Map</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Waypoints size={18} style={{ color: '#2563EB' }} />
+                    <span style={{ fontWeight: 700, fontSize: 14, letterSpacing: '-0.01em' }}>Semantic Explorer</span>
                 </div>
 
-                <div style={{ width: 1, height: 20, background: 'var(--border-color)' }} />
+                <div style={{ width: 1, height: 20, background: 'var(--border-color)', margin: '0 8px' }} />
 
-
-                {/* Filter chips */}
                 <div style={{ display: 'flex', gap: 4 }}>
                     {chips.map(c => (
                         <button key={c.id}
@@ -638,500 +654,150 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     ))}
                 </div>
 
-                <button
-                    onClick={() => setWorkbenchOpen(v => !v)}
-                    title="Open model/data inspector"
-                    style={{
-                        ...toolBtnStyle,
-                        color: workbenchOpen ? '#2563EB' : 'var(--text-tertiary)',
-                        marginLeft: 4,
-                    }}
-                >
-                    <PanelRight size={15} />
-                    <span style={{ fontSize: 11 }}>Inspector</span>
-                </button>
-
-                <button
-                    onClick={() => setShowExplorer(v => !v)}
-                    title="Toggle snapshot/files explorer"
-                    style={{
-                        ...toolBtnStyle,
-                        color: showExplorer ? '#2563EB' : 'var(--text-tertiary)',
-                    }}
-                >
-                    <Files size={15} />
-                    <span style={{ fontSize: 11 }}>Explorer</span>
-                </button>
-
-                {connectorOptions.length > 0 && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 8, flexShrink: 0 }}>
-                        <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap' }}>
-                            Connector
-                        </span>
-                        <select
-                            value={selectedConnector}
-                            onChange={(e) => {
-                                setSelectedConnector(e.target.value);
-                                setSelectedModelId('__all__');
-                                setSelectedTableId('__all__');
-                            }}
-                            style={dropdownStyle}
-                            title="Choose connector filter"
-                        >
-                            <option value="__all__">Select connector</option>
-                            {connectorOptions.map(c => (
-                                <option key={c.id} value={c.id}>{c.label}</option>
-                            ))}
-                        </select>
-
-                        <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap', marginLeft: 8 }}>
-                            Model
-                        </span>
-                        <select
-                            value={selectedModelId}
-                            onChange={(e) => {
-                                setSelectedModelId(e.target.value);
-                                setSelectedTableId('__all__');
-                            }}
-                            style={dropdownStyle}
-                            title="Choose model"
-                        >
-                            <option value="__all__">
-                                {selectedConnector === '__all__' ? 'Select connector first' : 'Select model'}
-                            </option>
-                            {modelOptions.map(m => (
-                                <option key={m.id} value={m.id}>{m.label}</option>
-                            ))}
-                        </select>
-
-                        {selectedModelId !== '__all__' && (
-                            <span style={{
-                                fontSize: 10,
-                                color: '#2563EB',
-                                border: '1px solid rgba(37, 99, 235, 0.35)',
-                                background: 'rgba(37, 99, 235, 0.10)',
-                                padding: '4px 8px',
-                                borderRadius: 999,
-                                whiteSpace: 'nowrap',
-                                marginLeft: 4,
-                            }}>
-                                Model filtered
-                            </span>
-                        )}
-                    </div>
-                )}
-
                 <div style={{ flex: 1 }} />
 
-                {/* Version badge toggle */}
-                {!erMode && (
-                    <button
-                        onClick={() => setShowVersionBadges(v => !v)}
-                        title="Toggle version history badges"
-                        style={{
-                            ...toolBtnStyle,
-                            color: showVersionBadges ? '#2563EB' : 'var(--text-tertiary)',
-                        }}
-                    >
-                        {showVersionBadges ? <Eye size={15} /> : <EyeOff size={15} />}
-                        <span style={{ fontSize: 11 }}>Versions</span>
-                    </button>
-                )}
-
-                {snapshotId && (
-                    <button
-                        onClick={() => setIncludeSystemTables(v => !v)}
-                        title="Include system-generated tables in snapshot"
-                        style={{
-                            ...toolBtnStyle,
-                            color: includeSystemTables ? '#2563EB' : 'var(--text-tertiary)',
-                        }}
-                    >
-                        <Filter size={15} />
-                        <span style={{ fontSize: 11 }}>{includeSystemTables ? 'System: On' : 'System: Off'}</span>
-                    </button>
-                )}
-
-                {/* Layout toggles */}
-                <button
-                    onClick={() => {
-                        setErMode(v => {
-                            const next = !v;
-                            return next;
-                        });
+                {/* Snapshot Selector Dropdown */}
+                <select
+                    value={selectedSnapshotId || ''}
+                    onChange={(e) => handleSnapshotChange(e.target.value)}
+                    style={{
+                        fontSize: 11,
+                        padding: '4px 8px',
+                        borderRadius: 4,
+                        border: '1px solid var(--border-color)',
+                        background: 'var(--bg-app)',
+                        color: 'var(--text-primary)',
+                        cursor: 'pointer',
+                        minWidth: 150,
                     }}
-                    title="Toggle ER relationship view"
+                >
+                    {allSnapshots.length === 0 ? (
+                        <option value="">No snapshots</option>
+                    ) : (
+                        allSnapshots.map(snap => (
+                            <option key={snap.snapshot_id} value={snap.snapshot_id}>
+                                {new Date(snap.timestamp).toLocaleString()} {snap.version_tag ? `(${snap.version_tag})` : ''}
+                            </option>
+                        ))
+                    )}
+                </select>
+
+                <button
+                    onClick={() => setErMode(v => !v)}
                     style={{
                         ...toolBtnStyle,
                         color: erMode ? '#2563EB' : 'var(--text-tertiary)',
+                        background: erMode ? 'rgba(37, 99, 235, 0.1)' : 'transparent',
+                        padding: '4px 10px',
                     }}
                 >
                     <Database size={15} />
-                    <span style={{ fontSize: 11 }}>ER View</span>
+                    <span style={{ fontSize: 11, fontWeight: 600 }}>ER View</span>
                 </button>
 
-                {!erMode && (
-                    <>
-                        <button
-                            onClick={() => setLayout('hierarchical')}
-                            title="Hierarchical layout"
-                            style={{
-                                ...toolBtnStyle,
-                                color: layout === 'hierarchical' ? '#2563EB' : 'var(--text-tertiary)',
-                            }}
-                        >
-                            <LayoutGrid size={15} />
-                        </button>
-                        <button
-                            onClick={() => setLayout('force')}
-                            title="Force-directed layout"
-                            style={{
-                                ...toolBtnStyle,
-                                color: layout === 'force' ? '#2563EB' : 'var(--text-tertiary)',
-                            }}
-                        >
-                            <Waypoints size={15} />
-                        </button>
-                    </>
-                )}
-
-                {/* Sync */}
                 <button
                     onClick={handleSync}
                     disabled={syncing}
-                    title="Refresh Map"
                     style={{
                         ...toolBtnStyle,
                         background: '#2563EB',
                         color: '#fff',
-                        padding: '4px 10px',
+                        padding: '4px 12px',
                         borderRadius: 6,
-                        opacity: syncing ? .6 : 1,
                     }}
                 >
                     <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} />
-                    <span style={{ fontSize: 11, fontWeight: 600 }}>
-                        {syncing ? 'Syncing...' : 'Refresh'}
-                    </span>
+                    <span style={{ fontSize: 11, fontWeight: 600 }}>Sync Metadata</span>
                 </button>
-
-                {onClose && (
-                    <button onClick={onClose} style={iconBtnStyle} title="Close map">
-                        <X size={16} />
-                    </button>
-                )}
             </div>
 
-            {snapshotAudit && (
-                <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(4, minmax(120px, 1fr))',
-                    gap: 10,
-                    padding: '10px 16px',
-                    borderBottom: '1px solid var(--border-color)',
-                    background: 'var(--bg-surface)',
-                }}>
-                    <AuditCard label="Total Tables" value={snapshotAudit.totalTables} tone="var(--accent-blue)" />
-                    <AuditCard label="Relationships" value={snapshotAudit.totalRelationships} tone="#22C55E" />
-                    <AuditCard label="Broken Refs" value={snapshotAudit.brokenTables} tone={snapshotAudit.brokenTables > 0 ? '#EF4444' : '#22C55E'} />
-                    <AuditCard
-                        label={includeSystemTables ? 'System Included' : 'System Excluded'}
-                        value={includeSystemTables ? snapshotAudit.systemDetected : snapshotAudit.systemExcluded}
-                        tone={includeSystemTables ? '#F59E0B' : 'var(--accent-blue)'}
-                    />
-                </div>
-            )}
-
-            {diffMode && (
-                <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    padding: '8px 16px',
-                    borderBottom: '1px solid var(--border-color)',
-                    background: 'var(--bg-surface)',
-                    fontSize: 11,
-                }}>
-                    <span style={{ fontWeight: 700, color: 'var(--accent-blue)' }}>Diff Mode</span>
-                    {diffLoading ? (
-                        <span style={{ color: 'var(--text-tertiary)' }}>Comparing snapshots...</span>
-                    ) : (
-                        <>
-                            <span style={{ color: '#22C55E' }}>+ {diffReport?.summary?.added || 0} added</span>
-                            <span style={{ color: '#EF4444' }}>- {diffReport?.summary?.removed || 0} removed</span>
-                            <span style={{ color: '#EAB308' }}>~ {diffReport?.summary?.modified || 0} modified</span>
-                            <span style={{ color: 'var(--text-tertiary)' }}>Relationships: +{diffReport?.summary?.relationships_added || 0} / -{diffReport?.summary?.relationships_removed || 0}</span>
-                        </>
-                    )}
-                </div>
-            )}
-
-            {/* ─── BODY ─── */}
+            {/* ─── BODY (3-PANEL LAYOUT) ─── */}
             <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-                {/* File Tree */}
-                {showExplorer && (
+                
+                {/* 1. Component Tree (Left) */}
                 <div style={{
-                    width: 260, minWidth: 200,
+                    width: 280, minWidth: 280,
                     borderRight: '1px solid var(--border-color)',
-                    overflow: 'hidden',
                     background: 'var(--bg-surface)',
                     display: 'flex', flexDirection: 'column',
                 }}>
-                    {/* Snapshots Header */}
                     <div style={{
-                        display: 'flex', borderBottom: '1px solid var(--border-color)',
-                        background: 'var(--bg-app)', flexShrink: 0,
-                        padding: '6px 8px', alignItems: 'center', gap: 4,
+                        padding: '12px 16px', borderBottom: '1px solid var(--border-color)',
+                        fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em',
+                        color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 8
                     }}>
-                        <Database size={12} />
-                        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)' }}>Snapshots</span>
+                        <Files size={14} />
+                        Metadata Components
                     </div>
-                    <div style={{ flex: 1, overflow: 'auto' }}>
-                    {treeLoading ? (
-                        <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
-                            Loading tree...
-                        </div>
-                    ) : (
-                        <FileTreePanel
-                            tree={snapshotTreeData}
-                            onFileClick={handleFileClick}
-                            selectedPath={selectedFile}
+                    <div style={{ flex: 1, overflow: 'hidden' }}>
+                        <ComponentTree 
+                            nodes={graphData.nodes}
+                            onNodeClick={(node) => handleNodeClick(node.data)}
+                            selectedId={selectedNode?.id}
                         />
-                    )}
                     </div>
                 </div>
-                )}
 
-                {/* Dependency Graph */}
-                {/* Full Screen Relationship Diagram (ER/Table View) */}
-                {(erMode || filterType === 'tables') && fullScreen && (
-                    <div style={{
-                        position: 'fixed',
-                        top: 0, left: 0, right: 0, bottom: 0,
-                        background: 'var(--bg-app)',
-                        zIndex: 2000,
-                        display: 'flex', flexDirection: 'column',
-                    }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 20px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border-color)' }}>
-                            <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--accent-blue)' }}>Model Relationship Explorer (Full Screen)</span>
-                            <button onClick={() => setFullScreen(false)} style={{ ...iconBtnStyle, fontSize: 18, color: '#EF4444', border: '1px solid #EF4444', borderRadius: 6, padding: '4px 12px', fontWeight: 700 }}>Exit Full Screen ✕</button>
-                        </div>
-                        <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-                            <ReactFlowProvider>
-                                <DependencyGraph
-                                    graphData={renderedGraphData}
-                                    layout={layout}
-                                    erMode={erMode}
-                                    selectedModelId={selectedModelId}
-                                    selectedTableId={selectedTableId}
-                                    searchQuery={searchQuery}
-                                    filterType={filterType}
-                                    showVersionBadges={showVersionBadges}
-                                    onNodeClick={handleNodeClick}
-                                    isLoading={graphLoading}
-                                    snapshotId={snapshotId}
-                                    diffMode={diffMode}
-                                    defaultEdgeOptions={{ type: 'step' }}
-                                    // Pass a prop to enable zoom/pan/minimap in full screen
-                                    fullScreenMode={true}
-                                />
-                            </ReactFlowProvider>
-                        </div>
-                    </div>
-                )}
-                {/* Normal (non-fullscreen) diagram */}
-                {!(erMode || filterType === 'tables') || !fullScreen ? (
-                    <div style={{ flex: 1, position: 'relative' }}>
-                                                <ReactFlowProvider>
-                                                    <DependencyGraph
-                                                            graphData={renderedGraphData}
-                                                            layout={layout}
-                                                            erMode={erMode}
-                                                            selectedModelId={selectedModelId}
-                                                            selectedTableId={selectedTableId}
-                                                            searchQuery={searchQuery}
-                                                            filterType={filterType}
-                                                            showVersionBadges={showVersionBadges}
-                                                            onNodeClick={handleNodeClick}
-                                                            isLoading={graphLoading}
-                                                            snapshotId={snapshotId}
-                                                            diffMode={diffMode}
-                                                            defaultEdgeOptions={{ type: 'step' }}
-                                                            fullScreenMode={false}
-                                                            onRequestFullScreen={() => setFullScreen(true)}
-                                                            showFullScreenButton={(erMode || filterType === 'tables' || filterType === 'metrics') && !fullScreen}
-                                                    />
-                                                </ReactFlowProvider>
-                    </div>
-                ) : null}
+                {/* 2. Relationship Canvas (Center) */}
+                <div style={{ flex: 1, position: 'relative', background: 'var(--bg-app)' }}>
+                    <ReactFlowProvider>
+                        <DependencyGraph
+                            graphData={renderedGraphData}
+                            layout={layout}
+                            erMode={erMode}
+                            selectedModelId={selectedModelId}
+                            selectedTableId={selectedTableId}
+                            searchQuery={searchQuery}
+                            filterType={filterType}
+                            showVersionBadges={showVersionBadges}
+                            onNodeClick={handleNodeClick}
+                            isLoading={graphLoading}
+                            snapshotId={snapshotId}
+                            diffMode={diffMode}
+                            defaultEdgeOptions={{ type: 'step' }}
+                            fullScreenMode={fullScreen}
+                            onRequestFullScreen={() => setFullScreen(true)}
+                        />
+                    </ReactFlowProvider>
+                </div>
 
-                {/* Detail / Preview Panel - Modal Overlay */}
-                {showDetail && !workbenchOpen && (
-                    <div style={{
-                        position: 'fixed',
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        background: 'rgba(0,0,0,.4)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        padding: 16,
-                        zIndex: 999,
-                    }}>
-                        <div style={{
-                            width: '98vw',
-                            maxWidth: '98vw',
-                            height: '92vh',
-                            maxHeight: '92vh',
-                            borderRadius: 10,
-                            background: 'var(--bg-surface)',
-                            border: '1px solid var(--border-color)',
-                            overflow: 'auto',
-                            boxShadow: '0 20px 60px rgba(0,0,0,.3)',
-                        }}>
-                            <DetailPanel
-                                filePreview={filePreview}
-                                selectedNode={selectedNode}
-                                onClose={handleCloseDetail}
-                            />
-                        </div>
-                    </div>
-                )}
-
-                {workbenchOpen && (
-                    <div style={{
-                        position: 'fixed',
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        background: 'rgba(0,0,0,.4)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        padding: 16,
-                        zIndex: 1000,
-                    }}>
-                        <div style={{
-                            width: '98vw',
-                            maxWidth: '98vw',
-                            height: '92vh',
-                            maxHeight: '92vh',
-                            borderRadius: 10,
-                            background: 'var(--bg-surface)',
-                            border: '1px solid var(--border-color)',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            overflow: 'hidden',
-                            boxShadow: '0 20px 60px rgba(0,0,0,.3)',
-                        }}>
-                            <div style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                padding: '12px 16px',
-                                borderBottom: '1px solid var(--border-color)',
-                                background: 'var(--bg-app)',
-                            }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                                    <button
-                                        onClick={() => setInspectorResetToken(v => v + 1)}
-                                        style={{
-                                            ...iconBtnStyle,
-                                            border: '1px solid var(--border-color)',
-                                            borderRadius: 6,
-                                            padding: '4px 8px',
-                                            gap: 6,
-                                        }}
-                                        title="Back one step inside inspector"
-                                    >
-                                        <ArrowLeft size={14} />
-                                        <span style={{ fontSize: 11, fontWeight: 700 }}>Back</span>
-                                    </button>
-                                    <div style={{ minWidth: 0 }}>
-                                        <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-secondary)' }}>Schema Inspector</div>
-                                        <div style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>Explore tables, relationships, and measures in plain view</div>
-                                    </div>
-                                </div>
-                                <button onClick={() => setWorkbenchOpen(false)} style={iconBtnStyle} title="Close">
-                                    <X size={16} />
-                                </button>
-                            </div>
-
-                            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                                <ModelDataPanel
-                                    key={`inspector-${inspectorResetToken}`}
-                                    graphData={renderedGraphData}
-                                    selectedModelId={selectedModelId}
-                                    erMode={erMode}
-                                    selectedTableId={selectedTableId}
-                                    onSelectTable={setSelectedTableId}
-                                    onOpenTableER={focusTableInER}
-                                    compact
-                                    showTabHeader
-                                />
-                            </div>
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            {diffMode && !diffLoading && diffReport && (
+                {/* 3. Metadata Inspector (Right) */}
                 <div style={{
-                    borderTop: '1px solid var(--border-color)',
+                    width: 400, minWidth: 400,
+                    borderLeft: '1px solid var(--border-color)',
                     background: 'var(--bg-surface)',
-                    maxHeight: 220,
-                    overflow: 'auto',
-                    padding: '10px 16px',
+                    display: 'flex', flexDirection: 'column',
+                    transition: 'width 0.3s ease',
                 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 8, color: 'var(--text-secondary)' }}>
-                        Structured Change Log
+                    <div style={{
+                        padding: '12px 16px', borderBottom: '1px solid var(--border-color)',
+                        fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em',
+                        color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <PanelRight size={14} />
+                            Inspector
+                        </div>
+                        {selectedNode && (
+                            <button onClick={() => setSelectedNode(null)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
+                                <X size={14} />
+                            </button>
+                        )}
                     </div>
-
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                        <thead>
-                            <tr>
-                                <th style={thStyle}>Type</th>
-                                <th style={thStyle}>Entity</th>
-                                <th style={thStyle}>Change</th>
-                                <th style={thStyle}>Details</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {(diffReport.changes || []).map((row, idx) => (
-                                <tr key={`chg-${idx}`}>
-                                    <td style={tdStyle}>{row.entity_type}</td>
-                                    <td style={tdStyle}>{row.entity_name}</td>
-                                    <td style={{ ...tdStyle, color: row.change_type === 'added' ? '#22C55E' : row.change_type === 'removed' ? '#EF4444' : '#EAB308', fontWeight: 700 }}>
-                                        {row.change_type}
-                                    </td>
-                                    <td style={tdStyle}>{row.details}</td>
-                                </tr>
-                            ))}
-                            {(diffReport.relationships || []).map((row, idx) => (
-                                <tr key={`rel-${idx}`}>
-                                    <td style={tdStyle}>relationship</td>
-                                    <td style={tdStyle}>{row.relationship}</td>
-                                    <td style={{ ...tdStyle, color: row.change_type === 'added' ? '#22C55E' : '#EF4444', fontWeight: 700 }}>
-                                        {row.change_type}
-                                    </td>
-                                    <td style={tdStyle}>Relationship link updated</td>
-                                </tr>
-                            ))}
-                            {(!diffReport.changes?.length && !diffReport.relationships?.length) && (
-                                <tr>
-                                    <td colSpan={4} style={{ ...tdStyle, textAlign: 'center', color: 'var(--text-tertiary)' }}>
-                                        No changes detected between selected snapshots.
-                                    </td>
-                                </tr>
-                            )}
-                        </tbody>
-                    </table>
+                    <div style={{ flex: 1, overflow: 'hidden' }}>
+                        <ModelDataPanel
+                            graphData={renderedGraphData}
+                            selectedModelId={selectedModelId}
+                            erMode={erMode}
+                            selectedTableId={selectedNode?.id || selectedTableId}
+                            onSelectTable={setSelectedTableId}
+                            onOpenTableER={focusTableInER}
+                            compact
+                            showTabHeader={false}
+                        />
+                    </div>
                 </div>
-            )}
-
+            </div>
         </div>
     );
 }
