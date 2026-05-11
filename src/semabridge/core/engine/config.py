@@ -34,6 +34,7 @@ from semabridge.sml.models import SMLModel, SMLRelationship
 from semabridge.repository.model_repository import ModelRepository
 from semabridge.utils.logger import get_logger
 from semabridge.utils.relationship_naming import generate_relationship_name
+from semabridge.utils.identifiers import IdentifierSanitizer
 from semabridge.core.engine.context import RunContext
 from semabridge.core.engine.exceptions import (
     ConfigValidationError,
@@ -75,12 +76,22 @@ def _apply_mapping_overrides_from_config(
     if not isinstance(raw_overrides, list):
         return
 
+    target_cfg = parsed.get("target") if isinstance(parsed.get("target"), dict) else {}
+    if not target_cfg:
+        targets_cfg = parsed.get("targets")
+        if isinstance(targets_cfg, list) and targets_cfg and isinstance(targets_cfg[0], dict):
+            target_cfg = targets_cfg[0]
+    target_type = str(target_cfg.get("type") or "").strip().lower()
+    snowflake_sanitizer = IdentifierSanitizer(force_uppercase=True, suppress_reserved=True)
+
     overrides: Dict[str, str] = {}
     for row in raw_overrides:
         if not isinstance(row, dict):
             continue
         source_path = str(row.get("source_path") or "").strip()
         target_name = str(row.get("target_name") or "").strip()
+        if target_type == "snowflake" and target_name:
+            target_name = snowflake_sanitizer.sanitize_alias(target_name)
         if source_path and target_name:
             overrides[source_path] = target_name
 
@@ -124,8 +135,9 @@ def _apply_mapping_overrides_from_config(
                 continue
             for column in dataset.columns:
                 if str(column.unique_name) == column_name:
-                    if str(column.unique_name) != target_name:
-                        column.unique_name = target_name
+                    # Keep physical identity stable for extraction/CTAS/sample-query
+                    # paths; only override semantic display/alias label.
+                    if str(column.label) != target_name:
                         column.label = target_name
                         renamed_columns += 1
                     break
@@ -172,9 +184,6 @@ def _step1_load_config(
         # config_dict and file-loaded configs so that model_name, source
         # workspace, and target schema are honoured in all call paths).
         if raw_config:
-            if "project_id" in raw_config:
-                object.__setattr__(config, "_project_id_from_yaml", str(raw_config["project_id"]).strip())
-            
             source_cfg = raw_config.get("source") if isinstance(raw_config.get("source"), dict) else {}
             target_cfg: dict[str, Any] = {}
             raw_target = raw_config.get("target")
@@ -243,25 +252,18 @@ def _step2_init_identifiers(
     """
     self._current_step = 2
     logger.info("Step 2: Initializing identifiers")
+    sync_mode = str(sync_mode or "copy").strip().lower()
+    if sync_mode not in {"copy", "upsert"}:
+        sync_mode = "copy"
 
     # Determine project_id
-    if hasattr(config, "_project_id_from_yaml") and config._project_id_from_yaml:
-        # Strict Decoupling: YAML config is the ultimate authority
-        project_id = config._project_id_from_yaml
-    elif dataset_id:
+    if dataset_id:
         # For Fabric source, use dataset_id as project_id
         project_id = dataset_id
     elif project_name:
         project_id = project_name
     else:
         project_id = config.model.name
-
-    if source in ("pbix", "local"):
-        import re
-        # Strip 32-character UUID prefix if it exists (e.g. d501c10cadeb4687b0398c755d2b1add_continent -> continent)
-        project_id = re.sub(r'^[0-9a-f]{32}_', '', project_id)
-        if project_name:
-            project_name = re.sub(r'^[0-9a-f]{32}_', '', project_name)
 
     # Behavior loading logic (matches ExecutionConfig)
     behavior = ConnectorBehavior()

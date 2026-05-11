@@ -83,8 +83,43 @@ def create_account(request: Request, body: AccountCreate, db: Session = Depends(
 
         if existing:
             if existing.connector_type == body.connector_type.upper():
+                connector = body.connector_type.upper()
+                safe_token = None
+
+                if body.credentials and connector in ("SNOWFLAKE", "DATABRICKS"):
+                    import json
+
+                    clean_creds = {k: v for k, v in body.credentials.items() if v}
+                    safe_token = encrypt_token(json.dumps(clean_creds))
+                    logger.info(
+                        "Refreshed stored credential bundle for %s account %s (%d keys)",
+                        connector,
+                        body.tag,
+                        len(clean_creds),
+                    )
+                elif body.encrypted_token:
+                    payload_str = body.encrypted_token
+                    if connector == "FABRIC":
+                        try:
+                            import json
+                            from semabridge.repository.credential_manager import CredentialManager
+
+                            cm = CredentialManager()
+                            full_token = cm.get_msal_token()
+                            if full_token and full_token.get("access_token") == payload_str:
+                                payload_str = json.dumps(full_token)
+                        except Exception as e:
+                            logger.warning(f"Could not merge full MSAL payload for account {body.tag}: {e}")
+
+                    safe_token = encrypt_token(payload_str)
+
+                existing.identity_email = body.identity_email or existing.identity_email
+                if safe_token is not None:
+                    existing.encrypted_token = safe_token
+                existing.status = "Active"
+                db.commit()
                 logger.info(
-                    "Account with tag %s already exists for connector %s; returning existing account list",
+                    "Account with tag %s already exists for connector %s; refreshed stored credentials when provided",
                     body.tag,
                     body.connector_type.upper(),
                 )

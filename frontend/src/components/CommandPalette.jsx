@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import {
     Search,
-    Regex,
     Map,
     GitCommit,
     Bell,
@@ -13,7 +12,7 @@ import {
     Layers,
     Command,
 } from 'lucide-react';
-import { matchesSmartQuery } from './common/SmartSearchBar';
+import { getSmartQueryError, matchesSmartQuery } from './common/smartSearchQuery.js';
 
 const COMMANDS = [
     { id: 'repo-map', label: 'Open Repository Map', icon: Map, action: 'toggleRepoMap', category: 'View' },
@@ -33,38 +32,25 @@ export default function CommandPalette({
     models = [],
     queryValue,
     onQueryChange,
-    useRegexValue,
-    onUseRegexChange,
 }) {
     const [query, setQuery] = useState('');
-    const [useRegex, setUseRegex] = useState(false);
     const [selectedIndex, setSelectedIndex] = useState(0);
     const inputRef = useRef(null);
 
     const queryText = queryValue ?? query;
     const setQueryText = onQueryChange ?? setQuery;
-    const regexEnabled = useRegexValue ?? useRegex;
-    const setRegexEnabled = onUseRegexChange ?? setUseRegex;
 
     useEffect(() => {
         if (isOpen) {
             setSelectedIndex(0);
             if (!onQueryChange) setQuery('');
-            if (!onUseRegexChange) setUseRegex(false);
             setTimeout(() => inputRef.current?.focus(), 50);
         }
-    }, [isOpen, onQueryChange, onUseRegexChange]);
+    }, [isOpen, onQueryChange]);
 
     const regexError = useMemo(() => {
-        const q = String(queryText || '').trim();
-        if (!regexEnabled || !q) return '';
-        try {
-            new RegExp(q);
-            return '';
-        } catch (err) {
-            return err?.message || 'Invalid regex';
-        }
-    }, [queryText, regexEnabled]);
+        return getSmartQueryError(queryText);
+    }, [queryText]);
 
     // Global Ctrl+K shortcut
     useEffect(() => {
@@ -84,16 +70,12 @@ export default function CommandPalette({
 
     const results = useMemo(() => {
         const q = String(queryText || '').trim();
-        const qLower = q.toLowerCase();
         const items = [];
 
         const match = (text) => {
             if (!q) return true;
-            if (regexEnabled) {
-                if (regexError) return false;
-                return matchesSmartQuery(text, q, true);
-            }
-            return String(text || '').toLowerCase().includes(qLower);
+            if (regexError) return false;
+            return matchesSmartQuery(text, q);
         };
 
         // Search models
@@ -119,7 +101,7 @@ export default function CommandPalette({
         items.push(...matchedCommands);
 
         return items;
-    }, [queryText, models, regexEnabled, regexError]);
+    }, [queryText, models, regexError]);
 
     useEffect(() => {
         setSelectedIndex(0);
@@ -193,26 +175,6 @@ export default function CommandPalette({
                             }}
                         />
                     </div>
-                    <button
-                        type="button"
-                        onClick={() => setRegexEnabled(!regexEnabled)}
-                        title={regexEnabled ? 'Regex enabled' : 'Regex disabled'}
-                        style={{
-                            width: 22,
-                            height: 22,
-                            borderRadius: 6,
-                            border: '1px solid var(--border-main)',
-                            background: regexEnabled ? 'var(--accent-blue)18' : 'var(--bg-surface)',
-                            color: regexEnabled ? 'var(--accent-blue)' : 'var(--text-tertiary)',
-                            cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            flexShrink: 0,
-                        }}
-                    >
-                        <Regex size={12} />
-                    </button>
                     <kbd className="px-1.5 py-0.5 rounded bg-surface-raised border border-main text-[9px] font-mono text-tertiary">ESC</kbd>
                 </div>
                 {regexError && (

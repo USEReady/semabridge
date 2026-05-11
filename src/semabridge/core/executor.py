@@ -953,7 +953,7 @@ class CLIExecutor:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
         ddls = self._target_format.get("ddls", [])
-        with open(output_path, "w") as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             f.write("\n\n".join(ddls))
         
         return str(output_path)

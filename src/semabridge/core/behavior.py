@@ -43,6 +43,13 @@ class SnowflakeBehavior(BaseModel):
             "during deploy"
         )
     )
+    preserve_existing_tables: bool = Field(
+        default=False,
+        description=(
+            "When enabled, validate and preserve existing Snowflake tables "
+            "during deployment instead of destructive CREATE OR REPLACE"
+        )
+    )
 
 class FabricBehavior(BaseModel):
     """Fabric/PowerBI behavior controls."""

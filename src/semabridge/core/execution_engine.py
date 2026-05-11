@@ -25,8 +25,7 @@ from semabridge.core.source_format import (  # noqa: F401
 from semabridge.intermediate.models import OSIModel  # noqa: F401
 from semabridge.sml.models import SMLModel, SMLRelationship  # noqa: F401
 from semabridge.repository.model_repository import ModelRepository  # noqa: F401
-from semabridge.core.sync_modes import apply_sync_mode  # noqa: F401
+from semabridge.core.sync_modes import apply_sync_mode  # NOW ACTIVELY USED in engine pipeline
 from semabridge.utils.logger import get_logger  # noqa: F401
 from semabridge.utils.relationship_naming import generate_relationship_name  # noqa: F401
 from semabridge.utils.identifiers import IdentifierSanitizer  # noqa: F401
-

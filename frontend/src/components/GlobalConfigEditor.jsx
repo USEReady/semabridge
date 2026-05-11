@@ -10,9 +10,10 @@ import {
 } from 'lucide-react';
 import { api } from '../utils/api';
 import { useLogs } from '../context/LogsContext';
+import usePageCache from '../hooks/usePageCache';
 
 export default function GlobalConfigEditor() {
-    const [content, setContent] = useState('');
+    const [content, setContent] = usePageCache('globalConfig:content', '');
     const [originalContent, setOriginalContent] = useState('');
     const [configPath, setConfigPath] = useState('');
     const [configExists, setConfigExists] = useState(false);

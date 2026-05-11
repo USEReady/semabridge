@@ -1,0 +1,256 @@
+/* The Invisible Spacer (crucial for unpinned mode) */
+.sidebar-spacer {
+  width: 64px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border-main);
+  transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: width;
+}
+
+/* Base Sidebar Styles */
+.sidebar {
+  height: 100%;
+  background-color: var(--bg-surface);
+  transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+  will-change: width;
+  transform: translateZ(0);
+  display: flex;
+  flex-direction: column;
+  z-index: 50;
+  white-space: nowrap;
+  border-right: 1px solid var(--border-main);
+}
+
+/* ----------------------------------
+   STATE: PINNED (Locked & Pushing) 
+----------------------------------- */
+.sidebar.pinned {
+  width: 240px;
+  position: relative; /* Pushes sibling content in the flex container */
+}
+.sidebar.pinned .nav-label {
+  opacity: 1; /* Text is always visible */
+  pointer-events: auto;
+}
+
+/* ----------------------------------
+   STATE: UNPINNED (Hover to Float) 
+----------------------------------- */
+.sidebar.unpinned {
+  width: 64px;
+  position: absolute; /* Floats over the main dashboard */
+  top: 0;
+  left: 0;
+  box-shadow: none;
+}
+
+/* Expand on Hover when Unpinned */
+.sidebar.unpinned:hover {
+  width: 240px;
+  /* Add a shadow so it visually lifts off the dashboard */
+  box-shadow: 8px 0 16px rgba(0, 0, 0, 0.4); 
+}
+
+.sidebar.unpinned:hover + .sidebar-spacer {
+  width: 240px;
+}
+
+/* Hide text by default when unpinned */
+.sidebar.unpinned .nav-label {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  transition-delay: 0s;
+  pointer-events: none;
+}
+
+/* Fade text in gracefully when hovering the unpinned sidebar */
+.sidebar.unpinned:hover .nav-label {
+  opacity: 1;
+  transition-delay: 0.15s; 
+  pointer-events: auto;
+}
+
+/* ----------------------------------
+   Shared Item Styles 
+----------------------------------- */
+.nav-item {
+  display: flex;
+  align-items: center;
+  padding: 12px 20px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.nav-item:hover {
+  background-color: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.nav-item.active {
+  background-color: var(--color-accent-faint);
+  color: var(--accent-blue);
+}
+
+/* Icons */
+.sidebar-icon-container {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.nav-label {
+  margin-left: 16px;
+}
+
+/* Specific Areas */
+.logo-area {
+  height: 64px;
+  border-bottom: 1px solid var(--border-main);
+  padding: 0 18px; /* Centers 28px logo in 64px sidebar */
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.sidebar-nav {
+  flex: 1;
+  padding: 12px 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Hide scrollbar but allow scrolling */
+.sidebar-nav::-webkit-scrollbar {
+  display: none;
+}
+.sidebar-nav {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.sidebar-footer {
+  border-top: 1px solid var(--border-main);
+  padding: 10px 0;
+  flex-shrink: 0;
+  transition: border-color 0.2s ease;
+}
+
+.sidebar.unpinned .sidebar-footer {
+  border-top-color: transparent;
+}
+
+.sidebar.unpinned:hover .sidebar-footer {
+  border-top-color: var(--border-main);
+}
+
+.user-info {
+  padding: 10px 20px;
+}
+
+.user-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-accent-faint);
+  color: var(--accent-blue);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.user-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.logout-button {
+  background: transparent !important;
+  border: none !important;
+  padding: 4px !important;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+}
+
+.logout-button:hover {
+  color: var(--color-error) !important;
+}
+
+.toggle-button {
+  background: transparent !important;
+  border: none !important;
+  border-top: 1px solid var(--border-main) !important;
+  width: 100%;
+  justify-content: flex-start;
+  transition: opacity 0.2s ease;
+}
+
+.sidebar.unpinned .toggle-button {
+  opacity: 0.4;
+  pointer-events: auto;
+  border-top-color: transparent !important;
+}
+
+.sidebar.unpinned:hover .toggle-button {
+  opacity: 1;
+  pointer-events: auto;
+  border-top-color: var(--border-main) !important;
+}
+
+.reset-button {
+  padding: 8px 20px !important;
+  opacity: 0 !important;
+  font-size: 10px !important;
+  background: transparent !important;
+  border: none !important;
+  width: 100%;
+  justify-content: flex-start;
+  transition: opacity 0.2s ease !important;
+  pointer-events: none;
+}
+
+.sidebar.pinned .reset-button,
+.sidebar:hover .reset-button {
+  opacity: 0.2 !important;
+  pointer-events: auto;
+}
+
+.reset-button:hover {
+  opacity: 0.8 !important;
+}
+
+.reset-icon {
+  width: 24px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shrink {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.animate-shrink {
+  animation: shrink linear forwards;
+}

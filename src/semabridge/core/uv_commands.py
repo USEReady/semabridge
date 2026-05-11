@@ -33,8 +33,8 @@ class SyncCommand:
             config = load_project_config(config_path)
             
             # TODO: Override config with CLI options from ctx.options
-            
-            engine = SemaBridgeEngine(config)
+            # v4.3: CLI path uses default COPY mode
+            engine = SemaBridgeEngine(config, sync_mode="copy")
             result = engine.execute()
             
             if result.success:

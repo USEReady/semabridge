@@ -9,10 +9,12 @@
  *   summary       : { total_fields, auto_mapped, unmapped, collisions }
  *   relationships : Array<{ source, target, joinType, condition, confidence }>
  */
-import { useState, useMemo } from 'react';
-import { Edit2, GitMerge } from 'lucide-react';
+import { useState, useMemo, useCallback } from 'react';
+import { Edit2, GitMerge, Zap, CheckCircle } from 'lucide-react';
 import StatusBadge from './common/StatusBadge';
-import SmartSearchBar, { matchesSmartQuery } from './common/SmartSearchBar';
+import SmartSearchBar from './common/SmartSearchBar';
+import { matchesSmartQuery } from './common/smartSearchQuery.js';
+import { api } from '../utils/api';
 
 // ─── Filter tab definitions ───────────────────────────────────────────────────
 const MAPPING_FILTERS = [
@@ -78,6 +80,7 @@ function MeasureBadge() {
 const STATUS_BADGE_MAP = {
   auto:      { status: 'success', label: 'Auto' },
   manual:    { status: 'running', label: 'Manual' },
+  auto_resolved: { status: 'success', label: 'Auto-Resolved' },
   unmapped:  { status: 'draft',   label: 'Unmapped' },
   collision: { status: 'error',   label: 'Collision' },
 };
@@ -87,7 +90,7 @@ function TableHeader() {
   return (
     <div style={{
       display: 'grid',
-      gridTemplateColumns: '1.5fr 1.5fr 0.9fr 0.7fr',
+      gridTemplateColumns: '1.5fr 1.5fr 120px 100px',
       gap: '1rem',
       padding: '10px 14px',
       background: 'var(--bg-surface-raised)',
@@ -100,8 +103,8 @@ function TableHeader() {
     }}>
       <div>Source Field</div>
       <div>Target Field</div>
-      <div>Status</div>
-      <div>Action</div>
+      <div style={{ textAlign: 'center' }}>Status</div>
+      <div style={{ textAlign: 'right' }}>Action</div>
     </div>
   );
 }
@@ -117,7 +120,7 @@ function MappingRow({ row, onEdit }) {
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: '1.5fr 1.5fr 0.9fr 0.7fr',
+        gridTemplateColumns: '1.5fr 1.5fr 120px 100px',
         gap: '1rem',
         padding: '10px 14px',
         borderBottom: '1px solid var(--border-main)',
@@ -126,7 +129,7 @@ function MappingRow({ row, onEdit }) {
       }}
     >
       {/* Source Field */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
         <div style={{
           fontSize: 12,
           fontWeight: 600,
@@ -134,10 +137,11 @@ function MappingRow({ row, onEdit }) {
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
+          flexShrink: 0,
         }}>
           {row.source_field}
         </div>
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center', minWidth: 0 }}>
           {isMeasure ? <MeasureBadge /> : <TypeBadge type={row.source_type} />}
           {!isMeasure && row.source_table_name && (
             <span style={{
@@ -149,40 +153,18 @@ function MappingRow({ row, onEdit }) {
               color: '#7dd3fc',
               border: '1px solid rgba(56, 189, 248, 0.35)',
               whiteSpace: 'nowrap',
-              maxWidth: 140,
+              maxWidth: 120,
               overflow: 'hidden',
               textOverflow: 'ellipsis',
             }}>
               {row.source_table_name}
             </span>
           )}
-          {isMeasure && row.measure_source_tables?.length > 0 && (
-            <span style={{
-              fontSize: 10,
-              color: 'var(--text-tertiary)',
-              fontStyle: 'italic',
-            }}>
-              {row.measure_source_tables.join(', ')}
-            </span>
-          )}
         </div>
-        {isMeasure && row.measure_expression && (
-          <div style={{
-            fontSize: 10,
-            color: 'var(--text-tertiary)',
-            fontFamily: 'monospace',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            maxWidth: 220,
-          }}>
-            {row.measure_expression}
-          </div>
-        )}
       </div>
 
       {/* Target Field */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
         <div style={{
           fontSize: 12,
           fontWeight: 600,
@@ -191,28 +173,29 @@ function MappingRow({ row, onEdit }) {
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
           fontStyle: row.target_field ? 'normal' : 'italic',
+          flexShrink: 0,
         }}>
           {row.target_field || '— unmapped —'}
         </div>
         {row.target_type && !isMeasure && (
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             <TypeBadge type={row.target_type} />
           </div>
         )}
         {isCollision && row.suggested_target_name && (
-          <div style={{ fontSize: 10, color: 'var(--color-error)', lineHeight: 1.4 }}>
-            Suggestion: <span style={{ fontWeight: 700 }}>{row.suggested_target_name}</span>
+          <div style={{ fontSize: 10, color: 'var(--color-error)', fontWeight: 600, marginLeft: 8 }}>
+            (Suggestion: {row.suggested_target_name})
           </div>
         )}
       </div>
 
       {/* Status */}
-      <div>
+      <div style={{ display: 'flex', justifyContent: 'center' }}>
         <StatusBadge status={badgeCfg.status} label={badgeCfg.label} size="sm" />
       </div>
 
       {/* Action */}
-      <div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <button
           type="button"
           onClick={() => onEdit?.(row.id)}
@@ -220,7 +203,7 @@ function MappingRow({ row, onEdit }) {
             display: 'inline-flex',
             alignItems: 'center',
             gap: 5,
-            padding: '5px 10px',
+            padding: '4px 10px',
             borderRadius: 6,
             border: isCollision
               ? '1px solid rgba(239, 68, 68, 0.45)'
@@ -233,6 +216,7 @@ function MappingRow({ row, onEdit }) {
             fontWeight: 600,
             cursor: 'pointer',
             whiteSpace: 'nowrap',
+            transition: 'all 0.2s',
           }}
         >
           <Edit2 size={11} />
@@ -363,12 +347,15 @@ function RelationshipsSection({ relationships }) {
 export default function DryRunMappingTable({
   mappings = [],
   onEdit,
+  onBulkResolved,     // (resolvedMap: Record<rowId, suggestedTarget>) => void
   summary,
   relationships = [],
 }) {
   const [activeFilter, setActiveFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [useRegex, setUseRegex] = useState(false);
+  const [bulkResolving, setBulkResolving] = useState(false);
+  const [bulkToast, setBulkToast] = useState(null); // { type: 'success'|'error', msg }
 
   // ── Split columns vs measures ───────────────────────────────────────────────
   const { columns, measures } = useMemo(() => {
@@ -394,6 +381,47 @@ export default function DryRunMappingTable({
     });
     return c;
   }, [mappings]);
+
+  // ── Bulk resolve handler ─────────────────────────────────────────────────────
+  const handleBulkResolve = useCallback(async () => {
+    const collisions = mappings
+      .filter(r => String(r?.status || '').toLowerCase() === 'collision')
+      .map(r => ({
+        entity_name:    r.source_table_name || '',
+        field_name:     r.source_field      || '',
+        current_target: r.target_field      || r.source_field || '',
+      }));
+
+    if (!collisions.length) return;
+
+    setBulkResolving(true);
+    setBulkToast(null);
+    try {
+      const data = await api.bulkResolve(collisions);
+
+      // Build a map from field identity → suggested target for the parent to consume
+      const resolvedMap = {};
+      const resolvedList = data.resolved || [];
+      resolvedList.forEach((resolved) => {
+        // Match by entity + field name back to the row
+        const matchedRow = mappings.find(
+          r => r.source_table_name === resolved.entity_name
+            && r.source_field      === resolved.field_name
+        );
+        if (matchedRow?.id) {
+          resolvedMap[matchedRow.id] = resolved.suggested_target;
+        }
+      });
+
+      onBulkResolved?.(resolvedMap);
+      setBulkToast({ type: 'success', msg: `${resolvedList.length} collision${resolvedList.length !== 1 ? 's' : ''} resolved with deterministic hashes.` });
+    } catch (err) {
+      setBulkToast({ type: 'error', msg: `Resolve failed: ${err.message}` });
+    } finally {
+      setBulkResolving(false);
+      setTimeout(() => setBulkToast(null), 4000);
+    }
+  }, [mappings, onBulkResolved]);
 
   // ── Filtered rows ───────────────────────────────────────────────────────────
   const filterRow = (row) => {
@@ -468,8 +496,8 @@ export default function DryRunMappingTable({
         )}
       </div>
 
-      {/* ── Controls row: filter tabs + search ───────────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      {/* ── Controls row: filter tabs + search + Resolve All ─────────────────── */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
         <div className="filter-tabs" style={{ marginBottom: 0 }}>
           {MAPPING_FILTERS.map((filter) => {
             const count = counts[filter.id] ?? counts.all;
@@ -487,16 +515,82 @@ export default function DryRunMappingTable({
             );
           })}
         </div>
-        <div style={{ flex: '1 1 200px', minWidth: 160, maxWidth: 320 }}>
-          <SmartSearchBar
-            value={search}
-            onChange={setSearch}
-            useRegex={useRegex}
-            onToggleRegex={setUseRegex}
-            placeholder="Search fields..."
-          />
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* ── Resolve All button — only shown when collisions exist ─────── */}
+          {counts.collision > 0 && (
+            <button
+              id="bulk-resolve-btn"
+              type="button"
+              disabled={bulkResolving}
+              onClick={handleBulkResolve}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 14px',
+                borderRadius: 7,
+                border: '1px solid rgba(251,191,36,0.55)',
+                background: bulkResolving
+                  ? 'rgba(251,191,36,0.06)'
+                  : 'rgba(251,191,36,0.12)',
+                color: '#fbbf24',
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: bulkResolving ? 'not-allowed' : 'pointer',
+                whiteSpace: 'nowrap',
+                transition: 'background 0.15s, opacity 0.15s',
+                opacity: bulkResolving ? 0.7 : 1,
+              }}
+            >
+              {bulkResolving
+                ? <>
+                    <span style={{
+                      width: 11, height: 11, border: '2px solid #fbbf24',
+                      borderTopColor: 'transparent', borderRadius: '50%',
+                      display: 'inline-block',
+                      animation: 'spin 0.7s linear infinite',
+                    }} />
+                    Resolving…
+                  </>
+                : <><Zap size={12} /> Resolve All ({counts.collision})</>}
+            </button>
+          )}
+
+          <div style={{ width: 300 }}>
+            <SmartSearchBar
+              value={search}
+              onChange={setSearch}
+              useRegex={useRegex}
+              onToggleRegex={setUseRegex}
+              placeholder="Search fields..."
+            />
+          </div>
         </div>
       </div>
+
+      {/* ── Bulk-resolve toast ───────────────────────────────────────────────── */}
+      {bulkToast && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '9px 14px',
+          borderRadius: 8,
+          border: bulkToast.type === 'success'
+            ? '1px solid rgba(34,197,94,0.4)'
+            : '1px solid rgba(239,68,68,0.4)',
+          background: bulkToast.type === 'success'
+            ? 'rgba(34,197,94,0.09)'
+            : 'rgba(239,68,68,0.09)',
+          color: bulkToast.type === 'success' ? 'var(--color-success)' : 'var(--color-error)',
+          fontSize: 12,
+          fontWeight: 600,
+        }}>
+          {bulkToast.type === 'success' && <CheckCircle size={13} />}
+          {bulkToast.msg}
+        </div>
+      )}
 
       {/* ── Columns table ────────────────────────────────────────────────────── */}
       {mappings.length === 0 ? (
@@ -518,17 +612,21 @@ export default function DryRunMappingTable({
         <>
           {/* Columns section */}
           {columns.length > 0 && (
-            <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, overflow: 'hidden', background: 'var(--bg-surface)' }}>
+            <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, overflow: 'hidden', background: 'var(--bg-surface)', marginBottom: 16 }}>
               <div style={{
-                padding: '8px 14px',
-                background: 'var(--bg-surface-raised)',
+                padding: '10px 14px',
+                background: 'rgba(255, 255, 255, 0.03)',
                 borderBottom: '1px solid var(--border-main)',
                 fontSize: 11,
-                fontWeight: 700,
-                color: 'var(--text-secondary)',
+                fontWeight: 800,
+                color: 'var(--text-primary)',
                 textTransform: 'uppercase',
-                letterSpacing: '0.06em',
+                letterSpacing: '0.08em',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8
               }}>
+                <div style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--accent-blue)' }} />
                 Columns ({columns.length})
               </div>
               <TableHeader />
@@ -546,22 +644,22 @@ export default function DryRunMappingTable({
 
           {/* Measures section */}
           {measures.length > 0 && (
-            <div style={{ border: '1px solid rgba(56, 189, 248, 0.35)', borderRadius: 10, overflow: 'hidden', background: 'var(--bg-surface)' }}>
+            <div style={{ border: '1px solid rgba(56, 189, 248, 0.3)', borderRadius: 10, overflow: 'hidden', background: 'var(--bg-surface)' }}>
               <div style={{
-                padding: '8px 14px',
-                background: 'rgba(56, 189, 248, 0.08)',
-                borderBottom: '1px solid rgba(56, 189, 248, 0.25)',
+                padding: '10px 14px',
+                background: 'rgba(56, 189, 248, 0.05)',
+                borderBottom: '1px solid rgba(56, 189, 248, 0.2)',
                 fontSize: 11,
-                fontWeight: 700,
+                fontWeight: 800,
                 color: '#7dd3fc',
                 textTransform: 'uppercase',
-                letterSpacing: '0.06em',
+                letterSpacing: '0.08em',
                 display: 'flex',
                 alignItems: 'center',
-                gap: 6,
+                gap: 8,
               }}>
-                <span>fx</span>
-                <span>Measures ({measures.length})</span>
+                <div style={{ fontSize: 14, color: '#7dd3fc' }}>fx</div>
+                Measures ({measures.length})
               </div>
               <TableHeader />
               {filteredMeasures.length === 0 ? (

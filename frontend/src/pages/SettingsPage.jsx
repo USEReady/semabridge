@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import usePageCache from '../hooks/usePageCache';
 import { useNavigate } from 'react-router-dom';
 import {
   PlugZap, RefreshCw, CheckCircle2, AlertCircle, Clock,
@@ -12,7 +13,6 @@ import ConnectionsPanel from '../components/ConnectionsPanel';
 import ConfigEditor from '../components/ConfigEditor';
 import Modal from '../components/common/Modal';
 import SecretsPanel from '../components/SecretsPanel';
-import { ConfigurationProvider } from '../context/ConfigurationContext';
 import { api } from '../utils/api';
 
 const ENVIRONMENTS = ['Dev', 'Staging', 'Prod'];
@@ -65,7 +65,15 @@ function renderConnectorIcon(connectorId, size = 18) {
 
 export default function SettingsPage() {
   const navigate = useNavigate();
-  const [env, setEnv] = useState('Dev');
+
+  // Cached UI state — survives SPA navigation within the same tab.
+  const [settingsCache, setSettingsCache] = usePageCache('settings-page', {
+    env: 'Dev',
+    selectedConnectorId: null,
+  });
+  const { env, selectedConnectorId } = settingsCache;
+  const setEnv = (v) => setSettingsCache({ env: v });
+  const setSelectedConnectorId = (v) => setSettingsCache({ selectedConnectorId: v });
   
   // Timezone state
   const [timezone, setTimezone] = useState(() => {
@@ -76,7 +84,6 @@ export default function SettingsPage() {
   const [connectors, setConnectors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [manageOpen, setManageOpen] = useState(false);
-  const [selectedConnectorId, setSelectedConnectorId] = useState(null);
   const [localFolders, setLocalFolders] = useState([]);
   const [localFoldersLoading, setLocalFoldersLoading] = useState(false);
   const [localFolderModalOpen, setLocalFolderModalOpen] = useState(false);
@@ -142,9 +149,9 @@ export default function SettingsPage() {
         status: normalizeStatus(fabricStatus),
         last_sync: null,
         detail: fabricStatus === 'connected'
-          ? `Workspace: ${fabricConn.credentials.workspace_id}`
+          ? 'Configured'
           : fabricStatus === 'configured'
-            ? `Workspace set · ${fabricHasAuth ? '' : 'Auth required'}`
+            ? 'Setup in progress'
             : 'Not configured',
         tags: ['production', 'analytics'],
       });
@@ -153,8 +160,6 @@ export default function SettingsPage() {
       const snowConn = status?.snowflake;
       const snowConfigured = snowConn?.configured === true;
       const snowHasFields = (snowConn?.fields_stored ?? 0) > 0;
-      const snowAuthType = snowConn?.credentials?.auth_type ?? '';
-      const snowAccount  = snowConn?.credentials?.account ?? '';
       const snowMissing  = snowConn?.missing_fields ?? [];
       const snowStatus = snowConfigured
         ? 'connected'
@@ -168,9 +173,9 @@ export default function SettingsPage() {
         status: normalizeStatus(snowStatus),
         last_sync: null,
         detail: snowStatus === 'connected'
-          ? `${snowAccount}${snowAuthType ? ` · ${snowAuthType}` : ''}`
+          ? 'Configured'
           : snowStatus === 'configured'
-            ? `Missing: ${snowMissing.join(', ')}`
+            ? 'Setup in progress'
             : 'Not configured',
         tags: ['warehouse', 'target'],
       });
@@ -331,8 +336,7 @@ export default function SettingsPage() {
 
   
   return (
-    <ConfigurationProvider>
-      <div style={{ padding: '28px 16px', minHeight: '100%', maxWidth: 1400, margin: '0 auto' }} className="md:px-10">
+    <div style={{ padding: '28px 16px', minHeight: '100%', maxWidth: 1400, margin: '0 auto' }} className="md:px-10">
         <PageHeader
           title="Settings"
           description="Manage connectors, integrations, and environment configuration."
@@ -458,45 +462,61 @@ export default function SettingsPage() {
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} style={{ color: 'var(--accent-blue)' }} />
           </button>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <div style={{ 
+          display: 'flex', 
+          flexDirection: 'column', 
+          gap: '12px',
+          padding: '16px',
+          background: 'var(--bg-surface)',
+          borderRadius: '12px',
+          border: '1px solid var(--border-main)'
+        }}>
           {connectors.filter(c => c.id !== 'semabridge_api').map(conn => (
-            <div key={conn.id} style={{ padding: '16px', background: 'var(--bg-surface)', border: '1px solid var(--border-main)', borderRadius: 8 }}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div
-                    style={{
-                      width: 34, height: 34,
-                      background: 'var(--color-accent-faint)',
-                      borderRadius: 8,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 18,
-                    }}
-                  >
-                    {renderConnectorIcon(conn.id, 18)}
-                  </div>
-                  <div style={{ textAlign: 'left' }}>
-                    <p className="text-primary" style={{ fontWeight: 600, fontSize: 13, margin: 0 }}>{conn.name}</p>
-                    <p className="text-secondary" style={{ fontSize: 11, margin: 0, marginTop: 2 }}>{conn.detail}</p>
-                  </div>
+            <div key={conn.id} style={{ 
+              padding: '16px', 
+              background: 'var(--bg-surface-hover)', 
+              border: '1px solid var(--border-light)', 
+              borderRadius: '12px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between'
+            }}>
+              <div className="flex items-center gap-3" style={{ flex: 1 }}>
+                <div
+                  style={{
+                    width: 40, height: 40,
+                    background: 'rgba(88, 166, 255, 0.12)',
+                    borderRadius: '10px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 18,
+                    flexShrink: 0,
+                  }}
+                >
+                  {renderConnectorIcon(conn.id, 20)}
                 </div>
-                <div className="flex items-center gap-3">
-                  <StatusBadge status={conn.status} label={conn.status === 'connected' ? 'Connected' : conn.status === 'configured' ? 'Configured' : 'Disconnected'} />
-                  <button
-                    onClick={() => openManage(conn.id)}
-                    className="flex items-center gap-1.5 rounded-lg text-xs font-semibold px-3 py-1.5 theme-transition"
-                    style={{
-                      background: conn.status === 'disconnected' ? 'var(--accent-blue)' : 'transparent',
-                      color: conn.status === 'disconnected' ? '#fff' : 'var(--accent-blue)',
-                      border: conn.status !== 'disconnected' ? '1px solid var(--accent-blue)' : 'none',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {conn.status === 'disconnected' ? <PlugZap size={12} /> : <Settings2 size={12} />}
-                    {conn.status === 'disconnected' ? 'Connect' : 'Configure'}
-                  </button>
+                <div style={{ textAlign: 'left' }}>
+                  <p className="text-primary" style={{ fontWeight: 700, fontSize: 14, margin: 0 }}>{conn.name}</p>
+                  <p className="text-secondary" style={{ fontSize: 12, margin: 0, marginTop: 3 }}>{conn.detail}</p>
                 </div>
+              </div>
+              <div className="flex items-center gap-3" style={{ flexShrink: 0, marginLeft: '16px' }}>
+                <StatusBadge status={conn.status} label={conn.status === 'connected' ? 'Connected' : conn.status === 'configured' ? 'Configured' : 'Disconnected'} />
+                <button
+                  onClick={() => openManage(conn.id)}
+                  className="flex items-center gap-1.5 rounded-lg text-xs font-semibold px-4 py-2 theme-transition"
+                  style={{
+                    background: conn.status === 'disconnected' ? 'var(--accent-blue)' : 'transparent',
+                    color: conn.status === 'disconnected' ? '#fff' : 'var(--accent-blue)',
+                    border: conn.status !== 'disconnected' ? '1.5px solid var(--accent-blue)' : 'none',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {conn.status === 'disconnected' ? <PlugZap size={12} /> : <Settings2 size={12} />}
+                  {conn.status === 'disconnected' ? 'Connect' : 'Configure'}
+                </button>
               </div>
             </div>
           ))}
@@ -781,6 +801,5 @@ export default function SettingsPage() {
         </div>
       </Modal>
       </div>
-    </ConfigurationProvider>
   );
 }

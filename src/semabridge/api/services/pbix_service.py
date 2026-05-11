@@ -55,7 +55,7 @@ def _compat_set_project_pbix_path(project_id: str, pbix_path: str) -> None:
     _compat_save_store()
 
 
-def _save_uploaded_pbix_file(upload: UploadFile, target_dir: Path, use_uuid: bool = True) -> Path:
+def _save_uploaded_pbix_file(upload: UploadFile, target_dir: Path) -> Path:
     """Store an uploaded PBIX file in the target directory."""
     filename = str(upload.filename or "").strip()
     if not filename.lower().endswith(".pbix"):
@@ -63,10 +63,7 @@ def _save_uploaded_pbix_file(upload: UploadFile, target_dir: Path, use_uuid: boo
 
     safe_name = Path(filename).name
     target_dir.mkdir(parents=True, exist_ok=True)
-    if use_uuid:
-        destination = target_dir / f"{uuid.uuid4().hex}_{safe_name}"
-    else:
-        destination = target_dir / safe_name
+    destination = target_dir / f"{uuid.uuid4().hex}_{safe_name}"
 
     content = upload.file.read()
     if not content:
@@ -84,7 +81,7 @@ async def upload_pbix_temp(file: UploadFile = File(...)):
 
 async def upload_project_pbix(project_id: str, file: UploadFile = File(...)):
     project_root = Path(tempfile.gettempdir()) / "semabridge" / "projects" / project_id
-    saved = _save_uploaded_pbix_file(file, project_root, use_uuid=False)
+    saved = _save_uploaded_pbix_file(file, project_root)
     _compat_set_project_pbix_path(project_id, str(saved))
     return {
         "project_id": project_id,

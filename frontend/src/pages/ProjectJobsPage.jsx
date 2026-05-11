@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
+import usePageCache from '../hooks/usePageCache';
 import { Play, RefreshCw, Clock, CalendarClock, ChevronDown, ChevronRight, BarChart3, Cloud, Snowflake, Database, Link2 } from 'lucide-react';
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
 import SearchInput from '../components/common/SearchInput';
-import { matchesSmartQuery } from '../components/common/SmartSearchBar';
+import { matchesSmartQuery } from '../components/common/smartSearchQuery.js';
 import { api } from '../utils/api';
 import { buildMockRunLogs, getRunLogs, saveRunLogs } from '../utils/runLogs';
 
@@ -71,7 +72,7 @@ function RunDiffViewer({ run, projectId }) {
     const afterId = run.after_target_snapshot_ids?.[0] || run.after_tgt_snapshots?.[0];
 
     if (!beforeId || !afterId || !projectId) {
-      setStats({ total_after: 0, removed: 0, preserved: 0, source_mapped: 0 });
+      setStats({ total_after: 0, removed: 0, retained_from_target: 0, source_added: 0 });
       setLoading(false);
       return;
     }
@@ -83,7 +84,6 @@ function RunDiffViewer({ run, projectId }) {
         if (!isMounted) return;
         let removed = 0;
         let added = 0;
-        let preserved = 0;
         const totalAfter = diff.metadata_diff?.snapshot_b?.model_count || 0;
         const totalBefore = diff.metadata_diff?.snapshot_a?.model_count || 0;
 
@@ -91,21 +91,20 @@ function RunDiffViewer({ run, projectId }) {
           for (const mInfo of Object.values(diff.models)) {
              if (mInfo.status === 'removed') removed++;
              else if (mInfo.status === 'added') added++;
-             else preserved++; // unchanged or preserved
           }
         }
 
-        const kept = totalBefore - removed;
+        const retainedFromTarget = Math.max(0, totalBefore - removed);
         setStats({
           total_after: totalAfter,
           removed: removed,
-          preserved: kept,
-          source_mapped: totalAfter - kept
+          retained_from_target: retainedFromTarget,
+          source_added: added
         });
       })
       .catch(() => {
         if (!isMounted) return;
-        setStats({ total_after: 0, removed: 0, preserved: 0, source_mapped: 0 });
+        setStats({ total_after: 0, removed: 0, retained_from_target: 0, source_added: 0 });
       })
       .finally(() => {
         if (isMounted) setLoading(false);
@@ -136,12 +135,12 @@ function RunDiffViewer({ run, projectId }) {
               <span style={{ fontWeight: 700, color: '#10b981' }}>UPSERT</span>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Target-only models kept:</span>
-              <span style={{ fontWeight: 600 }}>{stats.preserved}</span>
+              <span style={{ color: 'var(--text-secondary)' }}>Models retained from target snapshot:</span>
+              <span style={{ fontWeight: 600 }}>{stats.retained_from_target}</span>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Source models deployed:</span>
-              <span style={{ fontWeight: 600 }}>{stats.source_mapped}</span>
+              <span style={{ color: 'var(--text-secondary)' }}>Net new source models added:</span>
+              <span style={{ fontWeight: 600 }}>{stats.source_added}</span>
             </div>
             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Total after snapshot:</span>
@@ -168,7 +167,7 @@ function RunDiffViewer({ run, projectId }) {
       
       <div style={{ marginTop: 16, padding: 10, background: 'var(--bg-input)', borderRadius: 6, fontSize: 12, borderLeft: `3px solid ${isUpsert ? '#10b981' : '#64748b'}` }}>
         {isUpsert 
-          ? `UPSERT mode preserved ${stats.preserved} target-only models.`
+          ? `UPSERT retained ${stats.retained_from_target} models from the previous target snapshot and added ${stats.source_added} net new source models.`
           : `COPY mode removed ${stats.removed} models not present in source.`}
       </div>
     </div>
@@ -181,10 +180,19 @@ export default function ProjectJobsPage() {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [scheduleDeletingId, setScheduleDeletingId] = useState('');
-  const [search, setSearch] = useState('');
-  const [searchUseRegex, setSearchUseRegex] = useState(false);
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [expandedRunId, setExpandedRunId] = useState(null);
+
+  // Cached UI state — survives SPA navigation within the same tab.
+  const [jobsCache, setJobsCache] = usePageCache('jobs-page', {
+    search: '',
+    searchUseRegex: false,
+    statusFilter: 'all',
+    expandedRunId: null,
+  });
+  const { search, searchUseRegex, statusFilter, expandedRunId } = jobsCache;
+  const setSearch = (v) => setJobsCache({ search: typeof v === 'function' ? v(search) : v });
+  const setSearchUseRegex = (v) => setJobsCache({ searchUseRegex: typeof v === 'function' ? v(searchUseRegex) : v });
+  const setStatusFilter = (v) => setJobsCache({ statusFilter: typeof v === 'function' ? v(statusFilter) : v });
+  const setExpandedRunId = (v) => setJobsCache({ expandedRunId: typeof v === 'function' ? v(expandedRunId) : v });
 
   useEffect(() => {
     let cancelled = false;

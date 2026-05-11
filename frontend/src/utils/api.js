@@ -4,6 +4,26 @@ const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/
 const TOKEN_KEY = 'semabridge-token';
 const FABRIC_TOKEN_KEY = 'semabridge-fabric-token';
 const FABRIC_TOKEN_EXPIRES_KEY = 'semabridge-fabric-token-expires';
+const API_CACHE_TTL_MS = 2 * 60 * 1000;
+const apiCache = new Map();
+
+function getCachedApiValue(cacheKey) {
+    const cached = apiCache.get(cacheKey);
+    if (!cached) return null;
+    if (Date.now() > cached.expiresAt) {
+        apiCache.delete(cacheKey);
+        return null;
+    }
+    return cached.value;
+}
+
+function setCachedApiValue(cacheKey, value, ttlMs = API_CACHE_TTL_MS) {
+    apiCache.set(cacheKey, {
+        value,
+        expiresAt: Date.now() + ttlMs,
+    });
+    return value;
+}
 
 function extractSnapshotList(payload) {
     if (Array.isArray(payload)) return payload;
@@ -306,9 +326,13 @@ export const api = {
 
     // ── Auth & Identity Vault ──────────────────────────────────────────────
     async getAccounts(connectorType = '') {
+        const cacheKey = `accounts:${String(connectorType || '').trim().toLowerCase()}`;
+        const cached = getCachedApiValue(cacheKey);
+        if (cached) return cached;
         const query = connectorType ? `?connector_type=${encodeURIComponent(connectorType)}` : '';
         const res = await authFetch(`${API_BASE_URL}/accounts${query}`);
-        return handleResponse(res);
+        const data = await handleResponse(res);
+        return setCachedApiValue(cacheKey, data);
     },
 
     async createAccount(payload) {
@@ -873,10 +897,15 @@ export const api = {
     },
 
     async restoreProjectVersion(projectId, payload) {
+        const body = {
+            ...payload,
+            restore_snapshot_id: payload?.restore_snapshot_id || payload?.snapshot_id,
+            run_type: 'restore',
+        };
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...payload, run_type: 'restore' })
+            body: JSON.stringify(body)
         });
         return handleResponse(res);
     },
@@ -934,7 +963,7 @@ export const api = {
 
     async updateProject(projectId, data) {
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}`, {
-            method: 'PUT',
+            method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
         });
@@ -1121,6 +1150,15 @@ export const api = {
         return handleResponse(res);
     },
 
+    async bulkResolve(collisions) {
+        const res = await authFetch(`${API_BASE_URL}/mapping/bulk-resolve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ collisions }),
+        });
+        return handleResponse(res);
+    },
+
     // ── Projects: enhanced CRUD ───────────────────────────────────────────
 
     async patchProject(projectId, data) {
@@ -1136,7 +1174,11 @@ export const api = {
 
     async getProjectConfig(projectId, options = {}) {
         const preferRepo = Boolean(options?.preferRepo);
-        const query = preferRepo ? '?prefer_repo=true' : '';
+        const noCache = Boolean(options?.noCache);
+        const params = new URLSearchParams();
+        if (preferRepo) params.set('prefer_repo', 'true');
+        if (noCache) params.set('refresh', Date.now().toString());
+        const query = params.toString() ? `?${params.toString()}` : '';
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/config${query}`);
         return handleResponse(res);
     },
@@ -1365,11 +1407,15 @@ export const api = {
     // ── Discovery ─────────────────────────────────────────────────────────
 
     async discoverFabricWorkspaces() {
+        const cacheKey = 'discovery:fabric:workspaces';
+        const cached = getCachedApiValue(cacheKey);
+        if (cached) return cached;
         const res = await fetch(`${API_BASE_URL}/connections/fabric/workspaces`, {
             headers: { ...getAuthHeaders(), ...getFabricAuthHeaders() },
         });
         const data = await handleResponse(res);
-        return (data.workspaces || data || []).map(normalizeWorkspace);
+        const normalized = (data.workspaces || data || []).map(normalizeWorkspace);
+        return setCachedApiValue(cacheKey, normalized);
     },
 
     async discoverFabricModels(workspaceId, connectionId = '') {
@@ -1380,10 +1426,14 @@ export const api = {
         const query = resolvedConnectionId
             ? `?identity_id=${encodeURIComponent(resolvedConnectionId)}&connectionId=${encodeURIComponent(resolvedConnectionId)}`
             : '';
+        const cacheKey = `discovery:fabric:models:${workspaceId}:${resolvedConnectionId || '-'}`;
+        const cached = getCachedApiValue(cacheKey);
+        if (cached) return cached;
         const res = await authFetch(
             `${API_BASE_URL}/discovery/fabric/workspaces/${encodeURIComponent(workspaceId)}/models${query}`
         );
-        return handleResponse(res);
+        const data = await handleResponse(res);
+        return setCachedApiValue(cacheKey, data);
     },
 
     async discoverFabricReports(workspaceId, connectionId = '') {
@@ -1394,32 +1444,52 @@ export const api = {
         const query = resolvedConnectionId
             ? `?identity_id=${encodeURIComponent(resolvedConnectionId)}&connectionId=${encodeURIComponent(resolvedConnectionId)}`
             : '';
+        const cacheKey = `discovery:fabric:reports:${workspaceId}:${resolvedConnectionId || '-'}`;
+        const cached = getCachedApiValue(cacheKey);
+        if (cached) return cached;
         const res = await authFetch(
             `${API_BASE_URL}/discovery/fabric/workspaces/${encodeURIComponent(workspaceId)}/reports${query}`
         );
-        return handleResponse(res);
+        const data = await handleResponse(res);
+        return setCachedApiValue(cacheKey, data);
     },
 
     async discoverSnowflakeWarehouses() {
+        const cacheKey = 'discovery:snowflake:warehouses';
+        const cached = getCachedApiValue(cacheKey);
+        if (cached) return cached;
         const res = await authFetch(`${API_BASE_URL}/discovery/snowflake/warehouses`);
-        return handleResponse(res);
+        const data = await handleResponse(res);
+        return setCachedApiValue(cacheKey, data);
     },
 
     async discoverSnowflakeDatabases() {
+        const cacheKey = 'discovery:snowflake:databases';
+        const cached = getCachedApiValue(cacheKey);
+        if (cached) return cached;
         const res = await authFetch(`${API_BASE_URL}/discovery/snowflake/databases`);
-        return handleResponse(res);
+        const data = await handleResponse(res);
+        return setCachedApiValue(cacheKey, data);
     },
 
     async discoverSnowflakeSchemas(database) {
+        const cacheKey = `discovery:snowflake:schemas:${String(database || '').trim().toUpperCase()}`;
+        const cached = getCachedApiValue(cacheKey);
+        if (cached) return cached;
         const res = await authFetch(
             `${API_BASE_URL}/discovery/snowflake/databases/${encodeURIComponent(database)}/schemas`
         );
-        return handleResponse(res);
+        const data = await handleResponse(res);
+        return setCachedApiValue(cacheKey, data);
     },
 
     async discoverSnowflakeModels() {
+        const cacheKey = 'discovery:snowflake:models';
+        const cached = getCachedApiValue(cacheKey);
+        if (cached) return cached;
         const res = await authFetch(`${API_BASE_URL}/discovery/snowflake`);
-        return handleResponse(res);
+        const data = await handleResponse(res);
+        return setCachedApiValue(cacheKey, data);
     },
 
     // -- Global Config - connector sections --
@@ -1529,4 +1599,3 @@ function _triggerDownload(blob, filename) {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
-

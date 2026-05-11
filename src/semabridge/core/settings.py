@@ -68,6 +68,15 @@ class SnowflakeConfig(BaseSettings):
         default=False,
         description="If True, insert RunSummary JSON into SEMABRIDGE_RUNS observability table after each run",
     )
+    naming_strategy: str = Field(
+        default="deterministic_hash",
+        description=(
+            "Collision resolution strategy for target attribute naming. "
+            "'deterministic_hash' (e.g. REGION_A1B2), "
+            "'source_prefix' (e.g. ACCOUNT_REGION), "
+            "or 'entity_suffix' (e.g. REGION_ACC)."
+        ),
+    )
     
     @field_validator("account")
     @classmethod

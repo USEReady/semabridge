@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .github/hooks/scripts/agent-skills/hooks/session-start.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

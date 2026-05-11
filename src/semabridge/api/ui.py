@@ -202,6 +202,7 @@ def _run_sync_job(
     fabric_workspace_id: Optional[str],
     pbix_path: Optional[str],
     env_overrides: dict[str, str],
+    sync_mode: str = "copy",
 ) -> None:
     _set_job_status(job_id, status="running")
 
@@ -251,6 +252,7 @@ def _run_sync_job(
                 dataset_id=dataset_id,
                 workspace_id=fabric_workspace_id,
                 pbix_path=pbix_path,
+                sync_mode=sync_mode,
             )
 
         summary_payload = summary.to_json()
@@ -350,6 +352,7 @@ async def start_sync_job(
     dataset_id: Optional[str] = Form(default=None),
     fabric_workspace_id: Optional[str] = Form(default=None),
     pbix_path: Optional[str] = Form(default=None),
+    sync_mode: str = Form(default="copy"),
     snowflake_account: Optional[str] = Form(default=None),
     snowflake_warehouse: Optional[str] = Form(default=None),
     snowflake_database: Optional[str] = Form(default=None),
@@ -424,6 +427,7 @@ async def start_sync_job(
             "fabric_workspace_id": (fabric_workspace_id or "").strip() or None,
             "pbix_path": resolved_pbix_path,
             "env_overrides": env_overrides,
+            "sync_mode": (sync_mode or "copy").strip().lower(),
         },
         name=f"ui-sync-{job_id[:8]}",
         daemon=True,

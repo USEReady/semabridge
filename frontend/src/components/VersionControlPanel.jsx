@@ -204,7 +204,11 @@ export default function VersionControlPanel({ isOpen, onClose }) {
         setIsRollingBack(true);
         try {
             const snapId = run?.after_tgt_snapshots?.[0] || run?.before_tgt_snapshots?.[0];
-            const result = await api.restoreProjectVersion(activeProjectId, { snapshot_id: snapId });
+            const result = await api.restoreProjectVersion(activeProjectId, {
+                snapshot_id: snapId,
+                restore_snapshot_id: snapId,
+                sync_mode: run?.sync_mode || 'copy',
+            });
             addLog('success', 'VC', 'Rollback initiated: ' + (result.run_id || result.id));
             setRollbackTarget(null);
             loadVersions();

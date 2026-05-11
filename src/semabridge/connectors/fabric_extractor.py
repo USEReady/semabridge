@@ -279,10 +279,42 @@ class FabricExtractor:
         # 1.5. Pre-issued token supplied via environment variable.
         env_token = get_fabric_access_token_from_env()
         if env_token and not self._skip_env_token_once:
-            self._access_token = env_token
-            self._token_expires_at = time.time() + 3600
-            logger.debug("Using FABRIC_ACCESS_TOKEN from environment")
-            return self._access_token
+            # Validate expiry from JWT 'exp' claim where possible so we don't
+            # repeatedly use an expired pre-issued token (common for short-lived
+            # developer tokens placed in .env). If parsing fails, fall back to
+            # a conservative 1-hour TTL.
+            try:
+                token_valid = False
+                exp_ts = None
+                parts = env_token.split('.')
+                if len(parts) == 3:
+                    payload = parts[1]
+                    import base64 as _b64
+                    rem = len(payload) % 4
+                    if rem:
+                        payload += '=' * (4 - rem)
+                    decoded = _b64.urlsafe_b64decode(payload.encode())
+                    payload_json = json.loads(decoded)
+                    exp_ts = int(payload_json.get('exp', 0))
+                if exp_ts and exp_ts > int(time.time()) + 60:
+                    token_valid = True
+                    self._token_expires_at = exp_ts
+                else:
+                    # Token is already expired or about to expire; do not use.
+                    token_valid = False
+            except Exception:
+                # Unable to parse JWT; assume 1 hour validity but still check
+                # whether it's expired relative to current time.
+                self._token_expires_at = time.time() + 3600
+                token_valid = time.time() < self._token_expires_at - 60
+
+            if token_valid:
+                self._access_token = env_token
+                logger.debug("Using FABRIC_ACCESS_TOKEN from environment (validated)")
+                return self._access_token
+            else:
+                logger.debug("FABRIC_ACCESS_TOKEN from environment is expired or near-expiry; skipping to allow refresh")
+
         if env_token and self._skip_env_token_once:
             logger.debug("Skipping FABRIC_ACCESS_TOKEN once after a 401 to force token reacquisition")
             self._skip_env_token_once = False
@@ -298,7 +330,7 @@ class FabricExtractor:
             }
             try:
                 logger.debug("Requesting new Azure AD access token (service principal)...")
-                response = requests.post(url, data=data)
+                response = requests.post(url, data=data, timeout=20)
                 response.raise_for_status()
                 result = response.json()
                 self._access_token = result["access_token"]
@@ -317,16 +349,16 @@ class FabricExtractor:
 
             cm = CredentialManager()
 
-            if cm.has_valid_token():
-                token_data = cm.get_msal_token()
-                self._access_token = token_data["access_token"]
-                # CredentialManager already checks expiry; use a conservative TTL.
-                self._token_expires_at = time.time() + 600
-                logger.debug("Using stored device-code access token")
-                return self._access_token
+            token_data = cm.get_msal_token()
+            if token_data and cm.has_valid_token():
+                self._access_token = token_data.get("access_token")
+                if self._access_token:
+                    # CredentialManager already checks expiry; use a conservative TTL.
+                    self._token_expires_at = time.time() + 600
+                    logger.debug("Using stored device-code access token")
+                    return self._access_token
 
             # Attempt silent refresh via stored refresh_token.
-            token_data = cm.get_msal_token()
             if token_data and token_data.get("refresh_token"):
                 import msal
                 tenant_id = token_data.get("tenant_id", "organizations")
@@ -405,7 +437,7 @@ class FabricExtractor:
         result = {}
         try:
             logger.info(f"Initiating extraction for model {dataset_id}...")
-            response = requests.post(api_url, headers=self._get_headers())
+            response = requests.post(api_url, headers=self._get_headers(), timeout=30)
             
             # Handle sync completion (rare but possible)
             if response.status_code == 200:
@@ -457,7 +489,7 @@ class FabricExtractor:
             time.sleep(retry_interval)
             
             try:
-                response = requests.get(operation_url, headers=self._get_headers())
+                response = requests.get(operation_url, headers=self._get_headers(), timeout=30)
                 response.raise_for_status()
                 
                 data = response.json()
@@ -481,7 +513,7 @@ class FabricExtractor:
                     logger.info(f"Fetching operation result from {result_url}...")
                     
                     try:
-                        res_response = requests.get(result_url, headers=self._get_headers())
+                        res_response = requests.get(result_url, headers=self._get_headers(), timeout=30)
                         res_response.raise_for_status()
                         res_data = res_response.json()
                         
@@ -564,7 +596,7 @@ class FabricExtractor:
         try:
             if not silent:
                 logger.info(f"Executing DAX query on {dataset_id}...")
-            response = requests.post(api_url, headers=self._get_headers(), json=payload)
+            response = requests.post(api_url, headers=self._get_headers(), json=payload, timeout=60)
             response.raise_for_status()
             
             # Parse response
@@ -681,7 +713,7 @@ class FabricExtractor:
         dataset_id: str,
         measure_name: str,
         group_by_dimensions: list[str],
-        filters: dict[str, Any] = None,
+        filters: Optional[dict[str, Any]] = None,
         use_fallback_pattern: bool = False,
     ) -> list[dict[str, Any]]:
         """

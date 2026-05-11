@@ -278,10 +278,11 @@ def generate_ctas_sql(
     schema = schema_name or emitter.config.schema_name
     quoted_source = f'{schema}."{table_name}"'
     quoted_fixed = f'{schema}."{table_name}__FIXED"'
+
     return (
-        f"CREATE OR REPLACE TABLE {quoted_fixed} AS\n"
+        f"CREATE TABLE {quoted_fixed} AS\n"
         f"SELECT\n    {select_sql}\n"
-        f"FROM {quoted_source};"
+        f"FROM {quoted_source}"
     )
 
 

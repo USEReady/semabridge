@@ -112,7 +112,8 @@ class DimensionsClauseBuilder:
                 if source_expr and not IdentifierSanitizer.is_physical_source_column(source_expr):
                     continue
                 
-                semantic_name = self.sanitizer.sanitize_semantic_name(col.unique_name)
+                semantic_source_name = str(getattr(col, "label", None) or col.unique_name)
+                semantic_name = self.sanitizer.sanitize_semantic_name(semantic_source_name)
                 if is_osi:
                     phys_col = self.identifier_sanitizer.sanitize_column(col.unique_name)
                 else:
@@ -135,7 +136,7 @@ class DimensionsClauseBuilder:
                         continue
                 
                 emitted_name = self._resolve_unique_dimension_alias(
-                    semantic_name, used_dimension_aliases, col.unique_name
+                    semantic_name, used_dimension_aliases, semantic_source_name
                 )
                 dims_lines.append(
                     f'  {alias}."{emitted_name}" AS {self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'

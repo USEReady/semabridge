@@ -13,19 +13,8 @@ import dagre from 'dagre';
 import DetailPanel from './DetailPanel';
 import ModelDataPanel from './ModelDataPanel';
 import { ReactFlowProvider } from '@xyflow/react';
+import usePageCache from '../../hooks/usePageCache';
 
-const EXPLORE_UI_PREFS_KEY = 'semabridge:explore-ui-prefs';
-
-function readExploreUiPrefs() {
-    try {
-        const raw = localStorage.getItem(EXPLORE_UI_PREFS_KEY);
-        if (!raw) return {};
-        const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === 'object' ? parsed : {};
-    } catch {
-        return {};
-    }
-}
 
 function normalizeGraphPayload(rawGraph) {
     const rawNodes = Array.isArray(rawGraph?.nodes) ? rawGraph.nodes : [];
@@ -139,8 +128,6 @@ function isSystemTableName(name) {
  * Right:  detail / file preview panel (slides in on selection).
  */
 export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId = null, diffMode = false }) {
-    const uiPrefs = readExploreUiPrefs();
-
     // ── data ──
     const [snapshotTreeData, setSnapshotTreeData] = useState(null);
     const [graphData, setGraphData] = useState({ nodes: [], edges: [], meta: {} });
@@ -149,18 +136,18 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     const [selectedFile, setSelectedFile] = useState(null);
     const [selectedNode, setSelectedNode] = useState(null);
     const [filePreview, setFilePreview] = useState(null);
-    const [workbenchOpen, setWorkbenchOpen] = useState(Boolean(uiPrefs?.workbenchOpen));
-    const [showExplorer, setShowExplorer] = useState(uiPrefs?.showExplorer !== false);
+    const [workbenchOpen, setWorkbenchOpen] = usePageCache('explore:workbenchOpen', false);
+    const [showExplorer, setShowExplorer] = usePageCache('explore:showExplorer', true);
 
     const [layout, setLayout] = useState('hierarchical');           // hierarchical | force
-    const [erMode, setErMode] = useState(uiPrefs?.erMode ?? true);                     // Power BI-like relationship view
-    const [selectedModelId, setSelectedModelId] = useState(uiPrefs?.selectedModelId || '__all__');
-    const [selectedConnector, setSelectedConnector] = useState(uiPrefs?.selectedConnector || '__all__');
+    const [erMode, setErMode] = usePageCache('explore:erMode', true);                     // Power BI-like relationship view
+    const [selectedModelId, setSelectedModelId] = usePageCache('explore:selectedModelId', '__all__');
+    const [selectedConnector, setSelectedConnector] = usePageCache('explore:selectedConnector', '__all__');
     const [searchQuery, setSearchQuery] = useState('');
     const [filterType, setFilterType] = useState('all');            // all | models | tables | broken
-    const [selectedTableId, setSelectedTableId] = useState(uiPrefs?.selectedTableId || '__all__');
+    const [selectedTableId, setSelectedTableId] = usePageCache('explore:selectedTableId', '__all__');
     const [showVersionBadges, setShowVersionBadges] = useState(false);
-    const [includeSystemTables, setIncludeSystemTables] = useState(Boolean(uiPrefs?.includeSystemTables));
+    const [includeSystemTables, setIncludeSystemTables] = usePageCache('explore:includeSystemTables', false);
 
     const [syncing, setSyncing] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -281,21 +268,6 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
 
     useEffect(() => { loadData(); }, [loadData]);
 
-    useEffect(() => {
-        try {
-            localStorage.setItem(EXPLORE_UI_PREFS_KEY, JSON.stringify({
-                workbenchOpen,
-                showExplorer,
-                erMode,
-                selectedModelId,
-                selectedConnector,
-                selectedTableId,
-                includeSystemTables,
-            }));
-        } catch {
-            // ignore persistence failures
-        }
-    }, [workbenchOpen, showExplorer, erMode, selectedModelId, selectedConnector, selectedTableId, includeSystemTables]);
 
     useEffect(() => {
         let active = true;

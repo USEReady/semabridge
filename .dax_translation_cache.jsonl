@@ -1,3 +1,0 @@
-{"key": "26d2f6248fb6405ac1525af515f0ff7ab46b82d784ed93fe394a5fc539c00b04", "sql": "SUM(sales.\"AMOUNT\")", "strategy": "ast_based", "timestamp": "2026-04-18T19:12:49.479196"}
-{"key": "aab3b2376104bfdb52bdbfe99e482036342ba20f85fee58075fbe0fbd12d3ebb", "sql": "DIV0((SUM(AMOUNT)), (SUM(QTY)))", "strategy": "ast_based", "timestamp": "2026-04-18T19:12:49.598555"}
-{"key": "2b9b5199616774dbe1c1309c8e2f767c97cbc505c0979b660a5fcc86e1ef9090", "sql": "DIV0((SUM(AMOUNT)), (SUM(AMOUNT) OVER (PARTITION BY YEAR)))", "strategy": "ast_based", "timestamp": "2026-04-18T19:12:49.708710"}

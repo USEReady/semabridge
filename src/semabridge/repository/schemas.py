@@ -36,6 +36,7 @@ class Snapshot(BaseModel):
     error_message: Optional[str] = None
     initiated_by: str = "cli"  # cli | api | scheduled
     run_id: Optional[str] = None
+    sync_mode: str = "copy"  # copy | upsert | etc. - v4.3 rollback metadata
 
 
 class ModelChange(BaseModel):

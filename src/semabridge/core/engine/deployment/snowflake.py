@@ -82,10 +82,13 @@ def _deploy_to_snowflake(self, context: RunContext) -> None:
             ).scalars().first()
 
             if not account:
-                raise DeploymentError(
-                    f"No Snowflake account found for identity_id '{identity_id}'. "
-                    "Please link this account in the Connections panel."
+                logger.warning(
+                    "No linked Snowflake account found for identity_id %s; falling back to global Snowflake settings",
+                    identity_id,
                 )
+                sf_cfg = context.config.snowflake
+                self._do_snowflake_deploy(context, sf_cfg)
+                return
 
             with scoped_account_env(account, session):
                 logger.info(
@@ -111,17 +114,34 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
     emitter = SnowflakeEmitter(sf_cfg, behavior=context.behavior)
     deployment_method = getattr(sf_cfg, "deployment_method", "ddl") or "ddl"
 
-    # ── DDL path ─────────────────────────────────────────────────────────
+    # DDL path
     if deployment_method in ("ddl", "both"):
-        deployed = emitter.deploy(context.sml_model)
+        deployed = emitter.deploy(
+            context.sml_model,
+            sync_mode=getattr(context, "sync_mode", "copy"),
+        )
         if not deployed:
+            error_msg = emitter.last_deployment_error or "unknown deployment error"
+
+            # Check if this is a database-not-found error
+            if "object does not exist" in error_msg.lower() and "use database" in error_msg.lower():
+                db_name, _ = sf_cfg._resolved_db_schema() if hasattr(sf_cfg, "_resolved_db_schema") else ("UNKNOWN", "")
+                raise DeploymentError(
+                    f"Snowflake deployment failed: Target database does not exist.\n"
+                    f"Database: {db_name}\n"
+                    f"Error: {error_msg}\n\n"
+                    f"SOLUTIONS:\n"
+                    f"1. Create the database manually in Snowflake: CREATE DATABASE {db_name}\n"
+                    f"2. Or enable auto-create in config: add 'auto_create_database: true' to snowflake section in semabridge.yaml\n"
+                    f"3. Or check if the database name in config is correct."
+                )
+
             raise DeploymentError(
-                f"Snowflake DDL deployment returned unsuccessful status: "
-                f"{emitter.last_deployment_error or 'unknown deployment error'}"
+                f"Snowflake DDL deployment returned unsuccessful status: {error_msg}"
             )
         self._export_inferred_osi_artifacts(context)
 
-    # ── Stored-procedure / Cortex YAML path ──────────────────────────────
+    # Stored-procedure / Cortex YAML path
     if deployment_method in ("yaml_stored_procedure", "both"):
         try:
             import snowflake.connector
@@ -144,7 +164,7 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
                 f"Cortex YAML stored-procedure deploy failed: {exc}"
             ) from exc
 
-    # ── Optional: Sync materialized DAX measures to MEASURES_* tables ────
+    # Optional: Sync materialized DAX measures to MEASURES_* tables
     if context.source_type == "fabric" and self._should_sync_measures(context):
         self._sync_fabric_measures(context, emitter)
 

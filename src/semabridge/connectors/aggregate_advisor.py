@@ -242,7 +242,7 @@ class AggregateAdvisor:
         newline = "\n"
         select_joined = f",{newline}  ".join(select_parts)
         ddl = (
-            f"CREATE OR REPLACE TABLE {qualified} AS\n"
+            f"CREATE TABLE IF NOT EXISTS {qualified} AS\n"
             f"SELECT\n  {select_joined}\n"
             f"FROM {source_qualified}\n"
             f"GROUP BY {group_by};"

@@ -14,11 +14,35 @@ from __future__ import annotations
 
 import re
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 from semabridge.core.settings import SnowflakeConfig
 from semabridge.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _normalize_snowflake_account(raw_account: str) -> str:
+    """Normalize Snowflake account input into the connector-safe account id.
+
+    Accepts common user-entered forms:
+    - ``xy12345.us-east-1`` (already valid)
+    - ``xy12345.us-east-1.snowflakecomputing.com``
+    - ``https://xy12345.us-east-1.snowflakecomputing.com``
+    """
+    account = (raw_account or "").strip()
+    if not account:
+        return account
+
+    parsed = urlparse(account)
+    if parsed.scheme and parsed.netloc:
+        account = parsed.netloc.strip()
+
+    account = account.rstrip("/")
+    if account.endswith(".snowflakecomputing.com"):
+        account = account[: -len(".snowflakecomputing.com")]
+
+    return account
 
 
 def _format_pem_key(raw: str) -> str:
@@ -116,10 +140,12 @@ def _acquire_oauth_token(config: SnowflakeConfig) -> str:
     """
     import requests as _requests
 
-    if not config.oauth_token_endpoint:
+    # Resolve oauth_token_endpoint (do NOT mutate config)
+    oauth_token_endpoint = config.oauth_token_endpoint
+    if not oauth_token_endpoint:
         import os
         tenant_id = os.environ.get("AZURE_TENANT_ID", "organizations")
-        config.oauth_token_endpoint = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+        oauth_token_endpoint = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
 
     if not config.oauth_client_id:
         raise ValueError(
@@ -130,21 +156,23 @@ def _acquire_oauth_token(config: SnowflakeConfig) -> str:
             "OAuth auth selected but SNOWFLAKE_OAUTH_CLIENT_SECRET is not set."
         )
 
-    if not config.oauth_scope:
-        config.oauth_scope = f"api://{config.oauth_client_id}/.default"
+    # Resolve oauth_scope (do NOT mutate config)
+    oauth_scope = config.oauth_scope
+    if not oauth_scope:
+        oauth_scope = f"api://{config.oauth_client_id}/.default"
 
     payload: Dict[str, str] = {
         "client_id": config.oauth_client_id,
         "client_secret": config.oauth_client_secret.get_secret_value(),
         "grant_type": "client_credentials",
-        "scope": config.oauth_scope,
+        "scope": oauth_scope,
     }
 
     try:
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         resp = _requests.post(
-            config.oauth_token_endpoint,
+            oauth_token_endpoint,
             data=payload,
             timeout=30,
             verify=False
@@ -163,7 +191,7 @@ def _acquire_oauth_token(config: SnowflakeConfig) -> str:
         return access_token
     except Exception as exc:
         raise ValueError(
-            f"OAuth token acquisition failed from {config.oauth_token_endpoint}: {exc}"
+            f"OAuth token acquisition failed from {oauth_token_endpoint}: {exc}"
         ) from exc
 
 
@@ -205,9 +233,13 @@ def get_snowflake_connect_kwargs(config: SnowflakeConfig) -> Dict[str, Any]:
                 "Update the credential in Settings \u2192 Connections and retry."
             )
 
+    normalized_account = _normalize_snowflake_account(config.account)
+    if not normalized_account:
+        raise ValueError("SNOWFLAKE_ACCOUNT resolved to an empty value after normalization.")
+
     kwargs: Dict[str, Any] = {
         "user": config.user,
-        "account": config.account,
+        "account": normalized_account,
         "warehouse": config.warehouse,
         "database": config.database,
         "schema": config.schema_name,

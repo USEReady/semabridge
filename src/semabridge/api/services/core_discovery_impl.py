@@ -140,7 +140,10 @@ def discover_snowflake(identity_id: Optional[str] = Query(None)):
                 if not account:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"No Snowflake account found for identity_id '{identity_id}'."
+                        detail=(
+                            f"No Snowflake account found for identity_id '{identity_id}'. "
+                            "Link this account in Settings -> Connections or POST to /api/accounts with connector_type 'SNOWFLAKE'."
+                        ),
                     )
                     
                 with scoped_account_env(account, session):

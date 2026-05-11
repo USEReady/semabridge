@@ -1,4 +1,5 @@
-import { Search, Regex, X } from 'lucide-react';
+import { Search, X } from 'lucide-react';
+import { getSmartQueryError } from './smartSearchQuery.js';
 
 /**
  * SearchInput — styled search field with prepended icon.
@@ -16,21 +17,12 @@ export default function SearchInput({
   className = '',
   width = 260,
   useRegex = false,
-  onToggleRegex,
   allowRegex = false,
   helperText = '',
   ...inputProps
 }) {
   const query = String(value || '');
-  let regexError = '';
-
-  if (allowRegex && useRegex && query.trim()) {
-    try {
-      new RegExp(query);
-    } catch (err) {
-      regexError = err?.message || 'Invalid regex';
-    }
-  }
+  const regexError = allowRegex ? getSmartQueryError(query, useRegex) : '';
 
   return (
     <div style={{ width, display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -60,7 +52,7 @@ export default function SearchInput({
             border: `1px solid ${regexError ? 'var(--color-error)' : 'var(--border-main)'}`,
             color: 'var(--text-primary)',
             padding: '7px 12px 7px 30px',
-            paddingRight: allowRegex ? (query ? 56 : 34) : (query ? 30 : 12),
+            paddingRight: query ? 30 : 12,
             outline: 'none',
             fontFamily: 'inherit',
             width: '100%',
@@ -86,38 +78,6 @@ export default function SearchInput({
             inputProps.onBlur?.(e);
           }}
         />
-
-        {allowRegex && (
-          <button
-            type="button"
-            onMouseDown={(e) => {
-              e.stopPropagation();
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleRegex?.(!useRegex);
-            }}
-            title={useRegex ? 'Regex enabled' : 'Regex disabled'}
-            style={{
-              position: 'absolute',
-              right: query ? 28 : 6,
-              zIndex: 2,
-              width: 22,
-              height: 22,
-              borderRadius: 6,
-              border: '1px solid var(--border-main)',
-              background: useRegex ? 'var(--color-accent-faint)' : 'var(--bg-surface-raised)',
-              color: useRegex ? 'var(--accent-blue)' : 'var(--text-secondary)',
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-            }}
-          >
-            <Regex size={11} />
-          </button>
-        )}
 
         {query && (
           <button

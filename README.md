@@ -96,7 +96,7 @@ make run-frontend # Start Vite frontend dev server
 - Always run `make migrate` (or `.\dev.ps1 migrate` on Windows) after pulling new changes
 - For production deployments, the CI/CD pipeline automatically applies migrations
 - Cross-platform scripts: `scripts/migrate.sh` (Unix/Mac) and `scripts/migrate.ps1` (Windows)
-- Full guide: See [Docs/DEVELOPMENT.md](Docs/DEVELOPMENT.md)
+- Full guide: See [docs/development/setup.md](docs/development/setup.md)
 
 ### Configuration
 
@@ -222,7 +222,7 @@ pytest tests/ -v --cov=src/semabridge --cov-report=term-missing
 3. **No Secrets in Code**: Secrets must route dynamically from environment variables, never hard-coded arguments.
 4. **Test Coverage**: All code additions must meet or exceed ≥ 80% test coverage. 
 
-Refer to [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for deeper internal technical mechanics.
+Refer to [docs/development/setup.md](docs/development/setup.md) and [docs/architecture/overview.md](docs/architecture/overview.md) for deeper internal technical mechanics.
 
 ---
 

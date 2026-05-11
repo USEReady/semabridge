@@ -10,11 +10,13 @@ import { useState } from 'react';
 
 // Layouts
 import DashboardLayout from './layouts/DashboardLayout';
+import { ConfigurationProvider } from './context/ConfigurationContext';
 
 // Pages
 import ExplorePage      from './pages/ExplorePage';
 import ProjectsPage     from './pages/ProjectsPage';
 import CreateProjectPage from './pages/CreateProjectPage';
+import EditProjectPage  from './pages/EditProjectPage';
 import ProjectConfigPage from './pages/ProjectConfigPage';
 import ProjectJobsPage  from './pages/ProjectJobsPage';
 import SettingsPage    from './pages/SettingsPage';
@@ -106,13 +108,15 @@ export default function App() {
         {/* Protected: All app routes — auto-login handles auth transparently */}
         <Route element={
           <ProtectedRoute>
-            <WorkspaceProvider>
-              <LogsProvider>
-                <SyncStatusProvider>
-                  <DashboardLayout />
-                </SyncStatusProvider>
-              </LogsProvider>
-            </WorkspaceProvider>
+            <ConfigurationProvider>
+              <WorkspaceProvider>
+                <LogsProvider>
+                  <SyncStatusProvider>
+                    <DashboardLayout />
+                  </SyncStatusProvider>
+                </LogsProvider>
+              </WorkspaceProvider>
+            </ConfigurationProvider>
           </ProtectedRoute>
         }>
           <Route index element={<Navigate to="/projects" replace />} />
@@ -120,7 +124,7 @@ export default function App() {
           <Route path="/projects"      element={<ProjectsPage />} />
           <Route path="/projects/new"  element={<CreateProjectPage />} />
           <Route path="/projects/:id" element={<ProjectDetailPage />} />
-          <Route path="/projects/:id/edit" element={<ProjectConfigPage />} />
+          <Route path="/projects/:id/edit" element={<EditProjectPage />} />
           <Route path="/projects/:id/config" element={<ProjectConfigPage />} />
           <Route path="/jobs"          element={<ProjectJobsPage />} />
           <Route path="/model-mapping" element={<Navigate to="/projects/new?step=4" replace />} />

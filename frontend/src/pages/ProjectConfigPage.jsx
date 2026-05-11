@@ -1,6 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Save, Play, CalendarClock, CalendarDays, Settings2, FileCode2, SlidersHorizontal, Loader2, CheckCircle2, RotateCcw, Camera } from 'lucide-react';
+import { 
+  ArrowLeft, Save, Play, CalendarClock, CalendarDays, Settings2, FileCode2, 
+  SlidersHorizontal, Loader2, CheckCircle2, RotateCcw, Camera, ChevronDown,
+  HelpCircle, Copy, RefreshCw
+} from 'lucide-react';
 import { parseDocument as parseYamlDocument, stringify as stringifyYaml } from 'yaml';
 import CodeMirror from '@uiw/react-codemirror';
 import { yaml as yamlLang } from '@codemirror/lang-yaml';
@@ -13,9 +17,324 @@ import { useLogs } from '../context/LogsContext';
 import { useSyncStatusStore } from '../context/SyncStatusContext';
 import { api } from '../utils/api';
 import { buildMockRunLogs, saveRunLogs } from '../utils/runLogs';
+import { normalizeSyncMode } from '../utils/syncMode';
 import { useUIStore } from '../store/uiStore';
+import usePageCache from '../hooks/usePageCache';
 
+import ProjectWizard from './CreateProjectPage';
 import Modal from '../components/common/Modal';
+
+// --- Styled Components for Dashboard ---
+const FormCard = ({ title, subtitle, children }) => (
+  <div style={{
+    border: '1px solid var(--border-main)',
+    borderRadius: 12,
+    background: 'var(--bg-surface)',
+    padding: 24,
+    boxShadow: '0 4px 20px rgba(0, 0, 0, 0.15)',
+    marginBottom: 24,
+  }}>
+    <div style={{ marginBottom: 20 }}>
+      <h3 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>{title}</h3>
+      {subtitle && <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>{subtitle}</p>}
+    </div>
+    {children}
+  </div>
+);
+
+const FormLabel = ({ children }) => (
+  <label style={{ 
+    display: 'block', 
+    fontSize: 11, 
+    fontWeight: 700, 
+    color: 'var(--text-tertiary)', 
+    marginBottom: 8, 
+    textTransform: 'uppercase', 
+    letterSpacing: '0.05em' 
+  }}>
+    {children}
+  </label>
+);
+
+const FormInput = ({ value, onChange, placeholder, type = "text", readOnly = false, style = {} }) => (
+  <input
+    type={type}
+    value={value}
+    onChange={onChange}
+    placeholder={placeholder}
+    readOnly={readOnly}
+    style={{
+      width: '100%',
+      padding: '10px 14px',
+      borderRadius: 8,
+      background: readOnly ? 'var(--bg-surface-faded)' : 'var(--bg-surface-raised)',
+      border: '1px solid var(--border-main)',
+      color: readOnly ? 'var(--text-tertiary)' : 'var(--text-primary)',
+      fontSize: 13,
+      outline: 'none',
+      cursor: readOnly ? 'not-allowed' : 'text',
+      ...style
+    }}
+  />
+);
+
+const FormSelect = ({ value, onChange, children }) => (
+  <select
+    value={value}
+    onChange={onChange}
+    style={{
+      width: '100%',
+      padding: '10px 14px',
+      borderRadius: 8,
+      background: 'var(--bg-surface-raised)',
+      border: '1px solid var(--border-main)',
+      color: 'var(--text-primary)',
+      fontSize: 13,
+      outline: 'none',
+      appearance: 'none',
+      backgroundImage: 'url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3e%3cpolyline points=\'6 9 12 15 18 9\'%3e%3c/polyline%3e%3c/svg%3e")',
+      backgroundRepeat: 'no-repeat',
+      backgroundPosition: 'right 12px center',
+      backgroundSize: '14px'
+    }}
+  >
+    {children}
+  </select>
+);
+
+const HelpTooltip = ({ text }) => (
+  <div className="group relative inline-block ml-1.5" style={{ verticalAlign: 'middle' }}>
+    <HelpCircle size={14} className="text-[var(--text-tertiary)] cursor-help hover:text-[var(--accent-blue)] transition-colors" />
+    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-[var(--bg-surface-raised)] border border-[var(--border-main)] rounded-lg shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 w-64 text-xs font-normal text-[var(--text-secondary)] leading-relaxed">
+      {text}
+      <div className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-[var(--border-main)]"></div>
+    </div>
+  </div>
+);
+
+const ConnectionStatus = ({ connected = true }) => (
+  <div style={{ 
+    display: 'inline-flex', 
+    alignItems: 'center', 
+    gap: 4, 
+    fontSize: 11, 
+    color: connected ? 'var(--color-success)' : 'var(--text-tertiary)',
+    marginLeft: 8,
+    fontWeight: 600
+  }}>
+    <div style={{ 
+      width: 6, 
+      height: 6, 
+      borderRadius: '50%', 
+      background: connected ? 'var(--color-success)' : 'var(--text-tertiary)',
+      boxShadow: connected ? '0 0 8px var(--color-success)' : 'none'
+    }} />
+    {connected ? 'Connected' : 'Disconnected'}
+  </div>
+);
+
+const SegmentedControl = ({ options, value, onChange, label }) => (
+  <div style={{ marginBottom: 20 }}>
+    {label && <FormLabel>{label}</FormLabel>}
+    <div style={{ 
+      display: 'flex', 
+      background: 'var(--bg-surface-raised)', 
+      borderRadius: 10, 
+      padding: 3, 
+      border: '1px solid var(--border-main)',
+      width: 'fit-content',
+      gap: 2
+    }}>
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          onClick={() => onChange(opt.value)}
+          style={{
+            padding: '8px 16px',
+            borderRadius: 8,
+            border: 'none',
+            cursor: 'pointer',
+            fontSize: 12,
+            fontWeight: 700,
+            transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+            background: value === opt.value ? 'var(--accent-blue)' : 'transparent',
+            color: value === opt.value ? 'white' : 'var(--text-tertiary)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            minWidth: 120,
+            boxShadow: value === opt.value ? '0 4px 12px rgba(88, 166, 255, 0.25)' : 'none'
+          }}
+        >
+          <span>{opt.label}</span>
+          {opt.subtext && <span style={{ fontSize: 10, fontWeight: 400, opacity: 0.8, marginTop: 2 }}>{opt.subtext}</span>}
+        </button>
+      ))}
+    </div>
+  </div>
+);
+
+const ToggleSwitch = ({ checked, onChange, label, description, showBorder = false }) => (
+  <div style={{ 
+    display: 'flex', 
+    alignItems: 'center', 
+    justifyContent: 'space-between', 
+    padding: '16px 20px',
+    borderRadius: 12,
+    background: showBorder ? 'rgba(255,255,255,0.02)' : 'transparent',
+    border: showBorder ? '1px solid var(--border-light)' : 'none',
+    transition: 'all 0.2s'
+  }}>
+    <div style={{ flex: 1, paddingRight: 20 }}>
+      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>{label}</div>
+      {description && <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{description}</div>}
+    </div>
+    <button 
+      onClick={() => onChange(!checked)}
+      style={{
+        width: 44,
+        height: 24,
+        borderRadius: 12,
+        position: 'relative',
+        transition: 'all 0.2s',
+        background: checked ? 'var(--accent-blue)' : 'var(--bg-surface-raised)',
+        border: '1px solid var(--border-main)',
+        cursor: 'pointer',
+        padding: 0
+      }}
+    >
+      <div style={{
+        width: 18,
+        height: 18,
+        borderRadius: '50%',
+        background: checked ? 'white' : 'var(--text-tertiary)',
+        position: 'absolute',
+        top: 2,
+        left: checked ? 23 : 2,
+        transition: 'all 0.2s',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
+      }} />
+    </button>
+  </div>
+);
+
+function ProjectDashboard({ project, configForm, setConfigForm }) {
+  const updateField = (field, value) => {
+    setConfigForm({ ...configForm, [field]: value });
+  };
+
+  return (
+    <div style={{ maxWidth: 900, margin: '0 auto', paddingBottom: 120 }}>
+      <FormCard title="Pipeline Configuration" subtitle="Control data sources, targets, and synchronization routing.">
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              <FormLabel>Source Type</FormLabel>
+              <ConnectionStatus connected={true} />
+            </div>
+            <FormSelect value={configForm.source_type || 'fabric'} onChange={e => updateField('source_type', e.target.value)}>
+              <option value="fabric">Microsoft Fabric</option>
+              <option value="snowflake">Snowflake</option>
+              <option value="pbix">Local PBIX</option>
+            </FormSelect>
+          </div>
+          
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              <FormLabel>Target Destination</FormLabel>
+              <ConnectionStatus connected={true} />
+            </div>
+            <FormSelect value={configForm.target_type || 'snowflake'} onChange={e => updateField('target_type', e.target.value)}>
+              <option value="snowflake">Snowflake</option>
+              <option value="fabric">Fabric</option>
+              <option value="databricks">Databricks</option>
+            </FormSelect>
+          </div>
+
+          <div style={{ gridColumn: 'span 2' }}>
+            <SegmentedControl 
+              label="Sync Strategy"
+              value={configForm.write_strategy || 'copy'}
+              onChange={val => updateField('write_strategy', val)}
+              options={[
+                { label: 'Copy', value: 'copy', subtext: 'Overwrite destination' },
+                { label: 'Upsert', value: 'upsert', subtext: 'Incremental update' }
+              ]}
+            />
+          </div>
+
+          <div style={{ gridColumn: 'span 2' }}>
+             <div style={{ display: 'flex', alignItems: 'center' }}>
+               <FormLabel>Workspace Identity / ID</FormLabel>
+               <HelpTooltip text="Find this UUID in your Microsoft Fabric workspace settings under 'Workspace Settings' -> 'General' -> 'Workspace ID'." />
+             </div>
+             <FormInput 
+               value={configForm.workspace_id || ''} 
+               onChange={e => updateField('workspace_id', e.target.value)} 
+               placeholder="UUID or Workspace Name"
+             />
+          </div>
+
+          <div style={{ gridColumn: 'span 2' }}>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              <FormLabel>Include Models (Allow-list)</FormLabel>
+              <HelpTooltip text="Comma-separated list of model names to include. Use '*' to include all models in the workspace." />
+            </div>
+            <FormInput 
+              value={configForm.allow_models || ''} 
+              onChange={e => updateField('allow_models', e.target.value)} 
+              placeholder="model1, model2 or * for all"
+            />
+          </div>
+        </div>
+      </FormCard>
+
+      <FormCard title="Synchronization Options" subtitle="Configure automated relationship detection and metadata generation.">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <ToggleSwitch 
+            label="Auto-Detect Relationships" 
+            description="Automatically map primary/foreign keys based on naming conventions and metadata."
+            checked={!!configForm.auto_relationships}
+            onChange={val => updateField('auto_relationships', val)}
+            showBorder={true}
+          />
+          <ToggleSwitch 
+            label="Generate Descriptions" 
+            description="Use semantic intelligence to automatically generate business descriptions for all fields."
+            checked={!!configForm.generate_descriptions}
+            onChange={val => updateField('generate_descriptions', val)}
+            showBorder={true}
+          />
+        </div>
+      </FormCard>
+
+      <FormCard title="Advanced System Settings" subtitle="Fine-tune technical output formats and system behaviors.">
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              <FormLabel>Intermediate Format</FormLabel>
+              <HelpTooltip text="OSI is the recommended open standard for semantic metadata. JSON is used for raw debugging." />
+            </div>
+            <FormSelect value={configForm.output_format || 'osi'} onChange={e => updateField('output_format', e.target.value)}>
+              <option value="osi">Open Semantic Interface (OSI)</option>
+              <option value="json">Raw JSON Metadata</option>
+            </FormSelect>
+          </div>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              <FormLabel>Validation Level</FormLabel>
+              <HelpTooltip text="Strict mode ensures all metadata mappings are perfectly valid before deployment." />
+            </div>
+            <FormSelect value={configForm.validation_level || 'strict'} onChange={e => updateField('validation_level', e.target.value)}>
+              <option value="strict">Strict (Fail on Warning)</option>
+              <option value="relaxed">Relaxed (Allow Warnings)</option>
+            </FormSelect>
+          </div>
+        </div>
+      </FormCard>
+    </div>
+  );
+}
 
 const INPUT = {
   display: 'block', width: '100%',
@@ -95,9 +414,9 @@ export default function ProjectConfigPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [syncMode, setSyncMode] = useState(() => {
-    return localStorage.getItem(`project_${id}_syncMode`) || 'copy';
-  });
+  const [moreActionsOpen, setMoreActionsOpen] = useState(false);
+  const moreActionsRef = useRef(null);
+  const [syncMode, setSyncMode] = usePageCache(`project_${id}_syncMode`, 'copy');
   const [project, setProject] = useState(null);
   const [allProjects, setAllProjects] = useState([]);
   const [selectedPresetProjectId, setSelectedPresetProjectId] = useState(null);
@@ -108,7 +427,7 @@ export default function ProjectConfigPage() {
   const [projectMappingsLoading, setProjectMappingsLoading] = useState(false);
   const [projectMappingsError, setProjectMappingsError] = useState('');
 
-  const [viewMode, setViewMode] = useState('form'); // form | yaml
+  const [viewMode, setViewMode] = usePageCache(`project_${id}_viewMode`, 'form'); // form | yaml
   const [yamlText, setYamlText] = useState('');
   const [configForm, setConfigForm] = useState({
     source_type: 'fabric',
@@ -129,16 +448,10 @@ export default function ProjectConfigPage() {
     block_models: '',
     auto_relationships: true,
     generate_descriptions: true,
+    write_strategy: 'copy',
+    selection_model_ids: [],
   });
-  const [fabricAccounts, setFabricAccounts] = useState([]);
-  const [fabricWorkspaces, setFabricWorkspaces] = useState([]);
-  const [fabricLoading, setFabricLoading] = useState(false);
 
-  // Target Fabric state (independent from source)
-  const [targetFabricAccounts, setTargetFabricAccounts] = useState([]);
-  const [targetFabricWorkspaces, setTargetFabricWorkspaces] = useState([]);
-  const [targetFabricLoading, setTargetFabricLoading] = useState(false);
-  const [databricksAccounts, setDatabricksAccounts] = useState([]);
 
   const [globalOpen, setGlobalOpen] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
@@ -171,6 +484,20 @@ export default function ProjectConfigPage() {
     'America/Los_Angeles',
     'Europe/London',
   ]), []);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (moreActionsRef.current && !moreActionsRef.current.contains(event.target)) {
+        setMoreActionsOpen(false);
+      }
+    }
+    if (moreActionsOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [moreActionsOpen]);
   const normalizedProjectId = String(project?.id || project?.project_id || id || '');
   const latestProjectRun = useMemo(() => {
     const projectRuns = runs.filter((run) => String(run?.project_id || '') === normalizedProjectId);
@@ -237,12 +564,10 @@ export default function ProjectConfigPage() {
 
   useEffect(() => {
     const modeFromUrl = searchParams.get('mode');
-    const storedMode = localStorage.getItem(`project_${id}_viewMode`);
-    const preferred = modeFromUrl === 'yaml' || modeFromUrl === 'form'
-      ? modeFromUrl
-      : (storedMode === 'yaml' || storedMode === 'form' ? storedMode : 'form');
-    setViewMode(preferred);
-  }, [id, searchParams]);
+    if (modeFromUrl === 'yaml' || modeFromUrl === 'form') {
+      setViewMode(modeFromUrl);
+    }
+  }, [id, searchParams, setViewMode]);
 
   useEffect(() => {
     if (!hasHydrated) return;
@@ -264,6 +589,21 @@ export default function ProjectConfigPage() {
         setProject(p);
         setYamlText(cfg?.config_yaml || '');
         setYamlPath(cfg?.yaml_path || '');
+        // Initialize syncMode from project record or YAML options if available
+        try {
+          const yamlSync = (cfg && cfg.config_yaml) ? (parseProjectYaml(cfg.config_yaml, p)?.form?.write_strategy) : null;
+          const nextSync = normalizeSyncMode(p?.sync_mode || yamlSync || 'copy');
+          setSyncMode(nextSync);
+          if (typeof localStorage !== 'undefined') {
+            localStorage.setItem(`project_${id}_syncMode`, nextSync);
+          }
+        } catch (err) {
+          const nextSync = normalizeSyncMode(p?.sync_mode || 'copy');
+          setSyncMode(nextSync);
+          if (typeof localStorage !== 'undefined') {
+            localStorage.setItem(`project_${id}_syncMode`, nextSync);
+          }
+        }
         setAllProjects(all.filter(x => String(x.id) !== String(id)));
         setActiveProjectId(p?.id || p?.project_id || id);
         try {
@@ -390,127 +730,18 @@ export default function ProjectConfigPage() {
     };
   }, [id, isInvalidProjectId, loading]);
 
+  // Synchronize syncMode state with configForm.write_strategy to ensure 
+  // the sync confirmation modal and execution use the correctly selected strategy.
   useEffect(() => {
-    if (configForm.source_type !== 'fabric') {
-      setFabricAccounts([]);
-      setFabricWorkspaces([]);
-      return;
+    const strategy = configForm.write_strategy || 'copy';
+    if (strategy !== syncMode) {
+      setSyncMode(strategy);
     }
+  }, [configForm.write_strategy, syncMode, setSyncMode]);
 
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await api.getAccounts('FABRIC');
-        const list = Array.isArray(res) ? res : (res?.accounts || []);
-        if (!cancelled) {
-          setFabricAccounts(list);
-          if (!configForm.identity_id) {
-            const preferred = list.find(acc => acc.id === project?.account_id);
-            if (preferred?.id) {
-              setConfigForm(prev => ({ ...prev, identity_id: prev.identity_id || preferred.id }));
-            }
-          }
-        }
-      } catch {
-        if (!cancelled) setFabricAccounts([]);
-      }
-    })();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [configForm.source_type, configForm.identity_id, project?.account_id]);
 
-  const refreshFabricWorkspaces = async (identityId = configForm.identity_id) => {
-    if (!identityId) {
-      setFabricWorkspaces([]);
-      return;
-    }
-    setFabricLoading(true);
-    try {
-      const data = await api.fabricListWorkspaces(identityId);
-      const list = Array.isArray(data?.workspaces) ? data.workspaces : (Array.isArray(data) ? data : []);
-      setFabricWorkspaces(list);
-      if (!configForm.workspace_id && list[0]) {
-        setConfigForm(prev => ({
-          ...prev,
-          workspace_id: prev.workspace_id || String(list[0].id || list[0].workspace_id || ''),
-        }));
-      }
-    } catch {
-      setFabricWorkspaces([]);
-    } finally {
-      setFabricLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (configForm.source_type === 'fabric' && configForm.identity_id) {
-      refreshFabricWorkspaces(configForm.identity_id);
-    }
-  }, [configForm.source_type, configForm.identity_id]);
-
-  // ── Target Fabric: fetch accounts when target is fabric ──────────────────
-  useEffect(() => {
-    if (configForm.target_type !== 'fabric') {
-      setTargetFabricAccounts([]);
-      setTargetFabricWorkspaces([]);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await api.getAccounts('FABRIC');
-        const list = Array.isArray(res) ? res : (res?.accounts || []);
-        if (!cancelled) setTargetFabricAccounts(list);
-      } catch {
-        if (!cancelled) setTargetFabricAccounts([]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [configForm.target_type]);
-
-  const refreshTargetFabricWorkspaces = async (identityId = configForm.target_identity_id) => {
-    if (!identityId) {
-      setTargetFabricWorkspaces([]);
-      return;
-    }
-    setTargetFabricLoading(true);
-    try {
-      const data = await api.fabricListWorkspaces(identityId);
-      const list = Array.isArray(data?.workspaces) ? data.workspaces : (Array.isArray(data) ? data : []);
-      setTargetFabricWorkspaces(list);
-    } catch {
-      setTargetFabricWorkspaces([]);
-    } finally {
-      setTargetFabricLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (configForm.target_type === 'fabric' && configForm.target_identity_id) {
-      refreshTargetFabricWorkspaces(configForm.target_identity_id);
-    }
-  }, [configForm.target_type, configForm.target_identity_id]);
-
-  // ── Target Databricks: fetch accounts when target is databricks ──────────────────
-  useEffect(() => {
-    if (configForm.target_type !== 'databricks') {
-      setDatabricksAccounts([]);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await api.getAccounts('DATABRICKS');
-        const list = Array.isArray(res) ? res : (res?.accounts || []);
-        if (!cancelled) setDatabricksAccounts(list);
-      } catch {
-        if (!cancelled) setDatabricksAccounts([]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [configForm.target_type]);
+  // Unused useEffects removed from here
 
   const isLikelyBinaryOrGarbage = (text) => {
     const t = String(text || '').trim();
@@ -661,6 +892,7 @@ export default function ProjectConfigPage() {
         block_models: blockedModels.join(', '),
         auto_relationships: options.auto_relationships !== false,
         generate_descriptions: options.generate_descriptions !== false,
+        write_strategy: String(options.write_strategy || 'copy').toLowerCase(),
       },
     };
   };
@@ -671,65 +903,68 @@ export default function ProjectConfigPage() {
     setConfigForm(parsed.form);
   };
 
-  const buildYamlFromForm = () => {
-    const allow = configForm.allow_models.split(',').map(s => s.trim()).filter(Boolean);
-    const block = configForm.block_models.split(',').map(s => s.trim()).filter(Boolean);
+  const buildYamlFromForm = (overrideForm = null, overrideProjectName = null) => {
+    const formToUse = overrideForm || configForm;
+    const projName = overrideProjectName !== null ? overrideProjectName : (project?.name || '');
+    const allow = (formToUse.allow_models || '').split(',').map(s => s.trim()).filter(Boolean);
+    const block = (formToUse.block_models || '').split(',').map(s => s.trim()).filter(Boolean);
 
     const nextTree = {
       ...(configTree && typeof configTree === 'object' ? configTree : {}),
-      project_name: project?.name || '',
+      project_name: projName,
       source: {
         ...((configTree?.source && typeof configTree.source === 'object') ? configTree.source : {}),
-        type: configForm.source_type,
+        type: formToUse.source_type,
       },
       target: {
         ...((configTree?.target && typeof configTree.target === 'object') ? configTree.target : {}),
-        type: configForm.target_type,
+        type: formToUse.target_type,
       },
       ui: {
         ...((configTree?.ui && typeof configTree.ui === 'object') ? configTree.ui : {}),
-        output_format: configForm.output_format,
+        output_format: formToUse.output_format,
       },
       options: {
         ...((configTree?.options && typeof configTree.options === 'object') ? configTree.options : {}),
-        auto_relationships: Boolean(configForm.auto_relationships),
-        generate_descriptions: Boolean(configForm.generate_descriptions),
+        auto_relationships: formToUse.auto_relationships,
+        generate_descriptions: formToUse.generate_descriptions,
+        write_strategy: formToUse.write_strategy || 'copy',
       },
     };
 
-    if (configForm.source_type === 'fabric') {
-      if (configForm.identity_id) nextTree.source.identity_id = configForm.identity_id;
+    if (formToUse.source_type === 'fabric') {
+      if (formToUse.identity_id) nextTree.source.identity_id = formToUse.identity_id;
       else delete nextTree.source.identity_id;
-      nextTree.source.workspace_id = configForm.workspace_id || '';
+      nextTree.source.workspace_id = formToUse.workspace_id || '';
       delete nextTree.source.pbix_path;
       delete nextTree.source.pbix_folder;
       delete nextTree.source.source_path;
       delete nextTree.source.file_path;
       delete nextTree.source.database;
       delete nextTree.source.schema;
-    } else if (configForm.source_type === 'snowflake') {
+    } else if (formToUse.source_type === 'snowflake') {
       delete nextTree.source.identity_id;
-      nextTree.source.database = configForm.database || '';
-      nextTree.source.schema = configForm.schema || '';
+      nextTree.source.database = formToUse.database || '';
+      nextTree.source.schema = formToUse.schema || '';
       delete nextTree.source.pbix_path;
       delete nextTree.source.pbix_folder;
       delete nextTree.source.source_path;
       delete nextTree.source.file_path;
       delete nextTree.source.workspace_id;
-    } else if (configForm.source_type === 'pbix') {
+    } else if (formToUse.source_type === 'pbix') {
       delete nextTree.source.identity_id;
       delete nextTree.source.workspace_id;
       delete nextTree.source.database;
       delete nextTree.source.schema;
-      if (configForm.pbix_path?.trim()) {
-        nextTree.source.pbix_path = configForm.pbix_path.trim();
-        nextTree.source.pbix_file_path = configForm.pbix_path.trim();
+      if (formToUse.pbix_path?.trim()) {
+        nextTree.source.pbix_path = formToUse.pbix_path.trim();
+        nextTree.source.pbix_file_path = formToUse.pbix_path.trim();
       } else {
         delete nextTree.source.pbix_path;
         delete nextTree.source.pbix_file_path;
       }
-      if (configForm.pbix_folder?.trim()) {
-        nextTree.source.pbix_folder = configForm.pbix_folder.trim();
+      if (formToUse.pbix_folder?.trim()) {
+        nextTree.source.pbix_folder = formToUse.pbix_folder.trim();
       } else {
         delete nextTree.source.pbix_folder;
       }
@@ -746,11 +981,11 @@ export default function ProjectConfigPage() {
       delete nextTree.source.file_path;
     }
 
-    if (configForm.source_type === 'pbix') {
+    if (formToUse.source_type === 'pbix') {
       // PBIX extraction resolves model from file path/folder; do not force model fields.
       delete nextTree.source.model;
       delete nextTree.source.models;
-    } else if (configForm.source_type === 'fabric') {
+    } else if (formToUse.source_type === 'fabric') {
       if (allow.length) {
         nextTree.source.models = allow;
       } else {
@@ -765,17 +1000,26 @@ export default function ProjectConfigPage() {
       delete nextTree.source.models;
     }
 
-    if (configForm.target_type === 'snowflake') {
-      if (configForm.target_database) nextTree.target.database = configForm.target_database;
+    if (Array.isArray(formToUse.selection_model_ids) && formToUse.selection_model_ids.length > 0) {
+      nextTree.selection = {
+        ...(nextTree.selection || {}),
+        model_ids: formToUse.selection_model_ids,
+      };
+    } else {
+      delete nextTree.selection;
+    }
+
+    if (formToUse.target_type === 'snowflake') {
+      if (formToUse.target_database) nextTree.target.database = formToUse.target_database;
       else delete nextTree.target.database;
-      if (configForm.target_schema) nextTree.target.schema = configForm.target_schema;
+      if (formToUse.target_schema) nextTree.target.schema = formToUse.target_schema;
       else delete nextTree.target.schema;
       delete nextTree.target.identity_id;
       delete nextTree.target.workspace_id;
-    } else if (configForm.target_type === 'fabric') {
-      if (configForm.target_identity_id) nextTree.target.identity_id = configForm.target_identity_id;
+    } else if (formToUse.target_type === 'fabric') {
+      if (formToUse.target_identity_id) nextTree.target.identity_id = formToUse.target_identity_id;
       else delete nextTree.target.identity_id;
-      if (configForm.target_workspace_id) nextTree.target.workspace_id = configForm.target_workspace_id;
+      if (formToUse.target_workspace_id) nextTree.target.workspace_id = formToUse.target_workspace_id;
       else delete nextTree.target.workspace_id;
       delete nextTree.target.database;
       delete nextTree.target.schema;
@@ -795,12 +1039,16 @@ export default function ProjectConfigPage() {
     return stringifyYaml(normalized, { lineWidth: 0 });
   };
 
-  const handleSave = async () => {
+  const handleSave = async (wizardPayload = null) => {
     setSaving(true);
     setSaveInfo('');
     try {
       let nextYaml = '';
-      if (viewMode === 'yaml') {
+      if (wizardPayload && typeof wizardPayload === 'object' && wizardPayload.name) {
+        const { name, description, tags, configForm: updatedConfigForm } = wizardPayload;
+        await api.updateProject(project.id, { name, description, tags: Array.from(tags || []) });
+        nextYaml = buildYamlFromForm(updatedConfigForm, name);
+      } else if (viewMode === 'yaml') {
         const parsed = parseProjectYaml(yamlText, project);
         const normalizedTree = normalizeConfigTreeForApi(parsed.tree || {});
         setConfigTree(normalizedTree);
@@ -823,6 +1071,26 @@ export default function ProjectConfigPage() {
       }
 
       const response = await api.saveProjectConfig(id, nextYaml);
+      // Persist selected sync mode on the project record if it changed
+      try {
+        const normalizedSync = String(syncMode || 'copy').toLowerCase();
+        if (project && String(project.sync_mode || '').toLowerCase() !== normalizedSync) {
+          await api.updateProject(project.id || id, { sync_mode: normalizedSync });
+          setProject(prev => ({ ...(prev || {}), sync_mode: normalizedSync }));
+        }
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem(`project_${id}_syncMode`, normalizedSync);
+        }
+      } catch (err) {
+        addLog('warning', 'Project Config', `Failed to persist sync mode: ${err?.message || err}`);
+      }
+      
+      if (wizardPayload && typeof wizardPayload === 'object' && wizardPayload.name) {
+        setSaveInfo('Config saved successfully.');
+        navigate('/projects');
+        return;
+      }
+      
       setYamlText(nextYaml);
       if (response?.yaml_path) setYamlPath(response.yaml_path);
       if (Array.isArray(response?.warnings) && response.warnings.length) {
@@ -1371,6 +1639,17 @@ export default function ProjectConfigPage() {
       ? 'Sync Successful'
       : 'Sync Now';
 
+  const wizardInitialData = useMemo(() => {
+    return {
+      id: project?.id || project?.project_id,
+      name: project?.name || '',
+      description: project?.description || '',
+      tags: project?.tags || [],
+      mappings: projectMappings || [],
+      ...configForm,
+    };
+  }, [project, configForm, projectMappings]);
+
   if (loading) {
     return (
       <div style={{ padding: 36, color: 'var(--text-tertiary)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1391,33 +1670,115 @@ export default function ProjectConfigPage() {
     );
   }
 
+
+
   return (
-    <div style={{ padding: '28px 16px', minHeight: '100%', maxWidth: 1400, margin: '0 auto', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} className="md:px-10">
-      <div style={{ padding: '18px 28px', borderBottom: '1px solid var(--border-main)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <button
-          onClick={() => navigate('/projects')}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}
-        >
-          <ArrowLeft size={14} /> Projects
-        </button>
-        <span style={{ color: 'var(--border-main)' }}>|</span>
+    <div style={{ padding: '28px 48px', minHeight: '100%', width: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ padding: '24px 0', borderBottom: '1px solid var(--border-main)', display: 'flex', alignItems: 'flex-start', gap: 24, flexWrap: 'wrap' }}>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{project.name}</div>
-          <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Edit Project</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <button
+              onClick={() => navigate('/projects')}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 0 }}
+              title="Back to Projects"
+            >
+              <ArrowLeft size={18} />
+            </button>
+            <h1 style={{ fontSize: 32, fontWeight: 800, color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.02em' }}>
+              {project.name}
+            </h1>
+            <div style={{ 
+              background: 'var(--bg-surface-raised)', 
+              padding: '4px 10px', 
+              borderRadius: 6, 
+              border: '1px solid var(--border-main)',
+              fontSize: 11,
+              fontWeight: 700,
+              color: 'var(--text-tertiary)',
+              fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+              marginLeft: 8
+            }}>
+              ID: {project.id}
+            </div>
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 16 }}>
+            <span>Project Configuration & Pipeline Control</span>
+            <span style={{ color: 'var(--border-main)' }}>•</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <RefreshCw size={12} /> Last synced: {latestProjectRun?.completed_at ? new Date(latestProjectRun.completed_at).toLocaleDateString() : 'Never'}
+            </span>
+          </div>
         </div>
 
-        <button onClick={() => setGlobalOpen(true)} style={secondaryBtn}>
-          <Settings2 size={13} /> Global Config
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button 
+            onClick={() => setSchedulerOpen(true)} 
+            className="flex items-center gap-2 px-4 py-2 text-xs font-bold transition-all rounded-lg bg-[var(--accent-blue)] hover:bg-blue-600 text-white shadow-lg shadow-blue-900/20"
+          >
+            <CalendarClock size={14} /> CONFIGURE SCHEDULE
+          </button>
 
-        <div style={{ display: 'inline-flex', border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden' }}>
-          <ModeButton active={viewMode === 'form'} onClick={() => handleViewModeChange('form')} icon={<SlidersHorizontal size={13} />} ariaLabel="Form view" />
-          <ModeButton active={viewMode === 'yaml'} onClick={() => handleViewModeChange('yaml')} icon={<FileCode2 size={13} />} ariaLabel="YAML view" />
+          <div style={{ position: 'relative' }} ref={moreActionsRef}>
+            <button
+              onClick={() => setMoreActionsOpen(!moreActionsOpen)}
+              className="flex items-center gap-2 px-4 py-2 text-xs font-bold transition-all rounded-lg border border-[var(--border-main)] hover:bg-[var(--bg-surface-raised)] text-[var(--text-secondary)]"
+            >
+              <Settings2 size={14} /> OPTIONS <ChevronDown size={14} />
+            </button>
+            {moreActionsOpen && (
+              <div style={{ 
+                position: 'absolute', 
+                top: '100%', 
+                right: 0, 
+                marginTop: 8, 
+                width: 240, 
+                background: 'var(--bg-surface)', 
+                border: '1px solid var(--border-main)', 
+                borderRadius: 12, 
+                boxShadow: '0 8px 30px rgba(0,0,0,0.4)', 
+                padding: 6, 
+                zIndex: 1001 
+              }}>
+                <div style={{ padding: '8px 12px', fontSize: 10, fontWeight: 700, color: 'var(--text-quaternary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Administrative Tasks</div>
+                <button onClick={() => { setMoreActionsOpen(false); setManualSnapOpen(true); }} className="w-full text-left px-3 py-2.5 text-xs hover:bg-[var(--bg-surface-raised)] rounded-md text-[var(--text-primary)] flex items-center justify-between group transition-colors">
+                  <div className="flex items-center gap-2">
+                    <Camera size={14} className="text-[var(--text-tertiary)] group-hover:text-[var(--accent-blue)]" /> 
+                    <span>Create Snapshot</span>
+                  </div>
+                  <ChevronDown size={12} className="-rotate-90 text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100" />
+                </button>
+                <button onClick={() => { setMoreActionsOpen(false); setRestoreOpen(true); }} className="w-full text-left px-3 py-2.5 text-xs hover:bg-[var(--bg-surface-raised)] rounded-md text-[var(--text-primary)] flex items-center justify-between group transition-colors">
+                  <div className="flex items-center gap-2">
+                    <RotateCcw size={14} className="text-[var(--text-tertiary)] group-hover:text-[var(--accent-blue)]" /> 
+                    <span>Restore Version</span>
+                  </div>
+                  <ChevronDown size={12} className="-rotate-90 text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100" />
+                </button>
+                <button onClick={() => { setMoreActionsOpen(false); setCompareOpen(true); }} className="w-full text-left px-3 py-2.5 text-xs hover:bg-[var(--bg-surface-raised)] rounded-md text-[var(--text-primary)] flex items-center justify-between group transition-colors">
+                  <div className="flex items-center gap-2">
+                    <SlidersHorizontal size={14} className="text-[var(--text-tertiary)] group-hover:text-[var(--accent-blue)]" /> 
+                    <span>Compare Versions</span>
+                  </div>
+                  <ChevronDown size={12} className="-rotate-90 text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100" />
+                </button>
+                <div style={{ height: 1, background: 'var(--border-main)', margin: '6px 0' }} />
+                <button onClick={() => { setMoreActionsOpen(false); setGlobalOpen(true); }} className="w-full text-left px-3 py-2.5 text-xs hover:bg-[var(--bg-surface-raised)] rounded-md text-[var(--text-primary)] flex items-center gap-2 transition-colors">
+                  <Settings2 size={14} className="text-[var(--text-tertiary)]" /> 
+                  <span>Global System Config</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'inline-flex', border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden', marginLeft: 12 }}>
+            <ModeButton active={viewMode === 'form'} onClick={() => handleViewModeChange('form')} icon={<SlidersHorizontal size={13} />} ariaLabel="Form view" />
+            <ModeButton active={viewMode === 'yaml'} onClick={() => handleViewModeChange('yaml')} icon={<FileCode2 size={13} />} ariaLabel="YAML view" />
+          </div>
         </div>
       </div>
 
       {(yamlPath || saveInfo) && (
-        <div style={{ padding: '10px 28px', borderBottom: '1px solid var(--border-main)', fontSize: 12, color: 'var(--text-secondary)', display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+        <div style={{ padding: '10px 0', borderBottom: '1px solid var(--border-main)', fontSize: 12, color: 'var(--text-secondary)', display: 'flex', gap: 14, flexWrap: 'wrap' }}>
           {yamlPath && <span>Project semabridge.yaml: {yamlPath}</span>}
           {saveInfo && <span>{saveInfo}</span>}
         </div>
@@ -1446,18 +1807,18 @@ export default function ProjectConfigPage() {
               error={projectMappingsError}
             />
             {viewMode === 'form' ? (
-              <FormEditor
-                value={configForm}
-                onChange={setConfigForm}
-                fabricAccounts={fabricAccounts}
-                fabricWorkspaces={fabricWorkspaces}
-                fabricLoading={fabricLoading}
-                onRefreshFabricWorkspaces={() => refreshFabricWorkspaces()}
-                targetFabricAccounts={targetFabricAccounts}
-                targetFabricWorkspaces={targetFabricWorkspaces}
-                targetFabricLoading={targetFabricLoading}
-                onRefreshTargetFabricWorkspaces={() => refreshTargetFabricWorkspaces()}
-                databricksAccounts={databricksAccounts}
+              <ProjectDashboard
+                project={project}
+                configForm={configForm}
+                setConfigForm={(next) => {
+                  setConfigForm(next);
+                  try {
+                    const nextYaml = buildYamlFromForm(next);
+                    setYamlText(nextYaml);
+                  } catch (e) {
+                    console.error('Failed to sync form to YAML:', e);
+                  }
+                }}
               />
             ) : (
               <div style={{ height: '100%', minHeight: 420 }}>
@@ -1480,7 +1841,18 @@ export default function ProjectConfigPage() {
                     height="100%"
                     theme={theme === 'dark' ? 'dark' : 'light'}
                     extensions={yamlExtensions}
-                    onChange={(val) => setYamlText(val)}
+                    onChange={(val) => {
+                      setYamlText(val);
+                      try {
+                        const parsed = parseProjectYaml(val, project);
+                        if (parsed && parsed.form) {
+                          setConfigForm(parsed.form);
+                          setConfigTree(parsed.tree || {});
+                        }
+                      } catch {
+                        // ignore typing errors
+                      }
+                    }}
                     basicSetup={{
                       lineNumbers: true,
                       foldGutter: true,
@@ -1500,83 +1872,60 @@ export default function ProjectConfigPage() {
 
       </div>
 
-      <div style={{ padding: '10px 28px', borderTop: '1px solid var(--border-main)', background: 'var(--bg-surface)' }} />
 
-
-      {/* Action Buttons */}
-      <div style={{ padding: '14px 28px', borderTop: '1px solid var(--border-main)', display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap', background: 'var(--bg-surface)', position: 'sticky', bottom: 0, zIndex: 2 }}>
-        <button onClick={() => setSchedulerOpen(true)} style={secondaryBtn}>
-          <CalendarClock size={13} /> Schedule
-        </button>
-        <button onClick={openManualSnapshotModal} disabled={saving || syncing || isProjectSyncing} style={secondaryBtn}>
-          <Camera size={13} /> Capture Snapshot
-        </button>
-        <button onClick={openCompareModal} disabled={saving || syncing || isProjectSyncing} style={secondaryBtn}>
-          <FileCode2 size={13} /> Compare States
-        </button>
-        <button onClick={openRestoreModal} disabled={saving || syncing || isProjectSyncing} style={secondaryBtn}>
-          <RotateCcw size={13} /> Restore Version
-        </button>
-        <button onClick={handleCreateJob} style={secondaryBtn}>
-          <CalendarClock size={13} /> Create Job for Later
-        </button>
-        <button onClick={handleSave} disabled={saving || syncing || isProjectSyncing} style={secondaryBtn}>
-          {saving ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Save size={13} />}
-          Save Config
-        </button>
-        {/* Sync Mode Selector */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 0, border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg-input)' }}>
-          <select
-            id="sync-mode-select"
-            value={syncMode}
-            onChange={e => {
-              const val = e.target.value;
-              setSyncMode(val);
-              localStorage.setItem(`project_${id}_syncMode`, val);
-            }}
-            disabled={saving || syncing || isProjectSyncing}
-            title={syncMode === 'copy' ? 'COPY: target fully replaced by source' : 'UPSERT: source wins on conflict, target-only entities preserved'}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: syncMode === 'upsert' ? 'var(--color-warning, #f59e0b)' : 'var(--text-secondary)',
-              fontWeight: 700,
-              fontSize: 11,
-              padding: '0 10px',
-              height: 32,
-              cursor: saving || syncing || isProjectSyncing ? 'not-allowed' : 'pointer',
-              outline: 'none',
-              letterSpacing: '0.05em',
-              textTransform: 'uppercase',
-            }}
+      {/* Sticky Bottom Persistent Action Bar */}
+      <div style={{ 
+        padding: '16px 48px', 
+        borderTop: '1px solid var(--border-main)', 
+        display: 'flex', 
+        alignItems: 'center',
+        justifyContent: 'space-between', 
+        background: 'rgba(18, 20, 28, 0.95)', 
+        backdropFilter: 'blur(12px)',
+        position: 'fixed', 
+        bottom: 0, 
+        left: 0,
+        right: 0,
+        zIndex: 1000,
+        boxShadow: '0 -4px 20px rgba(0, 0, 0, 0.2)'
+      }}>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <button 
+            onClick={() => {
+              navigator.clipboard.writeText(yamlText);
+              setSaveInfo('YAML Configuration copied to clipboard!');
+              setTimeout(() => setSaveInfo(''), 3000);
+            }} 
+            className="flex items-center gap-2 px-4 py-2 text-xs font-bold transition-all rounded-lg border border-[var(--border-main)] hover:bg-[var(--bg-surface-raised)] text-[var(--text-secondary)]"
           >
-            <option value="copy">COPY</option>
-            <option value="upsert">UPSERT</option>
-          </select>
-          <div style={{ width: 1, background: 'var(--border-main)', height: 20 }} />
-          <button
-            id="sync-now-btn"
-            onClick={handleRunNow}
-            disabled={saving || syncing || isProjectSyncing}
-            style={{
-              ...syncButtonStyle,
-              borderRadius: 0,
-              border: 'none',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '0 16px',
-              height: 32,
-            }}
-          >
-            {isProjectSyncing || syncing ? (
-              <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
-            ) : isProjectSynced ? (
-              <CheckCircle2 size={13} />
-            ) : (
-              <Play size={13} />
-            )} {syncButtonLabel}
+            <Copy size={14} /> COPY YAML
           </button>
+        </div>
+
+        <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+          {saveInfo && (
+            <div style={{ fontSize: 12, color: 'var(--accent-green)', fontWeight: 600 }}>
+              {saveInfo}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button 
+              onClick={handleSave} 
+              disabled={saving}
+              className="flex items-center gap-2 px-5 py-2 text-xs font-bold transition-all rounded-lg border border-[var(--border-main)] hover:bg-[var(--bg-surface-raised)] text-[var(--text-secondary)]"
+            >
+              {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+              Save Config
+            </button>
+            <button 
+              onClick={handleRunNow} 
+              disabled={syncing} 
+              className="flex items-center gap-2 px-6 py-2 text-xs font-bold transition-all rounded-lg bg-[var(--accent-blue)] hover:bg-blue-600 text-white shadow-lg shadow-blue-900/20"
+            >
+              {syncing ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+              {syncing ? 'Syncing...' : 'Sync Now'}
+            </button>
+          </div>
         </div>
       </div>
 

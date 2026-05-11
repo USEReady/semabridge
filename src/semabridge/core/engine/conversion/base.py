@@ -16,6 +16,7 @@ from semabridge.connectors.snowflake_emitter import MissingSourceTableWarning
 from semabridge.core.settings import Settings, get_settings
 from semabridge.core.config_loader import get_project_file_path
 from semabridge.core.behavior import ConnectorBehavior
+from semabridge.core.sync_modes import apply_sync_mode
 from semabridge.core.run_summary import (
     STEP_NAMES,
     RunStatus,
@@ -88,6 +89,7 @@ def _step6_convert_to_sml(
 
     - Map validated Source Format into canonical SML
     - Ensure schema correctness and semantic consistency
+    - Apply sync_mode logic (UPSERT: merge with target; COPY: use source only)
     """
     self._current_step = 6
     logger.info("Step 6: Converting to canonical SML")
@@ -105,6 +107,42 @@ def _step6_convert_to_sml(
         # Normalize relationship names/deduplication here so all downstream
         # target conversions and deployments operate on the same final model.
         self._normalize_relationships_for_target(sml_model)
+        
+        # Apply sync_mode logic after source conversion so target-only Snowflake
+        # objects are preserved before target-format generation/deployment.
+        sync_mode = str(getattr(context, 'sync_mode', 'copy') or 'copy').strip().lower()
+        target_model = getattr(context, 'target_sml_model', None)
+
+        if sync_mode == "copy":
+            logger.info(f"COPY mode: Using source only (target-only entities will be deleted)")
+        elif sync_mode == "upsert":
+            logger.info("UPSERT mode: fetching live target state")
+            if target_model is not None:
+                logger.info("Live target fetched, applying merge")
+                logger.info(
+                    "UPSERT source before merge: %d datasets, %d metrics, %d dimensions",
+                    len(sml_model.datasets),
+                    len(sml_model.metrics),
+                    len(sml_model.dimensions),
+                )
+                logger.info(
+                    "UPSERT target before merge: %d datasets, %d metrics, %d dimensions",
+                    len(target_model.datasets),
+                    len(target_model.metrics),
+                    len(target_model.dimensions),
+                )
+                sml_model = apply_sync_mode(sml_model, target_model, "upsert")
+                logger.info(
+                    "Merge complete: %d datasets, %d metrics, %d dimensions",
+                    len(sml_model.datasets),
+                    len(sml_model.metrics),
+                    len(sml_model.dimensions),
+                )
+            else:
+                logger.warning("Could not fetch live target, falling back to COPY behavior")
+        elif target_model is None:
+            logger.info(f"No existing target found - treating as new deployment (source-only behavior)")
+        
         return sml_model
 
     except Exception as e:

@@ -34,6 +34,7 @@ class SemanticSnapshot(BaseModel):
     schema_hash: str = Field(..., description="SHA256 hash of semantic state")
     parent_snapshot_id: Optional[str] = Field(None, description="Parent snapshot ID")
     change_description: str = Field("", description="Description of changes")
+    sync_mode: str = Field("copy", description="Sync mode used (copy, upsert, etc.) - v4.3 rollback metadata")
     
     # Counts for quick lookup
     measure_count: int = Field(0, description="Number of measures")
@@ -153,6 +154,7 @@ class SemanticSnapshotManager:
         semantic_state: Dict[str, Any],
         change_description: str = "",
         parent_snapshot_id: Optional[str] = None,
+        sync_mode: str = "copy",
     ) -> SemanticSnapshot:
         """
         Create an immutable snapshot.
@@ -162,6 +164,7 @@ class SemanticSnapshotManager:
             semantic_state: Full SML JSON state.
             change_description: Description of what changed.
             parent_snapshot_id: Parent snapshot (auto-detected if None).
+            sync_mode: Sync mode used (copy, upsert, etc.) - stored for rollback context.
             
         Returns:
             The created SemanticSnapshot.
@@ -180,7 +183,7 @@ class SemanticSnapshotManager:
         # Count entities
         counts = self._count_entities(semantic_state)
         
-        # Create snapshot
+        # Create snapshot with sync_mode metadata
         snapshot = SemanticSnapshot(
             snapshot_id=snapshot_id,
             adapter=adapter,
@@ -189,6 +192,7 @@ class SemanticSnapshotManager:
             schema_hash=schema_hash,
             parent_snapshot_id=parent_snapshot_id,
             change_description=change_description,
+            sync_mode=sync_mode,
             **counts,
         )
         
@@ -202,7 +206,7 @@ class SemanticSnapshotManager:
         self._save_index()
         
         logger.info(
-            f"Created snapshot {snapshot_id} for {adapter}: "
+            f"Created snapshot {snapshot_id} for {adapter} (sync_mode={sync_mode}): "
             f"{snapshot.measure_count} measures, {snapshot.dimension_count} dimensions"
         )
         return snapshot

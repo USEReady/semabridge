@@ -3,11 +3,12 @@ import logging
 import datetime
 import json
 import re
-from typing import Any, Dict, List, Optional, TYPE_CHECKING, TypeAlias
+from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING, TypeAlias
 
 from semabridge.utils.logger import get_logger
 from semabridge.core.exceptions import ConnectorError
 from semabridge.formats.sml.models import SMLModel, SMLMetric, DataType
+from semabridge.connectors.schema_compatibility_validator import SchemaCompatibilityValidator
 
 if TYPE_CHECKING:
     from semabridge.intermediate.models import OSIModel, OSIDataset, OSIMetric, OSIDataType
@@ -215,19 +216,83 @@ class MeasureSynchronizer:
             cur = conn.cursor()
             
             try:
-                # Create or replace table based on write mode
+                # Build schema type map for this measure
+                type_map = []
+                for col in columns:
+                    val = first_row[col]
+                    if isinstance(val, bool):
+                        type_map.append((col, "BOOLEAN"))
+                    elif isinstance(val, int):
+                        type_map.append((col, "INTEGER"))
+                    elif isinstance(val, float):
+                        type_map.append((col, "FLOAT"))
+                    elif isinstance(val, (list, dict)):
+                        type_map.append((col, "VARIANT"))
+                    else:
+                        # Check if it looks like a date
+                        str_val = str(val) if val else ""
+                        if len(str_val) == 10 and "-" in str_val:
+                            type_map.append((col, "DATE"))
+                        else:
+                            type_map.append((col, "VARCHAR(500)"))
+                
+                # Prepare expected column info for validation
+                expected_columns = {self._id.sanitize_column(c[0]): c[1] for c in type_map}
+                col_defs = ", ".join([f'"{self._id.sanitize_column(c[0])}" {c[1]}' for c in type_map])
+                
+                # Check if table exists and validate compatibility
+                validator = SchemaCompatibilityValidator(cur, self.config)
+                validation_result = validator.validate_table(
+                    table_name=safe_table,
+                    join_columns=set(expected_columns.keys()),
+                    join_column_types=expected_columns
+                )
+                
                 if write_mode == "overwrite":
-                    col_defs = ", ".join([f'"{self._id.sanitize_column(c[0])}" {c[1]}' for c in type_map])
-                    create_ddl = f"CREATE OR REPLACE TABLE {full_table} ({col_defs})"
-                    logger.debug(f"Creating table: {create_ddl}")
-                    self.connection_manager._execute_sql(cur, create_ddl, context=f"CREATE TABLE {full_table}")
+                    if validation_result.table_exists:
+                        # Table exists - check if it's compatible
+                        if not validation_result.is_compatible:
+                            # Schema mismatch - abort to preserve data
+                            error_msg = (
+                                f"Cannot overwrite {full_table}: existing table has incompatible schema.\n"
+                                f"{validation_result.error_message()}\n"
+                                f"To proceed, manually drop the table or change the target table name."
+                            )
+                            raise ConnectorError(error_msg)
+                        # Compatible - truncate and reuse
+                        logger.info(f"Existing table {full_table} is compatible. Truncating and reusing.")
+                        self.connection_manager._execute_sql(
+                            cur, 
+                            f"TRUNCATE TABLE {full_table}", 
+                            context=f"TRUNCATE TABLE {full_table}"
+                        )
+                    else:
+                        # Table doesn't exist - create it
+                        logger.info(f"Creating new table {full_table}")
+                        self.connection_manager._execute_sql(
+                            cur,
+                            f"CREATE TABLE IF NOT EXISTS {full_table} ({col_defs})",
+                            context=f"CREATE TABLE IF NOT EXISTS {full_table}"
+                        )
+                        
                 elif write_mode == "append":
-                    # Check if table exists, create if not
-                    try:
-                        self.connection_manager._execute_sql(cur, f"DESC TABLE {full_table}", context=f"DESC TABLE {full_table}")
-                    except:
-                        col_defs = ", ".join([f'"{self._id.sanitize_column(c[0])}" {c[1]}' for c in type_map])
-                        self.connection_manager._execute_sql(cur, f"CREATE TABLE IF NOT EXISTS {full_table} ({col_defs})", context=f"CREATE TABLE IF NOT EXISTS {full_table}")
+                    if not validation_result.table_exists:
+                        # Create table if it doesn't exist
+                        logger.info(f"Creating new table {full_table} for append mode")
+                        self.connection_manager._execute_sql(
+                            cur,
+                            f"CREATE TABLE IF NOT EXISTS {full_table} ({col_defs})",
+                            context=f"CREATE TABLE IF NOT EXISTS {full_table}"
+                        )
+                    elif not validation_result.is_compatible:
+                        # In append mode, also validate for compatibility
+                        error_msg = (
+                            f"Cannot append to {full_table}: existing table has incompatible schema.\n"
+                            f"{validation_result.error_message()}"
+                        )
+                        raise ConnectorError(error_msg)
+                    else:
+                        logger.info(f"Appending to existing compatible table {full_table}")
                 
                 # Insert data in batches for performance
                 batch_size = 10000
@@ -252,7 +317,6 @@ class MeasureSynchronizer:
                             elif isinstance(val, (int, float)):
                                 vals.append(str(val))
                             elif isinstance(val, (list, dict)):
-                                import json
                                 vals.append(f"PARSE_JSON('{json.dumps(val)}')")
                             else:
                                 # Escape single quotes in strings
@@ -282,6 +346,7 @@ class MeasureSynchronizer:
                     pass
                     
                 return True
+
                 
             finally:
                 cur.close()
