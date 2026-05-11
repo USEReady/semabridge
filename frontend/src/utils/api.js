@@ -545,8 +545,11 @@ export const api = {
             for (const list of nestedResults) {
                 for (const item of list) {
                     const sid = String(item?.snapshot_id || '');
-                    if (!sid) continue;
-                    deduped.set(sid, item);
+                    const modelName = String(item?.model_name || '');
+                    if (!sid || !modelName) continue;
+                    // Deduplicate by project + snapshot combo, not globally by snapshot_id
+                    const key = `${modelName}|${sid}`;
+                    deduped.set(key, item);
                 }
             }
 

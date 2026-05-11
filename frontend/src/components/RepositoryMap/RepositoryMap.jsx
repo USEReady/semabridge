@@ -183,9 +183,16 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                 );
                 effectiveSnapshotId = sorted[0]?.snapshot_id || null;
             }
-            setSelectedSnapshotId(effectiveSnapshotId);
-
+            
+            // Find the snapshot and set the composite key (model_name|snapshot_id)
             const effectiveSnapshot = snapshots.find((s) => s?.snapshot_id === effectiveSnapshotId) || null;
+            if (effectiveSnapshot) {
+                const compositeKey = `${effectiveSnapshot.model_name}|${effectiveSnapshotId}`;
+                setSelectedSnapshotId(compositeKey);
+            } else {
+                setSelectedSnapshotId(null);
+            }
+
             const modelScope = String(effectiveSnapshot?.model_name || '').trim() || '__all__';
 
             if (effectiveSnapshotId) {
@@ -308,13 +315,18 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     };
 
     // ── snapshot selector handler ────────────────────
-    const handleSnapshotChange = async (newSnapshotId) => {
-        setSelectedSnapshotId(newSnapshotId);
+    const handleSnapshotChange = async (snapshotKey) => {
+        // snapshotKey format: "model_name|snapshot_id" to support multi-project snapshots
+        const [modelName, snapshotId] = snapshotKey.split('|');
+        setSelectedSnapshotId(snapshotKey);
         setGraphLoading(true);
         try {
-            const selectedSnap = allSnapshots.find(s => s?.snapshot_id === newSnapshotId);
+            const selectedSnap = allSnapshots.find(s => 
+                s?.snapshot_id === snapshotId && s?.model_name === modelName
+            );
+            if (!selectedSnap) throw new Error('Snapshot not found');
             const modelScope = String(selectedSnap?.model_name || '').trim() || '__all__';
-            const graphResp = await api.getGraphSnapshot(modelScope, newSnapshotId, includeSystemTables).catch(() => null);
+            const graphResp = await api.getGraphSnapshot(modelScope, snapshotId, includeSystemTables).catch(() => null);
             const normalizedGraph = graphResp ? normalizeGraphPayload(graphResp) : { nodes: [], edges: [], meta: {} };
             setGraphData(normalizedGraph);
         } catch (err) {
@@ -668,15 +680,15 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                         background: 'var(--bg-app)',
                         color: 'var(--text-primary)',
                         cursor: 'pointer',
-                        minWidth: 150,
+                        minWidth: 200,
                     }}
                 >
                     {allSnapshots.length === 0 ? (
                         <option value="">No snapshots</option>
                     ) : (
                         allSnapshots.map(snap => (
-                            <option key={snap.snapshot_id} value={snap.snapshot_id}>
-                                {new Date(snap.timestamp).toLocaleString()} {snap.version_tag ? `(${snap.version_tag})` : ''}
+                            <option key={`${snap.model_name}|${snap.snapshot_id}`} value={snap.snapshot_id}>
+                                {snap.model_name} • {new Date(snap.timestamp).toLocaleString()} {snap.version_tag ? `(${snap.version_tag})` : ''}
                             </option>
                         ))
                     )}
