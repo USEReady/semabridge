@@ -331,6 +331,9 @@ class Project(Base):
     runs: Mapped[List["Run"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+    artifact_metadata: Mapped[List["ArtifactMetadata"]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:
         return f"<Project(project_id={self.project_id!r}, name={self.name!r})>"
@@ -469,6 +472,62 @@ class SourceArtifact(Base):
         return (
             f"<SourceArtifact(artifact_id={self.artifact_id!r}, "
             f"source_type={self.source_type!r})>"
+        )
+
+
+class ArtifactMetadata(Base):
+    """Artifact lifecycle and versioning metadata.
+    
+    Tracks the state of artifacts (semantic views, datasets, models) across
+    the sync lifecycle: created, updated, deprecated, archived. Enables
+    contract validation and version pinning for downstream consumers.
+    
+    Versioning strategy:
+    - artifact_ref: immutable reference (e.g., "model:AggregateMetrics")
+    - version: semantic version or timestamp-based (e.g., "1.0.0" or "20260512.1")
+    - status: "active", "deprecated", "archived", "failed"
+    - contract_version: schema contract enforced at sync time (breaks detected if mismatched)
+    - deprecation_date: when deprecated; null if active or never deprecated
+    - archived_at: when archived; null otherwise
+    """
+
+    __tablename__ = "artifact_metadata"
+    __table_args__ = (
+        Index("ix_artifact_ref_project", "project_id", "artifact_ref"),
+        Index("ix_artifact_version_status", "artifact_ref", "status"),
+        Index("ix_artifact_deprecation_date", "deprecation_date"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.project_id"), nullable=False
+    )
+    artifact_ref: Mapped[str] = mapped_column(String(255), nullable=False)  # e.g., "model:AggregateMetrics"
+    version: Mapped[str] = mapped_column(String(100), nullable=False)  # e.g., "1.0.0" or "20260512.1"
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active"
+    )  # "active", "deprecated", "archived", "failed"
+    contract_version: Mapped[str] = mapped_column(String(50), nullable=False, default="1.0")  # Schema version
+    
+    created_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False, default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        _UTC_DT, nullable=False, default=func.now(), onupdate=func.now()
+    )
+    deprecation_date: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)  # When deprecated
+    archived_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)  # When archived
+    
+    run_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)  # Associated run
+    snapshot_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)  # Associated snapshot
+    
+    metadata_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Extra metadata (JSON)
+    
+    # Relationships
+    project: Mapped["Project"] = relationship(back_populates="artifact_metadata")
+
+    def __repr__(self) -> str:
+        return (
+            f"<ArtifactMetadata(artifact_ref={self.artifact_ref!r}, "
+            f"version={self.version!r}, status={self.status!r})>"
         )
 
 

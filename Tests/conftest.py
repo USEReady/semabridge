@@ -120,6 +120,27 @@ def _set_test_database_env(request: pytest.FixtureRequest):
 
 
 
+# Initialize database schema for all tests
+@pytest.fixture(autouse=True, scope="session")
+def _init_test_schema(request: pytest.FixtureRequest):
+    """Create all ORM tables in the test database."""
+    # Wait for _set_test_database_env to complete first
+    request.getfixturevalue('_set_test_database_env')
+    
+    try:
+        from semabridge.repository.orm.base import Base
+        from semabridge.repository.orm.session_factory import db_manager
+        
+        engine = db_manager.get_engine()
+        Base.metadata.create_all(bind=engine, checkfirst=True)
+    except Exception as e:
+        # Log but don't fail — tests may set up their own schema
+        import logging
+        logging.warning(f"Failed to create ORM schema: {e}")
+    
+    yield
+
+
 # -----------------------------------------------------------------------------
 # SML Model Fixtures
 # -----------------------------------------------------------------------------
