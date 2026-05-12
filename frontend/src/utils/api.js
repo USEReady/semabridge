@@ -499,12 +499,18 @@ export const api = {
         return handleResponse(res);
     },
 
-    async getGraphSnapshot(modelId = '__all__', snapshotId, includeSystemTables = false) {
+    async getGraphSnapshot(
+        modelId = '__all__',
+        snapshotId,
+        includeSystemTables = false,
+        includeColumnLineage = false
+    ) {
         if (!snapshotId) {
             throw new Error('snapshotId is required');
         }
         const params = new URLSearchParams({
             include_system_tables: includeSystemTables ? 'true' : 'false',
+            include_column_lineage: includeColumnLineage ? 'true' : 'false',
         });
         const res = await authFetch(`${API_BASE_URL}/graph/${encodeURIComponent(modelId)}/snapshot/${encodeURIComponent(snapshotId)}?${params}`);
         return handleResponse(res);
