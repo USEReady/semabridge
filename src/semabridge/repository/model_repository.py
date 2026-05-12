@@ -403,6 +403,23 @@ class ModelRepository:
             )
             return [self._row_to_snapshot(r) for r in rows]
 
+    def list_all_snapshots(
+        self, limit: int = 10000
+    ) -> List[Snapshot]:
+        """List snapshots across all projects, newest first."""
+        with self._session() as session:
+            rows = (
+                session.execute(
+                    select(SnapshotRow)
+                    .order_by(SnapshotRow.timestamp.desc())
+                    .limit(limit)
+                )
+                .scalars()
+                .all()
+            )
+            return [self._row_to_snapshot(r) for r in rows]
+
+
     def commit_model(
         self,
         project_id: str,
@@ -891,6 +908,18 @@ class ModelRepository:
                 }
                 for r in rows
             ]
+
+    def list_distinct_model_ids(
+        self,
+        workspace_id: Optional[str] = None,
+    ) -> List[str]:
+        """List distinct model IDs present in model version history."""
+        with self._session() as session:
+            stmt = select(ModelVersion.model_id).distinct().order_by(ModelVersion.model_id.asc())
+            if workspace_id:
+                stmt = stmt.where(ModelVersion.workspace_id == workspace_id)
+            rows = session.execute(stmt).all()
+            return [str(row[0]) for row in rows if row and row[0]]
 
     def delete_model_versions(
         self,

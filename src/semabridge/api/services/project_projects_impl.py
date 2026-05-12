@@ -460,6 +460,26 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
     if not isinstance(datasets, list):
         datasets = []
 
+    # Fallback: extract models array directly if present
+    sml_models = sml.get("models", [])
+    if isinstance(sml_models, list):
+        for entry in sml_models:
+            if isinstance(entry, dict):
+                datasets.append(entry)
+            elif isinstance(entry, str):
+                datasets.append({"name": entry, "table": entry})
+
+    # Fallback: extract models from source block
+    source_obj = sml.get("source", {})
+    if isinstance(source_obj, dict):
+        src_models = source_obj.get("models", [])
+        if isinstance(src_models, list):
+            for entry in src_models:
+                if isinstance(entry, dict):
+                    datasets.append(entry)
+                elif isinstance(entry, str):
+                    datasets.append({"name": entry, "table": entry})
+
     entities = sml.get("entities", {})
     if isinstance(entities, dict):
         for ent_name, ent_def in entities.items():
@@ -661,6 +681,58 @@ async def graph_snapshots_compat(model_name: str):
             snapshots = db_manager.list_all_snapshots(limit=10000)
         else:
             snapshots = db_manager.list_snapshots(model_name, limit=10000)
+            if not snapshots:
+                # Backward-compat resolver:
+                # Older runs may have committed snapshots under project display name
+                # (e.g., "Client Data") instead of canonical project_id (e.g., "proj-client_sf").
+                alias_candidates: List[str] = []
+
+                # Deterministic aliases derived from the requested model id.
+                # This covers common cases where snapshots were committed under
+                # a bare name ("sales") while Explore requests prefixed ids
+                # ("proj-sales" / "preview-...").
+                requested = str(model_name or "").strip()
+                if requested:
+                    alias_candidates.append(requested)
+                    lower_requested = requested.lower()
+                    for prefix in ("proj-", "preview-"):
+                        if lower_requested.startswith(prefix):
+                            stripped = requested[len(prefix):].strip()
+                            if stripped and stripped not in alias_candidates:
+                                alias_candidates.append(stripped)
+                        else:
+                            prefixed = f"{prefix}{requested}"
+                            if prefixed not in alias_candidates:
+                                alias_candidates.append(prefixed)
+
+                project_row = _compat_projects.get(model_name) if isinstance(_compat_projects.get(model_name), dict) else {}
+                if project_row:
+                    for key in ("name", "display_name", "project_name"):
+                        val = str(project_row.get(key) or "").strip()
+                        if val and val not in alias_candidates:
+                            alias_candidates.append(val)
+                try:
+                    cfg_text = str(_compat_project_configs.get(model_name) or "").strip()
+                    if cfg_text:
+                        cfg = yaml.safe_load(cfg_text) or {}
+                        if isinstance(cfg, dict):
+                            cfg_name = str(cfg.get("project_name") or "").strip()
+                            if cfg_name and cfg_name not in alias_candidates:
+                                alias_candidates.append(cfg_name)
+                except Exception:
+                    pass
+
+                for alias in alias_candidates:
+                    alias_snaps = db_manager.list_snapshots(alias, limit=10000)
+                    if alias_snaps:
+                        logger.info(
+                            "[Explore] Snapshot list alias-resolved model=%s alias=%s count=%s",
+                            model_name,
+                            alias,
+                            len(alias_snaps),
+                        )
+                        snapshots = alias_snaps
+                        break
         
         logger.info("[Explore] Snapshot list resolved model=%s count=%s", model_name, len(snapshots or []))
         return [
