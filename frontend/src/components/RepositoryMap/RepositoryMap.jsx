@@ -405,6 +405,12 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     const [workbenchOpen, setWorkbenchOpen] = usePageCache('explore:workbenchOpen', false);
     const [showExplorer, setShowExplorer] = usePageCache('explore:showExplorer', true);
 
+    // ── Progressive disclosure state ──
+    const [disclosureLevel, setDisclosureLevel] = usePageCache('explore:disclosureLevel', 'model');  // model | table | column
+    // store as an array of IDs for page-cache compatibility
+    const [expandedTableIds, setExpandedTableIds] = usePageCache('explore:expandedTableIds', []);  // array of table IDs with columns loaded
+    const [tableLoadingIds, setTableLoadingIds] = useState([]); // array of table IDs currently loading
+
     const [layout, setLayout] = useState('hierarchical');           // hierarchical | force
     const [erMode, setErMode] = usePageCache('explore:erMode', true);                     // Power BI-like relationship view
     const [selectedModelId, setSelectedModelId] = usePageCache('explore:selectedModelId', '__all__');
@@ -664,12 +670,23 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             setSelectedModelId(getPrimaryModelIdFromGraph(normalizedGraph, pid));
             setHasUserSelectedModel(true);
             setSelectedTableId('__all__');
+            setExpandedTableIds([]);
+            setTableLoadingIds([]);
+            setDisclosureLevel('table');
         } catch (err) {
             console.error('Failed to load project context:', err);
         } finally {
             setGraphLoading(false);
         }
-    }, [allProjectIds, includeSystemTables, projectAliasesById, setSelectedModelId, setSelectedTableId]);
+    }, [
+        allProjectIds,
+        includeSystemTables,
+        projectAliasesById,
+        setDisclosureLevel,
+        setExpandedTableIds,
+        setSelectedModelId,
+        setSelectedTableId,
+    ]);
 
     const handleSnapshotChange = async (snapshotKey) => {
         if (!snapshotKey || !String(snapshotKey).includes('|')) return;
@@ -763,6 +780,9 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                 setHasUserSelectedModel(true);
             }
             setSelectedTableId('__all__');
+            setExpandedTableIds([]);
+            setTableLoadingIds([]);
+            setDisclosureLevel('table');
         } catch (err) {
             console.error('Failed to load snapshot:', err);
         } finally {
@@ -777,13 +797,90 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             const targetModelId = String(nodeData.model_id).trim();
             setSelectedModelId(targetModelId);
             setHasUserSelectedModel(true);
+            setDisclosureLevel('table');
             await loadProjectContext(targetModelId);
         }
         if (nodeData?.nodeType === 'table' && nodeData?.id) {
-            setSelectedTableId(String(nodeData.id));
+            const tid = String(nodeData.id);
+            setSelectedTableId(tid);
+            // trigger progressive disclosure for columns (non-blocking)
+            void expandTable(tid, String(nodeData.model_id || nodeData.data?.model_id || selectedModelId));
         }
         setSelectedNode(nodeData);
     };
+
+    // Progressive disclosure helpers
+    const isTableExpanded = useCallback((tableId) => {
+        if (!tableId) return false;
+        return Array.isArray(expandedTableIds) && expandedTableIds.includes(String(tableId));
+    }, [expandedTableIds]);
+
+    const setTableExpanded = useCallback((tableId, expand = true) => {
+        setExpandedTableIds((prev) => {
+            const arr = Array.isArray(prev) ? [...prev] : [];
+            const id = String(tableId);
+            if (expand) {
+                if (!arr.includes(id)) arr.push(id);
+                return arr;
+            }
+            return arr.filter((x) => x !== id);
+        });
+    }, [setExpandedTableIds]);
+
+    const setTableLoading = useCallback((tableId, loading) => {
+        setTableLoadingIds((prev) => {
+            const arr = Array.isArray(prev) ? [...prev] : [];
+            const id = String(tableId);
+            if (loading) {
+                if (!arr.includes(id)) arr.push(id);
+                return arr;
+            }
+            return arr.filter((x) => x !== id);
+        });
+    }, [setTableLoadingIds]);
+
+    const expandTable = useCallback(async (tableNodeId, modelId) => {
+        if (!tableNodeId || !modelId) return;
+        if (isTableExpanded(tableNodeId)) return;
+        const snapKey = selectedSnapshotId || snapshotId;
+        if (!snapKey) return;
+        // snapshotKey is of form "scope|snapshotId"
+        const sep = String(snapKey).lastIndexOf('|');
+        const snapshotIdPart = sep > 0 ? String(snapKey).slice(sep + 1) : snapKey;
+        try {
+            setTableLoading(tableNodeId, true);
+            const scopedGraph = await api.getGraphSnapshot(modelId, snapshotIdPart, includeSystemTables, true).catch(() => null);
+            if (!hasGraphNodes(scopedGraph)) return;
+            const normalized = normalizeGraphPayload(scopedGraph);
+
+            const columnNodes = (normalized.nodes || []).filter((n) => String(n?.data?.nodeType || '').toLowerCase() === 'column');
+            const columnNodeIds = new Set((columnNodes || []).map((n) => n.id));
+            const relevantEdges = (normalized.edges || []).filter((e) => {
+                if (!e || !e.source || !e.target) return false;
+                // include edges that reference the table node or any of the column nodes
+                return String(e.source) === String(tableNodeId) || String(e.target) === String(tableNodeId) || columnNodeIds.has(e.source) || columnNodeIds.has(e.target);
+            });
+
+            setGraphData((prev) => {
+                const existingNodeIds = new Set((prev.nodes || []).map((n) => n.id));
+                const mergedNodes = [...(prev.nodes || [])];
+                columnNodes.forEach((n) => { if (!existingNodeIds.has(n.id)) mergedNodes.push(n); });
+
+                const existingEdgeIds = new Set((prev.edges || []).map((e) => e.id));
+                const mergedEdges = [...(prev.edges || [])];
+                relevantEdges.forEach((e) => { if (!existingEdgeIds.has(e.id)) mergedEdges.push(e); });
+
+                return { ...prev, nodes: mergedNodes, edges: mergedEdges };
+            });
+
+            setTableExpanded(tableNodeId, true);
+            setDisclosureLevel('column');
+        } catch (err) {
+            console.error('Failed to expand table for columns:', err);
+        } finally {
+            setTableLoading(tableNodeId, false);
+        }
+    }, [selectedSnapshotId, snapshotId, includeSystemTables, isTableExpanded, setTableExpanded, setTableLoading]);
 
     const focusTableInER = useCallback((tableId) => {
         if (!tableId) return;
@@ -955,6 +1052,21 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     ))}
                 </div>
 
+                <div style={{
+                    marginLeft: 8,
+                    padding: '4px 8px',
+                    borderRadius: 999,
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--bg-app)',
+                    color: 'var(--text-secondary)',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                }}>
+                    View: {String(disclosureLevel || 'model')}
+                </div>
+
                 <div style={{ flex: 1 }} />
 
                 <select
@@ -1094,6 +1206,23 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
 
                 {/* 2. Relationship Canvas (Center) */}
                 <div style={{ flex: 1, position: 'relative', background: 'var(--bg-app)' }}>
+                    {tableLoadingIds.length > 0 && (
+                        <div style={{
+                            position: 'absolute',
+                            top: 12,
+                            left: 12,
+                            zIndex: 5,
+                            padding: '6px 10px',
+                            borderRadius: 6,
+                            border: '1px solid var(--border-color)',
+                            background: 'var(--bg-surface)',
+                            color: 'var(--text-secondary)',
+                            fontSize: 11,
+                            fontWeight: 600,
+                        }}>
+                            Loading columns for {tableLoadingIds.length} table{tableLoadingIds.length > 1 ? 's' : ''}...
+                        </div>
+                    )}
                     {graphMismatchReason === 'empty' ? (
                         <div style={{
                             display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
