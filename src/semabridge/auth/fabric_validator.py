@@ -107,7 +107,7 @@ class FabricTokenValidator:
         now = time.time()
         token_exp = payload.get("exp")
         if token_exp and now > token_exp:
-            logger.warning("Token validation failed: Token mathematically expired on local clock.")
+            logger.debug("Token validation: access token expired on local clock (will attempt refresh).")
             raise HTTPException(status_code=401, detail={"status": "expired", "message": "Login session expired. Please try again."})
             
         token_nbf = payload.get("nbf")

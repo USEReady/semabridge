@@ -871,20 +871,21 @@ def _resolve_fabric_access_token(
                 try:
                     fabric_validator.validate_msal_token(access_token)
                 except HTTPException:
-                    logger.warning("Decrypted Fabric token from DB is expired.")
+                    logger.info("Stored Fabric access token expired — attempting silent refresh for account '%s'...", account_tag)
                     if is_json_payload and refresh_token and matched_account_id:
-                        logger.info(f"Attempting isolated silent refresh for account {account_tag}...")
                         refreshed_access_token = _refresh_account_token(
                             matched_account_id, account_tag, refresh_token, tenant_id, payload_dict
                         )
                         if refreshed_access_token:
+                            logger.info("Silent token refresh succeeded for account '%s' — using refreshed token.", account_tag)
                             return refreshed_access_token
                     
-                    logger.warning("Silent refresh failed. Forcing reauthentication.")
+                    logger.warning("Silent refresh failed for account '%s'. Re-authentication required.", account_tag)
                     raise HTTPException(status_code=401, detail={"error": "reauth_required"})
 
                 logger.info(f"Using access token from default Fabric account: {account_tag}")
                 return access_token
+
             except HTTPException:
                 raise
             except Exception as e:
