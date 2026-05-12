@@ -118,16 +118,7 @@ class VersionControlService:
 
     def _discover_model_ids(self) -> List[str]:
         try:
-            conn = self.db_manager._get_connection()
-            try:
-                model_ids = [
-                    row[0]
-                    for row in conn.execute(
-                        "SELECT DISTINCT model_id FROM model_versions"
-                    ).fetchall()
-                ]
-            finally:
-                conn.close()
+            model_ids = self.db_manager.list_distinct_model_ids()
         except Exception:
             model_ids = []
 

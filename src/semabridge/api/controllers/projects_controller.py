@@ -6,6 +6,11 @@ from semabridge.api.services.projects_service import (
     delete_project_compat,
     get_project_compat,
     get_project_config_compat,
+    get_project_dependency_graph_compat,
+    get_project_dependency_impact_compat,
+    get_project_dependency_resolution_compat,
+    premerge_validate_projects_compat,
+    preflight_project_contract_change_compat,
     list_projects_compat,
     list_project_discovery_compat,
     patch_project_compat,
@@ -26,6 +31,11 @@ from semabridge.api.services.project_runs_service import (
 router = APIRouter()
 router.get('/api/projects')(list_projects_compat)
 router.get('/api/projects/discovery')(list_project_discovery_compat)
+router.get('/api/projects/dependencies/graph')(get_project_dependency_graph_compat)
+router.get('/api/projects/{project_id}/dependencies/impact')(get_project_dependency_impact_compat)
+router.get('/api/projects/{project_id}/dependencies/resolution')(get_project_dependency_resolution_compat)
+router.post('/api/projects/{project_id}/contracts/preflight')(preflight_project_contract_change_compat)
+router.post('/api/projects/contracts/premerge-validate')(premerge_validate_projects_compat)
 router.post('/api/projects')(create_project_compat)
 router.get('/api/projects/{project_id}')(get_project_compat)
 router.patch('/api/projects/{project_id}')(patch_project_compat)

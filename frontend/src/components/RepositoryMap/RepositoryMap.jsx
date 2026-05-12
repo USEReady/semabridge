@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Map as MapIcon, RefreshCw,
     LayoutGrid, Waypoints,
@@ -7,12 +7,20 @@ import {
     Database, FolderOpen, PanelRight, Files, ArrowLeft,
 } from 'lucide-react';
 import { api } from '../../utils/api';
+import { emitTelemetryEvent, TELEMETRY_EVENTS } from '../../utils/graphTelemetry';
 import YAML from 'yaml';
 import ComponentTree from './ComponentTree';
 import DependencyGraph from './DependencyGraph';
 import dagre from 'dagre';
 import DetailPanel from './DetailPanel';
 import ModelDataPanel from './ModelDataPanel';
+import {
+    buildSnapshotScopes,
+    filterSnapshotsByProjectCandidates,
+    graphMatchesProjectCandidates,
+    resolveProjectCandidates,
+    normalizeProjectKey,
+} from './graphScopeHelpers';
 import { ReactFlowProvider } from '@xyflow/react';
 import usePageCache from '../../hooks/usePageCache';
 
@@ -34,6 +42,12 @@ function normalizeGraphPayload(rawGraph) {
             else nodeType = 'modelNode';
         }
 
+        const fallbackModelId = (graphModelId && graphModelId !== '__all__')
+            ? graphModelId
+            : '';
+        const defaultModelId = incomingData.model_id
+            || (nodeType === 'modelNode' ? (fallbackModelId || nodeId) : '');
+
         return {
             ...node,
             id: nodeId,
@@ -42,7 +56,7 @@ function normalizeGraphPayload(rawGraph) {
                 ...incomingData,
                 nodeType: incomingData.nodeType || (nodeType === 'tableNode' ? 'table' : nodeType === 'measureNode' ? 'measure' : 'model'),
                 label: incomingData.label || nodeId,
-                model_id: incomingData.model_id || (graphModelId && graphModelId !== '__all__' ? graphModelId : nodeId),
+                model_id: defaultModelId,
             },
             position: node?.position && typeof node.position.x === 'number' && typeof node.position.y === 'number'
                 ? node.position
@@ -89,7 +103,11 @@ function normalizeGraphPayload(rawGraph) {
     const nodes = provisionalNodes.map((node) => {
         const inferredModelId = modelIdsByNodeId.get(node.id);
         const existingModelId = String(node?.data?.model_id || '').trim();
-        const resolvedModelId = existingModelId || inferredModelId || (graphModelId && graphModelId !== '__all__' ? graphModelId : '');
+        const nodeType = String(node?.data?.nodeType || '').toLowerCase();
+        const graphScopeFallback = (nodeType === 'model' && graphModelId && graphModelId !== '__all__')
+            ? graphModelId
+            : '';
+        const resolvedModelId = existingModelId || inferredModelId || graphScopeFallback;
 
         return {
             ...node,
@@ -109,15 +127,6 @@ function normalizeGraphPayload(rawGraph) {
 
 function hasGraphNodes(payload) {
     return Array.isArray(payload?.nodes) && payload.nodes.length > 0;
-}
-
-function looksLikeProjectId(value) {
-    const v = String(value || '').trim().toLowerCase();
-    return v.startsWith('proj-') || v.startsWith('preview-');
-}
-
-function normalizeProjectKey(value) {
-    return String(value || '').trim().toLowerCase().replace(/^proj-/, '');
 }
 
 function buildGraphFromProjectConfig(configYaml, projectId) {
@@ -333,13 +342,56 @@ function getPrimaryModelIdFromGraph(graph, fallback = '') {
     return modelId || String(fallback || '').trim();
 }
 
+function buildProjectCatalogGraph(projectIds = []) {
+    const uniqueIds = [...new Set((projectIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+    return {
+        nodes: uniqueIds.map((id, idx) => ({
+            id: `model-${id}`,
+            type: 'modelNode',
+            position: { x: 220 + ((idx % 4) * 240), y: 120 + (Math.floor(idx / 4) * 140) },
+            data: {
+                label: id,
+                model_id: id,
+                nodeType: 'model',
+                status: 'valid',
+            },
+        })),
+        edges: [],
+        meta: { reason: 'project_catalog' },
+    };
+}
+
+function mergeProjectIds(primaryIds = [], snapshotRows = []) {
+    const merged = new Map();
+    (primaryIds || []).forEach((id) => {
+        const value = String(id || '').trim();
+        if (!value) return;
+        merged.set(normalizeProjectKey(value), value);
+    });
+    (snapshotRows || []).forEach((row) => {
+        const candidates = [
+            row?.project_id,
+            row?.projectId,
+            row?.model_id,
+            row?.modelId,
+            row?.model_name,
+            row?.modelName,
+        ]
+            .map((v) => String(v || '').trim())
+            .filter(Boolean)
+            .filter((v) => v !== '__all__');
+        candidates.forEach((value) => {
+            const key = normalizeProjectKey(value);
+            if (!merged.has(key)) {
+                merged.set(key, value);
+            }
+        });
+    });
+    return [...merged.values()];
+}
+
 /**
  * RepositoryMap — master container for the visual repo explorer.
- *
- * Top bar: search / filter / workspace / layout toggle / sync.
- * Left:   collapsible file tree.
- * Center: React-Flow dependency graph.
- * Right:  detail / file preview panel (slides in on selection).
  */
 export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId = null, diffMode = false }) {
     // ── data ──
@@ -364,9 +416,11 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     const [includeSystemTables, setIncludeSystemTables] = usePageCache('explore:includeSystemTables', false);
     const [allSnapshots, setAllSnapshots] = useState([]);
     const [allProjectIds, setAllProjectIds] = useState([]);
+    const [projectAliasesById, setProjectAliasesById] = useState({});
+    const [selectedProjectId, setSelectedProjectId] = useState('__all__');
+    const [selectedSemanticModel, setSelectedSemanticModel] = useState('__all__');
     const [selectedSnapshotId, setSelectedSnapshotId] = useState(null);
     const [hasUserSelectedModel, setHasUserSelectedModel] = useState(false);
-    const selectedModelIdRef = useRef(selectedModelId);
 
     const [syncing, setSyncing] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -374,179 +428,101 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     const [graphLoading, setGraphLoading] = useState(true);
     const [diffLoading, setDiffLoading] = useState(false);
     const [diffReport, setDiffReport] = useState(null);
-    const [inspectorResetToken, setInspectorResetToken] = useState(0);
+    const [graphMismatchReason, setGraphMismatchReason] = useState(null);  // null | 'no_match' | 'empty'
+    const [inspectorWidth, setInspectorWidth] = usePageCache('explore:inspectorWidth', 400);
+    const [isResizing, setIsResizing] = useState(false);
 
-    useEffect(() => {
-        selectedModelIdRef.current = selectedModelId;
-    }, [selectedModelId]);
-
-    const makeSnapshotKey = useCallback((snap) => {
-        const modelName = String(snap?.model_name || '').trim();
-        const sid = String(snap?.snapshot_id || '').trim();
-        if (!modelName || !sid) return '';
-        return `${modelName}|${sid}`;
+    const startResizing = useCallback((e) => {
+        setIsResizing(true);
+        e.preventDefault();
     }, []);
 
-    // ── initial load ────────────────────────────────
+    const stopResizing = useCallback(() => {
+        setIsResizing(false);
+    }, []);
+
+    const resize = useCallback((e) => {
+        if (isResizing) {
+            const newWidth = window.innerWidth - e.clientX;
+            if (newWidth > 200 && newWidth < 1200) {
+                setInspectorWidth(newWidth);
+            }
+        }
+    }, [isResizing, setInspectorWidth]);
+
+    useEffect(() => {
+        if (isResizing) {
+            window.addEventListener('mousemove', resize);
+            window.addEventListener('mouseup', stopResizing);
+        } else {
+            window.removeEventListener('mousemove', resize);
+            window.removeEventListener('mouseup', stopResizing);
+        }
+        return () => {
+            window.removeEventListener('mousemove', resize);
+            window.removeEventListener('mouseup', stopResizing);
+        };
+    }, [isResizing, resize, stopResizing]);
+
     const loadData = useCallback(async () => {
         setLoading(true);
         setTreeLoading(true);
         setGraphLoading(true);
         try {
-            const [snapshotResp, snapshotsResp, projectsResp] = await Promise.all([
+            const [snapshotResp, projectsResp] = await Promise.all([
                 api.getSnapshotTree().catch(() => ({ root: null })),
-                api.getGraphSnapshots('__all__').catch(() => []),
                 api.listProjects().catch(() => []),
             ]);
 
             setSnapshotTreeData(snapshotResp?.root || null);
             setTreeLoading(false);
 
-            let graphResp;
-            let effectiveSnapshotId = null;
-            let effectiveModelName = '';
-            const snapshots = Array.isArray(snapshotsResp) ? snapshotsResp : [];
-            setAllSnapshots(snapshots);
             const projectIds = (Array.isArray(projectsResp) ? projectsResp : [])
                 .map((p) => String(p?.id || p?.project_id || '').trim())
                 .filter(Boolean);
-            setAllProjectIds([...new Set(projectIds)]);
-            if (snapshotId && String(snapshotId).includes('|')) {
-                const [incomingModelName, incomingSnapshotId] = String(snapshotId).split('|');
-                const matched = snapshots.find(
-                    (s) => String(s?.snapshot_id || '') === String(incomingSnapshotId || '')
-                        && String(s?.model_name || '') === String(incomingModelName || '')
-                );
-                if (matched) {
-                    effectiveSnapshotId = String(matched.snapshot_id);
-                    effectiveModelName = String(matched.model_name || '');
-                }
-            } else if (snapshotId) {
-                const matched = snapshots.find((s) => String(s?.snapshot_id || '') === String(snapshotId));
-                if (matched) {
-                    effectiveSnapshotId = String(matched.snapshot_id);
-                    effectiveModelName = String(matched.model_name || '');
-                }
-            }
+            const aliasMap = {};
+            (Array.isArray(projectsResp) ? projectsResp : []).forEach((p) => {
+                const pid = String(p?.id || p?.project_id || '').trim();
+                if (!pid) return;
+                const aliases = [
+                    p?.name,
+                    p?.display_name,
+                    p?.project_name,
+                ]
+                    .map((v) => String(v || '').trim())
+                    .filter(Boolean);
+                if (aliases.length) aliasMap[pid] = aliases;
+            });
+            setProjectAliasesById(aliasMap);
+            let uniqueProjectIds = [...new Set(projectIds)];
 
-            if (!effectiveSnapshotId) {
-                const selectedScope = String(selectedModelIdRef.current || '').trim();
-                if (selectedScope && selectedScope !== '__all__') {
-                    const selectedNorm = normalizeProjectKey(selectedScope);
-                    const scoped = snapshots.filter((s) => {
-                        const mid = String(s?.model_name || '').trim();
-                        return mid === selectedScope || normalizeProjectKey(mid) === selectedNorm;
-                    }).sort(
-                        (a, b) => new Date(b?.timestamp || 0).getTime() - new Date(a?.timestamp || 0).getTime()
-                    );
-                    if (scoped.length > 0) {
-                        effectiveSnapshotId = scoped[0]?.snapshot_id || null;
-                        effectiveModelName = String(scoped[0]?.model_name || '');
-                    }
-                }
-            }
+            // Enrich from snapshot metadata because some backends encode project
+            // identity in project_id/model_id while model_name is reused (e.g. "client").
+            const allSnapshotRows = await api.getGraphSnapshots('__all__').catch(() => []);
+            uniqueProjectIds = mergeProjectIds(uniqueProjectIds, allSnapshotRows);
 
-            if (!effectiveSnapshotId) {
-                const sorted = [...snapshots].sort(
-                    (a, b) => new Date(b?.timestamp || 0).getTime() - new Date(a?.timestamp || 0).getTime()
-                );
-                effectiveSnapshotId = sorted[0]?.snapshot_id || null;
-                effectiveModelName = String(sorted[0]?.model_name || '');
-            }
-            
-            const effectiveSnapshot = snapshots.find((s) =>
-                String(s?.snapshot_id || '') === String(effectiveSnapshotId || '')
-                && String(s?.model_name || '') === String(effectiveModelName || '')
-            ) || snapshots.find((s) => String(s?.snapshot_id || '') === String(effectiveSnapshotId || '')) || null;
-            const compositeKey = makeSnapshotKey(effectiveSnapshot);
-            setSelectedSnapshotId(compositeKey || null);
+            // Additional fallback: include repo model identifiers when available.
+            const repoModels = await api.getRepoModels().catch(() => []);
+            const repoModelIds = (Array.isArray(repoModels) ? repoModels : [])
+                .map((m) => String(m?.project_id || m?.projectId || m?.model_id || m?.modelId || m?.id || m?.name || '').trim())
+                .filter(Boolean);
+            uniqueProjectIds = mergeProjectIds(uniqueProjectIds, repoModelIds.map((id) => ({ model_id: id })));
 
-            const modelScope = String(effectiveSnapshot?.model_name || '').trim() || '__all__';
-
-            if (effectiveSnapshotId) {
-                // Backends are mixed: some only return data when scoped to the
-                // concrete model/project, others can serve __all__. Try scoped
-                // first (guaranteed load), then broaden when available.
-                graphResp = await api.getGraphSnapshot(modelScope, effectiveSnapshotId, includeSystemTables).catch(() => null);
-                if (!hasGraphNodes(graphResp)) {
-                    graphResp = await api.getGraphSnapshot('__all__', effectiveSnapshotId, includeSystemTables).catch(() => null);
-                }
-            }
-
-            // Fallback only when no snapshot graph available
-            if (!graphResp) {
-                graphResp = await api.getModelGraph(modelScope).catch((err) => {
-                    console.warn('Primary graph fallback failed:', err);
-                    return null;
-                });
-            }
-
-            const normalizedGraph = normalizeGraphPayload(graphResp);
-            setGraphData(normalizedGraph);
-            const resolvedModelId = getPrimaryModelIdFromGraph(normalizedGraph, effectiveModelName);
-            if (resolvedModelId) {
-                setSelectedModelId(resolvedModelId);
-                setHasUserSelectedModel(true);
-            }
+            setAllProjectIds(uniqueProjectIds);
+            const defaultProjectId = uniqueProjectIds[0] || '__all__';
+            setSelectedProjectId(defaultProjectId);
+            setSelectedSemanticModel('__all__');
+            setAllSnapshots([]);
+            setSelectedSnapshotId(null);
+            setGraphData(normalizeGraphPayload(buildProjectCatalogGraph(uniqueProjectIds)));
+            setSelectedModelId('__all__');
+            setHasUserSelectedModel(false);
             setSelectedTableId('__all__');
-            setGraphLoading(false);
 
-            // Snowflake-only environments may have no repository graph yet.
-            // Run discovery in the background so Explore doesn't stay blocked on it.
-            if ((normalizedGraph.nodes || []).length === 0) {
-                void api.discoverSnowflakeModels()
-                    .then((discovered) => {
-                        const models = Array.isArray(discovered) ? discovered : [];
-                        if (!models.length) return;
-
-                        const modelNodeId = 'model-snowflake-discovery';
-                        const nodes = [{
-                            id: modelNodeId,
-                            type: 'modelNode',
-                            position: { x: 420, y: 130 },
-                            data: {
-                                label: 'Snowflake Discovery',
-                                model_id: 'snowflake',
-                                workspace_id: '',
-                                description: 'Discovered semantic objects',
-                                status: 'valid',
-                                nodeType: 'model',
-                            },
-                        }];
-                        const edges = [];
-
-                        models.forEach((m, idx) => {
-                            const objName = String(m?.name || m?.displayName || m?.id || `object_${idx + 1}`);
-                            const nodeId = `table-snowflake-${idx}`;
-                            nodes.push({
-                                id: nodeId,
-                                type: 'tableNode',
-                                position: { x: 120 + (idx % 4) * 260, y: 320 + Math.floor(idx / 4) * 130 },
-                                data: {
-                                    label: objName,
-                                    table_name: objName,
-                                    schema: String(m?.schema || m?.database_schema || 'PUBLIC'),
-                                    source_type: 'snowflake',
-                                    columns: Array.isArray(m?.columns) ? m.columns : [],
-                                    nodeType: 'table',
-                                    model_id: 'snowflake',
-                                    status: 'valid',
-                                },
-                            });
-                            edges.push({
-                                id: `e-${modelNodeId}-${nodeId}`,
-                                source: nodeId,
-                                target: modelNodeId,
-                                animated: false,
-                                style: { stroke: '#22C55E' },
-                            });
-                        });
-
-                        setGraphData({ nodes, edges, meta: { source: 'snowflake-discovery-fallback' } });
-                    })
-                    .catch(() => {
-                        // Keep empty graph if discovery is unavailable.
-                    });
+            if (snapshotId && String(snapshotId).includes('|')) {
+                await handleSnapshotChange(String(snapshotId));
+            } else if (defaultProjectId !== '__all__') {
+                await loadProjectContext(defaultProjectId);
             }
         } catch (err) {
             console.error('Failed to load repo map data:', err);
@@ -555,33 +531,10 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             setGraphLoading(false);
             setLoading(false);
         }
-    }, [snapshotId, includeSystemTables, makeSnapshotKey]);
+    }, [snapshotId, setSelectedModelId, setSelectedTableId]);
 
     useEffect(() => { loadData(); }, [loadData]);
 
-
-    useEffect(() => {
-        let active = true;
-        async function loadDiff() {
-            if (!diffMode || !snapshotId || !compareSnapshotId || snapshotId === compareSnapshotId) {
-                setDiffReport(null);
-                return;
-            }
-            setDiffLoading(true);
-            try {
-                const report = await api.compareGraphSnapshots('__all__', compareSnapshotId, snapshotId, includeSystemTables);
-                if (active) setDiffReport(report || null);
-            } catch {
-                if (active) setDiffReport(null);
-            } finally {
-                if (active) setDiffLoading(false);
-            }
-        }
-        loadDiff();
-        return () => { active = false; };
-    }, [diffMode, snapshotId, compareSnapshotId, includeSystemTables]);
-
-    // ── sync handler ────────────────────────────────
     const handleSync = async () => {
         setSyncing(true);
         try {
@@ -594,23 +547,14 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         }
     };
 
-    const resolveProjectIdForSelection = useCallback((rawId) => {
-        const candidate = String(rawId || '').trim();
-        if (!candidate) return '';
-        if (!Array.isArray(allProjectIds) || allProjectIds.length === 0) return candidate;
-
-        const exact = allProjectIds.find((p) => String(p) === candidate);
-        if (exact) return exact;
-
-        const prefixed = allProjectIds.find((p) => String(p) === `proj-${candidate}`);
-        if (prefixed) return prefixed;
-
-        const norm = normalizeProjectKey(candidate);
-        const normalizedMatches = allProjectIds.filter((p) => normalizeProjectKey(p) === norm);
-        if (normalizedMatches.length === 1) return normalizedMatches[0];
-
-        return candidate;
-    }, [allProjectIds]);
+    const handleProjectChange = async (nextProjectId) => {
+        const pid = String(nextProjectId || '').trim();
+        if (!pid) return;
+        setSelectedProjectId(pid);
+        setSelectedSemanticModel('__all__');
+        setSelectedSnapshotId(null);
+        await loadProjectContext(pid);
+    };
 
     const loadProjectContext = useCallback(async (projectId) => {
         const pid = String(projectId || '').trim();
@@ -618,36 +562,101 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
 
         setGraphLoading(true);
         try {
-            const projectSnapshots = await api.getGraphSnapshots(pid).catch(() => []);
+            const aliasCandidates = projectAliasesById[pid] || [];
+            const candidateIds = resolveProjectCandidates(pid, allProjectIds, aliasCandidates);
+            let projectSnapshots = [];
+            for (const candidateId of candidateIds) {
+                const rows = await api.getGraphSnapshots(candidateId).catch(() => []);
+                const candidateSnapshots = filterSnapshotsByProjectCandidates(rows, [candidateId]);
+                if (candidateSnapshots.length > 0) {
+                    projectSnapshots = candidateSnapshots;
+                    break;
+                }
+            }
+            if (!projectSnapshots.length) {
+                const globalRows = await api.getGraphSnapshots('__all__').catch(() => []);
+                projectSnapshots = filterSnapshotsByProjectCandidates(globalRows, candidateIds);
+            }
+
             const ordered = (Array.isArray(projectSnapshots) ? projectSnapshots : [])
                 .slice()
                 .map((snap) => ({
                     ...snap,
                     model_name: String(snap?.model_name || pid),
+                    snapshot_scope: String(snap?.project_id || snap?.projectId || snap?.model_id || snap?.modelId || snap?.model_name || pid),
                 }))
                 .sort((a, b) => new Date(b?.timestamp || 0).getTime() - new Date(a?.timestamp || 0).getTime());
+            if (!ordered.length) {
+                console.warn('No snapshots found for selected model candidates:', candidateIds);
+            }
             setAllSnapshots(ordered);
 
             const latest = ordered[0] || null;
             let graphResp = null;
 
             if (latest?.snapshot_id) {
-                graphResp = await api.getGraphSnapshot(pid, latest.snapshot_id, includeSystemTables).catch(() => null);
-                const key = `${pid}|${latest.snapshot_id}`;
-                setSelectedSnapshotId(key);
-            }
-
-            // Fallback for projects with no snapshot history yet.
-            // Avoid /repo/models/{projectId}/graph for project-style IDs because
-            // that endpoint expects repository model IDs and returns 404 noise.
-            if (!hasGraphNodes(graphResp)) {
-                if (!looksLikeProjectId(pid)) {
-                    graphResp = await api.getModelGraph(pid).catch(() => null);
-                } else {
-                    const cfg = await api.getProjectConfig(pid).catch(() => null);
-                    const cfgYaml = String(cfg?.config_yaml || '');
-                    graphResp = buildGraphFromProjectConfig(cfgYaml, pid);
+                const graphScopes = [...new Set([
+                    ...buildSnapshotScopes(latest, pid),
+                    ...candidateIds,
+                ])];
+                for (const scope of graphScopes) {
+                    const scopedGraph = await api.getGraphSnapshot(scope, latest.snapshot_id, includeSystemTables).catch(() => null);
+                    if (hasGraphNodes(scopedGraph) && graphMatchesProjectCandidates(scopedGraph, candidateIds)) {
+                        graphResp = scopedGraph;
+                        emitTelemetryEvent(TELEMETRY_EVENTS.GRAPH_LOAD_SUCCESS, {
+                            scope,
+                            candidate_id: pid,
+                            node_count: scopedGraph.nodes.length,
+                        });
+                        break;
+                    }
                 }
+
+                if (!hasGraphNodes(graphResp)) {
+                    const modelGraph = await api.getModelGraph(pid).catch(() => null);
+                    if (hasGraphNodes(modelGraph) && graphMatchesProjectCandidates(modelGraph, candidateIds, { requireStrong: true })) {
+                        graphResp = modelGraph;
+                        emitTelemetryEvent(TELEMETRY_EVENTS.GRAPH_LOAD_SUCCESS, {
+                            scope: 'model_graph',
+                            candidate_id: pid,
+                            node_count: modelGraph.nodes.length,
+                        });
+                    }
+                }
+
+                if (!hasGraphNodes(graphResp)) {
+                    const fallbackGraph = await api.getGraphSnapshot('__all__', latest.snapshot_id, includeSystemTables).catch(() => null);
+                    if (hasGraphNodes(fallbackGraph)) {
+                        // Require a strong match when accepting the global fallback to avoid weak-name false positives
+                        if (graphMatchesProjectCandidates(fallbackGraph, candidateIds, { requireStrong: true })) {
+                            graphResp = fallbackGraph;
+                            emitTelemetryEvent(TELEMETRY_EVENTS.FALLBACK_TO_GLOBAL, {
+                                candidate_id: pid,
+                                node_count: fallbackGraph.nodes.length,
+                            });
+                        } else {
+                            // Weak fallback match — treat as mismatch to surface empty UI instead of silently showing unrelated graph
+                            emitTelemetryEvent(TELEMETRY_EVENTS.GRAPH_LOAD_MISMATCH, {
+                                reason: 'weak_fallback',
+                                candidate_id: pid,
+                            });
+                        }
+                    }
+                }
+
+                if (!hasGraphNodes(graphResp)) {
+                    console.warn('No matching graph payload found for selected model candidates:', candidateIds);
+                    emitTelemetryEvent(TELEMETRY_EVENTS.GRAPH_LOAD_EMPTY, {
+                        candidate_id: pid,
+                        candidate_count: candidateIds.length,
+                    });
+                    setGraphMismatchReason('empty');
+                } else {
+                    setGraphMismatchReason(null);
+                }
+
+                const key = `${String(latest?.snapshot_scope || latest?.model_name || pid)}|${latest.snapshot_id}`;
+                setSelectedSnapshotId(key);
             }
 
             const normalizedGraph = normalizeGraphPayload(graphResp);
@@ -660,29 +669,96 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         } finally {
             setGraphLoading(false);
         }
-    }, [includeSystemTables]);
+    }, [allProjectIds, includeSystemTables, projectAliasesById, setSelectedModelId, setSelectedTableId]);
 
-    // ── snapshot selector handler ────────────────────
     const handleSnapshotChange = async (snapshotKey) => {
-        // snapshotKey format: "model_name|snapshot_id" to support multi-project snapshots
         if (!snapshotKey || !String(snapshotKey).includes('|')) return;
-        const [modelName, snapshotId] = snapshotKey.split('|');
+        const separatorIndex = String(snapshotKey).lastIndexOf('|');
+        if (separatorIndex <= 0) return;
+        const scopeModelId = String(snapshotKey).slice(0, separatorIndex);
+        const snapshotId = String(snapshotKey).slice(separatorIndex + 1);
+        if (!scopeModelId || !snapshotId) return;
         setSelectedSnapshotId(snapshotKey);
         setGraphLoading(true);
         try {
-            const selectedSnap = allSnapshots.find(s => 
-                s?.snapshot_id === snapshotId && s?.model_name === modelName
-            );
-            if (!selectedSnap) throw new Error('Snapshot not found');
-            const modelScope = String(selectedSnap?.model_name || '').trim() || '__all__';
-            let graphResp = await api.getGraphSnapshot(modelScope, snapshotId, includeSystemTables).catch(() => null);
-            if (!hasGraphNodes(graphResp)) {
-                graphResp = await api.getGraphSnapshot('__all__', snapshotId, includeSystemTables).catch(() => null);
+            const selectedSnap = (allSnapshots || []).find((snap) => (
+                `${String(snap?.snapshot_scope || snap?.model_name)}|${String(snap?.snapshot_id || '')}` === snapshotKey
+            ));
+            const graphScopes = buildSnapshotScopes(selectedSnap || {}, scopeModelId);
+            const scopeAliasCandidates = projectAliasesById[scopeModelId] || [];
+            const scopeCandidates = resolveProjectCandidates(scopeModelId, allProjectIds, scopeAliasCandidates);
+            let graphResp = null;
+            for (const scope of graphScopes) {
+                const scopedGraph = await api.getGraphSnapshot(scope, snapshotId, includeSystemTables).catch(() => null);
+                if (hasGraphNodes(scopedGraph) && graphMatchesProjectCandidates(scopedGraph, scopeCandidates)) {
+                    graphResp = scopedGraph;
+                    emitTelemetryEvent(TELEMETRY_EVENTS.GRAPH_LOAD_SUCCESS, {
+                        scope,
+                        model_id: scopeModelId,
+                        snapshot_id: snapshotId,
+                        node_count: scopedGraph.nodes.length,
+                    });
+                    break;
+                }
             }
-            const normalizedGraph = graphResp ? normalizeGraphPayload(graphResp) : { nodes: [], edges: [], meta: {} };
+            if (!hasGraphNodes(graphResp)) {
+                const modelGraph = await api.getModelGraph(scopeModelId).catch(() => null);
+                if (hasGraphNodes(modelGraph) && graphMatchesProjectCandidates(modelGraph, scopeCandidates, { requireStrong: true })) {
+                    graphResp = modelGraph;
+                    emitTelemetryEvent(TELEMETRY_EVENTS.GRAPH_LOAD_SUCCESS, {
+                        scope: 'model_graph',
+                        model_id: scopeModelId,
+                        snapshot_id: snapshotId,
+                        node_count: modelGraph.nodes.length,
+                    });
+                }
+            }
+
+            if (!hasGraphNodes(graphResp)) {
+                const fallbackGraph = await api.getGraphSnapshot('__all__', snapshotId, includeSystemTables).catch(() => null);
+                if (hasGraphNodes(fallbackGraph)) {
+                    if (graphMatchesProjectCandidates(fallbackGraph, scopeCandidates, { requireStrong: true })) {
+                        graphResp = fallbackGraph;
+                        emitTelemetryEvent(TELEMETRY_EVENTS.FALLBACK_TO_GLOBAL, {
+                            model_id: scopeModelId,
+                            snapshot_id: snapshotId,
+                            node_count: fallbackGraph.nodes.length,
+                        });
+                    } else {
+                        emitTelemetryEvent(TELEMETRY_EVENTS.GRAPH_LOAD_MISMATCH, {
+                            reason: 'weak_fallback',
+                            model_id: scopeModelId,
+                            snapshot_id: snapshotId,
+                        });
+                    }
+                }
+            }
+            if (!hasGraphNodes(graphResp)) {
+                emitTelemetryEvent(TELEMETRY_EVENTS.GRAPH_LOAD_EMPTY, {
+                    model_id: scopeModelId,
+                    snapshot_id: snapshotId,
+                });
+            }
+            const normalizedGraph = normalizeGraphPayload(graphResp);
             setGraphData(normalizedGraph);
-            const resolvedModelId = getPrimaryModelIdFromGraph(normalizedGraph, modelScope);
-            if (resolvedModelId && resolvedModelId !== '__all__') {
+            if (!hasGraphNodes(graphResp)) {
+                setGraphMismatchReason('empty');
+            } else {
+                setGraphMismatchReason(null);
+            }
+            const snapshotListScope = graphScopes[0] || scopeModelId;
+            const modelSnapshots = await api.getGraphSnapshots(snapshotListScope).catch(() => []);
+            const ordered = (Array.isArray(modelSnapshots) ? modelSnapshots : [])
+                .slice()
+                .map((snap) => ({
+                    ...snap,
+                    model_name: String(snap?.model_name || scopeModelId),
+                    snapshot_scope: String(snap?.project_id || snap?.projectId || snap?.model_id || snap?.modelId || snap?.model_name || scopeModelId),
+                }))
+                .sort((a, b) => new Date(b?.timestamp || 0).getTime() - new Date(a?.timestamp || 0).getTime());
+            setAllSnapshots(ordered);
+            const resolvedModelId = getPrimaryModelIdFromGraph(normalizedGraph, scopeModelId);
+            if (resolvedModelId) {
                 setSelectedModelId(resolvedModelId);
                 setHasUserSelectedModel(true);
             }
@@ -694,38 +770,14 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         }
     };
 
-    // ── file click ──────────────────────────────────
-    const handleFileClick = async (filePath) => {
-        setSelectedNode(null);
-        setSelectedFile(filePath);
-        try {
-            let data;
-            if (filePath.startsWith('snapshots/')) {
-                // Extract model_id from snapshot path: snapshots/{ws}/{model_id}
-                const parts = filePath.split('/');
-                const modelId = parts[parts.length - 1];
-                data = await api.getSnapshotFile(modelId);
-            } else {
-                data = await api.getRepoFile(filePath);
-            }
-            setFilePreview(data);
-        } catch {
-            setFilePreview({ name: filePath, content: '(failed to load)', language: 'text' });
-        }
-    };
-
-    // ── node click ──────────────────────────────────
     const handleNodeClick = async (nodeData) => {
         setSelectedFile(null);
         setFilePreview(null);
         if (nodeData?.nodeType === 'model' && nodeData?.model_id) {
             const targetModelId = String(nodeData.model_id).trim();
-            const resolvedProjectId = resolveProjectIdForSelection(targetModelId);
-            if (targetModelId) {
-                setSelectedModelId(resolvedProjectId || targetModelId);
-                setHasUserSelectedModel(true);
-            }
-            await loadProjectContext(resolvedProjectId || targetModelId);
+            setSelectedModelId(targetModelId);
+            setHasUserSelectedModel(true);
+            await loadProjectContext(targetModelId);
         }
         if (nodeData?.nodeType === 'table' && nodeData?.id) {
             setSelectedTableId(String(nodeData.id));
@@ -733,68 +785,29 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         setSelectedNode(nodeData);
     };
 
-    const handleCloseDetail = () => {
-        setSelectedFile(null);
-        setFilePreview(null);
-        setSelectedNode(null);
-    };
+    const focusTableInER = useCallback((tableId) => {
+        if (!tableId) return;
+        setSelectedTableId(String(tableId));
+        setErMode(true);
+        setFilterType('tables');
+    }, [setSelectedTableId, setErMode]);
 
-    const showDetail = !!(filePreview || selectedNode);
-
-    const snapshotAudit = useMemo(() => {
-        if (!snapshotId) return null;
-
-        const allNodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
-        const allEdges = Array.isArray(graphData?.edges) ? graphData.edges : [];
-        const tableNodes = allNodes.filter(n => n?.data?.nodeType === 'table');
-        const brokenTables = tableNodes.filter(n => n?.data?.status === 'broken').length;
-        const relationshipEdges = allEdges.filter(e => String(e?.id || '').startsWith('rel-')).length;
-        const systemDetected = tableNodes.filter(n => {
-            const schema = n?.data?.schema ? `${n.data.schema}.` : '';
-            const table = n?.data?.table_name || n?.data?.label || '';
-            return isSystemTableName(`${schema}${table}`);
-        }).length;
-
-        return {
-            totalTables: tableNodes.length,
-            totalRelationships: relationshipEdges,
-            brokenTables,
-            systemDetected,
-            systemExcluded: Number(graphData?.meta?.system_tables_excluded || 0),
-        };
-    }, [graphData, snapshotId]);
-
-    // ── filter chips ────────────────────────────────
-    const chips = [
-        { id: 'all', label: 'All' },
-        { id: 'broken', label: 'Broken Refs' },
-    ];
-
-    // --- FULL SCREEN STATE ---
-    const [fullScreen, setFullScreen] = useState(false);
-
-    // --- DAGRE LAYOUT FOR CLEAN RELATIONSHIP DIAGRAM ---
     const getDagreLayoutedGraph = (rawGraph) => {
         const g = new dagre.graphlib.Graph();
         g.setDefaultEdgeLabel(() => ({}));
-        // Layout direction: TB (top-bottom) or LR (left-right)
         const direction = 'LR';
         g.setGraph({ rankdir: direction, nodesep: 80, ranksep: 120, edgesep: 40 });
 
-        // Assign rank for hierarchy: model=0, table=1, measure=2
         const nodeRanks = { model: 0, table: 1, measure: 2 };
-        // Group nodes by model for visual clustering
         const modelGroups = {};
 
         (rawGraph.nodes || []).forEach((node) => {
             const type = String(node?.type || node?.data?.nodeType || '').toLowerCase();
             const nodeType = type.includes('model') ? 'model' : type.includes('table') ? 'table' : type.includes('measure') ? 'measure' : 'other';
-            // Default node size (width, height)
             let width = 180, height = 60;
             if (nodeType === 'model') height = 70;
             if (nodeType === 'measure') height = 50;
             g.setNode(node.id, { ...node, width, height, rank: nodeRanks[nodeType] ?? 1 });
-            // Group by model for later offset
             const modelId = node?.data?.model_id || node.id;
             if (!modelGroups[modelId]) modelGroups[modelId] = [];
             modelGroups[modelId].push(node.id);
@@ -805,10 +818,9 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
 
         dagre.layout(g);
 
-        // Apply dagre-calculated positions, then offset by model group for visual clustering
         const modelOffsets = {};
         let groupIdx = 0;
-        const groupSpacing = 320; // space between model clusters
+        const groupSpacing = 320;
         Object.keys(modelGroups).forEach((modelId) => {
             modelOffsets[modelId] = groupIdx * groupSpacing;
             groupIdx++;
@@ -817,201 +829,96 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         const nodes = (rawGraph.nodes || []).map((node) => {
             const dagreNode = g.node(node.id);
             const modelId = node?.data?.model_id || node.id;
-            // Offset x by model group for visual grouping
             const offsetX = modelOffsets[modelId] || 0;
             return {
                 ...node,
-                position: {
-                    x: (dagreNode?.x || 0) + offsetX,
-                    y: dagreNode?.y || 0,
-                },
-                // For React Flow, must set positionAbsolute for deterministic layout
-                positionAbsolute: {
-                    x: (dagreNode?.x || 0) + offsetX,
-                    y: dagreNode?.y || 0,
-                },
-                // Optionally, lock nodes to prevent drag (optional)
+                position: { x: (dagreNode?.x || 0) + offsetX, y: dagreNode?.y || 0 },
+                positionAbsolute: { x: (dagreNode?.x || 0) + offsetX, y: dagreNode?.y || 0 },
                 draggable: false,
             };
         });
-        // Edges: force type 'step' for orthogonal routing
-        const edges = (rawGraph.edges || []).map((edge) => ({
-            ...edge,
-            type: 'step',
-        }));
+        const edges = (rawGraph.edges || []).map((edge) => ({ ...edge, type: 'step' }));
         return { ...rawGraph, nodes, edges };
     };
 
     const renderedGraphData = useMemo(() => {
-        // Use diff graph if in diff mode
         let baseGraph = graphData;
-        if (diffMode) {
-            const styled = diffReport?.styled_graph;
-            if (styled && Array.isArray(styled.nodes) && styled.nodes.length > 0) {
-                baseGraph = normalizeGraphPayload(styled);
-            }
-        }
-        // Only apply dagre layout in ER mode (relationship view)
         if (erMode && baseGraph.nodes && baseGraph.nodes.length > 0) {
             return getDagreLayoutedGraph(baseGraph);
         }
-        // For non-ER mode, keep original positions (e.g., force layout)
         return baseGraph;
-    }, [diffMode, diffReport, graphData, erMode]);
-
-    const connectorOptions = useMemo(() => {
-        const nodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
-        const connectors = new Set();
-        nodes.forEach(n => {
-            if (n.data?.nodeType === 'model') {
-                const connector = n.data?.source_type || n.data?.target_type || 'Generic';
-                connectors.add(connector);
-            }
-        });
-        return Array.from(connectors)
-            .map(c => ({ 
-                id: c, 
-                label: c.charAt(0).toUpperCase() + c.slice(1).toLowerCase() 
-            }))
-            .sort((a,b) => a.label.localeCompare(b.label));
-    }, [graphData]);
-
-    const modelOptions = useMemo(() => {
-        const nodes = Array.isArray(renderedGraphData?.nodes) ? renderedGraphData.nodes : [];
-        const explicitModels = nodes
-            .filter(n => n?.data?.nodeType === 'model')
-            .map(n => ({
-                id: String(n?.data?.model_id || n.id || ''),
-                label: String(n?.data?.label || n?.data?.model_id || n.id || 'Model'),
-            }))
-            .filter(m => m.id);
-
-        const inferredModels = nodes
-            .filter(n => n?.data?.nodeType === 'table' || n?.data?.nodeType === 'measure')
-            .map(n => {
-                const id = String(n?.data?.model_id || '').trim();
-                return id ? { id, label: id } : null;
-            })
-            .filter(Boolean);
-
-        const models = explicitModels.length ? explicitModels : inferredModels;
-
-        const dedup = new Map();
-        models.forEach(m => {
-            if (!dedup.has(m.id)) dedup.set(m.id, m);
-        });
-
-        const dedupValues = [...dedup.values()];
-        const counts = {};
-        dedupValues.forEach(m => {
-            const key = String(m.label || '').trim().toLowerCase();
-            counts[key] = (counts[key] || 0) + 1;
-        });
-
-        const byId = dedupValues.map(m => {
-            const rawLabel = String(m.label || '').trim() || 'Model';
-            const key = rawLabel.toLowerCase();
-            const shortId = String(m.id).slice(0, 8);
-            const isGeneric = key === 'fabricmodel' || key === 'model' || key === 'semanticmodel';
-            const label = (counts[key] > 1 || isGeneric)
-                ? `${rawLabel} (${shortId})`
-                : rawLabel;
-                
-            // Find connector for this model
-            const node = nodes.find(n => n.id === m.id || n.data?.model_id === m.id);
-            const connector = node?.data?.source_type || node?.data?.target_type || 'Generic';
-            
-            return { ...m, label, connector };
-        });
-
-        if (selectedConnector === '__all__') return byId;
-        return byId.filter(m => m.connector === selectedConnector);
-    }, [renderedGraphData, selectedConnector]);
+    }, [graphData, erMode]);
 
     const snapshotModelNames = useMemo(() => {
         const names = new Set();
-        (allSnapshots || []).forEach((s) => {
-            const name = String(s?.model_name || '').trim();
+        (allProjectIds || []).forEach((id) => {
+            const name = String(id || '').trim();
             if (name) names.add(name);
         });
-        (allProjectIds || []).forEach((id) => {
-            const v = String(id || '').trim();
-            if (v) names.add(v);
+        (allSnapshots || []).forEach((s) => {
+            const candidates = [
+                s?.snapshot_scope,
+                s?.project_id,
+                s?.projectId,
+                s?.model_id,
+                s?.modelId,
+                s?.model_name,
+            ];
+            candidates.forEach((v) => {
+                const name = String(v || '').trim();
+                if (name) names.add(name);
+            });
         });
         return [...names].sort((a, b) => a.localeCompare(b));
     }, [allSnapshots, allProjectIds]);
 
-    const tableOptions = useMemo(() => {
-        const nodes = Array.isArray(renderedGraphData?.nodes) ? renderedGraphData.nodes : [];
-        return nodes
-            .filter(n => n?.data?.nodeType === 'table')
-            .filter(n => {
-                if (selectedModelId === '__all__') return true;
-                const mid = String(n?.data?.model_id || '').trim();
-                // If model_id is missing on table node, don't hide it from selector.
-                if (!mid) return true;
-                return mid === String(selectedModelId);
-            })
-            .map(n => ({
-                id: String(n.id),
-                name: String(n?.data?.label || n.id),
-                schema: String(n?.data?.schema || 'PUBLIC'),
-                model: String(n?.data?.model_label || n?.data?.model_name || n?.data?.model_id || selectedModelId || 'unknown'),
-            }))
-            .sort((a, b) => {
-                const s = a.schema.localeCompare(b.schema);
-                if (s !== 0) return s;
-                return a.name.localeCompare(b.name);
+    const semanticModelOptions = useMemo(() => {
+        const names = new Set();
+        (allSnapshots || []).forEach((s) => {
+            const semanticList = Array.isArray(s?.semantic_models) ? s.semantic_models : [];
+            semanticList.forEach((v) => {
+                const name = String(v || '').trim();
+                if (name) names.add(name);
             });
-    }, [renderedGraphData, selectedModelId]);
+            const fallbackName = String(s?.model_label || s?.semantic_model || s?.model_name || '').trim();
+            if (fallbackName) names.add(fallbackName);
+        });
+        return [...names].sort((a, b) => a.localeCompare(b));
+    }, [allSnapshots]);
+
+    const visibleSnapshots = useMemo(() => {
+        if (selectedSemanticModel === '__all__') return allSnapshots;
+        const target = String(selectedSemanticModel || '').trim().toLowerCase();
+        return (allSnapshots || []).filter((s) => {
+            const semanticList = Array.isArray(s?.semantic_models) ? s.semantic_models : [];
+            const semanticMatch = semanticList.some((v) => String(v || '').trim().toLowerCase() === target);
+            if (semanticMatch) return true;
+            const modelName = String(s?.model_label || s?.semantic_model || s?.model_name || '').trim().toLowerCase();
+            return modelName === target;
+        });
+    }, [allSnapshots, selectedSemanticModel]);
 
     useEffect(() => {
-        if (selectedTableId === '__all__') return;
-        if (!tableOptions.some(t => t.id === selectedTableId)) {
-            setSelectedTableId('__all__');
+        if (!selectedSnapshotId) return;
+        const exists = (visibleSnapshots || []).some((s) => (
+            `${String(s.snapshot_scope || s.model_name)}|${s.snapshot_id}` === selectedSnapshotId
+        ));
+        if (!exists) {
+            setSelectedSnapshotId(null);
         }
-    }, [tableOptions, selectedTableId]);
+    }, [visibleSnapshots, selectedSnapshotId]);
 
-    const focusTableInER = useCallback((tableId) => {
-        if (!tableId) return;
-        setSelectedTableId(String(tableId));
-        setErMode(true);
-        setFilterType('tables');
-    }, []);
+    const [fullScreen, setFullScreen] = useState(false);
 
-    useEffect(() => {
-        if (selectedModelId !== '__all__' && !modelOptions.some((m) => m.id === selectedModelId)) {
-            setSelectedModelId('__all__');
-            setSelectedTableId('__all__');
-            setHasUserSelectedModel(false);
-            return;
-        }
-        if (!hasUserSelectedModel && selectedModelId === '__all__' && erMode && modelOptions.length === 1) {
-            setSelectedModelId(modelOptions[0].id);
-            setHasUserSelectedModel(true);
-        }
-    }, [erMode, hasUserSelectedModel, modelOptions, selectedModelId]);
+    const chips = [
+        { id: 'all', label: 'All' },
+        { id: 'broken', label: 'Broken Refs' },
+    ];
 
     useEffect(() => {
-        if (filterType === 'models' && erMode) {
-            setErMode(false);
-        }
-        if (filterType === 'tables' && !erMode) {
-            // Tables tab is better in ER view for this workspace.
-            setErMode(true);
-        }
-    }, [filterType, erMode]);
-
-    const dropdownStyle = {
-        border: '1px solid var(--border-color)',
-        borderRadius: 6,
-        background: 'var(--bg-app)',
-        color: 'var(--text-secondary)',
-        fontSize: 11,
-        padding: '4px 8px',
-        maxWidth: 220,
-        minWidth: 120,
-    };
+        if (filterType === 'models' && erMode) setErMode(false);
+        if (filterType === 'tables' && !erMode) setErMode(true);
+    }, [filterType, erMode, setErMode]);
 
     return (
         <div style={{
@@ -1019,7 +926,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             height: '100%', width: '100%',
             background: 'var(--bg-app)', color: 'var(--text-primary)',
         }}>
-            {/* ─── TOP BAR (CLEAN & TECHNICAL) ─── */}
+            {/* ─── TOP BAR ─── */}
             <div style={{
                 display: 'flex', alignItems: 'center', gap: 12,
                 padding: '10px 16px',
@@ -1050,10 +957,59 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
 
                 <div style={{ flex: 1 }} />
 
-                {/* Snapshot Selector Dropdown */}
+                <select
+                    value={selectedProjectId}
+                    onChange={(e) => { void handleProjectChange(e.target.value); }}
+                    disabled={allProjectIds.length === 0}
+                    style={{
+                        fontSize: 11,
+                        padding: '4px 8px',
+                        borderRadius: 4,
+                        border: '1px solid var(--border-color)',
+                        background: 'var(--bg-app)',
+                        color: 'var(--text-primary)',
+                        cursor: 'pointer',
+                        minWidth: 180,
+                    }}
+                >
+                    {allProjectIds.length === 0 ? (
+                        <option value="__all__">Select project</option>
+                    ) : (
+                        allProjectIds.map((pid) => (
+                            <option key={pid} value={pid}>
+                                {pid}
+                            </option>
+                        ))
+                    )}
+                </select>
+
+                <select
+                    value={selectedSemanticModel}
+                    onChange={(e) => setSelectedSemanticModel(e.target.value)}
+                    disabled={semanticModelOptions.length === 0}
+                    style={{
+                        fontSize: 11,
+                        padding: '4px 8px',
+                        borderRadius: 4,
+                        border: '1px solid var(--border-color)',
+                        background: 'var(--bg-app)',
+                        color: 'var(--text-primary)',
+                        cursor: 'pointer',
+                        minWidth: 180,
+                    }}
+                >
+                    <option value="__all__">All models</option>
+                    {semanticModelOptions.map((modelName) => (
+                        <option key={modelName} value={modelName}>
+                            {modelName}
+                        </option>
+                    ))}
+                </select>
+
                 <select
                     value={selectedSnapshotId || ''}
                     onChange={(e) => handleSnapshotChange(e.target.value)}
+                    disabled={visibleSnapshots.length === 0}
                     style={{
                         fontSize: 11,
                         padding: '4px 8px',
@@ -1065,12 +1021,15 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                         minWidth: 200,
                     }}
                 >
-                    {allSnapshots.length === 0 ? (
-                        <option value="">No snapshots</option>
+                    {visibleSnapshots.length === 0 ? (
+                        <option value="">Select a model to load snapshots</option>
                     ) : (
-                        allSnapshots.map(snap => (
-                            <option key={`${snap.model_name}|${snap.snapshot_id}`} value={`${snap.model_name}|${snap.snapshot_id}`}>
-                                {snap.model_name} • {new Date(snap.timestamp).toLocaleString()} {snap.version_tag ? `(${snap.version_tag})` : ''}
+                        visibleSnapshots.map(snap => (
+                            <option
+                                key={`${String(snap.snapshot_scope || snap.model_name)}|${snap.snapshot_id}`}
+                                value={`${String(snap.snapshot_scope || snap.model_name)}|${snap.snapshot_id}`}
+                            >
+                                {String(snap.snapshot_scope || snap.model_name)} • {new Date(snap.timestamp).toLocaleString()} {snap.version_tag ? `(${snap.version_tag})` : ''}
                             </option>
                         ))
                     )}
@@ -1135,63 +1094,133 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
 
                 {/* 2. Relationship Canvas (Center) */}
                 <div style={{ flex: 1, position: 'relative', background: 'var(--bg-app)' }}>
-                    <ReactFlowProvider>
-                        <DependencyGraph
-                            graphData={renderedGraphData}
-                            layout={layout}
-                            erMode={erMode}
-                            selectedModelId={selectedModelId}
-                            selectedTableId={selectedTableId}
-                            searchQuery={searchQuery}
-                            filterType={filterType}
-                            showVersionBadges={showVersionBadges}
-                            onNodeClick={handleNodeClick}
-                            isLoading={graphLoading}
-                            snapshotId={snapshotId}
-                            diffMode={diffMode}
-                            defaultEdgeOptions={{ type: 'step' }}
-                            fullScreenMode={fullScreen}
-                            onRequestFullScreen={() => setFullScreen(true)}
-                        />
-                    </ReactFlowProvider>
+                    {graphMismatchReason === 'empty' ? (
+                        <div style={{
+                            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                            width: '100%', height: '100%',
+                            color: 'var(--text-tertiary)', gap: 16, padding: 32,
+                        }}>
+                            <div style={{ fontSize: 48, opacity: 0.3 }}>⚠️</div>
+                            <div style={{ textAlign: 'center' }}>
+                                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8 }}>
+                                    No Graph Data Available
+                                </div>
+                                <div style={{ fontSize: 12, color: 'var(--text-tertiary)', maxWidth: 320, lineHeight: 1.5 }}>
+                                    {selectedModelId && selectedModelId !== '__all__' ? (
+                                        <>The selected model has no dependency graph loaded. This may mean:</>
+                                    ) : (
+                                        <>Select a model to view its dependency graph.</>
+                                    )}
+                                </div>
+                                {selectedModelId && selectedModelId !== '__all__' && (
+                                    <ul style={{ fontSize: 11, marginTop: 12, textAlign: 'left', color: 'var(--text-tertiary)', listStyle: 'none', paddingLeft: 0 }}>
+                                        <li>• No snapshot exists for this model</li>
+                                        <li>• Snapshot data is incomplete or empty</li>
+                                        <li>• Model identifier mismatch</li>
+                                    </ul>
+                                )}
+                                <button
+                                    onClick={() => loadProjectContext(selectedModelId)}
+                                    style={{
+                                        marginTop: 16, padding: '6px 12px', fontSize: 11, fontWeight: 600,
+                                        border: '1px solid var(--accent-blue)', background: 'var(--accent-blue)', color: '#fff',
+                                        borderRadius: 4, cursor: 'pointer',
+                                    }}
+                                >
+                                    Retry
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <ReactFlowProvider>
+                            <DependencyGraph
+                                graphData={renderedGraphData}
+                                layout={layout}
+                                erMode={erMode}
+                                selectedModelId={selectedModelId}
+                                selectedTableId={selectedTableId}
+                                searchQuery={searchQuery}
+                                filterType={filterType}
+                                showVersionBadges={showVersionBadges}
+                                onNodeClick={handleNodeClick}
+                                isLoading={graphLoading}
+                                snapshotId={snapshotId}
+                                diffMode={diffMode}
+                                defaultEdgeOptions={{ type: 'step' }}
+                                fullScreenMode={fullScreen}
+                                onRequestFullScreen={() => setFullScreen(true)}
+                            />
+                        </ReactFlowProvider>
+                    )}
                 </div>
 
-                {/* 3. Metadata Inspector (Right) */}
-                <div style={{
-                    width: 400, minWidth: 400,
-                    borderLeft: '1px solid var(--border-color)',
-                    background: 'var(--bg-surface)',
-                    display: 'flex', flexDirection: 'column',
-                    transition: 'width 0.3s ease',
-                }}>
-                    <div style={{
-                        padding: '12px 16px', borderBottom: '1px solid var(--border-color)',
-                        fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em',
-                        color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between'
-                    }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <PanelRight size={14} />
-                            Inspector
+                {!graphMismatchReason && (
+                    <>
+                        {/* 3. Resizer */}
+                        <div 
+                            onMouseDown={startResizing}
+                            onMouseEnter={(e) => { e.currentTarget.firstChild.style.opacity = '1'; e.currentTarget.firstChild.style.background = 'var(--accent-blue)'; }}
+                            onMouseLeave={(e) => { if(!isResizing) { e.currentTarget.firstChild.style.opacity = '0.5'; e.currentTarget.firstChild.style.background = 'var(--border-color)'; } }}
+                            className="inspector-resizer"
+                            style={{
+                                width: 12,
+                                margin: '0 -6px',
+                                cursor: 'col-resize',
+                                zIndex: 1000,
+                                position: 'relative',
+                                display: 'flex',
+                                justifyContent: 'center',
+                                transition: 'all 0.2s',
+                            }}
+                        >
+                            <div style={{
+                                width: 2,
+                                height: '100%',
+                                background: isResizing ? 'var(--accent-blue)' : 'var(--border-color)',
+                                opacity: 0.5,
+                            }} />
                         </div>
-                        {selectedNode && (
-                            <button onClick={() => setSelectedNode(null)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
-                                <X size={14} />
-                            </button>
-                        )}
-                    </div>
-                    <div style={{ flex: 1, overflow: 'hidden' }}>
-                        <ModelDataPanel
-                            graphData={renderedGraphData}
-                            selectedModelId={selectedModelId}
-                            erMode={erMode}
-                            selectedTableId={selectedNode?.id || selectedTableId}
-                            onSelectTable={setSelectedTableId}
-                            onOpenTableER={focusTableInER}
-                            compact
-                            showTabHeader={false}
-                        />
-                    </div>
-                </div>
+
+                        {/* 4. Inspector Panel (Right) */}
+                        <div style={{
+                            width: inspectorWidth,
+                            minWidth: 200,
+                            maxWidth: 1200,
+                            background: 'var(--bg-surface)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            position: 'relative',
+                        }}>
+                            <div style={{
+                                padding: '12px 16px', borderBottom: '1px solid var(--border-color)',
+                                fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em',
+                                color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <PanelRight size={14} />
+                                    Inspector
+                                </div>
+                                {selectedNode && (
+                                    <button onClick={() => setSelectedNode(null)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
+                                        <X size={14} />
+                                    </button>
+                                )}
+                            </div>
+                            <div style={{ flex: 1, overflow: 'hidden' }}>
+                                <ModelDataPanel
+                                    graphData={renderedGraphData}
+                                    selectedModelId={selectedModelId}
+                                    erMode={erMode}
+                                    selectedTableId={selectedNode?.id || selectedTableId}
+                                    onSelectTable={setSelectedTableId}
+                                    onOpenTableER={focusTableInER}
+                                    compact
+                                    showTabHeader={false}
+                                />
+                            </div>
+                        </div>
+                    </>
+                )}
             </div>
         </div>
     );

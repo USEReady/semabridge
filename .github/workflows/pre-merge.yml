@@ -1,0 +1,70 @@
+name: Pre-merge validation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: pre-merge-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile key backend modules
+        run: |
+          python -m py_compile \
+            src/semabridge/api/services/project_projects_impl.py \
+            src/semabridge/api/services/project_runs_impl.py \
+            src/semabridge/api/services/version_control_impl.py
+
+      - name: Run targeted backend tests
+        run: |
+          pytest -q -p no:cacheprovider \
+            Tests/test_project_model_manifest.py \
+            Tests/test_project_dependency_graph.py \
+            Tests/test_project_atomic_runs.py \
+            Tests/test_version_control_service_postgres_ready.py
+
+  frontend:
+    name: Frontend validation
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Build frontend
+        run: npm run build

@@ -1,4 +1,13 @@
 from semabridge.api.services.core_shared import *
+import time as _time
+
+_VALIDATE_LIVE_CACHE_TTL_SECONDS = 3.0
+_validate_live_cache: Dict[str, Any] = {
+    "fetched_at": 0.0,
+    "rows_count": None,
+    "latest_created_at": None,
+    "result": None,
+}
 
 
 async def get_config():
@@ -192,9 +201,29 @@ async def get_history():
 async def validate_live(payload: Dict[str, Any] = None):
     errors: list[dict] = []
     warnings: list[dict] = []
+    row_count = None
+    latest_created_at = None
     try:
         conn = db_manager._get_connection()
         try:
+            now_ts = _time.time()
+            sig_row = conn.execute(
+                """
+                SELECT COUNT(*) AS row_count, MAX(created_at) AS latest_created_at
+                FROM model_versions
+                """
+            ).fetchone()
+            row_count = int(sig_row[0] or 0) if sig_row else 0
+            latest_created_at = str(sig_row[1] or "") if sig_row else ""
+
+            cache_fresh = (now_ts - float(_validate_live_cache.get("fetched_at") or 0.0)) < _VALIDATE_LIVE_CACHE_TTL_SECONDS
+            cache_same_data = (
+                _validate_live_cache.get("rows_count") == row_count
+                and _validate_live_cache.get("latest_created_at") == latest_created_at
+            )
+            if cache_fresh and cache_same_data and isinstance(_validate_live_cache.get("result"), dict):
+                return dict(_validate_live_cache["result"])
+
             rows = conn.execute(
                 """
                 WITH RankedVersions AS (
@@ -247,4 +276,9 @@ async def validate_live(payload: Dict[str, Any] = None):
     except Exception as e:
         errors.append({"model": "system", "severity": "error", "message": str(e)})
 
-    return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings, "total_issues": len(errors) + len(warnings)}
+    result = {"valid": len(errors) == 0, "errors": errors, "warnings": warnings, "total_issues": len(errors) + len(warnings)}
+    _validate_live_cache["fetched_at"] = _time.time()
+    _validate_live_cache["rows_count"] = row_count
+    _validate_live_cache["latest_created_at"] = latest_created_at
+    _validate_live_cache["result"] = result
+    return result

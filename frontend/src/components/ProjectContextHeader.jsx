@@ -59,20 +59,27 @@ export default function ProjectContextHeader({
 
     return (
         <header style={{
-            height: 56,
-            padding: '0 16px',
+            height: 64,
+            padding: '0 24px',
             borderBottom: '1px solid var(--border-color)',
             background: 'var(--bg-surface)',
             display: 'flex',
             alignItems: 'center',
+            justifyContent: 'space-between',
             gap: 16,
             flexShrink: 0,
             zIndex: 100,
         }}>
+            {/* Left Spacer to balance the layout (could be used for breadcrumbs later) */}
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                {/* Future breadcrumbs or context info */}
+            </div>
 
-
-            {/* 4. Global Search */}
-            <div style={{ flex: 1, display: 'flex', justifyContent: 'center', maxWidth: 400, marginLeft: 'auto' }}>
+            {/* 4. Global Search - Centered */}
+            <div style={{ 
+                width: 800,
+                flexShrink: 0,
+            }}>
                 <div 
                     onClick={() => onShowCommandPalette(true)}
                     style={{
@@ -80,41 +87,52 @@ export default function ProjectContextHeader({
                         alignItems: 'center',
                         gap: 10,
                         width: '100%',
-                        height: 34,
-                        padding: '0 12px',
+                        height: 38,
+                        padding: '0 16px',
                         background: 'var(--bg-app)',
                         border: '1px solid var(--border-color)',
-                        borderRadius: 8,
+                        borderRadius: 10,
                         cursor: 'text',
                         color: 'var(--text-tertiary)',
                         fontSize: 13,
+                        transition: 'all 0.2s ease',
+                    }}
+                    onMouseOver={(e) => {
+                        e.currentTarget.style.borderColor = 'var(--accent-blue)';
+                        e.currentTarget.style.background = 'var(--bg-surface-raised)';
+                    }}
+                    onMouseOut={(e) => {
+                        e.currentTarget.style.borderColor = 'var(--border-color)';
+                        e.currentTarget.style.background = 'var(--bg-app)';
                     }}
                 >
-                    <Search size={14} />
-                    <span>Quick Search...</span>
-                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Search size={16} />
+                    <span>Search everything...</span>
+                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
                         <kbd style={{ 
                             background: 'var(--bg-surface)', 
                             border: '1px solid var(--border-color)', 
                             borderRadius: 4, 
-                            padding: '1px 5px',
-                            fontSize: 10,
+                            padding: '2px 6px',
+                            fontSize: 11,
                             fontWeight: 700,
-                        }}>Ctrl</kbd>
+                            color: 'var(--text-secondary)',
+                        }}>⌘</kbd>
                         <kbd style={{ 
                             background: 'var(--bg-surface)', 
                             border: '1px solid var(--border-color)', 
                             borderRadius: 4, 
-                            padding: '1px 5px',
-                            fontSize: 10,
+                            padding: '2px 6px',
+                            fontSize: 11,
                             fontWeight: 700,
+                            color: 'var(--text-secondary)',
                         }}>K</kbd>
                     </div>
                 </div>
             </div>
 
-            {/* Actions */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {/* Actions - Right Side */}
+            <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 12 }}>
                 <ThemeToggle />
                 
                 <button

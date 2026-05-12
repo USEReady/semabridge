@@ -116,6 +116,68 @@ def test_execute_sync_request_returns_none_routing_summary_when_missing(monkeypa
     assert result["routing_summary"] is None
 
 
+def test_execute_sync_request_runs_atomic_validation_before_deploy(monkeypatch) -> None:
+    calls: list[bool] = []
+
+    monkeypatch.setattr(ses, "reload_settings", lambda: None)
+    monkeypatch.setattr(ses, "_load_config", lambda payload, normalizer: ("semabridge.yaml", {}))
+    monkeypatch.setattr(
+        ses,
+        "_build_sync_jobs",
+        lambda config: (
+            [
+                {"dataset_id": "model-1", "pbix_path": None, "model_label": "model-1"},
+                {"dataset_id": "model-2", "pbix_path": None, "model_label": "model-2"},
+            ],
+            "fabric",
+            "databricks",
+            {"workspace_id": "ws-1"},
+            {"deploy": True},
+        ),
+    )
+    monkeypatch.setattr(
+        ses,
+        "get_settings",
+        lambda: SimpleNamespace(fabric=SimpleNamespace(workspace_id="ws-from-settings")),
+    )
+    monkeypatch.setattr(ses, "_resolve_requested_parallelism", lambda payload: 2)
+    monkeypatch.setattr(ses, "_resolve_executor_kind", lambda payload, is_fabric_bound: "thread")
+    monkeypatch.setattr(ses, "_resolve_effective_parallelism", lambda **kwargs: 2)
+
+    def _run_parallel_jobs(**kwargs):
+        calls.append(bool(kwargs.get("deploy_enabled")))
+        if not kwargs.get("deploy_enabled"):
+            return [
+                {
+                    "model": "model-1",
+                    "status": "success",
+                    "summary": {"status": "SUCCESS"},
+                    "routing_summary": None,
+                    "console": {"lines": []},
+                    "run_id": "run-1",
+                },
+                {
+                    "model": "model-2",
+                    "status": "failed",
+                    "summary": {"status": "FAILED"},
+                    "routing_summary": None,
+                    "console": {"lines": []},
+                    "run_id": "run-2",
+                },
+            ]
+        raise AssertionError("deploy phase should not run after failed validation")
+
+    monkeypatch.setattr(ses, "_run_parallel_jobs", _run_parallel_jobs)
+
+    result = ses.execute_sync_request({}, lambda content, *args: content)
+
+    assert calls == [False]
+    assert result["status"] == "failed"
+    assert result["batch"]["atomic"] is True
+    assert result["batch"]["validation_only"] is True
+    assert [r["status"] for r in result["results"]] == ["success", "failed"]
+
+
 @pytest.mark.parametrize(
     "source_cfg, expected_models",
     [

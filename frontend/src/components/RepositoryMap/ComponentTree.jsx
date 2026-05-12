@@ -4,6 +4,10 @@ import {
     Database, Table, Hash, Search,
 } from 'lucide-react';
 
+function formatProjectDisplayName(value) {
+    return String(value || '').trim().replace(/^proj-/i, '');
+}
+
 const ComponentNode = memo(function ComponentNode({
     node, depth, onNodeClick, selectedId,
 }) {
@@ -94,9 +98,10 @@ export default function ComponentTree({ nodes = [], snapshotModels = [], onNodeC
     const [search, setSearch] = useState('');
 
     const treeData = useMemo(() => {
+        const modelKeyOf = (value) => String(value || '').trim().toLowerCase();
         const models = nodes.filter(n => n.data?.nodeType === 'model').map(n => ({
             id: n.id,
-            label: n.data?.label || n.id,
+            label: formatProjectDisplayName(n.data?.label || n.id),
             type: 'model',
             data: n.data,
             children: []
@@ -104,30 +109,35 @@ export default function ComponentTree({ nodes = [], snapshotModels = [], onNodeC
 
         // Ensure models discovered from snapshot history are visible even when
         // the currently loaded graph is scoped to a single snapshot/project.
-        const existingModelIds = new Set(models.map((m) => String(m?.data?.model_id || m.id || '')));
+        const existingModelIds = new Set(models.map((m) => modelKeyOf(m?.data?.model_id || m.id || '')));
         snapshotModels.forEach((modelName) => {
             const id = String(modelName || '').trim();
-            if (!id || existingModelIds.has(id)) return;
+            const modelKey = modelKeyOf(id);
+            if (!id || existingModelIds.has(modelKey)) return;
             models.push({
                 id: `model-${id}`,
-                label: id,
+                label: formatProjectDisplayName(id),
                 type: 'model',
                 data: {
                     model_id: id,
-                    label: id,
+                    label: formatProjectDisplayName(id),
                     nodeType: 'model',
                     status: 'valid',
                 },
                 children: [],
             });
-            existingModelIds.add(id);
+            existingModelIds.add(modelKey);
         });
+
+        const modelByKey = new Map(
+            models.map((m) => [modelKeyOf(m?.data?.model_id || m.id), m])
+        );
 
         const tables = nodes.filter(n => n.data?.nodeType === 'table');
         
         tables.forEach(t => {
-            const modelId = t.data?.model_id;
-            const model = models.find(m => m.id === modelId);
+            const modelId = modelKeyOf(t.data?.model_id);
+            const model = modelByKey.get(modelId);
             if (model) {
                 model.children.push({
                     id: t.id,

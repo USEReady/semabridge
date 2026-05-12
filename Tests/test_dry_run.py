@@ -19,6 +19,7 @@ from typing import Any, Dict, List
 
 import pytest
 import yaml
+from fastapi import HTTPException
 
 # ---------------------------------------------------------------------------
 # Minimal stubs so the semabridge package can be imported without a live DB
@@ -39,7 +40,10 @@ if "psycopg2" not in sys.modules:
     sys.modules["psycopg2.extras"] = types.ModuleType("psycopg2.extras")
 
 from semabridge.api.services.mappings_service import MappingService
-from semabridge.api.controllers.mappings_controller import _build_config_yaml_from_request
+from semabridge.api.controllers.mappings_controller import (
+    _build_config_yaml_from_request,
+    _validate_dry_run_sources,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -117,6 +121,43 @@ def test_build_config_yaml_from_request_preserves_fabric_identity_id():
     assert config["source"]["workspace_id"] == "workspace-123"
     assert config["source"]["identity_id"] == "account-456"
     assert config["source"]["models"] == ["Model A"]
+
+
+def test_build_config_yaml_from_request_falls_back_to_source_models():
+    """The dry-run builder should reuse models already present on source_config."""
+    config_yaml = _build_config_yaml_from_request(
+        source_config={
+            "type": "fabric",
+            "workspace_id": "workspace-123",
+            "models": ["Model A", "Model B"],
+        },
+        target_config={"type": "snowflake"},
+        selected_sources=[],
+    )
+
+    config = yaml.safe_load(config_yaml)
+
+    assert config["source"]["models"] == ["Model A", "Model B"]
+
+
+def test_validate_dry_run_sources_requires_model_for_fabric():
+    with pytest.raises(HTTPException) as exc_info:
+        _validate_dry_run_sources(
+            source_config={"type": "fabric", "workspace_id": "workspace-123"},
+            selected_sources=[],
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "Select at least one source model" in str(exc_info.value.detail)
+
+
+def test_validate_dry_run_sources_uses_source_config_fallback_models():
+    normalized = _validate_dry_run_sources(
+        source_config={"type": "fabric", "models": ["Model A", "Model B"]},
+        selected_sources=[],
+    )
+
+    assert normalized == ["Model A", "Model B"]
 
 
 # ===========================================================================

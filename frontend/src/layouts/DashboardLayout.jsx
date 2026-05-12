@@ -59,7 +59,7 @@ export default function DashboardLayout() {
       className="flex flex-col h-screen overflow-hidden bg-app theme-transition"
       style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}
     >
-      {/* ── Top row: Sidebar + Main ── */}
+      {/* ── Main row: Sidebar + Content ── */}
       <div className="flex flex-1 overflow-hidden min-h-0 relative">
         {/* ── Sidebar (Floating or Pinned) ── */}
         <LeftNavigation 
@@ -67,8 +67,7 @@ export default function DashboardLayout() {
           searchQuery={search}
         />
 
-
-        {/* ── Main area ── */}
+        {/* ── Main content area ── */}
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
           <ProjectContextHeader 
             onShowLogs={() => setShowLogs(true)}

@@ -46,16 +46,35 @@ def test_project_config_is_saved_to_project_yaml_not_repo_yaml(monkeypatch, tmp_
 
     project_yaml_path = projects_dir / f"{project_id}.yaml"
     assert project_yaml_path.exists()
-    assert yaml.safe_load(project_yaml_path.read_text(encoding="utf-8")) == yaml.safe_load(initial_yaml)
+    saved_initial = yaml.safe_load(project_yaml_path.read_text(encoding="utf-8"))
+    expected_initial = yaml.safe_load(initial_yaml)
+    assert saved_initial.get("project_id") == expected_initial.get("project_id")
+    assert saved_initial.get("display_name") == expected_initial.get("display_name")
+    assert saved_initial.get("project_name") == expected_initial.get("project_name")
+    assert saved_initial.get("source") == expected_initial.get("source")
+    assert (saved_initial.get("model_manifest") or {}).get("model_id") == project_id
+    assert (saved_initial.get("model_manifest") or {}).get("topology_layer") == "spoke"
     assert repo_yaml.read_text(encoding="utf-8") == "project_name: GLOBAL\nsource:\n  type: fabric\n"
 
     updated_yaml = "project_id: \"cust_sf\"\ndisplay_name: \"Customer SF Updated\"\nproject_name: CUST UPDATED\nsource:\n  type: fabric\n"
     save_result = asyncio.run(ppi.save_project_config_compat(project_id, {"config_yaml": updated_yaml}))
 
     assert save_result["yaml_path"].replace("\\", "/").endswith(f"Config/projects/{project_id}.yaml")
-    assert yaml.safe_load(project_yaml_path.read_text(encoding="utf-8")) == yaml.safe_load(updated_yaml)
+    saved_updated = yaml.safe_load(project_yaml_path.read_text(encoding="utf-8"))
+    expected_updated = yaml.safe_load(updated_yaml)
+    assert saved_updated.get("project_id") == expected_updated.get("project_id")
+    assert saved_updated.get("display_name") == expected_updated.get("display_name")
+    assert saved_updated.get("project_name") == expected_updated.get("project_name")
+    assert saved_updated.get("source") == expected_updated.get("source")
+    assert (saved_updated.get("model_manifest") or {}).get("model_id") == project_id
+    assert (saved_updated.get("model_manifest") or {}).get("topology_layer") == "spoke"
     assert repo_yaml.read_text(encoding="utf-8") == "project_name: GLOBAL\nsource:\n  type: fabric\n"
 
     loaded = asyncio.run(ppi.get_project_config_compat(project_id))
-    assert yaml.safe_load(loaded["config_yaml"]) == yaml.safe_load(updated_yaml)
+    loaded_cfg = yaml.safe_load(loaded["config_yaml"])
+    assert loaded_cfg.get("project_id") == expected_updated.get("project_id")
+    assert loaded_cfg.get("display_name") == expected_updated.get("display_name")
+    assert loaded_cfg.get("project_name") == expected_updated.get("project_name")
+    assert loaded_cfg.get("source") == expected_updated.get("source")
+    assert (loaded_cfg.get("model_manifest") or {}).get("model_id") == project_id
     assert loaded["yaml_path"].replace("\\", "/").endswith(f"Config/projects/{project_id}.yaml")

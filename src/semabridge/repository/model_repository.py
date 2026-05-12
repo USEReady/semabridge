@@ -419,6 +419,76 @@ class ModelRepository:
             )
             return [self._row_to_snapshot(r) for r in rows]
 
+    def list_snapshots_meta(self, project_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """List lightweight snapshot metadata for a project, newest first.
+
+        This avoids deserializing large snapshot JSON blobs for list endpoints.
+        """
+        with self._session() as session:
+            rows = session.execute(
+                select(
+                    SnapshotRow.snapshot_id,
+                    SnapshotRow.project_id,
+                    SnapshotRow.timestamp,
+                    SnapshotRow.version_tag,
+                    SnapshotRow.status,
+                    SnapshotRow.duration_ms,
+                    SnapshotRow.error_message,
+                    SnapshotRow.initiated_by,
+                    SnapshotRow.run_id,
+                )
+                .where(SnapshotRow.project_id == project_id)
+                .order_by(SnapshotRow.timestamp.desc())
+                .limit(limit)
+            ).all()
+            return [
+                {
+                    "snapshot_id": r[0],
+                    "project_id": r[1],
+                    "timestamp": str(r[2]),
+                    "version_tag": r[3],
+                    "status": r[4],
+                    "duration_ms": r[5],
+                    "error_message": r[6],
+                    "initiated_by": r[7],
+                    "run_id": r[8],
+                }
+                for r in rows
+            ]
+
+    def list_all_snapshots_meta(self, limit: int = 10000) -> List[Dict[str, Any]]:
+        """List lightweight snapshot metadata across all projects, newest first."""
+        with self._session() as session:
+            rows = session.execute(
+                select(
+                    SnapshotRow.snapshot_id,
+                    SnapshotRow.project_id,
+                    SnapshotRow.timestamp,
+                    SnapshotRow.version_tag,
+                    SnapshotRow.status,
+                    SnapshotRow.duration_ms,
+                    SnapshotRow.error_message,
+                    SnapshotRow.initiated_by,
+                    SnapshotRow.run_id,
+                )
+                .order_by(SnapshotRow.timestamp.desc())
+                .limit(limit)
+            ).all()
+            return [
+                {
+                    "snapshot_id": r[0],
+                    "project_id": r[1],
+                    "timestamp": str(r[2]),
+                    "version_tag": r[3],
+                    "status": r[4],
+                    "duration_ms": r[5],
+                    "error_message": r[6],
+                    "initiated_by": r[7],
+                    "run_id": r[8],
+                }
+                for r in rows
+            ]
+
 
     def commit_model(
         self,

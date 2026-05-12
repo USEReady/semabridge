@@ -141,12 +141,32 @@ def _compat_connector_descriptors(project_cfg: str) -> Dict[str, Any]:
 
 
 def _compat_latest_sml_state(project_id: str, preferred_snapshot_id: str = "") -> Dict[str, Any]:
+    def _parse_snapshot_blob(raw_blob: Any) -> Dict[str, Any]:
+        if isinstance(raw_blob, dict):
+            return raw_blob
+        if isinstance(raw_blob, str) and raw_blob.strip():
+            try:
+                parsed_json = json.loads(raw_blob)
+                if isinstance(parsed_json, dict):
+                    return parsed_json
+            except Exception:
+                pass
+            try:
+                parsed_yaml = yaml.safe_load(raw_blob)
+                if isinstance(parsed_yaml, dict):
+                    return parsed_yaml
+            except Exception:
+                pass
+        return {}
+
     sid = str(preferred_snapshot_id or "").strip()
     if sid:
         try:
             snap = db_manager.get_snapshot(sid)
-            if snap and isinstance(getattr(snap, "sml_blob", None), dict):
-                return snap.sml_blob
+            if snap:
+                parsed = _parse_snapshot_blob(getattr(snap, "sml_blob", None))
+                if parsed:
+                    return parsed
         except Exception:
             pass
 
@@ -159,10 +179,34 @@ def _compat_latest_sml_state(project_id: str, preferred_snapshot_id: str = "") -
             continue
         try:
             snap = db_manager.get_snapshot(sid)
-            if snap and isinstance(getattr(snap, "sml_blob", None), dict):
-                return snap.sml_blob
+            if snap:
+                parsed = _parse_snapshot_blob(getattr(snap, "sml_blob", None))
+                if parsed:
+                    return parsed
         except Exception:
             continue
+
+    # DB-backed fallback: when in-memory compatibility stores are cold/stale,
+    # prefer the latest persisted snapshot state from PostgreSQL instead of
+    # falling back to YAML-derived skeleton datasets.
+    try:
+        from sqlalchemy import select
+        from semabridge.repository.orm.models import SnapshotRow
+        from semabridge.repository.orm.session_factory import db_manager
+
+        with db_manager.get_session() as session:
+            latest = session.execute(
+                select(SnapshotRow)
+                .where(SnapshotRow.project_id == project_id)
+                .order_by(SnapshotRow.timestamp.desc())
+                .limit(1)
+            ).scalars().first()
+            if latest is not None:
+                parsed = _parse_snapshot_blob(getattr(latest, "sml_blob", None))
+                if parsed:
+                    return parsed
+    except Exception:
+        pass
     return {}
 
 
@@ -957,6 +1001,224 @@ async def run_project_now_compat(project_id: str, background_tasks: BackgroundTa
     run["force"] = force
     background_tasks.add_task(_perform_project_run, run, project_cfg, started)
     return {"run_id": run["id"], "status": "running", "run_type": run_type, "message": "Sync started in background"}
+
+
+def _dependency_order_for_projects(project_ids: List[str]) -> List[str]:
+    """Topologically sort projects by manifest dependencies (deps first)."""
+    try:
+        from semabridge.api.services.project_projects_impl import _collect_project_dependency_rows
+        rows = _collect_project_dependency_rows()
+    except Exception:
+        rows = {}
+
+    selected = [str(pid).strip() for pid in project_ids if str(pid).strip()]
+    selected_set = set(selected)
+    indegree: Dict[str, int] = {pid: 0 for pid in selected}
+    forward: Dict[str, List[str]] = {pid: [] for pid in selected}
+
+    for pid in selected:
+        deps = rows.get(pid, {}).get("dependencies", []) if isinstance(rows.get(pid), dict) else []
+        for dep in deps:
+            if dep not in selected_set:
+                continue
+            # dep -> pid
+            forward.setdefault(dep, []).append(pid)
+            indegree[pid] = indegree.get(pid, 0) + 1
+
+    queue = sorted([pid for pid, deg in indegree.items() if deg == 0])
+    ordered: List[str] = []
+    while queue:
+        node = queue.pop(0)
+        ordered.append(node)
+        for nxt in sorted(forward.get(node, [])):
+            indegree[nxt] -= 1
+            if indegree[nxt] == 0:
+                queue.append(nxt)
+                queue.sort()
+
+    # Cycle or incomplete ordering: append remaining deterministically.
+    if len(ordered) != len(selected):
+        remainder = sorted([pid for pid in selected if pid not in set(ordered)])
+        ordered.extend(remainder)
+    return ordered
+
+
+def _find_before_snapshot_id_for_run(project_id: str, run_id: str) -> Optional[str]:
+    for row in _compat_project_snapshots.get(project_id, []):
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("run_id") or "") != str(run_id):
+            continue
+        if str(row.get("stage") or "") != "before":
+            continue
+        if str(row.get("role") or "") != "source":
+            continue
+        sid = str(row.get("snapshot_id") or "").strip()
+        if sid:
+            return sid
+    return None
+
+
+async def _execute_atomic_rollback(
+    *,
+    completed_successes: List[Dict[str, Any]],
+    run_group_id: str,
+    sync_mode: str,
+) -> List[Dict[str, Any]]:
+    rollback_results: List[Dict[str, Any]] = []
+    # Reverse order to unwind dependency chain safely.
+    for item in reversed(completed_successes):
+        project_id = str(item.get("project_id") or "")
+        run_id = str(item.get("run_id") or "")
+        before_snapshot_id = _find_before_snapshot_id_for_run(project_id, run_id)
+        if not before_snapshot_id:
+            rollback_results.append(
+                {
+                    "project_id": project_id,
+                    "status": "skipped",
+                    "reason": "No before snapshot available for rollback",
+                    "run_group_id": run_group_id,
+                    "rollback_of_run_id": run_id,
+                }
+            )
+            continue
+
+        snapshot_rows = _compat_project_snapshots.get(project_id, [])
+        snapshot_row = next(
+            (
+                row
+                for row in snapshot_rows
+                if isinstance(row, dict) and str(row.get("snapshot_id") or "") == before_snapshot_id
+            ),
+            None,
+        )
+        config_yaml = str((snapshot_row or {}).get("project_config_yaml") or _compat_project_configs.get(project_id) or "")
+        restore_run, restore_cfg, restore_started = _create_project_run(
+            project_id,
+            schedule_label="AtomicRollback",
+            run_type="RESTORE",
+            project_cfg_override=config_yaml,
+            restore_snapshot_id=before_snapshot_id,
+            sync_mode=sync_mode,
+        )
+        restore_run["run_group_id"] = run_group_id
+        executed = await _perform_project_run(restore_run, restore_cfg, restore_started)
+        rollback_results.append(
+            {
+                "project_id": project_id,
+                "status": str(executed.get("status") or "").lower() or "unknown",
+                "run_id": executed.get("run_id") or executed.get("id"),
+                "rollback_of_run_id": run_id,
+                "rollback_snapshot_id": before_snapshot_id,
+                "run_group_id": run_group_id,
+            }
+        )
+    return rollback_results
+
+
+async def run_projects_atomic_compat(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Execute a batch of project runs sequentially as one atomic run-group.
+    Fail-fast behavior: stop on first failure and mark rollback intent.
+    """
+    _compat_ensure_loaded()
+    body = payload or {}
+    requested_ids = body.get("project_ids")
+    if not isinstance(requested_ids, list) or not requested_ids:
+        raise HTTPException(status_code=400, detail="project_ids (non-empty list) is required")
+
+    project_ids = [str(pid).strip() for pid in requested_ids if str(pid).strip()]
+    if not project_ids:
+        raise HTTPException(status_code=400, detail="project_ids must contain at least one valid project id")
+
+    for pid in project_ids:
+        if pid not in _compat_projects:
+            raise HTTPException(status_code=404, detail=f"Project not found: {pid}")
+
+    run_group_id = f"rungroup-{uuid.uuid4().hex}"
+    ordered_ids = _dependency_order_for_projects(project_ids)
+    fail_fast = bool(body.get("fail_fast", True))
+    sync_mode = _compat_normalize_sync_mode(body.get("sync_mode")) or "copy"
+    force = bool(body.get("force", False))
+    dry_run = bool(body.get("dry_run", False))
+    execute_rollback_on_failure = bool(body.get("execute_rollback_on_failure", True))
+
+    results: List[Dict[str, Any]] = []
+    failed = False
+    completed_runs: List[str] = []
+    completed_successes: List[Dict[str, Any]] = []
+
+    for pid in ordered_ids:
+        if failed and fail_fast:
+            results.append({
+                "project_id": pid,
+                "status": "skipped",
+                "reason": "Skipped due to fail-fast after previous failure",
+                "run_group_id": run_group_id,
+            })
+            continue
+
+        if dry_run:
+            results.append({
+                "project_id": pid,
+                "status": "planned",
+                "run_group_id": run_group_id,
+                "sync_mode": sync_mode,
+            })
+            continue
+
+        run, project_cfg, started = _create_project_run(
+            pid,
+            schedule_label="AtomicBatch",
+            run_type="SYNC",
+            sync_mode=sync_mode,
+        )
+        run["run_group_id"] = run_group_id
+        run["force"] = force
+        executed = await _perform_project_run(run, project_cfg, started)
+        status = str(executed.get("status") or "").lower()
+        completed_runs.append(str(executed.get("run_id") or executed.get("id") or ""))
+        results.append({
+            "project_id": pid,
+            "run_id": executed.get("run_id") or executed.get("id"),
+            "status": status or "unknown",
+            "run_group_id": run_group_id,
+            "message": executed.get("message"),
+        })
+        if status in {"success", "warning"}:
+            completed_successes.append(
+                {
+                    "project_id": pid,
+                    "run_id": executed.get("run_id") or executed.get("id"),
+                    "status": status,
+                }
+            )
+        else:
+            failed = True
+
+    rollback_intent = bool(failed and not dry_run)
+    rollback_results: List[Dict[str, Any]] = []
+    if rollback_intent and execute_rollback_on_failure and completed_successes:
+        rollback_results = await _execute_atomic_rollback(
+            completed_successes=completed_successes,
+            run_group_id=run_group_id,
+            sync_mode=sync_mode,
+        )
+
+    return {
+        "run_group_id": run_group_id,
+        "ordered_project_ids": ordered_ids,
+        "requested_project_ids": project_ids,
+        "fail_fast": fail_fast,
+        "dry_run": dry_run,
+        "execute_rollback_on_failure": execute_rollback_on_failure,
+        "status": "failed" if failed else "success",
+        "rollback_intent": rollback_intent,
+        "rollback_executed": bool(rollback_results),
+        "completed_run_ids": [rid for rid in completed_runs if rid],
+        "results": results,
+        "rollback_results": rollback_results,
+    }
 
 
 async def get_run_conflicts_compat(run_id: str):

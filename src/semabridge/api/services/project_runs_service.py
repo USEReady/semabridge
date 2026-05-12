@@ -6,6 +6,7 @@ from semabridge.api.services.project_domain_service import (
     list_snapshot_groups_compat,
     restore_project_version_compat,
     run_project_now_compat,
+    run_projects_atomic_compat,
     delete_project_snapshots_compat,
     apply_project_retention_policy,
     get_project_storage_stats,

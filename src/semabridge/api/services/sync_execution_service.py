@@ -642,10 +642,52 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
         deploy_enabled,
     )
 
+    atomic_batch = bool(deploy_enabled and len(sync_jobs) > 1)
+
+    if atomic_batch:
+        validation_results = _run_parallel_jobs(
+            sync_jobs=sync_jobs,
+            effective_parallelism=1,
+            executor_kind="thread",
+            source_type=source_type,
+            target_type=target_type,
+            config=config,
+            config_path=config_path,
+            deploy_enabled=False,
+            resolved_workspace_id=resolved_workspace_id,
+            account_id=account_id,
+            sync_mode=sync_mode,
+            force=force or bool(payload.get("force", False)),
+        )
+        validation_failed = any(result.get("status") != "success" for result in validation_results)
+        if validation_failed:
+            logger.warning("Atomic validation failed; skipping deploy phase for batch sync")
+            last_validation_summary = next(
+                (result.get("summary") for result in reversed(validation_results) if isinstance(result.get("summary"), dict)),
+                {},
+            )
+            return {
+                "status": "failed",
+                "models_synced": 0,
+                "total_models": len(validation_results),
+                "results": validation_results,
+                "summary": last_validation_summary or {},
+                "routing_summary": (last_validation_summary or {}).get("routing_summary") if isinstance(last_validation_summary, dict) else None,
+                "batch": {
+                    "max_batch_models": MAX_BATCH_MODELS,
+                    "requested_parallelism": max_parallel_models,
+                    "effective_parallelism": 1,
+                    "executor": "thread",
+                    "fabric_limited": bool(is_fabric_bound and 1 < max_parallel_models),
+                    "atomic": True,
+                    "validation_only": True,
+                },
+            }
+
     try:
         per_model_results = _run_parallel_jobs(
             sync_jobs=sync_jobs,
-            effective_parallelism=effective_parallelism,
+            effective_parallelism=1 if atomic_batch else effective_parallelism,
             executor_kind=executor_kind,
             source_type=source_type,
             target_type=target_type,
@@ -723,8 +765,9 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
         "batch": {
             "max_batch_models": MAX_BATCH_MODELS,
             "requested_parallelism": max_parallel_models,
-            "effective_parallelism": effective_parallelism,
+            "effective_parallelism": 1 if atomic_batch else effective_parallelism,
             "executor": executor_kind,
             "fabric_limited": bool(is_fabric_bound and effective_parallelism < max_parallel_models),
+            "atomic": atomic_batch,
         },
     }

@@ -6,6 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Request, Body
 from semabridge.api.services.project_runs_service import (
     get_project_runs_compat,
     run_project_now_compat,
+    run_projects_atomic_compat,
     tag_snapshot_compat,
     preview_restore_compat,
     get_audit_logs_compat,
@@ -32,6 +33,7 @@ router.get('/api/projects/{project_id}/snapshots/{snapshot_id}/content')(get_sna
 router.get('/api/projects/{project_id}/snapshots/{snapshot_id}/report')(get_snapshot_report_compat)
 router.post('/api/projects/{project_id}/snapshots/{snapshot_id}/deploy')(manual_deploy_compat)
 router.get('/api/runs/{run_id}/conflicts')(get_run_conflicts_compat)
+router.post('/api/projects/runs/atomic')(run_projects_atomic_compat)
 
 
 

@@ -42,6 +42,59 @@ router.delete('/api/mappings')(delete_mappings_compat)
 from fastapi.responses import JSONResponse
 
 
+def _normalize_selected_sources(source_config: Dict[str, Any], selected_sources: List[str]) -> List[str]:
+    """Return a cleaned model list from the request payload.
+
+    Dry runs can arrive with selected_sources omitted even when the source
+    config already carries the selected model list. Prefer the explicit request
+    list, then fall back to source_config models/model/selection.model_ids.
+    """
+    candidate_sources: List[Any] = []
+
+    if selected_sources:
+        candidate_sources.extend(selected_sources)
+
+    source_models = source_config.get("models")
+    if isinstance(source_models, list):
+        candidate_sources.extend(source_models)
+    elif isinstance(source_models, str) and source_models.strip():
+        candidate_sources.extend(part.strip() for part in source_models.split(","))
+
+    source_model = source_config.get("model")
+    if isinstance(source_model, str) and source_model.strip():
+        candidate_sources.append(source_model.strip())
+
+    selection_model_ids = source_config.get("selection", {}).get("model_ids")
+    if isinstance(selection_model_ids, list):
+        candidate_sources.extend(selection_model_ids)
+
+    cleaned_sources: List[str] = []
+    seen: set[str] = set()
+    for raw_source in candidate_sources:
+        value = str(raw_source or "").strip()
+        if not value or value == "*" or value in seen:
+            continue
+        seen.add(value)
+        cleaned_sources.append(value)
+
+    return cleaned_sources
+
+
+def _validate_dry_run_sources(source_config: Dict[str, Any], selected_sources: List[str]) -> List[str]:
+    """Ensure dry-run requests include at least one resolvable source model."""
+    normalized_sources = _normalize_selected_sources(source_config, selected_sources)
+    source_type = str(source_config.get("type") or "").strip().lower()
+
+    # Fabric and Snowflake dry runs need explicit model scope to build sync jobs.
+    if source_type in {"fabric", "snowflake"} and not normalized_sources:
+        raise HTTPException(
+            status_code=400,
+            detail="Select at least one source model before running dry run.",
+        )
+
+    return normalized_sources
+
+
 def _build_config_yaml_from_request(
     source_config: Dict[str, Any],
     target_config: Dict[str, Any],
@@ -54,6 +107,7 @@ def _build_config_yaml_from_request(
     """
     source_type = str(source_config.get("type") or "fabric").strip().lower()
     target_type = str(target_config.get("type") or "snowflake").strip().lower()
+    normalized_sources = _normalize_selected_sources(source_config, selected_sources)
 
     source_section: Dict[str, Any] = {"type": source_type}
     if source_config.get("workspace_id"):
@@ -64,8 +118,8 @@ def _build_config_yaml_from_request(
         source_section["database"] = source_config["database"]
     if source_config.get("schema"):
         source_section["schema"] = source_config["schema"]
-    if selected_sources:
-        source_section["models"] = selected_sources
+    if normalized_sources:
+        source_section["models"] = normalized_sources
 
     target_section: Dict[str, Any] = {"type": target_type}
     if target_config.get("database"):
@@ -116,7 +170,8 @@ async def dry_run_mapping(
         # ── 1. Resolve or create a stable preview project in the compat store ──
         # Use a deterministic project id based on source+models so repeated dry
         # runs for the same wizard session reuse the same project slot.
-        seed = f"{request.source_config.get('type','')}-{request.source_config.get('workspace_id','')}-{'|'.join(sorted(request.selected_sources))}"
+        normalized_sources = _validate_dry_run_sources(request.source_config, request.selected_sources)
+        seed = f"{request.source_config.get('type','')}-{request.source_config.get('workspace_id','')}-{'|'.join(sorted(normalized_sources))}"
         preview_project_id = f"preview-{uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex[:12]}"
 
         project_shared._compat_ensure_loaded()
@@ -133,7 +188,7 @@ async def dry_run_mapping(
         config_yaml = _build_config_yaml_from_request(
             source_config=request.source_config,
             target_config=request.target_config,
-            selected_sources=request.selected_sources,
+            selected_sources=normalized_sources,
             project_name="dry-run-preview",
         )
         project_shared._compat_project_configs[preview_project_id] = config_yaml
@@ -148,7 +203,7 @@ async def dry_run_mapping(
         })
 
         preferred_snapshot_id = _compat_preferred_snapshot_id_from_sync_result(
-            sync_result, request.selected_sources
+            sync_result, normalized_sources
         )
 
         # Debug: log what we got from the sync result
@@ -203,9 +258,9 @@ async def dry_run_mapping(
             print(f"[DryRun] WARNING: No SML blob found — returning empty mappings")
 
         # Scope to selected sources if specified
-        if sml_blob and request.selected_sources:
+        if sml_blob and normalized_sources:
             from semabridge.api.services.project_runs_impl import _compat_scope_model_for_dry_run
-            sml_blob = _compat_scope_model_for_dry_run(sml_blob, request.selected_sources)
+            sml_blob = _compat_scope_model_for_dry_run(sml_blob, normalized_sources)
 
         built = build_entity_mappings(
             project_id=preview_project_id,
@@ -279,6 +334,20 @@ async def dry_run_mapping(
             },
         }
 
+    except HTTPException as e:
+        print(f"[Dry Run Error] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=e.status_code,
+            content={
+                "success": False,
+                "error": str(e.detail),
+                "entity_mappings": [],
+                "summary": {"total_fields": 0, "auto_mapped": 0, "unmapped": 0, "collisions": 0},
+            },
+        )
+
     except Exception as e:
         print(f"[Dry Run Error] {str(e)}")
         import traceback
@@ -321,10 +390,12 @@ async def rerun_auto_map(
     """
     Re-run auto-mapping algorithm on demand.
     """
+    normalized_sources = _validate_dry_run_sources(request.source_config, request.selected_sources)
+
     result = await service.auto_map_compat(
         source_config=request.source_config,
         target_config=request.target_config,
-        selected_sources=request.selected_sources,
+        selected_sources=normalized_sources,
         dry_run=False
     )
     

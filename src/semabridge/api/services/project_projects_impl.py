@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import time as _time
 from pathlib import Path
@@ -17,13 +18,19 @@ from semabridge.api.services.project_shared import (
     _compat_mappings,
     _compat_now_iso,
     _compat_project_configs,
+    _compat_project_schedules,
+    _compat_project_snapshots,
     _compat_project_payload,
     _compat_project_runs,
     _compat_project_yaml_path,
     _compat_projects,
     _compat_projects_dir,
+    _compat_run_snapshots,
     _compat_save_project_yaml_text,
     _compat_save_store,
+    _compat_snapshot_groups,
+    _compat_store_loaded,
+    _compat_folders,
     db_manager,
     logger,
 )
@@ -55,6 +62,80 @@ def _project_display_name_from_cfg(project_cfg: Dict[str, Any], fallback: str) -
     )
 
 
+def _normalize_model_manifest(project_id: str, parsed: Dict[str, Any]) -> Dict[str, Any]:
+    raw_manifest = parsed.get("model_manifest")
+    manifest = raw_manifest if isinstance(raw_manifest, dict) else {}
+
+    manifest_version = str(manifest.get("manifest_version") or "1").strip()
+    if manifest_version != "1":
+        raise HTTPException(status_code=400, detail="model_manifest.manifest_version must be '1'")
+
+    topology_layer = str(manifest.get("topology_layer") or "spoke").strip().lower()
+    if topology_layer not in {"hub", "spoke"}:
+        raise HTTPException(status_code=400, detail="model_manifest.topology_layer must be 'hub' or 'spoke'")
+
+    dependencies = manifest.get("dependencies")
+    if dependencies is None:
+        normalized_dependencies: List[str] = []
+    elif isinstance(dependencies, list):
+        normalized_dependencies = []
+        for dep in dependencies:
+            if not isinstance(dep, str):
+                raise HTTPException(status_code=400, detail="model_manifest.dependencies entries must be strings")
+            dep_id = dep.strip()
+            if dep_id:
+                normalized_dependencies.append(dep_id)
+    else:
+        raise HTTPException(status_code=400, detail="model_manifest.dependencies must be a list of strings")
+
+    dependency_pins_raw = manifest.get("dependency_pins")
+    if dependency_pins_raw is None:
+        dependency_pins: Dict[str, str] = {}
+    elif isinstance(dependency_pins_raw, dict):
+        dependency_pins = {}
+        for dep_id, dep_ver in dependency_pins_raw.items():
+            key = str(dep_id).strip()
+            val = str(dep_ver).strip()
+            if not key:
+                continue
+            if not val:
+                raise HTTPException(status_code=400, detail="model_manifest.dependency_pins values must be non-empty strings")
+            dependency_pins[key] = val
+    else:
+        raise HTTPException(status_code=400, detail="model_manifest.dependency_pins must be an object map")
+
+    published_versions_raw = manifest.get("published_contract_versions")
+    if published_versions_raw is None:
+        normalized_published_versions: List[str] = []
+    elif isinstance(published_versions_raw, list):
+        normalized_published_versions = []
+        for item in published_versions_raw:
+            ver = str(item).strip()
+            if not ver:
+                continue
+            normalized_published_versions.append(ver)
+    else:
+        raise HTTPException(status_code=400, detail="model_manifest.published_contract_versions must be a list of strings")
+
+    contract_version = str(manifest.get("contract_version") or "1.0.0").strip() or "1.0.0"
+    if contract_version not in normalized_published_versions:
+        normalized_published_versions.append(contract_version)
+    normalized_published_versions = sorted(set(normalized_published_versions))
+
+    return {
+        "manifest_version": manifest_version,
+        "model_id": str(manifest.get("model_id") or project_id).strip() or project_id,
+        "topology_layer": topology_layer,
+        "owner": str(manifest.get("owner") or "unknown").strip() or "unknown",
+        "contract_id": str(manifest.get("contract_id") or f"contract.{project_id}").strip() or f"contract.{project_id}",
+        "contract_version": contract_version,
+        "published_contract_versions": normalized_published_versions,
+        "dependency_pins": dependency_pins,
+        "deprecation_date": str(manifest.get("deprecation_date") or "").strip(),
+        "dependencies": normalized_dependencies,
+    }
+
+
 def _normalize_project_config_yaml(project_id: str, yaml_text: str, default_name: str) -> str:
     try:
         parsed = yaml.safe_load(yaml_text) or {}
@@ -76,6 +157,7 @@ def _normalize_project_config_yaml(project_id: str, yaml_text: str, default_name
     parsed["display_name"] = display_name
     if not str(parsed.get("project_name") or "").strip():
         parsed["project_name"] = display_name or default_name
+    parsed["model_manifest"] = _normalize_model_manifest(project_id, parsed)
     return yaml.safe_dump(parsed, sort_keys=False, allow_unicode=False)
 
 
@@ -98,6 +180,382 @@ def _project_discovery_entry(project_id: str, file_path: Path, project_cfg: Dict
         "source": source.get("type", "fabric"),
         "target_type": target.get("type", "snowflake"),
         "workspace_id": source.get("workspace_id", ""),
+    }
+
+
+def _extract_manifest_dependencies(project_id: str, project_cfg: Dict[str, Any]) -> List[str]:
+    if not isinstance(project_cfg, dict):
+        return []
+    manifest = project_cfg.get("model_manifest")
+    if not isinstance(manifest, dict):
+        return []
+    dependencies = manifest.get("dependencies")
+    if not isinstance(dependencies, list):
+        return []
+    normalized: List[str] = []
+    for dep in dependencies:
+        dep_id = str(dep).strip()
+        if dep_id and dep_id != project_id:
+            normalized.append(dep_id)
+    return sorted(set(normalized))
+
+
+def _collect_project_dependency_rows() -> Dict[str, Dict[str, Any]]:
+    rows: Dict[str, Dict[str, Any]] = {}
+    projects_dir = _compat_projects_dir()
+    if projects_dir.exists() and projects_dir.is_dir():
+        for file_path in sorted(projects_dir.glob("*.y*ml")):
+            pid = file_path.stem.strip()
+            if not pid:
+                continue
+            try:
+                project_cfg = yaml.safe_load(file_path.read_text(encoding="utf-8")) or {}
+            except Exception:
+                continue
+            if not isinstance(project_cfg, dict):
+                continue
+            rows[pid] = {
+                "project_id": pid,
+                "dependencies": _extract_manifest_dependencies(pid, project_cfg),
+                "source": "project_yaml",
+            }
+
+    for pid, project in _compat_projects.items():
+        project_id = str(pid or "").strip()
+        if not project_id:
+            continue
+        if project_id in rows:
+            continue
+        rows[project_id] = {
+            "project_id": project_id,
+            "dependencies": [],
+            "source": "compat_memory",
+        }
+    return rows
+
+
+def _detect_dependency_cycles(rows: Dict[str, Dict[str, Any]]) -> List[List[str]]:
+    adjacency: Dict[str, List[str]] = {}
+    for pid, row in rows.items():
+        deps = [d for d in row.get("dependencies", []) if d in rows]
+        adjacency[pid] = sorted(set(deps))
+
+    cycles: List[List[str]] = []
+    seen: set[str] = set()
+
+    for start in sorted(adjacency.keys()):
+        stack: List[tuple[str, List[str], set[str]]] = [(start, [start], {start})]
+        while stack:
+            node, path, path_set = stack.pop()
+            for nxt in adjacency.get(node, []):
+                if nxt == start and len(path) > 1:
+                    cycle_nodes = path + [start]
+                    ring = cycle_nodes[:-1]
+                    min_idx = min(range(len(ring)), key=lambda i: ring[i])
+                    normalized = tuple(ring[min_idx:] + ring[:min_idx] + [ring[min_idx]])
+                    cycle_key = "->".join(normalized)
+                    if cycle_key not in seen:
+                        seen.add(cycle_key)
+                        cycles.append(list(normalized))
+                    continue
+                if nxt in path_set:
+                    continue
+                stack.append((nxt, path + [nxt], path_set | {nxt}))
+    return sorted(cycles, key=lambda c: "->".join(c))
+
+
+async def get_project_dependency_graph_compat(strict_cycles: bool = False) -> Dict[str, Any]:
+    _compat_ensure_loaded()
+    rows = _collect_project_dependency_rows()
+
+    nodes = [{"id": pid, "type": "project"} for pid in sorted(rows.keys())]
+    edges: List[Dict[str, str]] = []
+    seen_edges: set[str] = set()
+
+    for pid, row in rows.items():
+        for dep in row.get("dependencies", []):
+            if dep not in rows:
+                nodes.append({"id": dep, "type": "external"})
+            edge_id = f"{pid}->{dep}"
+            if edge_id in seen_edges:
+                continue
+            edges.append({"id": edge_id, "source": pid, "target": dep})
+            seen_edges.add(edge_id)
+
+    # keep node list deterministic and unique even with external deps
+    unique_nodes: Dict[str, Dict[str, str]] = {}
+    for node in nodes:
+        node_id = str(node.get("id") or "").strip()
+        if not node_id:
+            continue
+        existing = unique_nodes.get(node_id)
+        if existing and existing.get("type") == "project":
+            continue
+        unique_nodes[node_id] = {"id": node_id, "type": str(node.get("type") or "project")}
+
+    cycles = _detect_dependency_cycles(rows)
+    if strict_cycles and cycles:
+        raise HTTPException(status_code=409, detail={"message": "Dependency cycle detected", "cycles": cycles})
+
+    return {
+        "nodes": sorted(unique_nodes.values(), key=lambda n: n["id"]),
+        "edges": sorted(edges, key=lambda e: e["id"]),
+        "project_count": len([n for n in unique_nodes.values() if n.get("type") == "project"]),
+        "edge_count": len(edges),
+        "cycles": cycles,
+    }
+
+
+async def get_project_dependency_impact_compat(project_id: str) -> Dict[str, Any]:
+    _compat_ensure_loaded()
+    target_id = str(project_id or "").strip()
+    if not target_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+
+    rows = _collect_project_dependency_rows()
+    if target_id not in rows:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    upstream = set(rows.get(target_id, {}).get("dependencies", []))
+    reverse: Dict[str, List[str]] = {}
+    for pid, row in rows.items():
+        for dep in row.get("dependencies", []):
+            reverse.setdefault(dep, []).append(pid)
+    downstream = set(reverse.get(target_id, []))
+
+    return {
+        "project_id": target_id,
+        "upstream_dependencies": sorted(upstream),
+        "downstream_dependents": sorted(downstream),
+    }
+
+
+def _transitive_dependents(rows: Dict[str, Dict[str, Any]], target_id: str) -> List[str]:
+    reverse: Dict[str, List[str]] = {}
+    for pid, row in rows.items():
+        for dep in row.get("dependencies", []):
+            reverse.setdefault(dep, []).append(pid)
+
+    seen: set[str] = set()
+    stack: List[str] = list(sorted(reverse.get(target_id, [])))
+    while stack:
+        node = stack.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        for nxt in sorted(reverse.get(node, [])):
+            if nxt not in seen:
+                stack.append(nxt)
+    return sorted(seen)
+
+
+def _load_project_config_dict(project_id: str) -> Dict[str, Any]:
+    yaml_text = _compat_load_project_yaml_text(project_id)
+    if not str(yaml_text or "").strip():
+        return {}
+    try:
+        parsed = yaml.safe_load(yaml_text) or {}
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _classify_contract_change(current_manifest: Dict[str, Any], proposed_manifest: Dict[str, Any]) -> Dict[str, Any]:
+    current_id = str(current_manifest.get("contract_id") or "").strip()
+    current_ver = str(current_manifest.get("contract_version") or "").strip()
+    proposed_id = str(proposed_manifest.get("contract_id") or "").strip()
+    proposed_ver = str(proposed_manifest.get("contract_version") or "").strip()
+
+    breaking_reasons: List[str] = []
+    non_breaking_reasons: List[str] = []
+
+    if proposed_id and current_id and proposed_id != current_id:
+        breaking_reasons.append(f"contract_id changed: {current_id} -> {proposed_id}")
+    if proposed_ver and current_ver and proposed_ver != current_ver:
+        major_current = (current_ver.split(".") + ["0"])[0]
+        major_proposed = (proposed_ver.split(".") + ["0"])[0]
+        if major_proposed != major_current:
+            breaking_reasons.append(f"major contract_version changed: {current_ver} -> {proposed_ver}")
+        else:
+            non_breaking_reasons.append(f"contract_version changed: {current_ver} -> {proposed_ver}")
+
+    current_deps = set(current_manifest.get("dependencies") or [])
+    proposed_deps = set(proposed_manifest.get("dependencies") or [])
+    removed_deps = sorted(current_deps - proposed_deps)
+    added_deps = sorted(proposed_deps - current_deps)
+    if removed_deps:
+        breaking_reasons.append(f"dependencies removed: {', '.join(removed_deps)}")
+    if added_deps:
+        non_breaking_reasons.append(f"dependencies added: {', '.join(added_deps)}")
+
+    return {
+        "is_breaking": bool(breaking_reasons),
+        "breaking_reasons": breaking_reasons,
+        "non_breaking_reasons": non_breaking_reasons,
+    }
+
+
+async def preflight_project_contract_change_compat(project_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    _compat_ensure_loaded()
+    target_id = str(project_id or "").strip()
+    if not target_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+
+    rows = _collect_project_dependency_rows()
+    if target_id not in rows:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    current_cfg = _load_project_config_dict(target_id)
+    current_manifest = _normalize_model_manifest(target_id, current_cfg)
+
+    requested = payload if isinstance(payload, dict) else {}
+    proposed_root = {"model_manifest": requested.get("model_manifest") if isinstance(requested.get("model_manifest"), dict) else {}}
+    # Merge defaults from current so omitted fields remain stable
+    merged_manifest = dict(current_manifest)
+    merged_manifest.update(proposed_root["model_manifest"])
+    proposed_manifest = _normalize_model_manifest(target_id, {"model_manifest": merged_manifest})
+
+    classification = _classify_contract_change(current_manifest, proposed_manifest)
+    direct_dependents = sorted([pid for pid, row in rows.items() if target_id in set(row.get("dependencies", []))])
+    transitive = _transitive_dependents(rows, target_id)
+
+    deprecation_date = str(proposed_manifest.get("deprecation_date") or requested.get("deprecation_date") or "").strip()
+    if classification["is_breaking"] and not deprecation_date:
+        classification["breaking_reasons"].append("deprecation_date is required for breaking contract changes")
+        classification["is_breaking"] = True
+
+    policy_mode = str(requested.get("policy_mode") or "warn").strip().lower()
+    if policy_mode not in {"warn", "enforce"}:
+        raise HTTPException(status_code=400, detail="policy_mode must be 'warn' or 'enforce'")
+
+    required_actions: List[str] = []
+    if classification["is_breaking"]:
+        required_actions.append("publish_new_contract_version")
+        required_actions.append("notify_downstream_consumers")
+        if not deprecation_date:
+            required_actions.append("set_deprecation_date")
+    if transitive:
+        required_actions.append("review_transitive_dependents")
+    if direct_dependents:
+        required_actions.append("validate_direct_dependents")
+    required_actions = sorted(set(required_actions))
+
+    allow_merge = not (policy_mode == "enforce" and classification["is_breaking"])
+
+    return {
+        "project_id": target_id,
+        "current_manifest": current_manifest,
+        "proposed_manifest": proposed_manifest,
+        "policy_mode": policy_mode,
+        "allow_merge": allow_merge,
+        "required_actions": required_actions,
+        "is_breaking": classification["is_breaking"],
+        "breaking_reasons": classification["breaking_reasons"],
+        "non_breaking_reasons": classification["non_breaking_reasons"],
+        "direct_downstream_dependents": direct_dependents,
+        "transitive_downstream_dependents": transitive,
+    }
+
+
+async def get_project_dependency_resolution_compat(project_id: str) -> Dict[str, Any]:
+    _compat_ensure_loaded()
+    target_id = str(project_id or "").strip()
+    if not target_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+
+    rows = _collect_project_dependency_rows()
+    if target_id not in rows:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    target_cfg = _load_project_config_dict(target_id)
+    target_manifest = _normalize_model_manifest(target_id, target_cfg)
+    dependency_pins = target_manifest.get("dependency_pins") if isinstance(target_manifest.get("dependency_pins"), dict) else {}
+
+    resolutions: List[Dict[str, Any]] = []
+    for dep_id in sorted(rows.get(target_id, {}).get("dependencies", [])):
+        dep_cfg = _load_project_config_dict(dep_id)
+        dep_manifest = _normalize_model_manifest(dep_id, dep_cfg) if dep_cfg else {
+            "contract_version": "",
+            "published_contract_versions": [],
+        }
+        available_versions = [
+            str(v).strip()
+            for v in (dep_manifest.get("published_contract_versions") or [])
+            if str(v).strip()
+        ]
+        current_version = str(dep_manifest.get("contract_version") or "").strip()
+        if current_version and current_version not in available_versions:
+            available_versions.append(current_version)
+        available_versions = sorted(set(available_versions))
+
+        pinned = str(dependency_pins.get(dep_id) or "").strip()
+        if pinned and pinned in available_versions:
+            resolved = pinned
+            status = "pinned"
+        elif pinned and pinned not in available_versions:
+            resolved = current_version
+            status = "unresolved_pin"
+        else:
+            resolved = current_version
+            status = "implicit"
+
+        resolutions.append({
+            "dependency_project_id": dep_id,
+            "available_versions": available_versions,
+            "pinned_version": pinned or None,
+            "resolved_version": resolved or None,
+            "status": status,
+        })
+
+    return {
+        "project_id": target_id,
+        "dependency_resolutions": resolutions,
+    }
+
+
+async def premerge_validate_projects_compat(payload: Dict[str, Any]) -> Dict[str, Any]:
+    _compat_ensure_loaded()
+    body = payload if isinstance(payload, dict) else {}
+    project_ids_raw = body.get("project_ids")
+    if not isinstance(project_ids_raw, list) or not project_ids_raw:
+        raise HTTPException(status_code=400, detail="project_ids (non-empty list) is required")
+
+    project_ids = [str(pid).strip() for pid in project_ids_raw if str(pid).strip()]
+    if not project_ids:
+        raise HTTPException(status_code=400, detail="project_ids must contain valid values")
+
+    policy_mode = str(body.get("policy_mode") or "warn").strip().lower()
+    if policy_mode not in {"warn", "enforce"}:
+        raise HTTPException(status_code=400, detail="policy_mode must be 'warn' or 'enforce'")
+
+    strict_cycles = bool(body.get("strict_cycles", True))
+    proposed_manifests = body.get("proposed_manifests") if isinstance(body.get("proposed_manifests"), dict) else {}
+
+    cycle_payload = await get_project_dependency_graph_compat(strict_cycles=False)
+    cycles = cycle_payload.get("cycles", [])
+
+    project_results: List[Dict[str, Any]] = []
+    for pid in project_ids:
+        req = {
+            "policy_mode": policy_mode,
+            "model_manifest": proposed_manifests.get(pid) if isinstance(proposed_manifests.get(pid), dict) else {},
+        }
+        project_results.append(await preflight_project_contract_change_compat(pid, req))
+
+    blocking_reasons: List[str] = []
+    if strict_cycles and cycles:
+        blocking_reasons.append("dependency_cycles_detected")
+    if any(not bool(item.get("allow_merge")) for item in project_results):
+        blocking_reasons.append("contract_policy_block")
+
+    allow_merge = len(blocking_reasons) == 0
+    return {
+        "allow_merge": allow_merge,
+        "policy_mode": policy_mode,
+        "strict_cycles": strict_cycles,
+        "cycles": cycles,
+        "project_results": project_results,
+        "blocking_reasons": blocking_reasons,
     }
 
 
@@ -389,7 +847,12 @@ def _extract_snapshot_connectors(snapshot_obj: Any) -> List[str]:
     return deduped
 
 
-def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_tables: bool = False) -> Dict[str, Any]:
+def _snapshot_graph_payload(
+    snapshot_obj: Any,
+    model_name: str,
+    include_system_tables: bool = False,
+    include_column_lineage: bool = False,
+) -> Dict[str, Any]:
     """Build React-Flow compatible graph payload from a snapshot object."""
     snapshot_id = getattr(snapshot_obj, "snapshot_id", "")
     sml = getattr(snapshot_obj, "sml_blob", {}) or {}
@@ -435,16 +898,26 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
         }
         return mapping.get(c, c or "?:?")
 
-    detected_model = str(sml.get("model_name") or model_name or getattr(snapshot_obj, "project_id", "") or "model").strip()
-    model_node_id = f"model-{_safe_id(detected_model)}"
+    def _column_label(column: Any, fallback: str) -> str:
+        if isinstance(column, dict):
+            for key in ("name", "column_name", "unique_name", "label", "field"):
+                value = str(column.get(key) or "").strip()
+                if value:
+                    return value
+        value = str(column or "").strip()
+        return value or fallback
+
+    detected_model_id = str(getattr(snapshot_obj, "project_id", "") or model_name or "model").strip()
+    detected_model_label = str(sml.get("model_name") or detected_model_id or "model").strip()
+    model_node_id = f"model-{_safe_id(detected_model_id)}"
 
     nodes: List[Dict[str, Any]] = [{
         "id": model_node_id,
         "type": "modelNode",
         "position": {"x": 400, "y": 150},
         "data": {
-            "label": detected_model,
-            "model_id": detected_model,
+            "label": detected_model_label,
+            "model_id": detected_model_id,
             "workspace_id": str(sml.get("workspace_id") or ""),
             "description": str(sml.get("description") or ""),
             "status": "valid",
@@ -454,7 +927,11 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
     edges: List[Dict[str, Any]] = []
 
     table_nodes: Dict[str, str] = {}
+    table_positions: Dict[str, int] = {}
+    column_nodes: Dict[str, str] = {}
     excluded_system_tables = 0
+    included_columns = 0
+    included_column_relationships = 0
 
     datasets = sml.get("datasets", [])
     if not isinstance(datasets, list):
@@ -519,18 +996,21 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
 
         table_node_id = f"table-{_safe_id(qualified)}"
         table_nodes[qualified] = table_node_id
+        table_nodes.setdefault(table, table_node_id)
+        table_positions[qualified] = 120 + (len(table_nodes) - 1) * 260
         columns = ds.get("columns") if isinstance(ds.get("columns"), list) else []
 
         nodes.append({
             "id": table_node_id,
             "type": "tableNode",
-            "position": {"x": 120 + (len(table_nodes) - 1) * 260, "y": 0},
+            "position": {"x": table_positions[qualified], "y": 0},
             "data": {
                 "label": qualified,
                 "table_name": table,
                 "schema": schema,
                 "source_type": str(ds.get("source_type") or "snapshot"),
                 "columns": columns,
+                "model_id": detected_model_id,
                 "nodeType": "table",
                 "status": "valid",
             },
@@ -544,6 +1024,48 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
             "style": {"stroke": "#22C55E"},
         })
 
+        if include_column_lineage:
+            column_items: List[tuple[str, int, Any]] = []
+            for column_index, column in enumerate(columns):
+                column_name = _column_label(column, f"column_{column_index + 1}")
+                if not column_name:
+                    continue
+                column_items.append((column_name.lower(), column_index, column))
+
+            for column_index, (_, original_index, column) in enumerate(sorted(column_items, key=lambda item: (item[0], item[1]))):
+                column_name = _column_label(column, f"column_{original_index + 1}")
+                column_key = f"{qualified}::{column_name}".lower()
+                if column_key in column_nodes:
+                    continue
+
+                column_node_id = f"column-{_safe_id(qualified)}-{_safe_id(column_name)}"
+                column_nodes[column_key] = column_node_id
+                column_nodes.setdefault(f"{table}::{column_name}".lower(), column_node_id)
+                included_columns += 1
+                nodes.append({
+                    "id": column_node_id,
+                    "type": "columnNode",
+                    "position": {"x": table_positions.get(qualified, 120), "y": 120 + column_index * 72},
+                    "data": {
+                        "label": column_name,
+                        "column_name": column_name,
+                        "table_name": qualified,
+                        "schema": schema,
+                        "source_type": str(ds.get("source_type") or "snapshot"),
+                        "nodeType": "column",
+                        "status": str(column.get("status") or "valid") if isinstance(column, dict) else "valid",
+                        "expression": str(column.get("expression") or "") if isinstance(column, dict) else "",
+                        "model_id": detected_model_id,
+                    },
+                })
+                edges.append({
+                    "id": f"e-{table_node_id}-{column_node_id}",
+                    "source": table_node_id,
+                    "target": column_node_id,
+                    "animated": False,
+                    "style": {"stroke": "#94A3B8", "strokeDasharray": "4 4"},
+                })
+
     measures = sml.get("metrics", sml.get("measures", []))
     if not isinstance(measures, list):
         measures = []
@@ -552,7 +1074,7 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
         if not isinstance(measure, dict):
             continue
         measure_name = str(measure.get("name") or measure.get("unique_name") or measure.get("label") or f"measure_{midx}")
-        measure_node_id = f"measure-{_safe_id(detected_model)}-{midx}"
+        measure_node_id = f"measure-{_safe_id(detected_model_id)}-{midx}"
         nodes.append({
             "id": measure_node_id,
             "type": "measureNode",
@@ -561,7 +1083,8 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
                 "label": measure_name,
                 "expression": str(measure.get("expression") or ""),
                 "data_type": str(measure.get("data_type") or measure.get("format_string") or ""),
-                "parent_model": detected_model,
+                "parent_model": detected_model_id,
+                "model_id": detected_model_id,
                 "nodeType": "measure",
             },
         })
@@ -607,6 +1130,7 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
                     "schema": from_schema or "PUBLIC",
                     "source_type": "snapshot",
                     "columns": [],
+                    "model_id": detected_model_id,
                     "nodeType": "table",
                     "status": "broken",
                 },
@@ -625,6 +1149,7 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
                     "schema": to_schema or "PUBLIC",
                     "source_type": "snapshot",
                     "columns": [],
+                    "model_id": detected_model_id,
                     "nodeType": "table",
                     "status": "broken",
                 },
@@ -649,11 +1174,37 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
             },
         })
 
+        if include_column_lineage and from_col and to_col:
+            source_col_id = column_nodes.get(f"{from_key}::{from_col}".lower())
+            target_col_id = column_nodes.get(f"{to_key}::{to_col}".lower())
+            if not source_col_id and from_table:
+                source_col_id = column_nodes.get(f"{str(from_table).strip()}::{from_col}".lower())
+            if not target_col_id and to_table:
+                target_col_id = column_nodes.get(f"{str(to_table).strip()}::{to_col}".lower())
+            if source_col_id and target_col_id:
+                included_column_relationships += 1
+                edges.append({
+                    "id": f"colrel-{ridx}-{source_col_id}-{target_col_id}",
+                    "source": source_col_id,
+                    "target": target_col_id,
+                    "label": f"{_card_symbol(cardinality)}{f' • {join_label}' if join_label else ''}",
+                    "type": "smoothstep",
+                    "style": {"stroke": "#6366F1", "strokeDasharray": "3 2"},
+                    "data": {
+                        "cardinality": cardinality,
+                        "from_column": from_col,
+                        "to_column": to_col,
+                        "nodeType": "column_relationship",
+                    },
+                })
+
     return {
         "nodes": nodes,
         "edges": edges,
         "snapshot_id": snapshot_id,
-        "model": model_name,
+        "model": detected_model_id,
+        "model_label": detected_model_label,
+        "project_id": detected_model_id,
         "timestamp": getattr(snapshot_obj, "timestamp", None),
         "version_tag": getattr(snapshot_obj, "version_tag", None),
         "run_id": getattr(snapshot_obj, "run_id", None),
@@ -661,6 +1212,8 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
         "connectors": _extract_snapshot_connectors(snapshot_obj),
         "meta": {
             "tables_included": len(table_nodes),
+            "columns_included": included_columns,
+            "column_relationships_included": included_column_relationships,
             "system_tables_excluded": excluded_system_tables,
             "include_system_tables": include_system_tables,
         },
@@ -675,12 +1228,50 @@ async def graph_snapshots_compat(model_name: str):
     """
     try:
         logger.info("[Explore] Snapshot list requested model=%s", model_name)
+        def _snap_attr(snap: Any, key: str, default: Any = None) -> Any:
+            if isinstance(snap, dict):
+                return snap.get(key, default)
+            return getattr(snap, key, default)
+        def _semantic_names(snap: Any) -> List[str]:
+            # Rich extraction when full snapshot (with sml_blob) is available.
+            blob = _snap_attr(snap, "sml_blob", {}) or {}
+            if not isinstance(blob, dict):
+                blob = {}
+            names: List[str] = []
+            primary = str(blob.get("model_name") or blob.get("display_name") or "").strip()
+            if primary:
+                names.append(primary)
+            source = blob.get("source") if isinstance(blob.get("source"), dict) else {}
+            src_models = source.get("models") if isinstance(source, dict) else []
+            if isinstance(src_models, list):
+                for entry in src_models:
+                    if isinstance(entry, str):
+                        value = str(entry).strip()
+                    elif isinstance(entry, dict):
+                        value = str(entry.get("name") or entry.get("model") or entry.get("table") or "").strip()
+                    else:
+                        value = ""
+                    if value and value not in names:
+                        names.append(value)
+            # Lightweight rows fallback.
+            for key in ("model_label", "semantic_model", "model_name"):
+                value = str(_snap_attr(snap, key, "") or "").strip()
+                if value and value not in names:
+                    names.append(value)
+            return names
         
-        # Handle __all__ specially to query all projects
+        # Handle __all__ specially to query all projects.
+        # Keep this bounded so Explore remains responsive on large histories.
+        snapshot_limit = int(os.getenv("SEMABRIDGE_GRAPH_SNAPSHOTS_LIMIT", "500"))
+        snapshot_limit = max(50, min(snapshot_limit, 2000))
         if model_name == '__all__':
-            snapshots = db_manager.list_all_snapshots(limit=10000)
+            if hasattr(db_manager, "list_all_snapshots_meta"):
+                snapshots = db_manager.list_all_snapshots_meta(limit=snapshot_limit)
+            else:
+                snapshots = db_manager.list_all_snapshots(limit=snapshot_limit)
         else:
-            snapshots = db_manager.list_snapshots(model_name, limit=10000)
+            # For project-scoped queries, use full snapshots to surface semantic model names.
+            snapshots = db_manager.list_snapshots(model_name, limit=snapshot_limit)
             if not snapshots:
                 # Backward-compat resolver:
                 # Older runs may have committed snapshots under project display name
@@ -723,7 +1314,7 @@ async def graph_snapshots_compat(model_name: str):
                     pass
 
                 for alias in alias_candidates:
-                    alias_snaps = db_manager.list_snapshots(alias, limit=10000)
+                    alias_snaps = db_manager.list_snapshots(alias, limit=snapshot_limit)
                     if alias_snaps:
                         logger.info(
                             "[Explore] Snapshot list alias-resolved model=%s alias=%s count=%s",
@@ -735,26 +1326,38 @@ async def graph_snapshots_compat(model_name: str):
                         break
         
         logger.info("[Explore] Snapshot list resolved model=%s count=%s", model_name, len(snapshots or []))
-        return [
-            {
-                "snapshot_id": s.snapshot_id,
-                "timestamp": s.timestamp,
-                "version_tag": s.version_tag or f"v{s.snapshot_id[:8]}",
-                "status": s.status or "success",
-                "duration_ms": s.duration_ms or 0,
-                "model_name": s.project_id,  # Preserve project_id from database
-                "run_id": s.run_id,
-                "initiated_by": s.initiated_by,
+        rows = []
+        for s in snapshots:
+            names = _semantic_names(s)
+            project_id = _snap_attr(s, "project_id")
+            rows.append({
+                "snapshot_id": _snap_attr(s, "snapshot_id"),
+                "timestamp": _snap_attr(s, "timestamp"),
+                "version_tag": _snap_attr(s, "version_tag") or f"v{str(_snap_attr(s, 'snapshot_id') or '')[:8]}",
+                "status": _snap_attr(s, "status", "success") or "success",
+                "duration_ms": _snap_attr(s, "duration_ms", 0) or 0,
+                "project_id": project_id,
+                "model_id": project_id,
+                "model_name": project_id,
+                "model_label": (names[0] if names else project_id),
+                "semantic_models": names,
+                "snapshot_scope": project_id,
+                "run_id": _snap_attr(s, "run_id"),
+                "initiated_by": _snap_attr(s, "initiated_by"),
                 "connectors": _extract_snapshot_connectors(s),
-            }
-            for s in snapshots
-        ]
+            })
+        return rows
     except Exception as exc:
         logger.debug("Failed to list snapshots for %s: %s", model_name, exc)
         return []
 
 
-async def graph_snapshot_compat(model_name: str, snapshot_id: str, include_system_tables: bool = False):
+async def graph_snapshot_compat(
+    model_name: str,
+    snapshot_id: str,
+    include_system_tables: bool = False,
+    include_column_lineage: bool = False,
+):
     """Load graph for a single snapshot."""
     try:
         logger.info(
@@ -767,7 +1370,7 @@ async def graph_snapshot_compat(model_name: str, snapshot_id: str, include_syste
         if not snapshot:
             logger.warning("Snapshot %s not found", snapshot_id)
             return {"nodes": [], "edges": [], "snapshot_id": snapshot_id, "model": model_name}
-        payload = _snapshot_graph_payload(snapshot, model_name, include_system_tables)
+        payload = _snapshot_graph_payload(snapshot, model_name, include_system_tables, include_column_lineage)
         logger.info(
             "[Explore] Snapshot graph ready model=%s snapshot_id=%s nodes=%s edges=%s",
             model_name,
@@ -786,6 +1389,7 @@ async def compare_graph_snapshots_compat(
     from_snapshot_id: str,
     to_snapshot_id: str,
     include_system_tables: bool = False,
+    include_column_lineage: bool = False,
 ):
     """Compare two snapshots and return graph diff + tabular change details."""
     try:
@@ -800,8 +1404,8 @@ async def compare_graph_snapshots_compat(
                 "styled_graph": {"nodes": [], "edges": []},
             }
 
-        from_graph = _snapshot_graph_payload(snap_from, model_name, include_system_tables)
-        to_graph = _snapshot_graph_payload(snap_to, model_name, include_system_tables)
+        from_graph = _snapshot_graph_payload(snap_from, model_name, include_system_tables, include_column_lineage)
+        to_graph = _snapshot_graph_payload(snap_to, model_name, include_system_tables, include_column_lineage)
 
         from_nodes = from_graph.get("nodes", [])
         to_nodes = to_graph.get("nodes", [])
