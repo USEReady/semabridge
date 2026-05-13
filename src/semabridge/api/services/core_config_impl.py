@@ -117,7 +117,7 @@ async def generate_config(payload: Dict[str, Any]):
             source_cfg["database"] = settings.snowflake.database or ""
             source_cfg["schema"] = settings.snowflake.schema_name or "PUBLIC"
         elif source_type == "pbix":
-                local_models_path = pbix_folder or str(await asyncio.to_thread(_resolve_models_path))
+            local_models_path = pbix_folder or str(await asyncio.to_thread(_resolve_models_path))
             source_cfg["pbix_folder"] = local_models_path.replace("\\", "/")
 
         if selected_models:
