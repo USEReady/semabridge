@@ -155,10 +155,15 @@ class DAXTranslator:
                 metric_name=metric_name
             )
             if det_result.is_success and det_result.sql:
-                logger.info(f"✓ Deterministic translation successful: {det_result.sql[:60]}")
-                return DAXTranslationResult(det_result.sql, det_result.tier, clean_dax)
-            else:
-                logger.debug(f"Deterministic translator returned no SQL, falling back to Tier logic")
+                # Sanity check for VAR/SELECT/FROM
+                illegal_keywords = [r'\bVAR\b', r'\bRETURN\b', r'\bSELECT\b', r'\bFROM\b']
+                if any(re.search(kw, det_result.sql.upper()) for kw in illegal_keywords):
+                    logger.warning(f"⚠️  Deterministic translation for '{metric_name}' contains illegal keywords. Falling back.")
+                else:
+                    logger.info(f"✓ Deterministic translation successful: {det_result.sql[:60]}")
+                    return DAXTranslationResult(det_result.sql, det_result.tier, clean_dax)
+            
+            logger.debug(f"Deterministic translator returned no SQL or was rejected, falling back to Tier logic")
         except Exception as e:
             logger.warning(f"Deterministic translator error, falling back to Tier logic: {e}")
         
@@ -239,6 +244,11 @@ class DAXTranslator:
             metric_name
         )
         if llm_result:
+            # Final sanity check on LLM output before returning
+            illegal_keywords = [r'\bVAR\b', r'\bRETURN\b', r'\bSELECT\b', r'\bFROM\b']
+            if llm_result.sql and any(re.search(kw, llm_result.sql.upper()) for kw in illegal_keywords):
+                logger.warning(f"⚠️  LLM translation for '{metric_name}' contains illegal keywords. Rejecting.")
+                return DAXTranslationResult(None, 5, clean_dax)
             return llm_result
 
         # No translation possible — return None (all tiers exhausted)

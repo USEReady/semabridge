@@ -201,7 +201,7 @@ def sync_measure_data(
                     f"COMMENT ON TABLE {full_table} IS 'DAX Measure: {measure_name} | Synced: {sync_time}Z'",
                     context=f"COMMENT ON TABLE {full_table}",
                 )
-            except:
+            except Exception:
                 pass
                 
             return True

@@ -37,6 +37,10 @@ class SyncDirection(str, Enum):
     FABRIC_TO_SNOWFLAKE = "fabric_to_snowflake"
     SNOWFLAKE_TO_FABRIC = "snowflake_to_fabric"
     FABRIC_SNOWFLAKE_BIDIRECTIONAL = "fabric_snowflake_bidirectional"
+    # ── Fabric ↔ Databricks semantic model sync ────────────────────────
+    PBIX_TO_DATABRICKS = "pbix_to_databricks"
+    FABRIC_TO_DATABRICKS = "fabric_to_snowflake" # We reuse logic but target changes
+    DATABRICKS_TO_FABRIC = "databricks_to_fabric"
 
 
 class SyncJobStatus(str, Enum):
@@ -379,6 +383,10 @@ class SyncConfig(BaseModel):
         default=None,
         description="Alias for snowflake_schema used by external callers",
     )
+
+    # Databricks target
+    databricks_catalog: Optional[str] = Field(default=None, description="Target Databricks Catalog")
+    databricks_schema: Optional[str] = Field(default=None, description="Target Databricks Schema")
 
     # Power BI / Fabric target
     fabric_workspace_id: Optional[str] = Field(

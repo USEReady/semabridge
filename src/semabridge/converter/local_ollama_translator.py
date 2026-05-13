@@ -72,7 +72,7 @@ class OllamaDAXTranslator:
         try:
             response = requests.get(f"{self.ollama_host}/api/tags", timeout=2)
             return response.status_code == 200
-        except:
+        except Exception:
             return False
     
     def _ensure_model_exists(self) -> bool:

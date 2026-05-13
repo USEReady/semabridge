@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Set, Tuple, Optional
 
+from semabridge.connectors.synonym_clause import synonyms_clause
+
 from semabridge.utils.logger import get_logger
 from semabridge.utils.identifiers import IdentifierSanitizer
 from semabridge.connectors.ddl_helpers import (
@@ -143,7 +145,8 @@ class MetricsClauseBuilder:
             
             if expr:
                 metric_entity_alias = self._resolve_metric_emission_alias(alias, expr, dataset_aliases, fact_aliases)
-                metrics_lines.append(f'  {metric_entity_alias}."{metric_name}" AS {expr}')
+                syn_clause = synonyms_clause(getattr(metric, "synonyms", []))
+                metrics_lines.append(f'  {metric_entity_alias}."{metric_name}" AS {expr}{syn_clause}')
 
         # Pruning and Fallbacks...
         metrics_lines = self._prune_unresolved_metric_lines(metrics_lines, metric_name_set)
@@ -167,6 +170,7 @@ class MetricsClauseBuilder:
         measures_alias: str,
         dataset_col_lookup: Dict[str, Set[str]],
         dataset_aliases: Dict[str, str],
+        metric_name_set: Set[str],
         fact_aliases: Optional[Set[str]] = None,
     ) -> Optional[str]:
         """Remap references from a virtual MEASURES table alias to real owning tables.
@@ -186,8 +190,11 @@ class MetricsClauseBuilder:
                 key=lambda ds: 0 if dataset_aliases.get(ds) in fact_aliases else 1
             )
 
+        # Pattern for qualified references: alias.col or "alias"."col"
+        # Handles optional quotes on both alias and column
         pattern = re.compile(
-            rf'(?P<alias>{re.escape(measures_alias)})\s*\.\s*(?P<col>"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)'
+            rf'(?:"?{re.escape(measures_alias)}"?)\s*\.\s*(?P<col>"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)',
+            re.IGNORECASE
         )
 
         unresolved = False
@@ -224,6 +231,40 @@ class MetricsClauseBuilder:
             return f'{chosen_alias}."{chosen_col}"'
 
         rewritten = pattern.sub(_replace, sql_expr)
+
+        # Also handle BARE identifiers if they belong to a physical dataset but are 
+        # currently in the context of this virtual measures table.
+        # This prevents validation failures later.
+        if rewritten:
+            # Simple heuristic for bare identifiers in aggregation: SUM(COL)
+            # We only do this if it's not already qualified
+            bare_pattern = re.compile(r'\b(?<!\.)(?P<col>"[A-Z_][A-Z0-9_$]*"|[A-Z_][A-Z0-9_$]*)\b', re.IGNORECASE)
+            
+            def _replace_bare(match: re.Match) -> str:
+                col_name = match.group("col").strip('"')
+                # Skip keywords and already qualified things
+                if col_name.upper() in ("SUM", "AVG", "MIN", "MAX", "COUNT", "DISTINCT", "AS", "NULL", "TRUE", "FALSE"):
+                    return match.group(0)
+                
+                # Check if it's a known metric first (don't remap metrics)
+                if col_name in metric_name_set:
+                    return match.group(0)
+
+                owners = []
+                for ds in physical_datasets:
+                    if self.translator._resolve_column_name_for_dataset(dataset_col_lookup.get(ds, set()), col_name):
+                        owners.append(ds)
+                
+                if len(owners) == 1:
+                    owner_alias = dataset_aliases.get(owners[0])
+                    if owner_alias:
+                        return f'{owner_alias}."{col_name}"'
+                
+                return match.group(0)
+            
+            # Only apply bare replacement if it looks like a simple expression
+            if "(" in rewritten:
+                rewritten = bare_pattern.sub(_replace_bare, rewritten)
 
         if unresolved:
             logger.warning(
@@ -313,6 +354,14 @@ class MetricsClauseBuilder:
                             metric.unique_name, metric.dataset
                         )
                         return None
+                    known_cols = dataset_col_lookup.get(metric.dataset, set())
+                    if known_cols:
+                        logger.warning(
+                            "Metric '%s': column '%s' not found in dataset '%s'. "
+                            "Using fallback expression to keep deployment moving.",
+                            metric.unique_name, col_name, metric.dataset,
+                        )
+                        return self._fallback_metric_expression(metric)
                     logger.debug(
                         "Metric '%s': column '%s' not found in schema metadata; "
                         "emitting against declared dataset alias '%s'",
@@ -328,20 +377,44 @@ class MetricsClauseBuilder:
         # SQL Expression path
         sql_expr = getattr(metric, "sql_expression", None)
         dax_expr = getattr(metric, "expression", None)
+
+        # COUNTROWS('Table') is a table-count measure. Some upstream paths can
+        # persist a malformed intermediate like COUNT(*)('Table'); normalize it
+        # here before generic SQL validation accepts it as a ref-free expression.
+        if dax_expr and re.match(r"(?is)^\s*COUNTROWS\s*\(\s*(?:'[^']+'|[A-Za-z_][A-Za-z0-9_]*)\s*\)\s*$", str(dax_expr).strip()):
+            return "COUNT(*)"
+        if sql_expr and re.match(r"(?is)^\s*COUNT\s*\(\s*\*\s*\)\s*\(", str(sql_expr).strip()):
+            return "COUNT(*)"
         
-        # If we have SQL expression, use it directly
+        # If we have SQL expression, use it directly only when it is valid.
+        # Some upstream converters persist failed Tier-5 attempts in
+        # sql_expression; those should not block translation from raw DAX.
         if sql_expr:
             # If the metric's dataset is a virtual measures table, try to remap
             # column references to the actual fact table that owns those columns.
             if self._is_virtual_measures_table(metric.dataset, dataset_col_lookup):
                 sql_expr = self._remap_virtual_measures_table_refs(
-                    sql_expr, alias, dataset_col_lookup, dataset_aliases, fact_aliases=fact_aliases
+                    sql_expr, alias, dataset_col_lookup, dataset_aliases, metric_name_set, fact_aliases=fact_aliases
                 )
                 if sql_expr is None:
                     logger.warning(
                         "Metric '%s': could not remap virtual measures table references. Skipping.",
                         metric.unique_name
                     )
+                    if dax_expr:
+                        return self._translate_dax_metric_expression(
+                            metric=metric,
+                            metric_name=metric_name,
+                            alias=alias,
+                            alias_by_raw=alias_by_raw,
+                            dataset_by_name=dataset_by_name,
+                            dataset_col_lookup=dataset_col_lookup,
+                            dataset_aliases=dataset_aliases,
+                            metric_name_set=metric_name_set,
+                            all_physical_col_names=all_physical_col_names,
+                            emittable_metric_name_set=emittable_metric_name_set,
+                            skipped_metric_names=skipped_metric_names,
+                        )
                     return None
             expr = sql_expr
             # Normalize and validate
@@ -358,47 +431,174 @@ class MetricsClauseBuilder:
             )
             if not is_valid:
                 logger.warning(
-                    "Metric '%s': skipping invalid SQL expression after normalization: %s",
+                    "Metric '%s': using fallback due to invalid SQL expression after normalization: %s",
                     metric.unique_name,
                     reason or "unknown reference error",
                 )
-                return None
+                if dax_expr:
+                    logger.info(
+                        "Metric '%s': attempting raw DAX translation after rejecting stored sql_expression.",
+                        metric.unique_name,
+                    )
+                    return self._translate_dax_metric_expression(
+                        metric=metric,
+                        metric_name=metric_name,
+                        alias=alias,
+                        alias_by_raw=alias_by_raw,
+                        dataset_by_name=dataset_by_name,
+                        dataset_col_lookup=dataset_col_lookup,
+                        dataset_aliases=dataset_aliases,
+                        metric_name_set=metric_name_set,
+                        all_physical_col_names=all_physical_col_names,
+                        emittable_metric_name_set=emittable_metric_name_set,
+                        skipped_metric_names=skipped_metric_names,
+                    )
+                return self._fallback_metric_expression(metric)
+            # Final safety check: if sql_expr contains unsupported DAX functions, reject it
+            if self._contains_unsupported_dax_keywords(expr):
+                if dax_expr:
+                    logger.warning(
+                        "Metric '%s': stored sql_expression contains unsupported DAX functions. "
+                        "Ignoring it and translating raw DAX instead.",
+                        metric.unique_name,
+                    )
+                    return self._translate_dax_metric_expression(
+                        metric=metric,
+                        metric_name=metric_name,
+                        alias=alias,
+                        alias_by_raw=alias_by_raw,
+                        dataset_by_name=dataset_by_name,
+                        dataset_col_lookup=dataset_col_lookup,
+                        dataset_aliases=dataset_aliases,
+                        metric_name_set=metric_name_set,
+                        all_physical_col_names=all_physical_col_names,
+                        emittable_metric_name_set=emittable_metric_name_set,
+                        skipped_metric_names=skipped_metric_names,
+                    )
+                logger.error("🛑 Metric '%s': stored sql_expression contains unsupported DAX functions: %s. Using fallback to prevent DDL failure.", metric.unique_name, expr)
+                return self._fallback_metric_expression(metric)
+            if self._contains_bare_metric_reference(expr, metric_name_set):
+                logger.warning(
+                    "Metric '%s': stored sql_expression contains bare metric references that "
+                    "Snowflake semantic-view DDL cannot resolve. Using fallback.",
+                    metric.unique_name,
+                )
+                return self._fallback_metric_expression(metric)
             return expr
         
         # If we have DAX expression, try to translate it
         if dax_expr:
-            # Try basic DAX translation first (COUNTROWS, COUNTBLANK, etc.)
-            translated = self.translator._try_basic_dax_metric_fallback_expression(
-                metric, alias, dataset_col_lookup, model=None, dataset_by_name=dataset_by_name
-            )
-            if translated:
-                return translated
-            
-            # Try LLM fallback for complex DAX
-            translated = self.translator._try_llm_metric_fallback_expression(
+            return self._translate_dax_metric_expression(
                 metric=metric,
                 metric_name=metric_name,
-                table_alias=alias,
+                alias=alias,
                 alias_by_raw=alias_by_raw,
+                dataset_by_name=dataset_by_name,
                 dataset_col_lookup=dataset_col_lookup,
                 dataset_aliases=dataset_aliases,
                 metric_name_set=metric_name_set,
                 all_physical_col_names=all_physical_col_names,
                 emittable_metric_name_set=emittable_metric_name_set,
-                skipped_metric_names=skipped_metric_names
+                skipped_metric_names=skipped_metric_names,
             )
-            if translated:
-                return translated
-            
-            # Translation failed — skip this metric rather than emitting invalid SQL
-            logger.warning(
-                "Could not translate metric '%s' with expression '%s'. "
-                "Skipping metric to prevent DDL compilation failure.",
-                metric.unique_name, dax_expr[:100]
-            )
-            return None
             
         return None
+
+    @staticmethod
+    def _contains_unsupported_dax_keywords(sql: Any) -> bool:
+        return any(
+            re.search(pattern, str(sql or ""), re.IGNORECASE)
+            for pattern in (
+                r"\bVAR\b",
+                r"\bRETURN\b",
+                r"\bSELECT\b",
+                r"\bFROM\b",
+                r"\bWITH\b",
+                r"\bCALCULATE\s*\(",
+                r"\bISBLANK\s*\(",
+                r"\bBLANK\s*\(",
+                r"\[[^\]]+\]",
+                r"\|\|",
+            )
+        )
+
+    def _translate_dax_metric_expression(
+        self,
+        *,
+        metric: Any,
+        metric_name: str,
+        alias: str,
+        alias_by_raw: Dict[str, str],
+        dataset_by_name: Dict[str, Any],
+        dataset_col_lookup: Dict[str, Set[str]],
+        dataset_aliases: Dict[str, str],
+        metric_name_set: Set[str],
+        all_physical_col_names: Set[str],
+        emittable_metric_name_set: Set[str],
+        skipped_metric_names: Set[str],
+    ) -> str:
+        dax_expr = getattr(metric, "expression", None) or ""
+
+        # Try basic DAX translation first (COUNTROWS, COUNTBLANK, etc.)
+        translated = self.translator._try_basic_dax_metric_fallback_expression(
+            metric, alias, dataset_col_lookup, model=None, dataset_by_name=dataset_by_name
+        )
+        if translated:
+            return translated
+
+        # Try deterministic/LLM fallback for complex DAX.
+        translated = self.translator._try_llm_metric_fallback_expression(
+            metric=metric,
+            metric_name=metric_name,
+            table_alias=alias,
+            alias_by_raw=alias_by_raw,
+            dataset_col_lookup=dataset_col_lookup,
+            dataset_aliases=dataset_aliases,
+            metric_name_set=metric_name_set,
+            all_physical_col_names=all_physical_col_names,
+            emittable_metric_name_set=emittable_metric_name_set,
+            skipped_metric_names=skipped_metric_names
+        )
+        if translated:
+            if self._contains_unsupported_dax_keywords(translated):
+                logger.error("🛑 Metric '%s': translated expression contains unsupported DAX functions: %s. Using fallback to prevent DDL failure.", metric_name, translated)
+                return self._fallback_metric_expression(metric)
+            if self._contains_bare_metric_reference(translated, metric_name_set):
+                logger.warning(
+                    "Metric '%s': translated expression contains bare metric references that "
+                    "Snowflake semantic-view DDL cannot resolve. Using fallback.",
+                    metric_name,
+                )
+                return self._fallback_metric_expression(metric)
+            return translated
+
+        logger.warning(
+            "Could not translate metric '%s' with expression '%s'. Using fallback.",
+            metric.unique_name, dax_expr[:100]
+        )
+        return self._fallback_metric_expression(metric)
+
+    def _fallback_metric_expression(self, metric: Any) -> str:
+        dtype = str(
+            getattr(metric, "data_type", "")
+            or getattr(metric, "semantic_type", "")
+            or getattr(metric, "format_string", "")
+            or ""
+        ).upper()
+        if any(token in dtype for token in ("DATE", "TIME", "TIMESTAMP")):
+            return "CURRENT_TIMESTAMP()"
+        if any(token in dtype for token in ("STRING", "TEXT", "CHAR")):
+            return "'Column not available'"
+        return "0"
+
+    @staticmethod
+    def _contains_bare_metric_reference(sql: Any, metric_name_set: Set[str]) -> bool:
+        if not sql or not metric_name_set:
+            return False
+        text = str(sql)
+        text = re.sub(r"'(?:''|[^'])*'", "''", text)
+        refs = set(re.findall(r'(?<!\.)"([A-Z_][A-Z0-9_]*)"', text))
+        return any(ref in metric_name_set for ref in refs)
 
     def _apply_osi_fallbacks(
         self, metrics_lines: List[str], expected_metrics: List[Any], osi: Any, 

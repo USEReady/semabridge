@@ -33,6 +33,7 @@ from semabridge.connectors.databricks_measure_translation import (
     TIER_DEFERRED,
     TIER_RELATIONSHIP_AWARE_FILTERED_AGGREGATION,
 )
+from semabridge.converter.common_dax_translator import CommonDAXTranslator, SQLDialect
 from semabridge.connectors.schema_reconciler import SchemaMapper
 from semabridge.repository.orm.session_factory import db_manager
 from semabridge.repository.semantic_routing_repository import RouterDecision, SemanticRoutingRepository
@@ -107,7 +108,7 @@ CONFIDENCE_MEDIUM = "MEDIUM"
 CONFIDENCE_LOW = "LOW"
 CONFIDENCE_NONE = "NONE"
 
-DRAFT_MEASURE_SQL = "CAST(NULL AS DOUBLE)"
+DRAFT_MEASURE_SQL = "0"
 
 # ── View Technology ──────────────────────────────────────────────────────────
 VIEW_TYPE_METRIC = "metric_view"
@@ -199,6 +200,7 @@ class DatabricksPublisher:
             build_aggregation_sql=self._build_aggregation_sql,
             distinct_count_expression=lambda column: f"COUNT(DISTINCT {column})",
         )
+        self._common_dax_translator: CommonDAXTranslator | None = None
         self._semantic_graph: SemanticGraph | None = None
         self._table_categories: dict[str, dict[str, str]] = {}
         self._per_fact_metric_views: dict[str, str] = {}
@@ -1821,7 +1823,12 @@ class DatabricksPublisher:
                 # If we have measure overrides, they might be relying on 'Inventory_Fact.source_value_total_stock'
                 # but if that column is purely in Project_Measures, it won't exist.
                 # However, this mapping guarantees metric view yaml syntax validity.
-                source_expr = "CAST(NULL AS DOUBLE)"
+                logger.warning(
+                    "Column %s missing in %s. Using Databricks source fallback 0.",
+                    binding.source_column,
+                    source_fq,
+                )
+                source_expr = "0"
 
             projected_alias = str(binding.projected_name or "").strip()
             if projected_alias and projected_alias.lower() not in used_aliases:
@@ -4073,27 +4080,35 @@ class DatabricksPublisher:
         if not dax_expr:
             return None
 
-        try:
-            from semabridge.converter.gemini_dax_translator import get_gemini_translator
-        except Exception as exc:  # pragma: no cover - import guard
-            logger.debug("Gemini translator unavailable: %s", exc)
-            return None
-
-        translator = get_gemini_translator()
-        if not translator.use_gemini or not translator.api_key:
-            logger.debug("Gemini translator disabled or missing API key")
-            return None
-
         table_alias = self._sanitize_identifier(dataset.unique_name) or "source"
         schema_context = self._build_llm_schema_context(sml_model)
-        result = translator.translate(
+        if self._common_dax_translator is None:
+            self._common_dax_translator = CommonDAXTranslator(
+                dialect=SQLDialect.DATABRICKS,
+                provider_order=list(getattr(self._dbx_behavior, "llm_dax_provider_order", []) or []),
+                timeout_seconds=int(getattr(self._dbx_behavior, "llm_dax_timeout_seconds", 20) or 20),
+                cache_enabled=bool(getattr(self._dbx_behavior, "llm_dax_cache_enabled", True)),
+                fallback_to_placeholder=bool(
+                    getattr(self._dbx_behavior, "llm_dax_fallback_to_placeholder", True)
+                ),
+                placeholder_sql=DRAFT_MEASURE_SQL,
+            )
+
+        result = self._common_dax_translator.translate(
             dax=dax_expr,
-            table_alias=table_alias,
-            dataset_name=str(dataset.unique_name or ""),
             metric_name=str(metric.unique_name or ""),
+            dataset_name=str(dataset.unique_name or ""),
+            table_alias=table_alias,
             schema_context=schema_context,
         )
         if result and result.is_valid and result.sql:
+            if result.fallback_used:
+                logger.warning(
+                    "LLM providers could not translate measure '%s'; using draft placeholder after trying %s",
+                    metric.unique_name,
+                    ", ".join(result.attempted_providers) or "no providers",
+                )
+                return result.sql
             logger.info(
                 "LLM translated DAX for measure '%s': %s → %s",
                 metric.unique_name,
@@ -4106,6 +4121,12 @@ class DatabricksPublisher:
                 "LLM translation rejected for measure '%s': %s",
                 metric.unique_name,
                 result.sql[:80],
+            )
+        elif result and result.error:
+            logger.warning(
+                "LLM translation failed for measure '%s': %s",
+                metric.unique_name,
+                result.error,
             )
         return None
 

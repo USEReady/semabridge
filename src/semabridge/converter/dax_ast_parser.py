@@ -300,6 +300,22 @@ class UnaryOpNode(DaxNode):
     op: str
     operand: DaxNode = field(default_factory=lambda: LiteralNode(0))
 
+class AstNodeType(Enum):
+    TIME_INTELLIGENCE_TOTALYTD = auto()
+    TIME_INTELLIGENCE_SPLY = auto() # SAMEPERIODLASTYEAR
+    TIME_INTELLIGENCE_PREVIOUSYEAR = auto()
+    TIME_INTELLIGENCE_PREVIOUSMONTH = auto()
+    TIME_INTELLIGENCE_PREVIOUSQUARTER = auto()
+    TIME_INTELLIGENCE_DATEADD = auto()
+
+@dataclass
+class TimeIntelligenceNode(DaxNode):
+    operation_type: AstNodeType
+    expression: Optional[DaxNode]       # The measure being evaluated (e.g. SUM(Amount))
+    date_column: DaxNode      # The Date dimension column (e.g. 'Date'[Date])
+    offset_value: Optional[DaxNode] = None    # Used for DATEADD (e.g., -1)
+    offset_interval: Optional[DaxNode] = None # Used for DATEADD (e.g., YEAR)
+
 
 # ---------------------------------------------------------------------------
 # Recursive-Descent Parser
@@ -487,6 +503,60 @@ class DaxAstParser:
         self._advance()
         return IdentifierNode(name=tok.value)
 
+    def _parse_time_intelligence(self, func_name: str, args: List[DaxNode]) -> DaxNode:
+        """Matches the parsed arguments to specific Time Intelligence constraints."""
+        if func_name == "TOTALYTD" and args:
+            # Signature: TOTALYTD(<expression>, <dates>[, <filter>][, <year_end_date>])
+            return TimeIntelligenceNode(
+                operation_type=AstNodeType.TIME_INTELLIGENCE_TOTALYTD,
+                expression=args[0],
+                date_column=args[1] if len(args) > 1 else LiteralNode(0)
+            )
+            
+        elif func_name == "SAMEPERIODLASTYEAR" and args:
+            # Signature: SAMEPERIODLASTYEAR(<dates>)
+            return TimeIntelligenceNode(
+                operation_type=AstNodeType.TIME_INTELLIGENCE_SPLY,
+                expression=None, # Contextual expression injected by CALCULATE handling
+                date_column=args[0]
+            )
+
+        elif func_name == "PREVIOUSYEAR" and args:
+            # Signature: PREVIOUSYEAR(<dates>)
+            return TimeIntelligenceNode(
+                operation_type=AstNodeType.TIME_INTELLIGENCE_PREVIOUSYEAR,
+                expression=None,
+                date_column=args[0],
+            )
+
+        elif func_name == "PREVIOUSMONTH" and args:
+            # Signature: PREVIOUSMONTH(<dates>)
+            return TimeIntelligenceNode(
+                operation_type=AstNodeType.TIME_INTELLIGENCE_PREVIOUSMONTH,
+                expression=None,
+                date_column=args[0],
+            )
+
+        elif func_name == "PREVIOUSQUARTER" and args:
+            # Signature: PREVIOUSQUARTER(<dates>)
+            return TimeIntelligenceNode(
+                operation_type=AstNodeType.TIME_INTELLIGENCE_PREVIOUSQUARTER,
+                expression=None,
+                date_column=args[0],
+            )
+            
+        elif func_name == "DATEADD" and args:
+            # Signature: DATEADD(<dates>, <number_of_intervals>, <interval>)
+            return TimeIntelligenceNode(
+                operation_type=AstNodeType.TIME_INTELLIGENCE_DATEADD,
+                expression=None, # Injected by context
+                date_column=args[0],
+                offset_value=args[1] if len(args) > 1 else None,
+                offset_interval=args[2] if len(args) > 2 else None
+            )
+        
+        return FunctionCallNode(func=func_name, args=args)
+
     def _parse_function_call(self) -> DaxNode:
         tok = self._advance()
         func_name = tok.value.upper()
@@ -506,6 +576,16 @@ class DaxAstParser:
 
         if self._peek().type == DaxTokenType.RPAREN:
             self._advance()  # consume ')'
+
+        if func_name in {
+            "TOTALYTD",
+            "SAMEPERIODLASTYEAR",
+            "PREVIOUSYEAR",
+            "PREVIOUSMONTH",
+            "PREVIOUSQUARTER",
+            "DATEADD",
+        }:
+            return self._parse_time_intelligence(func_name, args)
 
         return FunctionCallNode(func=func_name, args=args)
 
@@ -560,11 +640,13 @@ class DaxSqlRenderer:
         table_alias: str = "T",
         date_alias: str = "CALENDAR",
         measure_sql_map: Optional[Dict[str, str]] = None,
+        table_alias_map: Optional[Dict[str, str]] = None,
     ) -> None:
         # Keep alias as provided (caller passes the correct form)
         self.table_alias = table_alias
         self.date_alias = date_alias
         self.measure_sql_map = measure_sql_map or {}
+        self.table_alias_map = {str(k).strip().lower(): str(v).strip() for k, v in (table_alias_map or {}).items() if str(k).strip() and str(v).strip()}
 
     def render(self, node: Optional[DaxNode]) -> Optional[str]:
         """
@@ -581,6 +663,8 @@ class DaxSqlRenderer:
             return None
 
     def _render_node(self, node: DaxNode) -> str:
+        if isinstance(node, TimeIntelligenceNode):
+            return self._render_time_intelligence(node)
         if isinstance(node, LiteralNode):
             return self._render_literal(node)
         if isinstance(node, ColumnRefNode):
@@ -609,7 +693,87 @@ class DaxSqlRenderer:
 
     def _render_column_ref(self, node: ColumnRefNode) -> str:
         col = sanitize_column(node.column)
+        if node.table:
+            mapped = self.table_alias_map.get(node.table.strip().lower())
+            if mapped:
+                return f'{mapped}."{col}"'
+        # Heuristic: Date/Calendar dimension columns should render against the
+        # provided date_alias, not the fact-table alias.
+        if node.table and node.table.strip().lower() in {"date", "calendar", "dim_date", "dates"}:
+            return f'{self.date_alias}."{col}"'
         return f'{self.table_alias}."{col}"'
+
+    def _render_time_intelligence(self, node: TimeIntelligenceNode) -> str:
+        date_col_sql = self._render_node(node.date_column)
+
+        if node.operation_type == AstNodeType.TIME_INTELLIGENCE_TOTALYTD:
+            if node.expression is None:
+                raise self.DaxRenderError("TOTALYTD requires an expression")
+            # Reuse the existing deterministic window-function implementation.
+            return self._render_period_to_date("TOTALYTD", [node.expression, node.date_column])
+
+        if node.operation_type == AstNodeType.TIME_INTELLIGENCE_SPLY:
+            # SAMEPERIODLASTYEAR is typically used as a CALCULATE modifier.
+            # We expect CALCULATE to inject the base expression into node.expression.
+            if node.expression is None:
+                raise self.DaxRenderError(
+                    "SAMEPERIODLASTYEAR requires a context expression (usually wrapped in CALCULATE)"
+                )
+            base_expr_sql = self._render_node(node.expression)
+            # Render as a window over the calendar date.
+            # Note: this is an approximation of DAX filter-context shifting;
+            # it avoids SELECT/CTEs to stay compatible with semantic-view metric expressions.
+            return (
+                f"{base_expr_sql} OVER ("
+                f"  ORDER BY {date_col_sql} "
+                f"  RANGE BETWEEN INTERVAL '1 YEAR' PRECEDING AND INTERVAL '1 YEAR' PRECEDING"
+                f")"
+            )
+
+        if node.operation_type == AstNodeType.TIME_INTELLIGENCE_PREVIOUSYEAR:
+            if node.expression is None:
+                raise self.DaxRenderError("PREVIOUSYEAR requires a context expression (usually wrapped in CALCULATE)")
+            base_expr_sql = self._render_node(node.expression)
+            return (
+                f"{base_expr_sql} OVER ("
+                f"  ORDER BY {date_col_sql} "
+                f"  RANGE BETWEEN INTERVAL '1 YEAR' PRECEDING AND INTERVAL '1 YEAR' PRECEDING"
+                f")"
+            )
+
+        if node.operation_type == AstNodeType.TIME_INTELLIGENCE_PREVIOUSMONTH:
+            if node.expression is None:
+                raise self.DaxRenderError("PREVIOUSMONTH requires a context expression (usually wrapped in CALCULATE)")
+            base_expr_sql = self._render_node(node.expression)
+            return (
+                f"{base_expr_sql} OVER ("
+                f"  ORDER BY {date_col_sql} "
+                f"  RANGE BETWEEN INTERVAL '1 MONTH' PRECEDING AND INTERVAL '1 MONTH' PRECEDING"
+                f")"
+            )
+
+        if node.operation_type == AstNodeType.TIME_INTELLIGENCE_PREVIOUSQUARTER:
+            if node.expression is None:
+                raise self.DaxRenderError("PREVIOUSQUARTER requires a context expression (usually wrapped in CALCULATE)")
+            base_expr_sql = self._render_node(node.expression)
+            # Snowflake doesn't always accept QUARTER in INTERVAL literals; use 3 months.
+            return (
+                f"{base_expr_sql} OVER ("
+                f"  ORDER BY {date_col_sql} "
+                f"  RANGE BETWEEN INTERVAL '3 MONTH' PRECEDING AND INTERVAL '3 MONTH' PRECEDING"
+                f")"
+            )
+
+        if node.operation_type == AstNodeType.TIME_INTELLIGENCE_DATEADD:
+            # DATEADD in DAX is a table function; here we map it to SQL DATEADD
+            # for scalar usage contexts.
+            return self._render_dateadd([
+                node.date_column,
+                node.offset_value or LiteralNode(0),
+                node.offset_interval or IdentifierNode(name="DAY"),
+            ])
+
+        raise self.DaxRenderError(f"Unsupported TimeIntelligenceNode: {node.operation_type}")
 
     def _render_measure_ref(self, node: MeasureRefNode) -> str:
         if node.name in self.measure_sql_map:
@@ -669,14 +833,8 @@ class DaxSqlRenderer:
         if func in {"TOTALYTD", "TOTALMTD", "TOTALQTD"}:
             return self._render_period_to_date(func, node.args)
 
-        if func in {"SAMEPERIODLASTYEAR", "PREVIOUSYEAR"}:
-            return self._render_lag_period(node.args, interval="year", amount=-1)
-
-        if func == "PREVIOUSMONTH":
-            return self._render_lag_period(node.args, interval="month", amount=-1)
-
-        if func == "PREVIOUSQUARTER":
-            return self._render_lag_period(node.args, interval="quarter", amount=-1)
+        # SAMEPERIODLASTYEAR / PREVIOUSYEAR / PREVIOUSMONTH / PREVIOUSQUARTER are parsed
+        # into TimeIntelligenceNode and rendered there. If they reach here, treat as unsupported.
 
         if func == "DATEADD":
             return self._render_dateadd(node.args)
@@ -773,12 +931,22 @@ class DaxSqlRenderer:
         if not args:
             raise self.DaxRenderError("CALCULATE requires at least 1 argument")
 
-        agg_expr = self._render_node(args[0])
+        agg_node = args[0]
         filter_clauses: List[str] = []
         partition_cols: List[str] = []
         is_window = False
 
         for filter_arg in args[1:]:
+            if isinstance(filter_arg, TimeIntelligenceNode):
+                if filter_arg.operation_type in {
+                    AstNodeType.TIME_INTELLIGENCE_SPLY,
+                    AstNodeType.TIME_INTELLIGENCE_PREVIOUSYEAR,
+                    AstNodeType.TIME_INTELLIGENCE_PREVIOUSMONTH,
+                    AstNodeType.TIME_INTELLIGENCE_PREVIOUSQUARTER,
+                }:
+                    filter_arg.expression = args[0]
+                    return self._render_time_intelligence(filter_arg)
+                    
             if isinstance(filter_arg, FunctionCallNode):
                 fname = filter_arg.func.upper()
 
@@ -812,16 +980,39 @@ class DaxSqlRenderer:
                 filter_clauses.append(self._render_node(filter_arg))
 
         if is_window:
+            agg_expr = self._render_node(agg_node)
             if partition_cols:
                 partition_clause = "PARTITION BY " + ", ".join(partition_cols)
                 return f"{agg_expr} OVER ({partition_clause})"
             else:
                 return f"{agg_expr} OVER ()"
-        elif filter_clauses:
+        if filter_clauses:
+            # Semantic-view / metric-expression constraint: avoid SELECT subqueries.
+            # Prefer conditional aggregates for common patterns.
             where = " AND ".join(filter_clauses)
-            return f"(SELECT {agg_expr} WHERE {where})"
-        else:
-            return agg_expr
+
+            if isinstance(agg_node, FunctionCallNode):
+                agg_func = agg_node.func.upper()
+                if agg_func in self._AGG_MAP and agg_node.args:
+                    inner_sql = self._render_node(agg_node.args[0])
+                    cast = "::FLOAT" if agg_func in {"SUM", "AVERAGE"} else ""
+                    case_expr = f"CASE WHEN {where} THEN {inner_sql}{cast} ELSE NULL END"
+
+                    if agg_func == "DISTINCTCOUNT":
+                        return f"COUNT(DISTINCT {case_expr})"
+                    if agg_func == "COUNTROWS":
+                        return f"COUNT(CASE WHEN {where} THEN 1 END)"
+
+                    sql_func = self._AGG_MAP[agg_func]
+                    if "{col}" in sql_func:
+                        return sql_func.format(col=case_expr)
+                    return f"{sql_func}({case_expr})"
+
+            # Unsupported for deterministic CALCULATE-with-filters.
+            # Raise so caller can fall back to the LLM translator.
+            raise self.DaxRenderError("CALCULATE with filters requires an aggregate function that can be rewritten")
+
+        return self._render_node(agg_node)
 
     def _render_period_to_date(self, func: str, args: List[DaxNode]) -> str:
         """
@@ -833,48 +1024,33 @@ class DaxSqlRenderer:
             raise self.DaxRenderError(f"{func} requires at least 1 argument")
 
         agg_sql = self._render_node(args[0])
-        d = self.date_alias
+        date_col_sql = self._render_node(args[1]) if len(args) > 1 else f'{self.date_alias}."DATE"'
 
         if func == "TOTALYTD":
             return (
                 f"{agg_sql} OVER (\n"
-                f"    PARTITION BY {d}.\"YEAR\"\n"
-                f"    ORDER BY {d}.\"DATE\"\n"
+                f"    PARTITION BY YEAR({date_col_sql})\n"
+                f"    ORDER BY {date_col_sql}\n"
                 f"    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW\n"
                 f")"
             )
         if func == "TOTALMTD":
             return (
                 f"{agg_sql} OVER (\n"
-                f"    PARTITION BY {d}.\"YEAR\", {d}.\"MONTH\"\n"
-                f"    ORDER BY {d}.\"DATE\"\n"
+                f"    PARTITION BY YEAR({date_col_sql}), MONTH({date_col_sql})\n"
+                f"    ORDER BY {date_col_sql}\n"
                 f"    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW\n"
                 f")"
             )
         if func == "TOTALQTD":
             return (
                 f"{agg_sql} OVER (\n"
-                f"    PARTITION BY {d}.\"YEAR\", {d}.\"QUARTER\"\n"
-                f"    ORDER BY {d}.\"DATE\"\n"
+                f"    PARTITION BY YEAR({date_col_sql}), QUARTER({date_col_sql})\n"
+                f"    ORDER BY {date_col_sql}\n"
                 f"    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW\n"
                 f")"
             )
         raise self.DaxRenderError(f"Unhandled period-to-date func: {func}")
-
-    def _render_lag_period(
-        self, args: List[DaxNode], interval: str, amount: int
-    ) -> str:
-        """
-        Translate SAMEPERIODLASTYEAR / PREVIOUSxxx to DATEADD-based subquery.
-        """
-        if not args:
-            raise self.DaxRenderError("Period function requires arguments")
-        agg_sql = self._render_node(args[0])
-        d = self.date_alias
-        return (
-            f"(SELECT {agg_sql} "
-            f"WHERE {d}.\"DATE\" >= DATEADD({interval}, {amount}, {d}.\"DATE\"))"
-        )
 
     def _render_dateadd(self, args: List[DaxNode]) -> str:
         """Translate DATEADD(dates, n_intervals, interval) to Snowflake DATEADD."""
@@ -902,6 +1078,7 @@ def try_ast_translate(
     table_alias: str,
     date_alias: str = "calendar",
     measure_sql_map: Optional[Dict[str, str]] = None,
+    table_alias_map: Optional[Dict[str, str]] = None,
 ) -> Optional[str]:
     """
     Attempt to translate a DAX expression to Snowflake SQL via AST parsing.
@@ -921,5 +1098,6 @@ def try_ast_translate(
         table_alias=table_alias,
         date_alias=date_alias,
         measure_sql_map=measure_sql_map or {},
+        table_alias_map=table_alias_map or {},
     )
     return renderer.render(ast)

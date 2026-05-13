@@ -154,9 +154,58 @@ class SemanticDDLSanitizer:
             _set_items(m_start, m_end, met_items)
 
         normalized_ddl = "\n".join(lines)
+        
+        # Determine all table aliases used in the DDL to avoid collisions
+        table_aliases = set()
+        if tables_block:
+            t_start, t_end = tables_block
+            table_items = _get_items(t_start, t_end)
+            for item in table_items:
+                m = re.search(r'^\s*(\w+)\s+AS\s+', item, flags=re.IGNORECASE)
+                if m:
+                    table_aliases.add(m.group(1).upper())
+
         # Final pass: remove any dangling comma immediately before a clause close.
         normalized_ddl = re.sub(r",\s*\n(\s*\)\s*;?)", r"\n\1", normalized_ddl)
+        
+        # Final pass: Ensure identifiers matching table aliases are quoted in DIMENSIONS/METRICS
+        if table_aliases:
+            normalized_ddl = self.sanitize_identifiers(normalized_ddl, table_aliases)
+            
         return normalized_ddl
+
+    def sanitize_identifiers(self, ddl: str, table_aliases: set[str]) -> str:
+        """Ensure identifiers that match table aliases are quoted in expressions.
+        
+        Snowflake can get confused if an unquoted metric/dimension identifier 
+        matches a table alias in the same semantic view.
+        """
+        lines = ddl.splitlines()
+        in_dimensions = False
+        in_metrics = False
+        sanitized_lines = []
+
+        for line in lines:
+            stripped = line.strip().upper()
+            if stripped.startswith("DIMENSIONS ("):
+                in_dimensions = True
+            elif stripped.startswith("METRICS ("):
+                in_metrics = True
+            elif stripped.startswith(")"):
+                in_dimensions = False
+                in_metrics = False
+
+            if (in_dimensions or in_metrics) and not stripped.startswith(("DIMENSIONS (", "METRICS (", ")")):
+                # Quote bare identifiers matching table aliases
+                # e.g. SUM(SENTIMENT) -> SUM("SENTIMENT")
+                for alias in table_aliases:
+                    # Look for bare identifier: not preceded by dot or quote, not followed by dot or quote
+                    pattern = rf'(?<![\w\.\"])\b{re.escape(alias)}\b(?![\w\."])'
+                    line = re.sub(pattern, f'"{alias}"', line, flags=re.IGNORECASE)
+            
+            sanitized_lines.append(line)
+        
+        return "\n".join(sanitized_lines)
 
     def remediate_invalid_identifier(
         self,

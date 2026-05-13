@@ -12,7 +12,9 @@ import json
 import re
 import unicodedata
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+from semabridge.utils.synonyms import merge_synonyms, generate_auto_synonyms
 
 from semabridge.core.interfaces import BaseConverter
 from semabridge.core.exceptions import ConversionError
@@ -367,8 +369,16 @@ class TMSLToOSIConverter(BaseConverter):
             is_key = True
 
         # ── Cortex AI metadata ──────────────────────────────────────────────
-        # Auto-generate synonyms from snake_case / PascalCase column names
-        synonyms = self._auto_synonyms(col_name)
+        # Merge user-defined synonyms with auto-generated heuristics
+        user_synonyms = col_def.get("synonyms") or []
+        if not isinstance(user_synonyms, list):
+            user_synonyms = []
+        
+        auto_synonyms = generate_auto_synonyms(col_name)
+        synonyms = merge_synonyms(user_synonyms, auto_synonyms)
+        
+        if user_synonyms:
+            logger.debug("Column '%s': loaded %d user-defined synonyms from TMSL", col_name, len(user_synonyms))
 
         # is_enum heuristic: TMSL dataCategory == "Category" or boolean type
         is_enum = (
@@ -484,44 +494,6 @@ class TMSLToOSIConverter(BaseConverter):
         # Default for Fabric dateTime is datetime.
         return OSIDataType.DATETIME
 
-    @staticmethod
-    def _auto_synonyms(name: str) -> List[str]:
-        """
-        Generate simple synonym candidates from a column/measure name.
-
-        Example: "CustomerID" → ["Customer ID", "Client ID"]
-                 "sale_amount" → ["Sale Amount", "Sales Amount"]
-        """
-        # Convert snake_case and PascalCase to title-case words
-        # e.g. "sale_amount" → "Sale Amount"
-        snake_separated = name.replace("_", " ").strip()
-        # Insert space before uppercase letters following lowercase (PascalCase)
-        import re as _re
-        camel_separated = _re.sub(r"(?<=[a-z])(?=[A-Z])", " ", snake_separated)
-        title_form = camel_separated.title().strip()
-
-        synonyms: List[str] = []
-        if title_form and title_form.lower() != name.lower():
-            synonyms.append(title_form)
-
-        # Common business abbreviation expansions
-        _abbrev_map = {
-            "Cust": "Customer", "Acct": "Account", "Amt": "Amount",
-            "Qty": "Quantity", "Num": "Number", "Id": "ID",
-            "Desc": "Description", "Dt": "Date", "Yr": "Year",
-            "Mth": "Month", "Qtr": "Quarter", "Wk": "Week",
-        }
-        for abbrev, expansion in _abbrev_map.items():
-            if abbrev in title_form:
-                synonyms.append(title_form.replace(abbrev, expansion))
-
-        # Return deduplicated list (up to 3 synonyms)
-        seen: List[str] = []
-        for s in synonyms:
-            if s not in seen and s.lower() != name.lower():
-                seen.append(s)
-        return seen[:3]
-
     def _parse_metric(self, measure_def: Dict[str, Any], dataset_name: str) -> OSIMetric:
         """Parse a TMSL measure into OSIMetric with Cortex AI metadata."""
         dax = self._extract_measure_expression(measure_def)
@@ -550,8 +522,16 @@ class TMSLToOSIConverter(BaseConverter):
         )
         access_modifier = "private_access" if is_helper else "public_access"
 
-        # Auto-generate synonyms from measure name
-        synonyms = TMSLToOSIConverter._auto_synonyms(display_name)
+        # Extract and merge synonyms from TMSL measure definition
+        user_synonyms = measure_def.get("synonyms") or []
+        if not isinstance(user_synonyms, list):
+            user_synonyms = []
+            
+        auto_synonyms = generate_auto_synonyms(display_name)
+        synonyms = merge_synonyms(user_synonyms, auto_synonyms)
+        
+        if user_synonyms:
+            logger.debug("Metric '%s': loaded %d user-defined synonyms from TMSL", name, len(user_synonyms))
 
         return OSIMetric(
             unique_name=name,

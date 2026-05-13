@@ -97,6 +97,7 @@ from . import identifier_utilities
 from . import schema_evolution
 from . import measure_sync
 from . import metric_helpers
+from . import fixers
 from . import exceptions
 from . import yaml_utils
 from . import renderers
@@ -108,6 +109,7 @@ __all__ = [
     "schema_evolution",
     "measure_sync",
     "metric_helpers",
+    "fixers",
     "exceptions",
     "yaml_utils",
     "renderers",

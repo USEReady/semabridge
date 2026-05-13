@@ -12,3 +12,5 @@ pytest>=7.4.0
 pytest-cov>=4.1.0
 python-multipart
 truststore>=0.9.0
+groq>=0.11.0
+sqlglot>=25.0.0

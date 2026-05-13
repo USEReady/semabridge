@@ -12,7 +12,9 @@ import hashlib
 import re
 import unicodedata
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+from semabridge.utils.synonyms import merge_synonyms, generate_auto_synonyms
 
 from semabridge.sml.models import (
     SMLModel, SMLDataset, SMLColumn, SMLMetric, SMLRelationship, SMLDimension, SMLAttribute,
@@ -370,6 +372,9 @@ class TMSLTransformer:
                     aggregation_type = m.get("aggregation", "sum").upper()
                     sql_expr = f'{aggregation_type}({table_alias}."{column_name}")'
                     
+                    # Generate synonyms for auto-detected metrics
+                    auto_syns = generate_auto_synonyms(measure_name)
+                    
                     metric = SMLMetric(
                         unique_name=measure_name,
                         label=measure_name,
@@ -380,7 +385,8 @@ class TMSLTransformer:
                         aggregation=AggregationType(m["aggregation"]),
                         confidence=m["confidence"],
                         sync_enabled=True,
-                        complexity_tier=1
+                        complexity_tier=1,
+                        synonyms=auto_syns
                     )
                     sml.metrics.append(metric)
                     existing_metrics.add(measure_name)
@@ -644,6 +650,16 @@ class TMSLTransformer:
         if mapped_type == DataType.STRING and normalized_type != "string":
             logger.debug(f"Column '{col_name}' has type '{tmsl_type}', falling back to STRING")
             
+        # Merge user-defined synonyms with auto-generated heuristics
+        user_synonyms = col_def.get("synonyms") or []
+        if not isinstance(user_synonyms, list):
+            user_synonyms = []
+        auto_synonyms = generate_auto_synonyms(col_name)
+        merged_synonyms = merge_synonyms(user_synonyms, auto_synonyms)
+
+        if user_synonyms:
+            logger.debug("Column '%s': loaded %d user-defined synonyms from TMSL", col_name, len(user_synonyms))
+
         return SMLColumn(
             unique_name=col_name,
             label=col_name,
@@ -653,7 +669,8 @@ class TMSLTransformer:
             is_hidden=col_def.get("isHidden", False),
             is_measure_candidate=is_measure_candidate,
             format_string=format_string,
-            folder=col_def.get("displayFolder")
+            folder=col_def.get("displayFolder"),
+            synonyms=merged_synonyms
         )
 
     def _parse_measure(self, measure_def: Dict[str, Any], table_name: str, overrides: Dict[str, str] = None, metrics_context: List[Any] = None) -> SMLMetric:
@@ -710,6 +727,17 @@ class TMSLTransformer:
                     complexity["failure_reason"] = reason
                     break
         
+        # Extract and merge synonyms from TMSL measure definition
+        user_synonyms = measure_def.get("synonyms") or []
+        if not isinstance(user_synonyms, list):
+            user_synonyms = []
+            
+        auto_synonyms = generate_auto_synonyms(display_name)
+        merged_synonyms = merge_synonyms(user_synonyms, auto_synonyms)
+
+        if user_synonyms:
+            logger.debug("Metric '%s': loaded %d user-defined synonyms from TMSL", measure_def["name"], len(user_synonyms))
+
         metric = SMLMetric(
             unique_name=measure_def["name"],
             label=display_name or measure_def["name"],
@@ -729,6 +757,7 @@ class TMSLTransformer:
             sync_failure_reason=complexity["failure_reason"],
             # Default partition to Year for Time Intelligence measures
             partition_dimension="'Date'[Year]" if complexity["requires_time_intel"] else None,
+            synonyms=merged_synonyms
         )
 
         # Apply direct transpiler output before standard translator path.

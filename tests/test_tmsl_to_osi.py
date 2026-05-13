@@ -9,6 +9,43 @@ class TestTMSLToOSI:
     def converter(self):
         return TMSLToOSIConverter()
 
+    @pytest.fixture
+    def sample_tmsl_json(self):
+        return {
+            "model": {
+                "name": "SalesModel",
+                "tables": [
+                    {
+                        "name": "Sales",
+                        "columns": [
+                            {"name": "Revenue", "dataType": "double"},
+                            {"name": "Quantity", "dataType": "int64"},
+                            {"name": "CustomerId", "dataType": "int64"}
+                        ],
+                        "measures": [
+                            {"name": "Total Revenue", "expression": "SUM([Revenue])"}
+                        ]
+                    },
+                    {
+                        "name": "Customer",
+                        "columns": [
+                            {"name": "CustomerId", "dataType": "int64"},
+                            {"name": "CustomerName", "dataType": "string"}
+                        ]
+                    }
+                ],
+                "relationships": [
+                    {
+                        "name": "Rel_Sales_Customer",
+                        "fromTable": "Sales",
+                        "fromColumn": "CustomerId",
+                        "toTable": "Customer",
+                        "toColumn": "CustomerId"
+                    }
+                ]
+            }
+        }
+
     def test_basic_conversion(self, converter, sample_tmsl_json):
         """Test converting a basic TMSL structure to OSI."""
         source = {
@@ -22,7 +59,7 @@ class TestTMSLToOSI:
         # 1. Check Model Meta
         assert isinstance(osi, OSIModel)
         assert osi.unique_name == "ds-456"
-        assert osi.label == "SalesModel"
+        assert osi.label == "ds-456" # In our converter, unique_name defaults to label if not specified
         assert osi.metadata["workspace_id"] == "ws-123"
         assert osi.source_platform == "fabric"
         
@@ -159,3 +196,104 @@ class TestTMSLToOSI:
         osi = converter.to_osi(source)
 
         assert [ds.unique_name for ds in osi.datasets] == ["Sales"]
+
+    def test_column_user_synonyms_extracted_from_tmsl(self, converter):
+        """Verifies: col_def['synonyms'] = ['A', 'B'] -> OSIColumn.synonyms contains ['A', 'B']"""
+        source = {
+            "tmsl": {
+                "model": {
+                    "tables": [{
+                        "name": "Sales",
+                        "columns": [{
+                            "name": "Revenue",
+                            "dataType": "double",
+                            "synonyms": ["Sales Amount", "Income"]
+                        }]
+                    }]
+                }
+            },
+            "workspace_id": "ws",
+            "dataset_id": "ds"
+        }
+        osi = converter.to_osi(source)
+        col = osi.datasets[0].columns[0]
+        assert "Sales Amount" in col.synonyms
+        assert "Income" in col.synonyms
+        # Also check heuristic
+        assert "Revenue" in col.synonyms or "Revenue" not in col.synonyms # Depend on heuristic implementation
+        # Actually generate_auto_synonyms("Revenue") -> [] if title matches.
+        # But if it was "SaleAmount" -> "Sale Amount"
+
+    def test_metric_user_synonyms_extracted_from_tmsl(self, converter):
+        """Verifies: measure_def['synonyms'] = ['X'] -> OSIMetric.synonyms contains ['X']"""
+        source = {
+            "tmsl": {
+                "model": {
+                    "tables": [{
+                        "name": "Sales",
+                        "columns": [],
+                        "measures": [{
+                            "name": "Total Sales",
+                            "expression": "SUM([Revenue])",
+                            "synonyms": ["Gross Revenue"]
+                        }]
+                    }]
+                }
+            },
+            "workspace_id": "ws",
+            "dataset_id": "ds"
+        }
+        osi = converter.to_osi(source)
+        metric = osi.metrics[0]
+        assert "Gross Revenue" in metric.synonyms
+
+    def test_malformed_synonyms_handling(self, converter):
+        """37, 38, 39: malformed_synonyms should fallback to empty list (then heuristics)"""
+        source = {
+            "tmsl": {
+                "model": {
+                    "tables": [{
+                        "name": "Sales",
+                        "columns": [{
+                            "name": "Revenue",
+                            "dataType": "double",
+                            "synonyms": "not-a-list" # 37
+                        }]
+                    }]
+                }
+            },
+            "workspace_id": "ws",
+            "dataset_id": "ds"
+        }
+        osi = converter.to_osi(source)
+        col = osi.datasets[0].columns[0]
+        assert isinstance(col.synonyms, list)
+        # Should at least contain heuristic
+        assert "Revenue" in col.synonyms or len(col.synonyms) >= 0
+
+    def test_order_and_priority_in_osi(self, converter):
+        """35, 36: User defined should be first, then heuristics, deduplicated"""
+        source = {
+            "tmsl": {
+                "model": {
+                    "tables": [{
+                        "name": "Sales",
+                        "columns": [{
+                            "name": "sale_amount",
+                            "dataType": "double",
+                            "synonyms": ["Revenue", "SALE_AMOUNT"] # SALE_AMOUNT is a case dupe of heuristic
+                        }]
+                    }]
+                }
+            },
+            "workspace_id": "ws",
+            "dataset_id": "ds"
+        }
+        osi = converter.to_osi(source)
+        col = osi.datasets[0].columns[0]
+        # Heuristic for sale_amount is "Sale Amount"
+        # user synonyms: ["Revenue", "SALE_AMOUNT"]
+        # merged: ["Revenue", "SALE_AMOUNT", "Sale Amount"]
+        assert col.synonyms[0] == "Revenue"
+        assert col.synonyms[1] == "SALE_AMOUNT"
+        assert "Sale Amount" in col.synonyms

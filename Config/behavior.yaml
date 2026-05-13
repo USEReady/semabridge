@@ -28,6 +28,11 @@ databricks:
   measure_view_mode: "combined" # "per_measure" (one view each) or "combined" (single model-level joined view)
   view_prefix: "mv" # Prefix for measure view names
   enable_simple_dax_translation: true # Translate simple DAX (SUM, COUNT, etc.) to SQL
+  enable_llm_dax_translation: true # Use common LLM fallback for complex DAX after deterministic translation fails
+  llm_dax_provider_order: ["deepseek", "gemini", "groq"] # Try DeepSeek first, then Gemini/Groq fallback
+  llm_dax_timeout_seconds: 20 # Per-provider LLM timeout before trying the next provider
+  llm_dax_cache_enabled: true # Cache DAX/schema/dialect translations to reduce repeated API calls
+  llm_dax_fallback_to_placeholder: true # Never skip solely because all LLM providers failed
   metric_view_only_sum_translation: true # Restrict simple DAX SUM translation to native metric-view generation only
   enable_cross_table_joins: true # Build explicit joins from model relationships when measures span datasets
   enable_metric_view_joins: true # Enable metric view 'joins' property for multi-table snowflake schemas (requires enable_cross_table_joins=true)

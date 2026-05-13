@@ -585,12 +585,12 @@ async def compare_project_snapshots_compat(
     left_state = from_row.get("state")
     if isinstance(left_state, str):
         try: left_state = json.loads(left_state)
-        except: left_state = {}
+        except Exception: left_state = {}
         
     right_state = to_row.get("state")
     if isinstance(right_state, str):
         try: right_state = json.loads(right_state)
-        except: right_state = {}
+        except Exception: right_state = {}
 
     if not isinstance(left_state, dict): left_state = {}
     if not isinstance(right_state, dict): right_state = {}
@@ -2048,7 +2048,7 @@ async def preview_restore_compat(project_id: str, snapshot_id: str) -> Dict[str,
     target_state = target_snap.get("state") or {}
     if isinstance(target_state, str):
         try: target_state = json.loads(target_state)
-        except: target_state = {}
+        except Exception: target_state = {}
         
     # 3. Diff them
     diff_results = _diff_models(current_state, target_state)
@@ -2155,7 +2155,7 @@ async def get_model_history_compat(project_id: str, model_name: str) -> List[Dic
         state = snap.get("state") or {}
         if isinstance(state, str):
             try: state = json.loads(state)
-            except: state = {}
+            except Exception: state = {}
             
         models = state.get("models", [])
         model = next((m for m in models if m.get("name") == model_name), None)
@@ -2202,7 +2202,7 @@ async def get_snapshot_content_compat(project_id: str, snapshot_id: str) -> Dict
     state = snap.get("sml_blob") or snap.get("state") or {}
     if isinstance(state, str):
         try: state = json.loads(state)
-        except: state = {}
+        except Exception: state = {}
         
     return {
         "snapshot_id": snapshot_id,
@@ -2236,7 +2236,7 @@ async def get_snapshot_report_compat(project_id: str, snapshot_id: str) -> Dict[
     state = snap.get("sml_blob") or snap.get("state") or {}
     if isinstance(state, str):
         try: state = json.loads(state)
-        except: state = {}
+        except Exception: state = {}
     
     # Extract conversion summary from state
     datasets = state.get("datasets") or state.get("models") or []

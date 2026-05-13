@@ -31,6 +31,7 @@ from semabridge.connectors.databricks_publisher import (
     DatabricksPublisher,
     ResolvedMeasure,
 )
+from semabridge.converter.common_dax_translator import CommonDAXTranslationResult
 from semabridge.connectors.databricks_measure_translation import (
     TIER_DEFERRED,
     TIER_FILTERED_CONDITIONAL_AGGREGATION,
@@ -1341,6 +1342,39 @@ class TestMeasureViewGeneration:
         assert created == 0
         assert skipped == 1
         assert details[0]["reason"] == DEPLOY_REASON_DAX_NOT_SUPPORTED
+
+    def test_complex_dax_uses_common_llm_when_enabled(self):
+        """Complex DAX uses the common LLM translator when explicitly enabled."""
+        model = _sales_model(dax_only=True)
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                enable_llm_dax_translation=True,
+                llm_dax_provider_order=["gemini", "groq"],
+                measure_view_type=VIEW_TYPE_METRIC,
+            )
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        with patch(
+            "semabridge.converter.common_dax_translator.CommonDAXTranslator.translate",
+            return_value=CommonDAXTranslationResult(
+                sql="SUM(CASE WHEN `sales`.`region` = 'North' THEN `sales`.`revenue` ELSE 0 END)",
+                is_valid=True,
+                provider="groq",
+                model="llama-3.3-70b-versatile",
+                attempted_providers=["gemini", "groq"],
+            ),
+        ) as translate:
+            stmts, created, skipped, details = publisher.generate_measure_view_statements(
+                model,
+                view_type_override=VIEW_TYPE_METRIC,
+            )
+
+        assert created == 1
+        assert skipped == 0
+        assert details == []
+        assert translate.called
+        assert "case when" in stmts[0].lower()
 
     def test_dax_tier_classifier_standard_aggregation(self):
         publisher = DatabricksPublisher(_cfg())

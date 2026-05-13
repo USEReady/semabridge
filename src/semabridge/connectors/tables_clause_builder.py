@@ -67,8 +67,10 @@ class TablesClauseBuilder:
                 modeled_cols = {self.identifier_sanitizer.sanitize_column(c.unique_name) for c in dataset.columns}
             else:
                 modeled_cols = set(self.schema_manager._collect_physical_source_columns(dataset).keys())
-            
             source_table = dataset.source_table or dataset.unique_name
+            if str(source_table).upper().endswith("_SEMABRIDGE_FISCAL"):
+                modeled_cols.add("_CURRENT_FISCAL_PERIOD")
+            
             source_key = self.identifier_sanitizer.sanitize_table_name(source_table).upper()
             live_cols = self.live_schema_metadata.get(source_key, set())
             dataset_col_lookup[dataset.unique_name] = set(live_cols) if live_cols else modeled_cols

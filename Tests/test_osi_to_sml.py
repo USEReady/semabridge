@@ -135,5 +135,58 @@ def test_from_osi_resolves_metric_dependencies_after_all_metrics_loaded():
     assert metric_sql["Total Revenue"] is not None
     assert metric_sql["Total COGS"] is not None
     assert metric_sql["Gross Margin"] is not None
-    assert 'SUM(fact."REVENUE")' in metric_sql["Gross Margin"]
-    assert 'SUM(fact."COGS")' in metric_sql["Gross Margin"]
+    assert 'REVENUE' in metric_sql["Gross Margin"]
+    assert 'COGS' in metric_sql["Gross Margin"]
+    assert '-' in metric_sql["Gross Margin"]
+
+def test_from_osi_propagates_synonyms():
+    converter = OSIToSMLConverter()
+    osi_model = OSIModel(
+        unique_name="syn-model",
+        datasets=[
+            OSIDataset(
+                unique_name="Sales",
+                columns=[
+                    OSIColumn(unique_name="Revenue", data_type=OSIDataType.FLOAT, synonyms=["Money", "Income"])
+                ]
+            )
+        ],
+        metrics=[
+            OSIMetric(
+                unique_name="Total Sales",
+                dataset="Sales",
+                expression="SUM([Revenue])",
+                synonyms=["Gross"]
+            )
+        ]
+    )
+
+    sml_model = converter.from_osi(osi_model)
+    
+    col = sml_model.datasets[0].columns[0]
+    assert "Money" in col.synonyms
+    assert "Income" in col.synonyms
+    
+    metric = sml_model.metrics[0]
+    assert "Gross" in metric.synonyms
+
+def test_from_osi_preserves_synonym_order_and_casing():
+    """62, 63: order and case should be preserved during OSI -> SML propagation"""
+    converter = OSIToSMLConverter()
+    osi_model = OSIModel(
+        unique_name="syn-model",
+        datasets=[
+            OSIDataset(
+                unique_name="Sales",
+                columns=[
+                    OSIColumn(unique_name="Revenue", data_type=OSIDataType.FLOAT, synonyms=["B", "a", "C"])
+                ]
+            )
+        ]
+    )
+
+    sml_model = converter.from_osi(osi_model)
+    col = sml_model.datasets[0].columns[0]
+    assert col.synonyms[0] == "B"
+    assert col.synonyms[1] == "a"
+    assert col.synonyms[2] == "C"

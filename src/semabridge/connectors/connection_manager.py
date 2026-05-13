@@ -337,7 +337,7 @@ class SnowflakeConnectionManager:
                         self._execute_sql(cur, "SHOW DATABASES", context="SHOW DATABASES")
                         available_dbs = [row[1] for row in cur.fetchall()]
                         logger.error(f"  Available databases: {', '.join(available_dbs)}")
-                    except:
+                    except Exception:
                         pass
                     
                     raise Exception(
@@ -456,7 +456,7 @@ class SnowflakeConnectionManager:
                     self._execute_sql(cur, "SHOW DATABASES", context="SHOW DATABASES")
                     dbs = [row[1] for row in cur.fetchall()]
                     logger.info(f"   Available: {', '.join(dbs)}")
-                except:
+                except Exception:
                     pass
             
             # Test schema access

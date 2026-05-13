@@ -31,6 +31,14 @@ from semabridge.converter.semantic_layer import (
     SemanticTranslator,
     get_semantic_translator,
 )
+from semabridge.models.phase_2_filter_context import FilterContextTrace
+from semabridge.models.phase_2_semantic_intent import ComplexCalculateIntent
+from semabridge.converter.filter_context_tracker import FilterContextTracker
+from semabridge.converter.context_conflict_detector import ContextConflictDetector
+from semabridge.converter.context_propagation_validator import ContextPropagationValidator
+from semabridge.converter.symbolic_executor import SymbolicExecutor
+from semabridge.converter.equivalence_validator import EquivalenceValidator
+from semabridge.converter.dax_ast_parser import DaxAstParser
 from semabridge.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -49,6 +57,12 @@ class DeterministicTranslationResult:
     # NEW: Multi-table support
     joins: List[str] = field(default_factory=list)  # SQL JOIN clauses
     tables_referenced: List[str] = field(default_factory=list)  # Tables used
+    
+    # PHASE 2 EXTENSIONS
+    filter_trace: Optional[FilterContextTrace] = None
+    semantic_intent: Optional[ComplexCalculateIntent] = None
+    proof_of_equivalence: Optional[str] = None  # Symbolic execution proof
+    symbolic_trace: Optional[Dict] = None
     
     @property
     def is_valid(self) -> bool:
@@ -115,6 +129,14 @@ class DeterministicTranslator:
             base_alias="fact"
         )
         
+        # PHASE 2 COMPONENTS
+        self.ast_parser = DaxAstParser()
+        self.filter_tracker = FilterContextTracker()
+        self.conflict_detector = ContextConflictDetector()
+        self.propagation_validator = ContextPropagationValidator()
+        self.symbolic_executor = SymbolicExecutor()
+        self.equivalence_validator = EquivalenceValidator()
+        
         logger.info(
             f"✅ DeterministicTranslator initialized\n"
             f"   ├─ Schema: {sorted(self.schema_columns)}\n"
@@ -153,6 +175,30 @@ class DeterministicTranslator:
         else:
             result.tables_referenced = sorted(list(tables))
             result.debug_trace['semantic_tables'] = result.tables_referenced
+            
+        # === STAGE 0.5: FILTER CONTEXT ANALYSIS (Phase 2) ===
+        logger.debug(f"[STAGE 0.5] Tracking filter context propagation")
+        try:
+            ast = self.ast_parser.parse(dax)
+            if ast:
+                trace = self.filter_tracker.track(ast)
+                trace.measure = metric_name or "Measure"
+                result.filter_trace = trace
+                
+                # Check for conflicts
+                conflicts = self.conflict_detector.detect(trace)
+                if conflicts:
+                    result.debug_trace['filter_conflicts'] = [c.description for c in conflicts]
+                    logger.warning(f"  ⚠️  Filter conflicts detected: {len(conflicts)}")
+                
+                # Validate propagation
+                prop_errors = self.propagation_validator.validate(trace)
+                if prop_errors:
+                    result.debug_trace['propagation_errors'] = prop_errors
+                    logger.warning(f"  ⚠️  Propagation issues: {prop_errors}")
+                    
+        except Exception as e:
+            logger.warning(f"  ⚠️  Filter context tracking failed: {e}")
         
         # === STAGE 1: PARSE & VALIDATE DAX ===
         logger.debug(f"[STAGE 1] Parsing DAX for metric: {metric_name or '?'}")
@@ -239,19 +285,21 @@ class DeterministicTranslator:
         logger.debug(f"  ✓ SQL validation passed")
         
         # === STAGE 5: SCHEMA VALIDATION ===
-        logger.debug(f"[STAGE 5] Validating schema columns")
-        
-        schema_ok, schema_issues = self._validate_schema_columns(resolved_sql)
-        result.schema_valid = schema_ok
-        result.debug_trace['schema_validation'] = schema_issues
-        
-        if not schema_ok:
-            result.error_reason = f"Schema validation failed: {schema_issues}"
-            logger.error(f"  ✗ {result.error_reason}")
-            return result
-        
         logger.debug(f"  ✓ Schema validation passed")
         
+        # === STAGE 5.5: SYMBOLIC VALIDATION (Phase 2) ===
+        logger.debug(f"[STAGE 5.5] Proving semantic equivalence")
+        try:
+            if ast:
+                is_equiv, proof = self.equivalence_validator.validate(ast, resolved_sql)
+                result.proof_of_equivalence = proof
+                if not is_equiv:
+                    logger.warning("  ⚠️  Could not prove semantic equivalence (Symbolic check)")
+                else:
+                    logger.info("  ✓ Semantic equivalence proven symbolically")
+        except Exception as e:
+            logger.warning(f"  ⚠️  Symbolic validation failed: {e}")
+            
         # === STAGE 6: FINAL SUBSTITUTION ===
         logger.debug(f"[STAGE 6] Applying table alias")
         

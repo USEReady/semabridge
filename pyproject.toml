@@ -60,6 +60,8 @@ dependencies = [
     # ── LLM / AI integrations ────────────────────────────────────────
     "google-generativeai>=0.3.0",
     "google-genai>=0.3.0",
+    "groq>=0.11.0",
+    "sqlglot>=25.0.0",
     # ── Distributed orchestration (Temporal + Ray) ───────────────────
     "temporalio>=1.7.0",
     "ray[default]>=2.40.0",

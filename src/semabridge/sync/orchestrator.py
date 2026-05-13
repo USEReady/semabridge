@@ -894,6 +894,8 @@ class SyncOrchestrator:
             return self._deploy_to_snowflake(osi_model, config)
         elif config.direction == SyncDirection.SNOWFLAKE_TO_PBI:
             return self._deploy_to_powerbi(osi_model, config)
+        elif config.direction == SyncDirection.PBIX_TO_DATABRICKS:
+            return self._deploy_to_databricks(osi_model, config)
         elif config.direction == SyncDirection.BIDIRECTIONAL:
             # Deploy to both — Snowflake first, then Power BI
             sf_id = self._deploy_to_snowflake(osi_model, config)
@@ -902,6 +904,8 @@ class SyncOrchestrator:
         # ── Fabric ↔ Snowflake semantic model directions ─────────────────
         elif config.direction == SyncDirection.FABRIC_TO_SNOWFLAKE:
             return self._deploy_to_snowflake(osi_model, config)
+        elif config.direction == SyncDirection.FABRIC_TO_DATABRICKS:
+            return self._deploy_to_databricks(osi_model, config)
         elif config.direction == SyncDirection.SNOWFLAKE_TO_FABRIC:
             return self._deploy_to_powerbi(osi_model, config)
         elif config.direction == SyncDirection.FABRIC_SNOWFLAKE_BIDIRECTIONAL:
@@ -921,7 +925,8 @@ class SyncOrchestrator:
         settings = get_settings()
 
         # Convert OSI → SML
-        converter = OSIToSMLConverter()
+        dialect = "snowflake" if config.direction in (SyncDirection.PBIX_TO_SNOWFLAKE, SyncDirection.FABRIC_TO_SNOWFLAKE) else "snowflake"
+        converter = OSIToSMLConverter(target_dialect=dialect)
         sml_model = converter.from_osi(osi_model)
 
         # Deploy via SnowflakeEmitter
@@ -934,6 +939,25 @@ class SyncOrchestrator:
         logger.info(f"Deployed '{osi_model.unique_name}' to Snowflake: {target_id}")
         return target_id
 
+    def _deploy_to_databricks(
+        self, osi_model: OSIModel, config: SyncConfig
+    ) -> Optional[str]:
+        """Convert OSI to SML and deploy to Databricks."""
+        from semabridge.converter.osi_to_sml import OSIToSMLConverter
+        from semabridge.core.settings import get_settings
+
+        settings = get_settings()
+        converter = OSIToSMLConverter(target_dialect="databricks")
+        sml_model = converter.from_osi(osi_model)
+
+        from semabridge.connectors.databricks_emitter import DatabricksEmitter
+        emitter = DatabricksEmitter(config=settings.databricks)
+        emitter.deploy(sml_model)
+
+        target_id = f"databricks://{config.databricks_catalog}/{config.databricks_schema}"
+        logger.info(f"Deployed '{osi_model.unique_name}' to Databricks: {target_id}")
+        return target_id
+
     def _deploy_to_powerbi(
         self, osi_model: OSIModel, config: SyncConfig
     ) -> Optional[str]:
@@ -944,7 +968,7 @@ class SyncOrchestrator:
         settings = get_settings()
 
         # Convert OSI → SML → TMSL → Fabric
-        converter = OSIToSMLConverter()
+        converter = OSIToSMLConverter(target_dialect="snowflake") # Fabric uses Snowflake-ish T-SQL/DAX
         sml_model = converter.from_osi(osi_model)
 
         from semabridge.connectors.fabric_publisher import FabricPublisher

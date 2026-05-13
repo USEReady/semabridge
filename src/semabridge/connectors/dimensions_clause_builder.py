@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Set, Tuple, Optional
 
+from semabridge.connectors.synonym_clause import synonyms_clause
+
 from semabridge.utils.logger import get_logger
 from semabridge.utils.identifiers import IdentifierSanitizer
 
@@ -93,8 +95,29 @@ class DimensionsClauseBuilder:
                     emitted_name = self._resolve_unique_dimension_alias(
                         semantic_name, used_dimension_aliases, attr.unique_name
                     )
+                    # Lookup synonyms from the underlying column if available
+                    item_synonyms = []
+                    dataset_obj = dataset_by_name.get(attr.dataset)
+                    if dataset_obj:
+                        raw_col_names = [
+                            getattr(attr, "dataset_column", None),
+                            getattr(attr, "source_column", None),
+                            attr.unique_name,
+                        ]
+                        col_obj = next(
+                            (
+                                dataset_obj.get_column(raw_col_name)
+                                for raw_col_name in raw_col_names
+                                if raw_col_name and dataset_obj.get_column(raw_col_name)
+                            ),
+                            None,
+                        )
+                        if col_obj:
+                            item_synonyms = getattr(col_obj, "synonyms", [])
+                    
+                    syn_clause = synonyms_clause(item_synonyms)
                     dims_lines.append(
-                        f'  {alias}."{emitted_name}" AS {self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
+                        f'  {alias}."{emitted_name}" AS {self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}{syn_clause}'
                     )
                     added_dimensions.add(dim_key)
                     
@@ -138,8 +161,9 @@ class DimensionsClauseBuilder:
                 emitted_name = self._resolve_unique_dimension_alias(
                     semantic_name, used_dimension_aliases, semantic_source_name
                 )
+                syn_clause = synonyms_clause(getattr(col, "synonyms", []))
                 dims_lines.append(
-                    f'  {alias}."{emitted_name}" AS {self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
+                    f'  {alias}."{emitted_name}" AS {self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}{syn_clause}'
                 )
                 added_dimensions.add(dim_key)
 

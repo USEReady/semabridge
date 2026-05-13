@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from semabridge.intermediate.models import OSIDataset, OSIModel
-from semabridge.sml.models import SMLDataset, SMLModel
+from semabridge.sml.models import DataType, SMLColumn, SMLDataset, SMLModel
 from semabridge.utils.identifiers import IdentifierSanitizer
 from semabridge.utils.logger import get_logger
 from semabridge.connectors.ddl_helpers import (
@@ -66,6 +66,51 @@ class SemanticViewBuilder:
             identifier_sanitizer, schema_manager, self.sanitizer, translator, config, dup_name_repo
         )
 
+    def _build_history_snapshot_ddls_for_sml(self, sml: SMLModel) -> tuple[list[str], dict[str, str]]:
+        """Proxy for history snapshot DDL generation (SML)."""
+        return self.snapshot_orchestrator.build_for_sml(sml)
+
+    def _build_history_snapshot_ddls_for_osi(self, osi: OSIModel) -> tuple[list[str], dict[str, str]]:
+        """Proxy for history snapshot DDL generation (OSI)."""
+        return self.snapshot_orchestrator.build_for_osi(osi)
+
+    def _build_current_fiscal_period_views(self, sml: SMLModel) -> tuple[list[str], dict[str, str]]:
+        fiscal_metrics = [
+            getattr(metric, "expression", "") or ""
+            for metric in getattr(sml, "metrics", []) or []
+            if re.search(r"\bFISCAL_YR_PERIOD\b\s*\]?\s*<", getattr(metric, "expression", "") or "", re.IGNORECASE)
+        ]
+        if not fiscal_metrics:
+            return [], {}
+
+        ddls: list[str] = []
+        overrides: dict[str, str] = {}
+        dates_table = f'"{self.config.database}"."{self.config.schema_name}"."DATES"'
+
+        for dataset in getattr(sml, "datasets", []) or []:
+            modeled_cols = {
+                self.identifier_sanitizer.sanitize_column(getattr(col, "unique_name", ""))
+                for col in getattr(dataset, "columns", []) or []
+            }
+            if "FISCAL_YR_PERIOD" not in modeled_cols:
+                continue
+
+            source_table = dataset.source_table or dataset.unique_name
+            safe_table = self.identifier_sanitizer.sanitize_table_name(source_table)
+            support_view = f"{safe_table}_SEMABRIDGE_FISCAL"
+            source_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
+            support_ref = f'"{self.config.database}"."{self.config.schema_name}"."{support_view}"'
+            ddls.append(
+                "CREATE OR REPLACE VIEW "
+                f"{support_ref} AS SELECT base.*, "
+                f"(SELECT MAX(\"FISCAL_YR_PERIOD\") FROM {dates_table} "
+                "WHERE \"CAL_DT\" = CURRENT_DATE()) AS \"_CURRENT_FISCAL_PERIOD\" "
+                f"FROM {source_ref} base"
+            )
+            overrides[dataset.unique_name] = support_view
+
+        return ddls, overrides
+
     def generate_ddls(self, sml: SMLModel) -> list[str]:
         if not sml.datasets:
             return []
@@ -78,13 +123,29 @@ class SemanticViewBuilder:
         )
         snapshot_ddls, source_overrides = self.snapshot_orchestrator.build_for_sml(sml)
         all_ddls = list(snapshot_ddls)
+        fiscal_view_ddls, fiscal_overrides = self._build_current_fiscal_period_views(sml)
+        all_ddls.extend(fiscal_view_ddls)
 
         original_sources: dict[str, str] = {}
+        original_columns: dict[str, list[Any]] = {}
         try:
             for dataset in sml.datasets:
-                if dataset.unique_name in source_overrides:
+                override = fiscal_overrides.get(dataset.unique_name) or source_overrides.get(dataset.unique_name)
+                if override:
                     original_sources[dataset.unique_name] = dataset.source_table
-                    dataset.source_table = source_overrides[dataset.unique_name]
+                    dataset.source_table = override
+                if dataset.unique_name in fiscal_overrides:
+                    original_columns[dataset.unique_name] = list(dataset.columns)
+                    if not any(
+                        str(getattr(col, "unique_name", "")).lower() == "_current_fiscal_period"
+                        for col in dataset.columns
+                    ):
+                        dataset.columns.append(
+                            SMLColumn(
+                                unique_name="_current_fiscal_period",
+                                data_type=DataType.STRING,
+                            )
+                        )
 
             semantic_ddl = self.sanitizer.sanitize_structure(self._generate_semantic_view(sml))
 
@@ -105,6 +166,8 @@ class SemanticViewBuilder:
             for dataset in sml.datasets:
                 if dataset.unique_name in original_sources:
                     dataset.source_table = original_sources[dataset.unique_name]
+                if dataset.unique_name in original_columns:
+                    dataset.columns = original_columns[dataset.unique_name]
 
         return [*all_ddls, semantic_ddl]
 
@@ -190,6 +253,18 @@ class SemanticViewBuilder:
         if metrics_lines: definitions.append("METRICS (\n" + ",\n".join(metrics_lines) + "\n)")
 
         final_ddl = lines[0] + "\n" + "\n".join(definitions) + ";"
+        
+        # DEBUG: Dump DDL to file for inspection
+        try:
+            debug_path = os.path.join("output", "debug", f"ddl_{safe_view_name}.sql")
+            os.makedirs(os.path.dirname(debug_path), exist_ok=True)
+            with open(debug_path, "w", encoding="utf-8") as f:
+                f.write(final_ddl)
+            logger.info(f"DEBUG: Dumped DDL to {debug_path}")
+        except Exception as e:
+            logger.debug(f"Could not dump debug DDL: {e}")
+
+        from semabridge.connectors.ddl_helpers import fix_global_sums
         return fix_global_sums(final_ddl, self.translator)
 
     def _generate_semantic_view_from_osi(self, osi: OSIModel) -> str:
@@ -242,6 +317,18 @@ class SemanticViewBuilder:
         if metrics_lines: definitions.append("METRICS (\n" + ",\n".join(metrics_lines) + "\n)")
 
         final_ddl = lines[0] + "\n" + "\n".join(definitions) + ";"
+
+        # DEBUG: Dump DDL to file for inspection
+        try:
+            debug_path = os.path.join("output", "debug", f"ddl_{safe_view_name}.sql")
+            os.makedirs(os.path.dirname(debug_path), exist_ok=True)
+            with open(debug_path, "w", encoding="utf-8") as f:
+                f.write(final_ddl)
+            logger.info(f"DEBUG: Dumped DDL to {debug_path}")
+        except Exception as e:
+            logger.debug(f"Could not dump debug DDL: {e}")
+
+        from semabridge.connectors.ddl_helpers import fix_global_sums
         return fix_global_sums(final_ddl, self.translator)
 
     @staticmethod

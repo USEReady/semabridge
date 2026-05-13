@@ -46,12 +46,14 @@ try:
 except ImportError:
     pass
 
-# Import Gemini SDK
+# Import Gemini SDK. Prefer the legacy high-level package here because this
+# service uses the GenerativeModel/configure API. The newer google.genai package
+# is installed in some environments but has a different client shape.
 try:
-    import google.genai as genai
+    import google.generativeai as genai
 except ImportError:
     try:
-        import google.generativeai as genai
+        import google.genai as genai
     except ImportError:
         genai = None
 
@@ -94,7 +96,7 @@ class GeminiAPIService:
     def __init__(self):
         """Initialize Gemini API service."""
         self.use_gemini = os.getenv("USE_GEMINI", "true").lower() in ("true", "1", "yes")
-        self.api_key = os.getenv("GEMINI_API_KEY")
+        self.api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         self.last_request_time = None
         self.is_available = False
         
@@ -105,14 +107,18 @@ class GeminiAPIService:
         
         if not self.api_key:
             logger.warning(
-                "❌ GEMINI_API_KEY not set. Gemini API disabled. "
-                "Set GEMINI_API_KEY=... in .env to enable LLM translation."
+                "❌ GEMINI_API_KEY/GOOGLE_API_KEY not set. Gemini API disabled. "
+                "Set GEMINI_API_KEY=... or GOOGLE_API_KEY=... in .env to enable LLM translation."
             )
             self.use_gemini = False
             return
         
         # Configure Gemini client
         try:
+            if not hasattr(genai, "configure") or not hasattr(genai, "GenerativeModel"):
+                raise RuntimeError(
+                    "Installed Gemini SDK does not expose configure/GenerativeModel API"
+                )
             genai.configure(api_key=self.api_key)
             self.is_available = True
             logger.info(f"✅ Gemini API initialized with {self.MODEL}")
