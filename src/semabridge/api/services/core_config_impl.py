@@ -7,7 +7,8 @@ async def get_config():
         config_path = get_default_config_path() or Path("config/semabridge.yaml")
         if not config_path.exists():
             raise HTTPException(status_code=404, detail="semabridge.yaml not found in project")
-        return {"content": config_path.read_text(encoding="utf-8")}
+        content = await asyncio.to_thread(config_path.read_text, encoding="utf-8")
+        return {"content": content}
     except HTTPException:
         raise
     except Exception as e:
@@ -46,7 +47,8 @@ defaults:
 """
         return {"content": default_content, "path": str(config_path), "exists": False}
     try:
-        return {"content": config_path.read_text(encoding="utf-8"), "path": str(config_path), "exists": True}
+        content = await asyncio.to_thread(config_path.read_text, encoding="utf-8")
+        return {"content": content, "path": str(config_path), "exists": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read global config: {e}")
 
@@ -84,8 +86,8 @@ async def save_global_config(payload: Dict[str, Any]):
 
     config_path = _global_config_path()
     try:
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(content, encoding="utf-8")
+        await asyncio.to_thread(config_path.parent.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread(config_path.write_text, content, encoding="utf-8")
         return {"status": "saved", "path": str(config_path)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save global config: {e}")
@@ -115,7 +117,7 @@ async def generate_config(payload: Dict[str, Any]):
             source_cfg["database"] = settings.snowflake.database or ""
             source_cfg["schema"] = settings.snowflake.schema_name or "PUBLIC"
         elif source_type == "pbix":
-            local_models_path = pbix_folder or str(_resolve_models_path())
+                local_models_path = pbix_folder or str(await asyncio.to_thread(_resolve_models_path))
             source_cfg["pbix_folder"] = local_models_path.replace("\\", "/")
 
         if selected_models:

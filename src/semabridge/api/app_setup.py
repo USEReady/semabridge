@@ -452,7 +452,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception as exc:
             logger.debug('MSAL warm-up skipped (no network?): %s', exc)
 
-    asyncio.get_event_loop().run_in_executor(None, _prime_msal)
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, _prime_msal)
 
     try:
         from semabridge.core.settings import reload_settings

@@ -3,10 +3,10 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { LogsProvider } from './context/LogsContext';
 import { WorkspaceProvider } from './context/WorkspaceContext';
 import { SyncStatusProvider } from './context/SyncStatusContext';
-import { useAuth } from './context/AuthContext';
 import { useUIStore } from './store/uiStore';
 import MobileGate from './components/MobileGate';
 import { useState } from 'react';
+import ProtectedRoute from './components/common/ProtectedRoute';
 
 // Layouts
 import DashboardLayout from './layouts/DashboardLayout';
@@ -24,43 +24,7 @@ import GlobalConfigPage from './pages/GlobalConfigPage';
 import ProjectDetailPage from './pages/ProjectDetailPage';
 import ComparatorPage from './pages/ComparatorPage';
 import VersionControlPage from './pages/VersionControlPage';
-
-/**
- * Auth gate — shows loading spinner while auth bootstrap resolves.
- * Temporary dev behavior: bypass login UI and route directly to app pages.
- */
-function ProtectedRoute({ children }) {
-  const { isAuthenticated, loading } = useAuth();
-
-  if (loading) {
-    return (
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        height: '100vh', background: 'var(--bg-app, #0d1117)',
-      }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{
-            width: 28, height: 28,
-            border: '2.5px solid rgba(88, 166, 255, 0.3)',
-            borderTopColor: '#58a6ff',
-            borderRadius: '50%',
-            animation: 'spin 0.8s linear infinite',
-            margin: '0 auto 12px',
-          }} />
-          <span style={{ color: '#8b949e', fontSize: 13 }}>Initializing SemaBridge…</span>
-        </div>
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      </div>
-    );
-  }
-
-  // Temporary bypass: render app even when auth is unavailable.
-  if (!isAuthenticated) {
-    return children;
-  }
-
-  return children;
-}
+import LoginPage from './pages/LoginPage';
 
 export default function App() {
   const [isMobile, setIsMobile] = useState(false);
@@ -102,12 +66,11 @@ export default function App() {
   return (
     <div style={{ minHeight: '100vh' }}>
       <Routes>
-        {/* Temporary: disable login page route */}
-        <Route path="/login" element={<Navigate to="/projects" replace />} />
+        <Route path="/login" element={<LoginPage />} />
 
-        {/* Protected: All app routes — auto-login handles auth transparently */}
-        <Route element={
-          <ProtectedRoute>
+        {/* Protected: All app routes */}
+        <Route element={<ProtectedRoute />}>
+          <Route element={
             <ConfigurationProvider>
               <WorkspaceProvider>
                 <LogsProvider>
@@ -117,8 +80,7 @@ export default function App() {
                 </LogsProvider>
               </WorkspaceProvider>
             </ConfigurationProvider>
-          </ProtectedRoute>
-        }>
+          }>
           <Route index element={<Navigate to="/projects" replace />} />
           <Route path="/explore"       element={<ExplorePage />} />
           <Route path="/projects"      element={<ProjectsPage />} />
@@ -132,6 +94,7 @@ export default function App() {
           <Route path="/settings"      element={<SettingsPage />} />
           <Route path="/global-config" element={<GlobalConfigPage />} />
           <Route path="/version-control" element={<VersionControlPage />} />
+          </Route>
         </Route>
 
         {/* Fallback */}

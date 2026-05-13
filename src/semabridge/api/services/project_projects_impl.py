@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import time as _time
@@ -102,7 +103,7 @@ def _project_discovery_entry(project_id: str, file_path: Path, project_cfg: Dict
 
 
 async def list_project_discovery_compat():
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     entries: List[Dict[str, Any]] = []
     projects_dir = _compat_projects_dir()
     if not projects_dir.exists() or not projects_dir.is_dir():
@@ -113,7 +114,8 @@ async def list_project_discovery_compat():
         if not project_id:
             continue
         try:
-            project_cfg = yaml.safe_load(file_path.read_text(encoding="utf-8")) or {}
+            file_text = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
+            project_cfg = yaml.safe_load(file_text) or {}
             if not isinstance(project_cfg, dict):
                 continue
             entries.append(_project_discovery_entry(project_id, file_path, project_cfg))
@@ -124,7 +126,7 @@ async def list_project_discovery_compat():
 
 async def list_projects_compat():
     """Compatibility: newfrontend expects a projects collection."""
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     deduped: Dict[str, Dict[str, Any]] = {}
     
     # Load modular projects from Config/projects (or config/projects)
@@ -133,7 +135,8 @@ async def list_projects_compat():
         for file_path in sorted(projects_dir.glob("*.y*ml")):
             pid = file_path.stem
             try:
-                project_cfg = yaml.safe_load(file_path.read_text(encoding="utf-8")) or {}
+                file_text = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
+                project_cfg = yaml.safe_load(file_text) or {}
                 if not isinstance(project_cfg, dict):
                     continue
                 deduped[pid] = _project_discovery_entry(pid, file_path, project_cfg)
@@ -169,7 +172,7 @@ async def list_projects_compat():
 
 async def create_project_compat(request: dict):
     """Compatibility: create in-memory project for UI continuity."""
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     payload = request or {}
     payload_name = _compat_clean_project_name(payload.get("name"), "")
     src = payload.get("source") if isinstance(payload.get("source"), dict) else {}
@@ -196,29 +199,29 @@ async def create_project_compat(request: dict):
         normalized_yaml = _normalize_project_config_yaml(project_id, config_yaml, project.get("name") or project_id)
         _compat_project_configs[project_id] = normalized_yaml
         try:
-            _compat_save_project_yaml_text(project_id, normalized_yaml)
+            await asyncio.to_thread(_compat_save_project_yaml_text, project_id, normalized_yaml)
             _clear_project_mapping_cache(project_id)
         except Exception as exc:
             logger.warning("Failed to persist project config for %s: %s", project_id, exc)
     else:
-        project_yaml = _compat_load_project_yaml_text(project_id)
-        repo_yaml = _compat_load_repo_yaml_text()
+        project_yaml = await asyncio.to_thread(_compat_load_project_yaml_text, project_id)
+        repo_yaml = await asyncio.to_thread(_compat_load_repo_yaml_text)
         selected_yaml = project_yaml or repo_yaml or _compat_default_project_yaml(project)
         normalized_yaml = _normalize_project_config_yaml(project_id, selected_yaml, project.get("name") or project_id)
         _compat_project_configs.setdefault(project_id, normalized_yaml)
         try:
-            _compat_save_project_yaml_text(project_id, normalized_yaml)
+            await asyncio.to_thread(_compat_save_project_yaml_text, project_id, normalized_yaml)
             _clear_project_mapping_cache(project_id)
         except Exception as exc:
             logger.warning("Failed to initialize project config file for %s: %s", project_id, exc)
 
     _compat_project_runs.setdefault(project_id, [])
-    _compat_save_store()
+    await asyncio.to_thread(_compat_save_store)
     return project
 
 
 async def get_project_compat(project_id: str):
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     project = _compat_projects.get(project_id)
     if not project:
         # Compatibility upsert for stale in-memory cache after reload.
@@ -229,12 +232,12 @@ async def get_project_compat(project_id: str):
             "target": {"type": "snowflake"},
         })
         _compat_projects[project_id] = project
-        _compat_save_store()
+        await asyncio.to_thread(_compat_save_store)
     return project
 
 
 async def patch_project_compat(project_id: str, payload: dict):
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     project = _compat_projects.get(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -272,21 +275,21 @@ async def patch_project_compat(project_id: str, payload: dict):
 
     project["updated_at"] = _compat_now_iso()
     _compat_projects[project_id] = project
-    _compat_save_store()
+    await asyncio.to_thread(_compat_save_store)
     return project
 
 
 async def delete_project_compat(project_id: str):
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     _compat_projects.pop(project_id, None)
     _compat_project_configs.pop(project_id, None)
     _compat_project_runs.pop(project_id, None)
-    _compat_save_store()
+    await asyncio.to_thread(_compat_save_store)
     return Response(status_code=204)
 
 
 async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(default=False)):
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     project = _compat_projects.get(project_id)
     if not project:
         # Compatibility upsert: keep UI editable even if project cache was reset.
@@ -301,9 +304,9 @@ async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(d
     # can load different YAMLs for different projects. Some UI flows (for
     # example Model Mapping) can opt into prefer_repo=True to reflect the
     # workspace semabridge.yaml as the single source of truth.
-    repo_yaml = _compat_load_repo_yaml_text()
+    repo_yaml = await asyncio.to_thread(_compat_load_repo_yaml_text)
     prefer_repo_flag = prefer_repo if isinstance(prefer_repo, bool) else False
-    project_yaml = _compat_load_project_yaml_text(project_id)
+    project_yaml = await asyncio.to_thread(_compat_load_project_yaml_text, project_id)
     if prefer_repo_flag and repo_yaml:
         yaml_text = repo_yaml
         _compat_project_configs[project_id] = repo_yaml
@@ -312,7 +315,7 @@ async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(d
         yaml_text = _normalize_project_config_yaml(project_id, yaml_text, project.get("name") or project_id)
         if not project_yaml and yaml_text:
             try:
-                _compat_save_project_yaml_text(project_id, yaml_text)
+                await asyncio.to_thread(_compat_save_project_yaml_text, project_id, yaml_text)
             except Exception as exc:
                 logger.warning("Failed to persist hydrated project config for %s: %s", project_id, exc)
     _compat_project_configs[project_id] = yaml_text
@@ -324,7 +327,7 @@ async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(d
 
 
 async def save_project_config_compat(project_id: str, payload: dict):
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     project = _compat_projects.get(project_id)
     if not project:
         # Compatibility upsert: allow saving config even when only project_id is known.
@@ -341,12 +344,12 @@ async def save_project_config_compat(project_id: str, payload: dict):
     yaml_text = _normalize_project_config_yaml(project_id, yaml_text, project.get("name") or project_id)
     _compat_project_configs[project_id] = yaml_text
     try:
-        _compat_save_project_yaml_text(project_id, yaml_text)
+        await asyncio.to_thread(_compat_save_project_yaml_text, project_id, yaml_text)
         _clear_project_mapping_cache(project_id)
     except Exception as exc:
         logger.warning("Failed to persist project config for %s: %s", project_id, exc)
     project["updated_at"] = _compat_now_iso()
-    _compat_save_store()
+    await asyncio.to_thread(_compat_save_store)
     return {
         "status": "saved",
         "project_id": project_id,

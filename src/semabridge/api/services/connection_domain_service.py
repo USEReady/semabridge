@@ -399,7 +399,7 @@ async def fabric_device_code_login(request: Request, payload: Dict[str, Any] = N
         return app_msal, flow
 
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         app_msal, flow = await loop.run_in_executor(None, _initiate_flow)
 
         if "user_code" not in flow:
@@ -595,14 +595,14 @@ async def fabric_logout():
         cm.delete_credentials("fabric")
         _fabric_session_token = None
         _fabric_session_token_expires_at = 0.0
-        _clear_fabric_from_config()
+        await _clear_fabric_from_config()
         logger.info("Fabric interactive session and workspace config cleared")
         return {"status": "logged_out"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _clear_fabric_from_config() -> None:
+async def _clear_fabric_from_config() -> None:
     """Remove the fabric section from config.yaml on logout."""
     import yaml
     from pathlib import Path
@@ -630,13 +630,19 @@ def _clear_fabric_from_config() -> None:
         return
 
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            config_data = yaml.safe_load(f) or {}
+        def _read_config() -> dict:
+            with open(config_path, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+
+        config_data = await asyncio.to_thread(_read_config)
 
         if "fabric" in config_data:
             del config_data["fabric"]
-            with open(config_path, "w", encoding="utf-8") as f:
-                yaml.dump(config_data, f, default_flow_style=False, sort_keys=False)
+            def _write_config() -> None:
+                with open(config_path, "w", encoding="utf-8") as f:
+                    yaml.dump(config_data, f, default_flow_style=False, sort_keys=False)
+
+            await asyncio.to_thread(_write_config)
             logger.info(f"Cleared fabric config from {config_path}")
     except Exception as exc:
         logger.error(f"Failed to clear fabric from config: {exc}")
@@ -1208,7 +1214,7 @@ async def fabric_select_workspace(payload: Dict[str, str]):
     })
 
     # Sync to config.yaml for CLI/offline compatibility
-    _sync_workspace_to_config(workspace_id, workspace_name)
+    await _sync_workspace_to_config(workspace_id, workspace_name)
 
     # Inject into live process environment so FabricConfig picks it up
     # without requiring a server restart. This is safe because env vars
@@ -1228,7 +1234,7 @@ async def fabric_select_workspace(payload: Dict[str, str]):
     }
 
 
-def _sync_workspace_to_config(workspace_id: str, workspace_name: str) -> None:
+async def _sync_workspace_to_config(workspace_id: str, workspace_name: str) -> None:
     """Update the local config.yaml with the selected Fabric workspace.
 
     Uses PyYAML to modify and rewrite the file, preserving existing content.
@@ -1263,8 +1269,11 @@ def _sync_workspace_to_config(workspace_id: str, workspace_name: str) -> None:
         return
 
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            config_data = yaml.safe_load(f) or {}
+        def _read_config() -> dict:
+            with open(config_path, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+
+        config_data = await asyncio.to_thread(_read_config)
 
         # Ensure the fabric section exists
         if "fabric" not in config_data:
@@ -1274,8 +1283,11 @@ def _sync_workspace_to_config(workspace_id: str, workspace_name: str) -> None:
         if workspace_name:
             config_data["fabric"]["workspace_name"] = workspace_name
 
-        with open(config_path, "w", encoding="utf-8") as f:
-            yaml.dump(config_data, f, default_flow_style=False, sort_keys=False)
+        def _write_config() -> None:
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.dump(config_data, f, default_flow_style=False, sort_keys=False)
+
+        await asyncio.to_thread(_write_config)
 
         logger.info(f"Config file updated: {config_path}")
     except Exception as exc:

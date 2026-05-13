@@ -9,33 +9,53 @@ from fastapi import APIRouter, HTTPException, Query
 router = APIRouter(prefix="/api/utils", tags=["utils"])
 
 
+def _parse_allowed_root_values() -> List[Path]:
+    """Return configured browse roots from the environment.
+
+    ``SEMABRIDGE_BROWSE_ROOTS`` accepts a comma-separated list of absolute
+    paths. When unset, browsing is limited to the user's home directory and
+    the current working directory of the backend process.
+    """
+    configured = os.environ.get("SEMABRIDGE_BROWSE_ROOTS", "").strip()
+    roots: List[Path] = []
+
+    if configured:
+        for raw_value in configured.split(","):
+            value = raw_value.strip()
+            if not value:
+                continue
+            try:
+                root = Path(os.path.expandvars(os.path.expanduser(value))).resolve()
+            except OSError:
+                continue
+            if root.exists() and root.is_dir():
+                roots.append(root)
+        return roots
+
+    home = Path(os.path.expanduser("~")).resolve()
+    cwd = Path.cwd().resolve()
+
+    for candidate in [home, cwd]:
+        if candidate.exists() and candidate.is_dir() and candidate not in roots:
+            roots.append(candidate)
+
+    return roots
+
+
 def _normalize_path(path: Path) -> str:
     return str(path.resolve()).replace("\\", "/")
 
 
 def _allowed_roots() -> List[Path]:
-    if os.name != "nt":
-        return [Path("/")]
+    roots = _parse_allowed_root_values()
+    if roots:
+        return roots
 
+    # Final fallback if the environment/home/cwd cannot be resolved.
     try:
-        import ctypes
-
-        bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+        return [Path(os.path.expanduser("~")).resolve()]
     except Exception:
-        bitmask = 0
-
-    roots: List[Path] = []
-    for index in range(26):
-        if bitmask & (1 << index):
-            drive = f"{chr(65 + index)}:/"
-            roots.append(Path(drive).resolve())
-
-    if not roots:
-        home = Path(os.path.expanduser("~")).resolve()
-        anchor = Path(home.anchor) if home.anchor else Path("C:/")
-        roots = [anchor.resolve()]
-
-    return roots
+        return [Path.cwd().resolve()]
 
 
 def _is_within_allowed_roots(path: Path, roots: List[Path]) -> bool:
@@ -59,7 +79,7 @@ def _resolve_start_path(base_path: Optional[str]) -> Path:
 
     roots = _allowed_roots()
     if not _is_within_allowed_roots(candidate, roots):
-        raise HTTPException(status_code=403, detail="Requested path is outside allowed drives")
+        raise HTTPException(status_code=403, detail="Requested path is outside allowed browse roots")
 
     return candidate
 
