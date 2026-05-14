@@ -1,15 +1,14 @@
-import { Navigate, Outlet, useLocation } from 'react-router-dom';
+import { Outlet } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { Hexagon } from 'lucide-react';
 
 /**
  * ProtectedRoute — wraps private routes.
- * If not authenticated, redirects to /login preserving the intended destination.
  * Shows a loading spinner while auth state is being confirmed.
+ * Login-route redirects were removed; unauthenticated users now see a static notice.
  */
 export default function ProtectedRoute() {
   const { isAuthenticated, loading } = useAuth();
-  const location = useLocation();
 
   if (loading) {
     return (
@@ -24,8 +23,17 @@ export default function ProtectedRoute() {
   }
 
   if (!isAuthenticated) {
-    const nextPath = `${location.pathname}${location.search}${location.hash}`;
-    return <Navigate to="/login" replace state={{ from: nextPath }} />;
+    return (
+      <div
+        className="flex items-center justify-center h-screen bg-app"
+        style={{ flexDirection: 'column', gap: 12 }}
+      >
+        <Hexagon size={28} className="text-accent-blue" />
+        <span className="text-secondary text-sm">
+          Authentication required. Login UI is archived in scratch.
+        </span>
+      </div>
+    );
   }
 
   return <Outlet />;

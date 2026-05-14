@@ -11,8 +11,7 @@ const AuthContext = createContext(undefined);
  * Provides authentication state & helpers to the entire app.
  *
  * In development mode, automatically calls /auth/auto-login to get a JWT
- * without showing any login page. The login page is available at /login
- * for future production use.
+ * without showing any login page.
  *
  * Industry best practice: Never clear UI state until all recovery attempts
  * have been exhausted. Uses proactive refresh to avoid 401 flashes.

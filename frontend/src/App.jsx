@@ -24,7 +24,6 @@ import GlobalConfigPage from './pages/GlobalConfigPage';
 import ProjectDetailPage from './pages/ProjectDetailPage';
 import ComparatorPage from './pages/ComparatorPage';
 import VersionControlPage from './pages/VersionControlPage';
-import LoginPage from './pages/LoginPage';
 
 export default function App() {
   const [isMobile, setIsMobile] = useState(false);
@@ -66,8 +65,6 @@ export default function App() {
   return (
     <div style={{ minHeight: '100vh' }}>
       <Routes>
-        <Route path="/login" element={<LoginPage />} />
-
         {/* Protected: All app routes */}
         <Route element={<ProtectedRoute />}>
           <Route element={
