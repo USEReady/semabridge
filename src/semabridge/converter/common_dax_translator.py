@@ -49,6 +49,7 @@ class SQLDialect(str, Enum):
 class LLMProviderName(str, Enum):
     """Supported LLM providers for DAX translation."""
 
+    OPENAI = "openai"
     DEEPSEEK = "deepseek"
     GEMINI = "gemini"
     GROQ = "groq"
@@ -169,6 +170,59 @@ class DeepSeekProvider:
         text = payload["choices"][0]["message"].get("content") or ""
         if not text.strip():
             raise RuntimeError("DeepSeek returned an empty response")
+        return text
+
+
+class OpenAIProvider:
+    """OpenAI chat-completions provider adapter."""
+
+    def __init__(self, model: str | None = None, api_key_env: str = "OPENAI_API_KEY") -> None:
+        self.config = LLMProviderConfig(
+            name=LLMProviderName.OPENAI,
+            model=model or os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            api_key_env=api_key_env,
+        )
+        self.base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+
+    def generate(self, prompt: str, timeout_seconds: int) -> str:
+        api_key = os.getenv(self.config.api_key_env)
+        if not api_key:
+            raise RuntimeError(f"{self.config.api_key_env} is not configured")
+
+        try:
+            import httpx
+        except ImportError as exc:
+            raise RuntimeError("httpx package is not installed") from exc
+
+        response = httpx.post(
+            f"{self.base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": self.config.model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a semantic-model compiler. Return only one valid "
+                            "SQL scalar expression. No explanations."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0,
+                "max_tokens": 800,
+                "stream": False,
+            },
+            timeout=timeout_seconds,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        text = payload["choices"][0]["message"].get("content") or ""
+        if not text.strip():
+            raise RuntimeError("OpenAI returned an empty response")
         return text
 
 
@@ -376,7 +430,9 @@ class CommonDAXTranslator:
             if not name or name in seen:
                 continue
             seen.add(name)
-            if name == LLMProviderName.DEEPSEEK.value:
+            if name == LLMProviderName.OPENAI.value:
+                providers.append(OpenAIProvider())
+            elif name == LLMProviderName.DEEPSEEK.value:
                 providers.append(DeepSeekProvider())
             elif name == LLMProviderName.GEMINI.value:
                 providers.append(GeminiProvider())

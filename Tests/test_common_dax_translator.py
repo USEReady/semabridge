@@ -2,10 +2,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
+
 from semabridge.converter.common_dax_translator import (
     CommonDAXTranslator,
     LLMProviderConfig,
     LLMProviderName,
+    OpenAIProvider,
     SQLDialect,
 )
 
@@ -167,3 +170,29 @@ def test_common_dax_translator_default_provider_order_prefers_deepseek(monkeypat
         "gemini",
         "groq",
     ]
+
+
+def test_common_dax_translator_builds_openai_provider_from_order(monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-test")
+
+    translator = CommonDAXTranslator(
+        dialect=SQLDialect.SNOWFLAKE,
+        provider_order=["openai", "deepseek"],
+        cache_enabled=False,
+    )
+
+    assert [provider.config.name.value for provider in translator.providers[:2]] == [
+        "openai",
+        "deepseek",
+    ]
+    assert isinstance(translator.providers[0], OpenAIProvider)
+    assert translator.providers[0].config.model == "gpt-test"
+
+
+def test_openai_provider_requires_api_key(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    provider = OpenAIProvider(model="gpt-test")
+
+    with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
+        provider.generate("translate dax", timeout_seconds=1)

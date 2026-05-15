@@ -35,6 +35,31 @@ from semabridge.converter.dax_rule_translator import rule_based_translation
 logger = get_logger(__name__)
 
 
+def _paren_delta_outside_quotes(sql: str) -> int:
+    """Return open-minus-close parentheses count, ignoring quoted strings."""
+    delta = 0
+    quote: str | None = None
+    idx = 0
+    while idx < len(sql):
+        ch = sql[idx]
+        if quote:
+            if ch == quote:
+                if quote == "'" and idx + 1 < len(sql) and sql[idx + 1] == "'":
+                    idx += 2
+                    continue
+                quote = None
+            idx += 1
+            continue
+        if ch in {"'", '"'}:
+            quote = ch
+        elif ch == "(":
+            delta += 1
+        elif ch == ")":
+            delta -= 1
+        idx += 1
+    return delta
+
+
 def balance_parentheses(sql: str) -> str:
     """Ensure parentheses are balanced by adding missing ones at the end."""
     if not sql or not isinstance(sql, str):
@@ -42,10 +67,9 @@ def balance_parentheses(sql: str) -> str:
     
     # Only balance if there are more opens than closes
     # This repairs (query(query) type truncation from LLMs
-    open_count = sql.count('(')
-    close_count = sql.count(')')
-    if open_count > close_count:
-        sql = sql + (')' * (open_count - close_count))
+    delta = _paren_delta_outside_quotes(sql)
+    if delta > 0:
+        sql = sql + (')' * delta)
     return sql
 
 

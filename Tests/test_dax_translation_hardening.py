@@ -5,6 +5,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from semabridge.converter.dax_engine import DaxTranslationEngine, sanitize_llm_sql
 from semabridge.converter.dax_rule_translator import rule_based_translation
+from semabridge.connectors.metrics_clause_builder import MetricsClauseBuilder
+from semabridge.connectors.translator import MetricExpressionTranslator
 
 
 def test_sanitize_llm_sql_removes_var_and_unwraps_select():
@@ -18,6 +20,39 @@ SELECT SUM(CASE WHEN region = 'North' THEN amount ELSE 0 END) FROM sales
     assert "VAR" not in sanitized.upper()
     assert not sanitized.upper().startswith("SELECT")
     assert sanitized == "SUM(CASE WHEN region = 'North' THEN amount ELSE 0 END)"
+
+
+def test_sanitize_llm_sql_ignores_parentheses_inside_string_literals():
+    sql = "CAST('Inventory (Excluding LIFO Reserves...' AS STRING)"
+
+    sanitized = sanitize_llm_sql(sql)
+
+    assert sanitized == sql
+    assert not sanitized.endswith("))")
+
+
+def test_snowflake_metric_expression_normalizes_case_cast_inside_sum():
+    expr = (
+        "SUM(CASE WHEN CORPORATE_DSI_AGGREGATE.FISCAL_YR_PERIOD < "
+        "CORPORATE_DSI_AGGREGATE._CURRENT_FISCAL_PERIOD THEN "
+        "CORPORATE_DSI_AGGREGATE.COS_EXCLDNG_LIFO_AMT ELSE 0 END::FLOAT)"
+    )
+
+    normalized = MetricsClauseBuilder._normalize_snowflake_metric_expression(expr)
+
+    assert normalized == (
+        "SUM(CAST((CASE WHEN CORPORATE_DSI_AGGREGATE.FISCAL_YR_PERIOD < "
+        "CORPORATE_DSI_AGGREGATE._CURRENT_FISCAL_PERIOD THEN "
+        "CORPORATE_DSI_AGGREGATE.COS_EXCLDNG_LIFO_AMT ELSE 0 END) AS FLOAT))"
+    )
+
+
+def test_safe_sum_uses_cast_for_case_expression():
+    translator = MetricExpressionTranslator()
+
+    sql = translator._build_safe_sum_sql("CASE WHEN FLAG THEN AMOUNT ELSE 0 END")
+
+    assert sql == "SUM(CAST((CASE WHEN FLAG THEN AMOUNT ELSE 0 END) AS FLOAT))"
 
 
 def test_fiscal_var_calculate_translates_without_llm_keywords():

@@ -53,9 +53,13 @@ class MeasureSynchronizer:
         if is_flag:
             return f"SUM(IFF({expr_sql} = 1 OR {expr_sql} = TRUE, 1, 0))"
 
-        if expr_sql.strip().upper().endswith("::FLOAT"):
-            return f"SUM({expr_sql})"
-        return f"SUM({expr_sql}::FLOAT)"
+        expr = expr_sql.strip()
+        if re.match(r"(?is)^CASE\b.*\bEND(?:\s*::\s*FLOAT)?$", expr):
+            expr = re.sub(r"(?is)\s*::\s*FLOAT\s*$", "", expr).strip()
+            return f"SUM(CAST(({expr}) AS FLOAT))"
+        if expr.upper().endswith("::FLOAT"):
+            return f"SUM({expr})"
+        return f"SUM({expr}::FLOAT)"
 
     def generate_semantic_view_tiered(
         self,

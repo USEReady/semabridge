@@ -144,6 +144,7 @@ class MetricsClauseBuilder:
             )
             
             if expr:
+                expr = self._normalize_snowflake_metric_expression(expr)
                 metric_entity_alias = self._resolve_metric_emission_alias(alias, expr, dataset_aliases, fact_aliases)
                 syn_clause = synonyms_clause(getattr(metric, "synonyms", []))
                 metrics_lines.append(f'  {metric_entity_alias}."{metric_name}" AS {expr}{syn_clause}')
@@ -163,6 +164,45 @@ class MetricsClauseBuilder:
             metrics_lines = deduplicate_metrics_lines(metrics_lines)
             
         return metrics_lines
+
+    @staticmethod
+    def _paren_delta_outside_quotes(sql: str) -> int:
+        delta = 0
+        quote: Optional[str] = None
+        idx = 0
+        while idx < len(sql):
+            ch = sql[idx]
+            if quote:
+                if ch == quote:
+                    if quote == "'" and idx + 1 < len(sql) and sql[idx + 1] == "'":
+                        idx += 2
+                        continue
+                    quote = None
+                idx += 1
+                continue
+            if ch in {"'", '"'}:
+                quote = ch
+            elif ch == "(":
+                delta += 1
+            elif ch == ")":
+                delta -= 1
+            idx += 1
+        return delta
+
+    @classmethod
+    def _normalize_snowflake_metric_expression(cls, expr: str) -> str:
+        """Repair SQL shapes that Snowflake semantic-view metrics reject."""
+        normalized = str(expr or "").strip()
+        normalized = re.sub(
+            r"(?is)SUM\(\s*(CASE\b.*?\bEND)\s*::\s*FLOAT\s*\)",
+            lambda m: f"SUM(CAST(({m.group(1).strip()}) AS FLOAT))",
+            normalized,
+        )
+        if re.match(r"(?is)^CAST\(.+\s+AS\s+\w+\)\)\s*$", normalized):
+            candidate = normalized[:-1].rstrip()
+            if cls._paren_delta_outside_quotes(candidate) == 0:
+                normalized = candidate
+        return normalized
 
     def _remap_virtual_measures_table_refs(
         self,
