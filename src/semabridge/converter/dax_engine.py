@@ -74,6 +74,13 @@ def sanitize_llm_sql(sql: str) -> str:
     m_return = re.search(r"(?is).*\bRETURN\b\s*(.*)$", cleaned)
     if m_return:
         cleaned = m_return.group(1).strip()
+    elif re.search(r"(?i)\bVAR\b", cleaned):
+        # Some providers prepend a DAX VAR assignment before a usable SQL
+        # projection on the same line. Keep the SQL projection instead of
+        # rejecting the whole response as DAX leakage.
+        m_select = re.search(r"(?is)\bSELECT\b.*$", cleaned)
+        if m_select:
+            cleaned = m_select.group(0).strip()
 
     # Unwrap simple SELECT projections (including parenthesized subquery forms)
     # into scalar expressions usable in metric contexts.

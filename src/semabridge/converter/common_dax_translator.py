@@ -300,8 +300,13 @@ class CommonDAXTranslator:
                 )
                 raw = provider.generate(prompt, self.timeout_seconds)
                 self._save_raw_response(provider_name, metric_name, raw, "initial")
+                raw_text = str(raw or "").strip()
+                raw_was_query = bool(re.match(r"(?is)^\s*\(?\s*SELECT\b", raw_text))
                 sql = self._clean_sql(raw)
                 valid, validation_error = self._validate_sql(sql)
+                if valid and raw_was_query:
+                    valid = False
+                    validation_error = "Full SELECT statements are not valid metric expressions"
                 if not valid:
                     repair_prompt = self._build_repair_prompt(
                         dax=dax_expr,

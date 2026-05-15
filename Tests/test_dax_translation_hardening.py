@@ -446,6 +446,70 @@ def test_snowflake_falls_back_for_dax_leakage_in_sql_expression():
     assert "||" not in joined
 
 
+def test_snowflake_translates_leaked_divide_in_sql_expression():
+    from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+    from semabridge.core.settings import SnowflakeConfig
+    from semabridge.sml.models import (
+        AggregationType,
+        DataType,
+        SMLColumn,
+        SMLDataset,
+        SMLMetric,
+        SMLModel,
+    )
+
+    model = SMLModel(
+        unique_name="Customer Profitability",
+        datasets=[
+            SMLDataset(
+                unique_name="Fact",
+                source_table="Fact",
+                is_fact=True,
+                columns=[
+                    SMLColumn(unique_name="Profit", data_type=DataType.DECIMAL),
+                    SMLColumn(unique_name="Revenue", data_type=DataType.DECIMAL),
+                ],
+            ),
+        ],
+        metrics=[
+            SMLMetric(
+                unique_name="Profit Margin",
+                dataset="Fact",
+                expression="DIVIDE(SUM('Fact'[Profit]), SUM('Fact'[Revenue]), 0)",
+                sql_expression="DIVIDE(SUM('Fact'[Profit]), SUM('Fact'[Revenue]), 0)",
+                aggregation=AggregationType.NONE,
+            ),
+        ],
+    )
+    emitter = SnowflakeEmitter(
+        SnowflakeConfig(
+            account="dummy",
+            user="dummy",
+            password="dummy",
+            warehouse="WH",
+            database="DB",
+            schema_name="PUBLIC",
+        )
+    )
+
+    ddls = emitter.semantic_view_builder.generate_ddls(model)
+    joined = "\n".join(ddls).upper()
+
+    assert "DIVIDE(" not in joined
+    assert "COALESCE(" in joined
+    assert "NULLIF(" in joined
+    assert 'FACT."PROFIT"' in joined
+    assert 'FACT."REVENUE"' in joined
+
+
+def test_snowflake_blocks_untranslated_divide_from_semantic_ddl():
+    from semabridge.connectors.metrics_clause_builder import MetricsClauseBuilder
+
+    assert MetricsClauseBuilder._contains_unsupported_dax_keywords(
+        "DIVIDE([Profit], [Revenue], 0)"
+    )
+
+
 def test_common_llm_translator_sanitizes_provider_select_and_var_output():
     from semabridge.converter.common_dax_translator import (
         CommonDAXTranslator,

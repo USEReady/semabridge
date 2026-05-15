@@ -2911,7 +2911,10 @@ class DatabricksPublisher:
                     extra_allowed_prefixes=join_prefixes,
                 )
                 if not metric_view_expr:
-                    if self._dbx_behavior.enable_cross_table_joins:
+                    if (
+                        self._dbx_behavior.enable_cross_table_joins
+                        or self._dbx_behavior.enable_low_confidence_drafts
+                    ):
                         resolved.append(ResolvedMeasure(
                             name=m_name,
                             sql_expression=DRAFT_MEASURE_SQL,
@@ -4261,6 +4264,7 @@ class DatabricksPublisher:
         # Priority 1: Pre-translated SQL expression
         sql_expr = (metric.sql_expression or "").strip()
         if sql_expr:
+            sql_expr = self._measure_translator.normalize_dax_leakage_in_sql_expression(sql_expr)
             return sql_expr, TRANSLATION_TYPE_SQL_NATIVE
 
         # Priority 2: Build from aggregation + source_column

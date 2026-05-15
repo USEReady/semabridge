@@ -275,6 +275,49 @@ class DatabricksMeasureTranslator:
 
         return "".join(output)
 
+    def normalize_dax_leakage_in_sql_expression(self, sql_expression: str) -> str:
+        """Normalize DAX syntax that was accidentally stored as SQL.
+
+        Fabric-to-target conversion can persist DAX in ``sql_expression`` for
+        simple expressions. Databricks cannot execute DAX refs like
+        ``'Fact'[Revenue]`` or the DAX-only ``DIVIDE`` function, so repair the
+        small deterministic subset before the publisher treats it as native SQL.
+        """
+        text = str(sql_expression or "").strip()
+        if not text:
+            return text
+        if not re.search(r"(?i)\bDIVIDE\s*\(|\[[^\]]+\]", text):
+            return text
+
+        def _render_ref(match: re.Match) -> str:
+            col = self._sanitize_identifier(match.group("column") or "")
+            return f"`{col}`" if col else match.group(0)
+
+        def _render_aggregate(match: re.Match) -> str:
+            func = str(match.group("func") or "").upper()
+            col = self._sanitize_identifier(match.group("column") or "")
+            if not col:
+                return match.group(0)
+            if func == "AVERAGE":
+                func = "AVG"
+            if func == "DISTINCTCOUNT":
+                return self._distinct_count_expression(col)
+            return f"{func}(`{col}`)"
+
+        aggregate_pattern = re.compile(
+            r"(?is)\b(?P<func>SUM|AVERAGE|AVG|COUNT|MIN|MAX|DISTINCTCOUNT)\s*\(\s*"
+            r"(?:(?:'[^']+'|[A-Za-z_][A-Za-z0-9_ ]*)\s*)?\[(?P<column>[^\]]+)\]\s*\)"
+        )
+        ref_pattern = re.compile(
+            r"(?is)(?:(?:'[^']+'|[A-Za-z_][A-Za-z0-9_ ]*)\s*)?\[(?P<column>[^\]]+)\]"
+        )
+
+        normalized = aggregate_pattern.sub(_render_aggregate, text)
+        normalized = ref_pattern.sub(_render_ref, normalized)
+        normalized = self.rewrite_divide_calls(normalized)
+        normalized = re.sub(r"(?i)\bBLANK\s*\(\s*\)", "NULL", normalized)
+        return normalized
+
     def is_sql_arithmetic_expression(self, expression: str) -> bool:
         """Return True when expression is safe to treat as SQL arithmetic."""
         text = str(expression or "").strip()
@@ -432,13 +475,11 @@ class DatabricksMeasureTranslator:
                 str(m_simple_agg.group("table_q") or m_simple_agg.group("table") or "")
             ).lower()
             col = self._sanitize_identifier(m_simple_agg.group("column")).lower()
-            qualify_for_join = {
-                "sum",
-                "average",
-                "count",
-            }
-            # For metric views, use the deterministic bare alias so Publisher's AST parser passes it gracefully
-            col_ref = f"`{col}`"
+            qualify_for_join = {"sum", "average", "count"}
+            if self._behavior.enable_cross_table_joins and table and func in qualify_for_join:
+                col_ref = f"{table}.{col}"
+            else:
+                col_ref = col
             if func == "average":
                 func = "avg"
             elif func == "distinctcount":

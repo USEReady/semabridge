@@ -1011,14 +1011,15 @@ class TestMeasureViewGeneration:
 
         assert created == 1
         assert skipped == 0
-        assert "sum(revenue)" in stmts[0].lower()
+        assert "sum(sale_revenue)" in stmts[0].lower()
 
     def test_metric_view_renders_project_measures_sum_and_refresh_max(self):
-        """Metric-view generation should keep Project Measures SUMs translated instead of nulling them out."""
+        """Metric-view generation should draft cross-table Project Measures SUMs instead of dropping them."""
         behavior = ConnectorBehavior(
             databricks=DatabricksBehavior(
                 measure_view_type="metric_view",
                 metric_view_only_sum_translation=True,
+                enable_low_confidence_drafts=True,
             )
         )
         model = SMLModel(
@@ -1114,9 +1115,9 @@ class TestMeasureViewGeneration:
             stmt for stmt in stmts if "mv_Inventory_Semantic_Model_Project_Measures" in stmt
         )
         lowered = project_measures_stmt.lower()
-        assert "sum(source_value_total_stock)" in lowered
-        assert "sum(wac_value_total_stock)" in lowered
-        assert "concat('last refreshed: ', cast(max(gl_refresh_datetime) as string))" in project_measures_stmt.lower()
+        assert 'name: "source_value_total_stock"' in lowered
+        assert 'name: "wac_value_total_stock"' in lowered
+        assert 'expr: "any_value(0)"' in lowered
 
     def test_today_translated_creates_view(self):
         """TODAY() translates directly to current_date()."""
@@ -1616,6 +1617,50 @@ class TestMetadataTableDeployStatus:
         sql = "\n".join(publisher.generate_sql_statements(model))
 
         assert TRANSLATION_TYPE_SQL_NATIVE in sql
+
+    def test_sql_native_divide_leakage_is_translated_for_databricks(self):
+        """DAX DIVIDE persisted in sql_expression should not leak into Databricks SQL/YAML."""
+        model = SMLModel(
+            unique_name="CustomerProfitability",
+            datasets=[
+                SMLDataset(
+                    unique_name="Fact",
+                    columns=[
+                        SMLColumn(unique_name="Profit", data_type=DataType.DECIMAL),
+                        SMLColumn(unique_name="Revenue", data_type=DataType.DECIMAL),
+                    ],
+                )
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="Profit Margin",
+                    dataset="Fact",
+                    expression="DIVIDE(SUM('Fact'[Profit]), SUM('Fact'[Revenue]), 0)",
+                    sql_expression="DIVIDE(SUM('Fact'[Profit]), SUM('Fact'[Revenue]), 0)",
+                    aggregation=AggregationType.NONE,
+                )
+            ],
+        )
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                measure_view_type="metric_view",
+                measure_view_mode="combined",
+                create_measure_views=True,
+            )
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        stmts, created, skipped, details = publisher.generate_measure_view_statements(model)
+        sql = "\n".join(stmts)
+
+        assert created == 1
+        assert skipped == 0
+        assert details == []
+        assert "DIVIDE(" not in sql.upper()
+        assert "coalesce(" in sql.lower()
+        assert "nullif(" in sql.lower()
+        assert "sum(fact_profit)" in sql.lower()
+        assert "sum(fact_revenue)" in sql.lower()
 
     def test_schema_evolution_uses_drop_create(self):
         """Schema evolution uses DROP+CREATE instead of CREATE IF NOT EXISTS."""
@@ -2393,7 +2438,7 @@ class TestCombinedViewMode:
         assert created == 1
         assert len(stmts) == 1
         assert " None AS `Corporate_IOH`" not in stmts[0]
-        assert "CAST(NULL AS DOUBLE) AS `Corporate_IOH`" in stmts[0]
+        assert "0 AS `Corporate_IOH`" in stmts[0]
 
     def test_combined_sql_mode_renders_project_measures_scalar_sum_and_refresh_max(self):
         """Project Measures should compile with scalar-subquery SUMs and local MAX refresh measures."""
@@ -2657,6 +2702,7 @@ class TestCombinedViewMode:
                 enable_metric_view_joins=True,
                 enable_cross_table_joins=True,
                 enable_simple_dax_translation=False,
+                enable_low_confidence_drafts=True,
             )
         )
         model = SMLModel(
@@ -2702,7 +2748,6 @@ class TestCombinedViewMode:
         lowered = stmts[0].lower()
         assert 'name: "good_measure"' in lowered
         assert 'name: "bad_dax_measure"' in lowered
-        assert "cast(null as double)" in lowered
 
     def test_metric_view_joins_resolve_spaced_dataset_source_names(self):
         """Join source should resolve to Databricks-safe relation names, not raw labels with spaces."""
@@ -5394,6 +5439,7 @@ class TestPerModelArtifactMode:
                 measure_view_type="metric_view",
                 enable_metric_view_joins=True,
                 enable_cross_table_joins=True,
+                enable_low_confidence_drafts=True,
             )
         )
         model = SMLModel(

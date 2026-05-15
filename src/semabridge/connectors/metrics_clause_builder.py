@@ -390,6 +390,12 @@ class MetricsClauseBuilder:
         # Some upstream converters persist failed Tier-5 attempts in
         # sql_expression; those should not block translation from raw DAX.
         if sql_expr:
+            sql_expr = self._translate_dax_function_leakage_in_sql_expression(
+                sql_expr,
+                alias=alias,
+                dataset_aliases=dataset_aliases,
+                alias_by_raw=alias_by_raw,
+            )
             # If the metric's dataset is a virtual measures table, try to remap
             # column references to the actual fact table that owns those columns.
             if self._is_virtual_measures_table(metric.dataset, dataset_col_lookup):
@@ -515,6 +521,7 @@ class MetricsClauseBuilder:
                 r"\bFROM\b",
                 r"\bWITH\b",
                 r"\bCALCULATE\s*\(",
+                r"\bDIVIDE\s*\(",
                 r"\bISBLANK\s*\(",
                 r"\bBLANK\s*\(",
                 r"\[[^\]]+\]",
@@ -590,6 +597,149 @@ class MetricsClauseBuilder:
         if any(token in dtype for token in ("STRING", "TEXT", "CHAR")):
             return "'Column not available'"
         return "0"
+
+    def _translate_dax_function_leakage_in_sql_expression(
+        self,
+        sql_expr: Any,
+        *,
+        alias: str,
+        dataset_aliases: Dict[str, str],
+        alias_by_raw: Dict[str, str],
+    ) -> str:
+        """Repair DAX functions accidentally persisted in sql_expression.
+
+        Upstream conversion can occasionally store a DAX expression in the
+        SQL slot. Snowflake semantic-view DDL cannot compile DAX functions such
+        as DIVIDE(), so normalize simple leaked DIVIDE expressions before the
+        generic SQL validation path accepts them.
+        """
+        expr = str(sql_expr or "")
+        if not re.search(r"\bDIVIDE\s*\(", expr, re.IGNORECASE):
+            return expr
+
+        def split_args(args_text: str) -> List[str]:
+            args: List[str] = []
+            current: List[str] = []
+            depth = 0
+            quote: Optional[str] = None
+            for ch in args_text:
+                current.append(ch)
+                if quote:
+                    if ch == quote:
+                        quote = None
+                    continue
+                if ch in {"'", '"'}:
+                    quote = ch
+                elif ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth = max(depth - 1, 0)
+                elif ch == "," and depth == 0:
+                    current.pop()
+                    args.append("".join(current).strip())
+                    current = []
+            tail = "".join(current).strip()
+            if tail:
+                args.append(tail)
+            return args
+
+        def resolve_alias(table_name: Optional[str]) -> str:
+            if not table_name:
+                return alias
+            raw = table_name.strip()
+            return (
+                dataset_aliases.get(raw)
+                or alias_by_raw.get(raw)
+                or alias_by_raw.get(raw.upper())
+                or alias_by_raw.get(self.identifier_sanitizer.sanitize_alias(raw))
+                or self.identifier_sanitizer.sanitize_alias(raw)
+            )
+
+        def render_operand(operand: str) -> str:
+            clean = operand.strip()
+
+            aggregate = re.fullmatch(
+                r"(?is)(SUM|AVERAGE|AVG|COUNT|MIN|MAX|DISTINCTCOUNT)\s*\(\s*"
+                r"(?:(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_ ]*))\s*)?\[([^\]]+)\]\s*\)",
+                clean,
+            )
+            if aggregate:
+                fn = aggregate.group(1).upper()
+                table_name = aggregate.group(2) or aggregate.group(3)
+                col_name = self.identifier_sanitizer.sanitize_column(aggregate.group(4))
+                table_alias = resolve_alias(table_name)
+                col_ref = f'{table_alias}."{col_name}"'
+                if fn == "AVERAGE":
+                    fn = "AVG"
+                if fn == "DISTINCTCOUNT":
+                    return f"COUNT(DISTINCT {col_ref})"
+                if fn == "SUM":
+                    return self.translator._build_safe_sum_sql(col_ref, col_name)
+                return f"{fn}({col_ref})"
+
+            column_ref = re.fullmatch(
+                r"(?is)(?:(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_ ]*))\s*)?\[([^\]]+)\]",
+                clean,
+            )
+            if column_ref:
+                table_name = column_ref.group(1) or column_ref.group(2)
+                col_name = self.identifier_sanitizer.sanitize_column(column_ref.group(3))
+                table_alias = resolve_alias(table_name)
+                return f'{table_alias}."{col_name}"'
+
+            if re.fullmatch(r"-?\d+(?:\.\d+)?", clean):
+                return clean
+
+            return clean
+
+        def replace_divide_at(text: str, start: int) -> Tuple[str, int]:
+            open_paren = text.find("(", start)
+            if open_paren < 0:
+                return text[start:], len(text)
+            depth = 0
+            quote: Optional[str] = None
+            for idx in range(open_paren, len(text)):
+                ch = text[idx]
+                if quote:
+                    if ch == quote:
+                        quote = None
+                    continue
+                if ch in {"'", '"'}:
+                    quote = ch
+                elif ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        args = split_args(text[open_paren + 1:idx])
+                        if len(args) < 2:
+                            return text[start:idx + 1], idx + 1
+                        numerator = render_operand(args[0])
+                        denominator = render_operand(args[1])
+                        alternate = render_operand(args[2]) if len(args) >= 3 and args[2].strip() else "0"
+                        return (
+                            f"COALESCE(({numerator}) / NULLIF(({denominator}), 0), {alternate})",
+                            idx + 1,
+                        )
+            return text[start:], len(text)
+
+        output: List[str] = []
+        pos = 0
+        while True:
+            match = re.search(r"\bDIVIDE\s*\(", expr[pos:], re.IGNORECASE)
+            if not match:
+                output.append(expr[pos:])
+                break
+            start = pos + match.start()
+            output.append(expr[pos:start])
+            replacement, next_pos = replace_divide_at(expr, start)
+            output.append(replacement)
+            pos = next_pos
+
+        translated = "".join(output)
+        if translated != expr:
+            logger.info("Translated leaked DAX DIVIDE() in stored sql_expression for Snowflake DDL")
+        return translated
 
     @staticmethod
     def _contains_bare_metric_reference(sql: Any, metric_name_set: Set[str]) -> bool:
