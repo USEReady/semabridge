@@ -1,3 +1,5 @@
+import asyncio
+
 from semabridge.api.services.core_shared import *
 
 
@@ -42,7 +44,13 @@ async def sync_models(payload: Dict[str, Any]):
         if account_id and user_id and os.environ.get("AUTH_ENABLED", "").lower() == "true":
             _validate_account_ownership(account_id, int(user_id))
 
-        return execute_sync_request(payload, _normalize_yaml_windows_path_fields, account_id=account_id)
+        return await asyncio.to_thread(
+            execute_sync_request,
+            payload,
+            _normalize_yaml_windows_path_fields,
+            account_id=account_id,
+            force=bool(payload.get("force", False)),
+        )
     except HTTPException:
         raise
     except Exception as e:
