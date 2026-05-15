@@ -139,6 +139,7 @@ class SMLColumn(BaseModel):
     label: str = Field(default="", description="Display name")
     data_type: DataType = Field(default=DataType.STRING, description="Normalized data type")
     source_type: str = Field(default="", description="Original source data type")
+    source_expression: Optional[str] = Field(default=None, description="Physical source column or SQL expression")
     description: str = Field(default="", description="Column description")
     is_hidden: bool = Field(default=False, description="Whether column is hidden")
     is_key: bool = Field(default=False, description="Whether column is a primary key")

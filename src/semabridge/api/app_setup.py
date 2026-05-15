@@ -54,6 +54,7 @@ def _apply_schema_compatibility_fixes() -> None:
     from sqlalchemy import inspect, text
 
     from semabridge.repository.orm.session_factory import get_engine
+    from semabridge.repository.schema_compat import widen_project_id_columns
 
     engine = get_engine()
     inspector = inspect(engine)
@@ -143,10 +144,10 @@ def _apply_schema_compatibility_fixes() -> None:
         except Exception as e:
             logger.warning("Could not inspect constraints on accounts table: %s", e)
 
-    if not pending_alters:
-        return
-
     with engine.begin() as conn:
+        widened = widen_project_id_columns(conn)
+        if not pending_alters and not widened:
+            return
         for ddl in pending_alters:
             conn.execute(text(ddl))
         # Backfill ORM canonical column from legacy column when both exist.

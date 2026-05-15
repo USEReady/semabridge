@@ -39,6 +39,7 @@ from semabridge.repository.orm.models import (
     SourceArtifact,
     SyncConflictRow,
 )
+from semabridge.repository.schema_compat import widen_project_id_columns
 from semabridge.utils.logger import get_logger
 
 # Re-export Pydantic models for backward compat
@@ -214,6 +215,7 @@ class ModelRepository:
             try:
                 with engine.begin() as conn:
                     Base.metadata.create_all(bind=conn)
+                    widen_project_id_columns(conn)
                     inspector = inspect(conn)
                     if "snapshots" in inspector.get_table_names():
                         snapshot_columns = {col["name"] for col in inspector.get_columns("snapshots")}

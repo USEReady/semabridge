@@ -173,6 +173,7 @@ class OSIToSMLConverter(BaseConverter):
             unique_name=osi_col.unique_name,
             label=osi_col.label,
             data_type=sml_type,
+            source_expression=osi_col.source_expression,
             description=osi_col.description or "",
             is_hidden=osi_col.is_hidden,
             is_key=osi_col.is_key,
