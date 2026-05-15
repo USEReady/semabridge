@@ -61,7 +61,7 @@ def upgrade() -> None:
     sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('duration_ms', sa.Integer(), nullable=True),
     sa.Column('adapter', sa.String(length=50), nullable=True),
-    sa.Column('project_id', sa.String(length=36), nullable=True),
+    sa.Column('project_id', sa.String(length=255), nullable=True),
     sa.Column('initiated_by', sa.String(length=20), nullable=False),
     sa.Column('error_message', sa.Text(), nullable=True),
     sa.Column('details', sa.Text(), nullable=True),
@@ -111,7 +111,7 @@ def upgrade() -> None:
         batch_op.create_index('ix_mv_model_workspace', ['model_id', 'workspace_id'], unique=False)
 
     op.create_table('projects',
-    sa.Column('project_id', sa.String(length=36), nullable=False),
+    sa.Column('project_id', sa.String(length=255), nullable=False),
     sa.Column('name', sa.String(length=255), nullable=False),
     sa.Column('workspace_id', sa.String(length=255), nullable=True),
     sa.Column('adapter', sa.String(length=50), nullable=True),
@@ -180,7 +180,7 @@ def upgrade() -> None:
     )
     op.create_table('runs',
     sa.Column('run_id', sa.String(length=36), nullable=False),
-    sa.Column('project_id', sa.String(length=36), nullable=False),
+    sa.Column('project_id', sa.String(length=255), nullable=False),
     sa.Column('started_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('status', sa.String(length=20), nullable=False),
@@ -194,7 +194,7 @@ def upgrade() -> None:
     )
     op.create_table('snapshots',
     sa.Column('snapshot_id', sa.String(length=36), nullable=False),
-    sa.Column('project_id', sa.String(length=36), nullable=False),
+    sa.Column('project_id', sa.String(length=255), nullable=False),
     sa.Column('timestamp', sa.DateTime(timezone=True), nullable=False),
     sa.Column('version_tag', sa.String(length=100), nullable=True),
     sa.Column('sml_blob', sa.Text(), nullable=True),
