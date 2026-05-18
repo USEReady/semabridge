@@ -39,6 +39,7 @@ from semabridge.repository.orm.models import (
     SourceArtifact,
     SyncConflictRow,
 )
+from semabridge.repository.schema_compat import widen_project_id_columns
 from semabridge.utils.logger import get_logger
 
 # Re-export Pydantic models for backward compat
@@ -214,6 +215,7 @@ class ModelRepository:
             try:
                 with engine.begin() as conn:
                     Base.metadata.create_all(bind=conn)
+                    widen_project_id_columns(conn)
                     inspector = inspect(conn)
                     if "snapshots" in inspector.get_table_names():
                         snapshot_columns = {col["name"] for col in inspector.get_columns("snapshots")}
@@ -223,6 +225,8 @@ class ModelRepository:
                             conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN trigger VARCHAR(50)")
                         if "sync_mode" not in snapshot_columns:
                             conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN sync_mode VARCHAR(20) NOT NULL DEFAULT 'copy'")
+                        if "source_format" not in snapshot_columns:
+                            conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN source_format VARCHAR(20) NOT NULL DEFAULT 'TMDL'")
                     if "runs" in inspector.get_table_names():
                         run_columns = {col["name"] for col in inspector.get_columns("runs")}
                         if "sync_mode" not in run_columns:
@@ -502,6 +506,7 @@ class ModelRepository:
         connector_id: Optional[str] = None,
         trigger: Optional[str] = None,
         sync_mode: str = "copy",
+        source_format: str = "TMDL",
     ) -> Tuple[bool, str]:
         """Commit a new version of the model.
 
@@ -541,6 +546,7 @@ class ModelRepository:
                     connector_id=connector_id,
                     trigger=trigger,
                     sync_mode=sync_mode,
+                    source_format=source_format,
                 )
             )
 
@@ -564,7 +570,11 @@ class ModelRepository:
             session.commit()
 
         logger.info(
-            "Committed snapshot %s with %d changes (sync_mode=%s)", snapshot_id, len(changes), sync_mode
+            "Committed snapshot %s with %d changes (sync_mode=%s, source_format=%s)",
+            snapshot_id,
+            len(changes),
+            sync_mode,
+            source_format,
         )
         return True, snapshot_id
 

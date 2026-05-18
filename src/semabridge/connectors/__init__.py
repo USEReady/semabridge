@@ -1,8 +1,7 @@
 """
-Emit module for Fabric model generation.
+Emit module for Fabric TMDL generation.
 """
 
-from semabridge.connectors.tmsl_generator import TMSLGenerator
 from semabridge.connectors.fabric_publisher import FabricPublisher
 from semabridge.connectors.schema_reconciler import (
     MissingPrerequisiteException,
@@ -11,7 +10,6 @@ from semabridge.connectors.schema_reconciler import (
 )
 
 __all__ = [
-    "TMSLGenerator",
     "FabricPublisher",
     "SchemaMapper",
     "MissingPrerequisiteException",

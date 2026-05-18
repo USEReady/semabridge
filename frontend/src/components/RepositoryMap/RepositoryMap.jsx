@@ -126,7 +126,9 @@ function normalizeGraphPayload(rawGraph) {
 }
 
 function hasGraphNodes(payload) {
-    return Array.isArray(payload?.nodes) && payload.nodes.length > 0;
+    // A valid graph response exists if it has a nodes array (even if empty).
+    // Empty graphs are valid snapshots (e.g., after COPY sync with 0 source models).
+    return Array.isArray(payload?.nodes);
 }
 
 function buildGraphFromProjectConfig(configYaml, projectId) {
@@ -573,15 +575,20 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             let projectSnapshots = [];
             for (const candidateId of candidateIds) {
                 const rows = await api.getGraphSnapshots(candidateId).catch(() => []);
+                console.debug('[RepositoryMap] Snapshots for candidateId:', candidateId, '- rows:', rows);
                 const candidateSnapshots = filterSnapshotsByProjectCandidates(rows, [candidateId]);
+                console.debug('[RepositoryMap] After filtering:', candidateSnapshots);
                 if (candidateSnapshots.length > 0) {
                     projectSnapshots = candidateSnapshots;
                     break;
                 }
             }
             if (!projectSnapshots.length) {
+                console.debug('[RepositoryMap] No project snapshots found, trying __all__');
                 const globalRows = await api.getGraphSnapshots('__all__').catch(() => []);
+                console.debug('[RepositoryMap] Global snapshots from __all__:', globalRows);
                 projectSnapshots = filterSnapshotsByProjectCandidates(globalRows, candidateIds);
+                console.debug('[RepositoryMap] After filtering __all__ by candidateIds:', candidateIds, '- result:', projectSnapshots);
             }
 
             const ordered = (Array.isArray(projectSnapshots) ? projectSnapshots : [])
@@ -593,7 +600,9 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                 }))
                 .sort((a, b) => new Date(b?.timestamp || 0).getTime() - new Date(a?.timestamp || 0).getTime());
             if (!ordered.length) {
-                console.warn('No snapshots found for selected model candidates:', candidateIds);
+                console.warn('[RepositoryMap] No snapshots found for selected model candidates:', candidateIds);
+            } else {
+                console.debug('[RepositoryMap] Loaded snapshots:', ordered);
             }
             setAllSnapshots(ordered);
 
@@ -984,15 +993,38 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     }, [allSnapshots]);
 
     const visibleSnapshots = useMemo(() => {
-        if (selectedSemanticModel === '__all__') return allSnapshots;
+        if (selectedSemanticModel === '__all__') {
+            console.debug('[RepositoryMap] visibleSnapshots: __all__ selected, returning all snapshots:', allSnapshots?.length || 0);
+            return allSnapshots;
+        }
         const target = String(selectedSemanticModel || '').trim().toLowerCase();
-        return (allSnapshots || []).filter((s) => {
+        const filtered = (allSnapshots || []).filter((s) => {
             const semanticList = Array.isArray(s?.semantic_models) ? s.semantic_models : [];
             const semanticMatch = semanticList.some((v) => String(v || '').trim().toLowerCase() === target);
-            if (semanticMatch) return true;
+            if (semanticMatch) {
+                console.debug('[RepositoryMap] Snapshot matches by semantic_models:', s?.snapshot_id);
+                return true;
+            }
             const modelName = String(s?.model_label || s?.semantic_model || s?.model_name || '').trim().toLowerCase();
-            return modelName === target;
+            // Allow snapshots with 0 models (empty semantic_models) if the project matches
+            // This enables viewing "exact source copy" snapshots that have no model changes
+            if (modelName === target) {
+                console.debug('[RepositoryMap] Snapshot matches by modelName:', s?.snapshot_id, 'modelName:', modelName);
+                return true;
+            }
+            // For 0-model snapshots, also check project_id
+            if (semanticList.length === 0) {
+                const projectId = String(s?.project_id || '').trim().toLowerCase();
+                if (projectId === target) {
+                    console.debug('[RepositoryMap] 0-model snapshot matches by project_id:', s?.snapshot_id, 'projectId:', projectId);
+                    return true;
+                }
+            }
+            console.debug('[RepositoryMap] Snapshot filtered out:', s?.snapshot_id, {target, semanticList, modelName, projectId: s?.project_id});
+            return false;
         });
+        console.debug('[RepositoryMap] visibleSnapshots for target:', target, '- count:', filtered?.length || 0);
+        return filtered;
     }, [allSnapshots, selectedSemanticModel]);
 
     useEffect(() => {

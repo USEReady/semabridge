@@ -1630,10 +1630,10 @@ def _run_snowflake_to_fabric(
         sml_model.unique_name = model_name
         sml_model.label = model_name
 
-        # Normalize relationships to avoid ambiguous paths (multiple paths between same tables)
+        # Normalize relationships; keep full graph for Snowflake target parity.
         from semabridge.core.execution_engine import ExecutionEngine
         engine = ExecutionEngine()
-        engine._normalize_relationships_for_target(sml_model)
+        engine._normalize_relationships_for_target(sml_model, prune_transitive_paths=False)
 
         total_columns = sum(len(ds.columns) for ds in sml_model.datasets)
         total_measures = len(sml_model.metrics)
@@ -1720,7 +1720,7 @@ def _run_snowflake_to_fabric(
         try:
              db_manager = DuckDBManager()
              db_manager.commit_model(project_id=model_name, sml_json={}, status="failed", duration_ms=duration, error_message=str(e), run_id=run_id)
-        except: pass
+        except Exception: pass
         
         if settings.logging.level == "DEBUG":
             import traceback
@@ -1899,7 +1899,7 @@ def _run_fabric_to_snowflake(settings, dataset_id, workspace_id, tag, sync, para
             head = db_manager.get_head(dataset_id)
             sml_json = head.sml_blob if head else {}
             db_manager.commit_model(project_id=dataset_id, sml_json=sml_json, tag=tag, status="failed", duration_ms=duration, error_message=str(e), run_id=run_id)
-        except: pass
+        except Exception: pass
         
         if settings.logging.level == "DEBUG":
             import traceback

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 import time
@@ -405,7 +405,7 @@ class SnowflakeSchemaManager:
 
     def _generate_create_table_ddl(self, dataset: SMLDataset, table_name: str) -> str:
         """Generate CREATE TABLE DDL from SML dataset definition."""
-        # Data type mapping from SML/TMSL to Snowflake
+        # Data type mapping from SML/TMDL to Snowflake
         type_map = {
             "STRING": "VARCHAR(500)",
             "INTEGER": "INTEGER",
@@ -482,11 +482,24 @@ class SnowflakeSchemaManager:
 
             source_expr = getattr(col, 'source_expression', None)
             if source_expr and not self._is_physical_source_column(source_expr):
-                logger.debug(
-                    "Skipping calculated column '%s' from physical source columns",
-                    col_name,
+                # is_physical_source_column requires TABLE.COLUMN format, which is
+                # the Snowflake convention.  Fabric/TMDL models store sourceColumn
+                # as a bare column name (e.g. "BU Key") which does NOT match that
+                # pattern — but it is still a physical column, not a DAX expression.
+                # A true calculated column will contain DAX-specific markers such as
+                # brackets ([), function calls ((), or multi-line expressions.
+                is_dax_expression = (
+                    "[" in source_expr
+                    or "(" in source_expr
+                    or "\n" in source_expr
                 )
-                continue
+                if is_dax_expression:
+                    logger.debug(
+                        "Skipping calculated column '%s' (DAX expression) from physical source columns",
+                        col_name,
+                    )
+                    continue
+                # Bare column name (possibly with spaces) is physical — allow it through.
 
             valid_columns.append(col)
             safe_base = self._sanitize_col_name(col_name)
@@ -574,7 +587,15 @@ class SnowflakeSchemaManager:
                 continue
             source_expr = getattr(col, "source_expression", None)
             if source_expr and not self._is_physical_source_column(source_expr):
-                continue
+                # Same logic as _collect_physical_source_columns: Fabric bare column
+                # names don't match TABLE.COLUMN format but are still physical.
+                is_dax_expression = (
+                    "[" in source_expr
+                    or "(" in source_expr
+                    or "\n" in source_expr
+                )
+                if is_dax_expression:
+                    continue
 
             valid_columns.append(col)
             safe_base = self._sanitize_col_name(col_name)
@@ -1585,3 +1606,4 @@ class SnowflakeSchemaManager:
             )
 
         return history_view_ddls, dataset_source_overrides
+

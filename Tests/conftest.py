@@ -231,12 +231,12 @@ def sample_sml_model(sample_dataset, sample_dimension_dataset, sample_metric, sa
 
 
 # -----------------------------------------------------------------------------
-# TMSL Fixtures
+# Fabric/TMDL Fixtures
 # -----------------------------------------------------------------------------
 
 @pytest.fixture
-def sample_tmsl_json():
-    """Create a sample TMSL JSON structure (Fabric model.bim format)."""
+def sample_tmdl_json():
+    """Create a sample Fabric semantic-model JSON structure (model.bim-compatible)."""
     return {
         "model": {
             "name": "SalesModel",
@@ -278,6 +278,12 @@ def sample_tmsl_json():
             ]
         }
     }
+
+
+@pytest.fixture
+def sample_tmsl_json(sample_tmdl_json):
+    """Backward-compatible alias for legacy test names."""
+    return sample_tmdl_json
 
 
 # -----------------------------------------------------------------------------

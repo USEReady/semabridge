@@ -12,7 +12,6 @@ const FORMAT_META = {
   OSI:            { label: 'OSI',       bg: 'var(--color-accent-faint)',   color: 'var(--accent-blue)' },
   FABRIC_OSI:     { label: 'Fabric',         bg: 'rgba(59,130,246,0.12)',       color: '#3b82f6' },
   SML:            { label: 'SML',            bg: 'rgba(139,92,246,0.12)',        color: 'var(--accent-purple)' },
-  TSML:           { label: 'TSML',           bg: 'rgba(249,115,22,0.10)',        color: 'var(--accent-orange)' },
   SNOWFLAKE:      { label: 'Snowflake',      bg: 'rgba(56,189,248,0.10)',        color: 'var(--accent-cyan)' },
   ATSCALE_SML:    { label: 'AtScale SML',    bg: 'rgba(236,72,153,0.10)',        color: '#ec4899' },
   SEMABRIDGE_SML: { label: 'Semabridge SML', bg: 'rgba(16,185,129,0.10)',        color: '#10b981' },
@@ -229,7 +228,7 @@ function UploadCard({ index, file, parsedData, onFileChange }) {
               {index === 1 ? 'Primary YAML' : 'Secondary YAML'}
             </div>
             <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>
-              {index === 2 ? 'Optional — for comparison diff' : 'OSI · SML · TSML · Snowflake'}
+              {index === 2 ? 'Optional — for comparison diff' : 'OSI · SML · Snowflake'}
             </div>
           </div>
         </>
@@ -974,7 +973,7 @@ export default function ComparatorPage() {
     <div style={{ padding: '28px 32px', minHeight: '100%' }}>
       <PageHeader
         title="Semantic Comparator"
-        description="Analyse and difference OSI, SML, TSML, and Snowflake semantic model YAML definitions."
+          description="Analyse and difference OSI, SML, and Snowflake semantic model YAML definitions."
       />
 
       {/* Error banner — matches pattern used across all Semabridge pages */}

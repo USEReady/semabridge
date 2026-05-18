@@ -57,9 +57,9 @@ class FabricBehavior(BaseModel):
         default=True,
         description="Overwrite existing semantic models by default"
     )
-    tmsl_generation_mode: str = Field(
+    tmdl_generation_mode: str = Field(
         default="standard",
-        description="TMSL generation strategy: 'standard' or 'compatibility'"
+        description="TMDL generation strategy: 'standard' or 'compatibility'"
     )
 
 class SemanticModelBehavior(BaseModel):
@@ -180,6 +180,34 @@ class DatabricksBehavior(BaseModel):
     enable_simple_dax_translation: bool = Field(
         default=True,
         description="Translate simple DAX patterns (SUM, COUNT, etc.) to SQL for view creation"
+    )
+    enable_llm_dax_translation: bool = Field(
+        default=False,
+        description=(
+            "Use the common LLM DAX translator for complex expressions after "
+            "deterministic translation fails. Disabled by default to preserve "
+            "legacy skip behavior unless a project opts in."
+        ),
+    )
+    llm_dax_provider_order: list[str] = Field(
+        default_factory=lambda: ["deepseek", "gemini", "groq"],
+        description="Ordered LLM providers for complex DAX translation fallback.",
+    )
+    llm_dax_timeout_seconds: int = Field(
+        default=20,
+        ge=1,
+        description="Per-provider timeout for LLM DAX translation attempts.",
+    )
+    llm_dax_cache_enabled: bool = Field(
+        default=True,
+        description="Cache LLM DAX translation results by DAX/schema/dialect.",
+    )
+    llm_dax_fallback_to_placeholder: bool = Field(
+        default=True,
+        description=(
+            "When all LLM providers fail, return a draft placeholder expression "
+            "instead of skipping the measure."
+        ),
     )
     metric_view_only_sum_translation: bool = Field(
         default=False,

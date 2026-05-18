@@ -91,7 +91,7 @@ class GeminiDAXTranslator:
     
     def __init__(self):
         """Initialize Gemini translator with centralized API service."""
-        self.api_key = os.getenv("GEMINI_API_KEY")
+        self.api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         self.use_gemini = os.getenv("USE_GEMINI", "true").lower() in ("true", "1", "yes")
         
         # Use centralized service
@@ -167,6 +167,7 @@ class GeminiDAXTranslator:
             # Parse and validate response
             sql = sql_response.strip()
             sql = self._strip_markdown_code_blocks(sql)
+            sql = self._clean_llm_sql(sql)
             result.sql = sql
             result.is_valid = self._validate_sql(sql, table_alias)
             result.confidence = self._score_confidence(sql, dax)
@@ -210,7 +211,7 @@ class GeminiDAXTranslator:
             return batch_result
         
         if not self.api_key:
-            batch_result.error = "GEMINI_API_KEY not configured"
+            batch_result.error = "GEMINI_API_KEY/GOOGLE_API_KEY not configured"
             logger.warning(batch_result.error)
             return batch_result
         
@@ -305,7 +306,17 @@ class GeminiDAXTranslator:
             
             # Call Gemini API via centralized service (handles retries, rate limiting)
             response_text = call_gemini(prompt, fallback_fn=batch_fallback)
-            
+            if not isinstance(response_text, str) or not response_text.strip():
+                logger.warning("Gemini batch returned no response; marking batch translations unavailable")
+                for metric_name, _, _, _, _ in batch:
+                    results[metric_name] = GeminiTranslationResult(
+                        sql="",
+                        is_valid=False,
+                        error="Gemini batch returned no response",
+                        timestamp=datetime.now().isoformat(),
+                    )
+                return results
+
             # Parse response
             results = self._parse_batch_response(response_text, batch)
             return results
@@ -340,12 +351,16 @@ Your task: Convert multiple DAX expressions to Snowflake aggregation expressions
 
 CRITICAL REQUIREMENTS FOR ALL EXPRESSIONS - YOU MUST FOLLOW ALL:
 1. Output ONLY raw SQL aggregation expressions (e.g., SUM(alias.AMOUNT), COUNT(DISTINCT alias.ID))
-2. NO SELECT, FROM, WHERE, JOIN, or any clauses - only aggregation functions
-3. NO markdown code blocks, backticks, or triple backticks
-4. NO explanations, comments, or extra text
-5. Use table aliases like {table_alias} for column references  
-6. Use UPPERCASE column names without quotes: alias.COLUMN_NAME (not alias."Column_Name")
-7. Return ONLY valid JSON with no other content
+2. NO SELECT, FROM, WHERE, JOIN, WITH, or any SQL clauses.
+3. NO CTEs (Common Table Expressions) - do not use WITH ctx AS ...
+4. NO subqueries or nested SELECT statements.
+5. NO markdown code blocks, backticks, or triple backticks.
+6. NO explanations, comments, or extra text.
+7. Use table aliases like {table_alias} for column references.
+8. Use UPPERCASE column names without quotes: alias.COLUMN_NAME (not alias."Column_Name").
+9. NO DAX keywords like VAR, RETURN, or CALCULATE in the output.
+10. Return ONLY valid JSON with no other content.
+11. If you cannot translate to a single expression, return "NULL".
 
 OUTPUT RULES (STRICT):
 ✗ WRONG: "metric1": "SELECT SUM(amount) FROM sales"
@@ -412,6 +427,7 @@ Return ONLY the JSON object with no other content:"""
                 # Clean SQL expression
                 sql_expr = sql_expr.strip() if sql_expr else ""
                 sql_expr = self._strip_markdown_code_blocks(sql_expr)
+                sql_expr = self._clean_llm_sql(sql_expr)
                 
                 # Validate SQL
                 is_valid = self._validate_sql(sql_expr, table_alias)
@@ -469,18 +485,19 @@ Return ONLY the JSON object with no other content:"""
                      metric_name: str,
                      schema_context: Optional[Dict] = None) -> str:
         """Build strict context-aware prompt for Gemini with explicit format requirements."""
-        prompt = f"""You are a DAX to Snowflake SQL translator for metric expressions ONLY.
+        prompt = f"""You are a Snowflake/Databricks SQL expert. Translate DAX to a single SQL expression.
 
 Your task: Convert the DAX expression below to a Snowflake aggregation expression.
 
 CRITICAL REQUIREMENTS - YOU MUST FOLLOW ALL:
 1. Output ONLY a raw SQL aggregation expression (e.g., SUM(alias.col), COUNT(DISTINCT alias.col))
-2. NO SELECT, FROM, WHERE, JOIN, or any clauses - only the aggregation part
+2. NEVER output a full SELECT ... FROM query. NO SELECT, FROM, WHERE, JOIN, or any clauses - only the aggregation part
 3. NO markdown code blocks, backticks, or triple backticks
 4. NO explanations, comments, or text - ONLY the SQL expression
 5. Use the table alias '{table_alias}' for all column references
 6. Use UPPERCASE column names without quotes: alias.COLUMN_NAME (not alias."Column_Name")
-7. If you don't know the exact column, use a placeholder like alias.AMOUNT
+7. NEVER output the keyword VAR, RETURN, or CALCULATE.
+8. If you don't know the exact column, use a safe fallback such as 0.
 
 DAX Expression to Convert:
 {dax}
@@ -494,10 +511,16 @@ OUTPUT RULES (STRICT):
 ✗ WRONG: SELECT SUM(amount) FROM sales
 ✗ WRONG: ```sql SUM(sales.amount) ```
 ✗ WRONG: SUM(sales."Amount") -- quoted identifiers
+✗ WRONG: VAR x = SUM(sales.amount) RETURN x -- NO VAR/RETURN
 ✓ RIGHT: SUM(sales.AMOUNT)
 ✓ RIGHT: COUNT(DISTINCT sales.PRODUCT_ID)
 
-Return ONLY the SQL aggregation expression, nothing else:"""
+Return ONLY the SQL aggregation expression, nothing else:
+- NO SELECT, FROM, WHERE, JOIN, WITH, or any SQL clauses.
+- NO CTEs or subqueries.
+- NO DAX keywords (VAR, RETURN, CALCULATE).
+- NO markdown blocks or explanations.
+- If impossible to translate as an expression, return "0". Never return CAST(NULL AS DOUBLE)."""
         
         if schema_context:
             prompt += f"\n\nSchema Context:\n{json.dumps(schema_context, indent=2)}"
@@ -519,13 +542,14 @@ Return ONLY the SQL aggregation expression, nothing else:"""
         sql_clean = sql.strip()
         sql_upper = sql_clean.upper()
         
-        # CRITICAL CHECK 1: No full SELECT statements
-        if sql_upper.startswith('SELECT'):
-            logger.warning(f"⚠️  SQL starts with SELECT - invalid for METRICS clause")
+        # CRITICAL CHECK 1: No full SELECT statements or FROM clauses
+        if re.search(r'\b(SELECT|FROM|WHERE|JOIN|WITH|UNION)\b', sql_upper):
+            logger.warning(f"⚠️  SQL contains illegal keywords (SELECT/FROM/WHERE/JOIN/WITH/UNION) - must be aggregation expression only")
             return False
         
-        if ' FROM ' in sql_upper or ' WHERE ' in sql_upper or ' JOIN ' in sql_upper:
-            logger.warning(f"⚠️  SQL contains FROM/WHERE/JOIN - must be aggregation expression only")
+        # CRITICAL CHECK 1.1: No DAX keywords (VAR, RETURN)
+        if re.search(r'\b(VAR|RETURN|CALCULATE)\b', sql_upper):
+            logger.warning(f"⚠️  SQL contains DAX keywords (VAR/RETURN/CALCULATE)")
             return False
         
         # Check for dangerous patterns
@@ -569,11 +593,58 @@ Return ONLY the SQL aggregation expression, nothing else:"""
         import re
         
         # Remove opening ```sql or ``` with optional language specifier
-        sql = re.sub(r'^```(?:sql|python|\\w*)?\\n?', '', sql, flags=re.MULTILINE)
+        sql = re.sub(r'^```(?:sql|python|\w*)?\n?', '', sql, flags=re.MULTILINE)
         # Remove closing ```
-        sql = re.sub(r'\\n?```$', '', sql, flags=re.MULTILINE)
+        sql = re.sub(r'\n?```$', '', sql, flags=re.MULTILINE)
         sql = sql.strip()
         
+        return sql
+
+    def _clean_llm_sql(self, sql: str) -> str:
+        """Strip DAX junk like VAR ... RETURN from the SQL expression."""
+        if not sql:
+            return ""
+        try:
+            from semabridge.converter.dax_engine import sanitize_llm_sql
+
+            sql = sanitize_llm_sql(sql)
+        except Exception:
+            pass
+        
+        # 0. Strip markdown and language tags if present
+        sql = re.sub(r'```sql\s*', '', sql, flags=re.IGNORECASE)
+        sql = sql.replace('```', '').strip()
+
+        # 1. Handle common "VAR result = ... RETURN result" pattern
+        # If RETURN exists, try to extract what's after it
+        if "RETURN" in sql.upper():
+            parts = re.split(r'\bRETURN\b', sql, flags=re.IGNORECASE)
+            if len(parts) > 1:
+                # Use everything after the LAST RETURN
+                sql = parts[-1].strip()
+        
+        # 2. Iteratively strip any leading "VAR name =" definitions
+        # Some LLMs return multiple VAR statements
+        prev_sql = None
+        while prev_sql != sql:
+            prev_sql = sql
+            sql = re.sub(r'^(?i)\s*VAR\s+[A-Za-z0-9_]+\s*=\s*', '', sql).strip()
+        
+        # 3. Strip trailing semicolons and extra whitespace
+        sql = sql.rstrip(';').strip()
+        
+        # 4. If we end up with just "VAR", it's a failure
+        if sql.strip().upper() == "VAR":
+            logger.warning("⚠️  Cleaned SQL resulted in orphaned 'VAR', rejecting")
+            return ""
+
+        # 5. Final Standalone VAR check: Snowflake will choke on this
+        if re.search(r'\bVAR\b', sql.upper()):
+            logger.warning(f"⚠️  SQL still contains 'VAR' keyword after cleaning: {sql}")
+            # If the expression is very short and contains VAR, it's garbage
+            if len(sql) < 30:
+                return ""
+            
         return sql
     
     def _score_confidence(self, sql: str, original_dax: str) -> float:

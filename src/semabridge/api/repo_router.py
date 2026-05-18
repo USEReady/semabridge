@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -572,9 +573,9 @@ def get_model_graph(
 
 
 @router.get("/file")
-def get_file_content(path: str = Query(..., description="Relative file path")):
+async def get_file_content(path: str = Query(..., description="Relative file path")):
     """REQ-MAP-001: Return raw file content for preview."""
-    file_root = _resolve_models_path()
+    file_root = await asyncio.to_thread(_resolve_models_path)
     if not file_root.exists():
         file_root = _get_repo_root()
 
@@ -588,9 +589,11 @@ def get_file_content(path: str = Query(..., description="Relative file path")):
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
 
     try:
-        content = target.read_text(encoding="utf-8")
+        content = await asyncio.to_thread(target.read_text, encoding="utf-8")
     except UnicodeDecodeError:
         content = "(binary file — cannot display)"
+
+    stat = await asyncio.to_thread(target.stat)
 
     suffix = target.suffix.lower()
     return {
@@ -598,9 +601,9 @@ def get_file_content(path: str = Query(..., description="Relative file path")):
         "name": target.name,
         "content": content,
         "language": ICON_MAP.get(suffix, "text"),
-        "size": target.stat().st_size,
+        "size": stat.st_size,
         "modified": datetime.fromtimestamp(
-            target.stat().st_mtime, tz=timezone.utc
+            stat.st_mtime, tz=timezone.utc
         ).isoformat(),
     }
 

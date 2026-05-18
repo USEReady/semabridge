@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re
@@ -560,7 +561,7 @@ async def premerge_validate_projects_compat(payload: Dict[str, Any]) -> Dict[str
 
 
 async def list_project_discovery_compat():
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     entries: List[Dict[str, Any]] = []
     projects_dir = _compat_projects_dir()
     if not projects_dir.exists() or not projects_dir.is_dir():
@@ -571,7 +572,8 @@ async def list_project_discovery_compat():
         if not project_id:
             continue
         try:
-            project_cfg = yaml.safe_load(file_path.read_text(encoding="utf-8")) or {}
+            file_text = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
+            project_cfg = yaml.safe_load(file_text) or {}
             if not isinstance(project_cfg, dict):
                 continue
             entries.append(_project_discovery_entry(project_id, file_path, project_cfg))
@@ -582,7 +584,7 @@ async def list_project_discovery_compat():
 
 async def list_projects_compat():
     """Compatibility: newfrontend expects a projects collection."""
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     deduped: Dict[str, Dict[str, Any]] = {}
     
     # Load modular projects from Config/projects (or config/projects)
@@ -591,7 +593,8 @@ async def list_projects_compat():
         for file_path in sorted(projects_dir.glob("*.y*ml")):
             pid = file_path.stem
             try:
-                project_cfg = yaml.safe_load(file_path.read_text(encoding="utf-8")) or {}
+                file_text = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
+                project_cfg = yaml.safe_load(file_text) or {}
                 if not isinstance(project_cfg, dict):
                     continue
                 deduped[pid] = _project_discovery_entry(pid, file_path, project_cfg)
@@ -627,7 +630,7 @@ async def list_projects_compat():
 
 async def create_project_compat(request: dict):
     """Compatibility: create in-memory project for UI continuity."""
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     payload = request or {}
     payload_name = _compat_clean_project_name(payload.get("name"), "")
     src = payload.get("source") if isinstance(payload.get("source"), dict) else {}
@@ -654,29 +657,29 @@ async def create_project_compat(request: dict):
         normalized_yaml = _normalize_project_config_yaml(project_id, config_yaml, project.get("name") or project_id)
         _compat_project_configs[project_id] = normalized_yaml
         try:
-            _compat_save_project_yaml_text(project_id, normalized_yaml)
+            await asyncio.to_thread(_compat_save_project_yaml_text, project_id, normalized_yaml)
             _clear_project_mapping_cache(project_id)
         except Exception as exc:
             logger.warning("Failed to persist project config for %s: %s", project_id, exc)
     else:
-        project_yaml = _compat_load_project_yaml_text(project_id)
-        repo_yaml = _compat_load_repo_yaml_text()
+        project_yaml = await asyncio.to_thread(_compat_load_project_yaml_text, project_id)
+        repo_yaml = await asyncio.to_thread(_compat_load_repo_yaml_text)
         selected_yaml = project_yaml or repo_yaml or _compat_default_project_yaml(project)
         normalized_yaml = _normalize_project_config_yaml(project_id, selected_yaml, project.get("name") or project_id)
         _compat_project_configs.setdefault(project_id, normalized_yaml)
         try:
-            _compat_save_project_yaml_text(project_id, normalized_yaml)
+            await asyncio.to_thread(_compat_save_project_yaml_text, project_id, normalized_yaml)
             _clear_project_mapping_cache(project_id)
         except Exception as exc:
             logger.warning("Failed to initialize project config file for %s: %s", project_id, exc)
 
     _compat_project_runs.setdefault(project_id, [])
-    _compat_save_store()
+    await asyncio.to_thread(_compat_save_store)
     return project
 
 
 async def get_project_compat(project_id: str):
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     project = _compat_projects.get(project_id)
     if not project:
         # Compatibility upsert for stale in-memory cache after reload.
@@ -687,12 +690,12 @@ async def get_project_compat(project_id: str):
             "target": {"type": "snowflake"},
         })
         _compat_projects[project_id] = project
-        _compat_save_store()
+        await asyncio.to_thread(_compat_save_store)
     return project
 
 
 async def patch_project_compat(project_id: str, payload: dict):
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     project = _compat_projects.get(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -730,21 +733,21 @@ async def patch_project_compat(project_id: str, payload: dict):
 
     project["updated_at"] = _compat_now_iso()
     _compat_projects[project_id] = project
-    _compat_save_store()
+    await asyncio.to_thread(_compat_save_store)
     return project
 
 
 async def delete_project_compat(project_id: str):
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     _compat_projects.pop(project_id, None)
     _compat_project_configs.pop(project_id, None)
     _compat_project_runs.pop(project_id, None)
-    _compat_save_store()
+    await asyncio.to_thread(_compat_save_store)
     return Response(status_code=204)
 
 
 async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(default=False)):
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     project = _compat_projects.get(project_id)
     if not project:
         # Compatibility upsert: keep UI editable even if project cache was reset.
@@ -759,9 +762,9 @@ async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(d
     # can load different YAMLs for different projects. Some UI flows (for
     # example Model Mapping) can opt into prefer_repo=True to reflect the
     # workspace semabridge.yaml as the single source of truth.
-    repo_yaml = _compat_load_repo_yaml_text()
+    repo_yaml = await asyncio.to_thread(_compat_load_repo_yaml_text)
     prefer_repo_flag = prefer_repo if isinstance(prefer_repo, bool) else False
-    project_yaml = _compat_load_project_yaml_text(project_id)
+    project_yaml = await asyncio.to_thread(_compat_load_project_yaml_text, project_id)
     if prefer_repo_flag and repo_yaml:
         yaml_text = repo_yaml
         _compat_project_configs[project_id] = repo_yaml
@@ -770,7 +773,7 @@ async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(d
         yaml_text = _normalize_project_config_yaml(project_id, yaml_text, project.get("name") or project_id)
         if not project_yaml and yaml_text:
             try:
-                _compat_save_project_yaml_text(project_id, yaml_text)
+                await asyncio.to_thread(_compat_save_project_yaml_text, project_id, yaml_text)
             except Exception as exc:
                 logger.warning("Failed to persist hydrated project config for %s: %s", project_id, exc)
     _compat_project_configs[project_id] = yaml_text
@@ -782,7 +785,7 @@ async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(d
 
 
 async def save_project_config_compat(project_id: str, payload: dict):
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     project = _compat_projects.get(project_id)
     if not project:
         # Compatibility upsert: allow saving config even when only project_id is known.
@@ -799,12 +802,12 @@ async def save_project_config_compat(project_id: str, payload: dict):
     yaml_text = _normalize_project_config_yaml(project_id, yaml_text, project.get("name") or project_id)
     _compat_project_configs[project_id] = yaml_text
     try:
-        _compat_save_project_yaml_text(project_id, yaml_text)
+        await asyncio.to_thread(_compat_save_project_yaml_text, project_id, yaml_text)
         _clear_project_mapping_cache(project_id)
     except Exception as exc:
         logger.warning("Failed to persist project config for %s: %s", project_id, exc)
     project["updated_at"] = _compat_now_iso()
-    _compat_save_store()
+    await asyncio.to_thread(_compat_save_store)
     return {
         "status": "saved",
         "project_id": project_id,
@@ -1264,14 +1267,24 @@ async def graph_snapshots_compat(model_name: str):
         # Keep this bounded so Explore remains responsive on large histories.
         snapshot_limit = int(os.getenv("SEMABRIDGE_GRAPH_SNAPSHOTS_LIMIT", "500"))
         snapshot_limit = max(50, min(snapshot_limit, 2000))
+        db_timeout_s = float(os.getenv("SEMABRIDGE_GRAPH_DB_TIMEOUT_SECONDS", "8"))
         if model_name == '__all__':
             if hasattr(db_manager, "list_all_snapshots_meta"):
-                snapshots = db_manager.list_all_snapshots_meta(limit=snapshot_limit)
+                snapshots = await asyncio.wait_for(
+                    asyncio.to_thread(db_manager.list_all_snapshots_meta, snapshot_limit),
+                    timeout=db_timeout_s,
+                )
             else:
-                snapshots = db_manager.list_all_snapshots(limit=snapshot_limit)
+                snapshots = await asyncio.wait_for(
+                    asyncio.to_thread(db_manager.list_all_snapshots, snapshot_limit),
+                    timeout=db_timeout_s,
+                )
         else:
             # For project-scoped queries, use full snapshots to surface semantic model names.
-            snapshots = db_manager.list_snapshots(model_name, limit=snapshot_limit)
+            snapshots = await asyncio.wait_for(
+                asyncio.to_thread(db_manager.list_snapshots, model_name, snapshot_limit),
+                timeout=db_timeout_s,
+            )
             if not snapshots:
                 # Backward-compat resolver:
                 # Older runs may have committed snapshots under project display name
@@ -1314,7 +1327,10 @@ async def graph_snapshots_compat(model_name: str):
                     pass
 
                 for alias in alias_candidates:
-                    alias_snaps = db_manager.list_snapshots(alias, limit=snapshot_limit)
+                    alias_snaps = await asyncio.wait_for(
+                        asyncio.to_thread(db_manager.list_snapshots, alias, snapshot_limit),
+                        timeout=db_timeout_s,
+                    )
                     if alias_snaps:
                         logger.info(
                             "[Explore] Snapshot list alias-resolved model=%s alias=%s count=%s",
@@ -1324,6 +1340,17 @@ async def graph_snapshots_compat(model_name: str):
                         )
                         snapshots = alias_snaps
                         break
+                # Final fallback: pull global lightweight list and filter by aliases.
+                if not snapshots and hasattr(db_manager, "list_all_snapshots_meta"):
+                    alias_set = {str(a).strip() for a in alias_candidates if str(a).strip()}
+                    all_rows = await asyncio.wait_for(
+                        asyncio.to_thread(db_manager.list_all_snapshots_meta, snapshot_limit),
+                        timeout=db_timeout_s,
+                    )
+                    snapshots = [
+                        row for row in (all_rows or [])
+                        if str(row.get("project_id") or "").strip() in alias_set
+                    ]
         
         logger.info("[Explore] Snapshot list resolved model=%s count=%s", model_name, len(snapshots or []))
         rows = []
@@ -1340,6 +1367,7 @@ async def graph_snapshots_compat(model_name: str):
                 "model_id": project_id,
                 "model_name": project_id,
                 "model_label": (names[0] if names else project_id),
+                "model_count": len(names),  # Include model count even if 0
                 "semantic_models": names,
                 "snapshot_scope": project_id,
                 "run_id": _snap_attr(s, "run_id"),
@@ -1366,7 +1394,11 @@ async def graph_snapshot_compat(
             snapshot_id,
             include_system_tables,
         )
-        snapshot = db_manager.get_snapshot(snapshot_id)
+        db_timeout_s = float(os.getenv("SEMABRIDGE_GRAPH_DB_TIMEOUT_SECONDS", "8"))
+        snapshot = await asyncio.wait_for(
+            asyncio.to_thread(db_manager.get_snapshot, snapshot_id),
+            timeout=db_timeout_s,
+        )
         if not snapshot:
             logger.warning("Snapshot %s not found", snapshot_id)
             return {"nodes": [], "edges": [], "snapshot_id": snapshot_id, "model": model_name}

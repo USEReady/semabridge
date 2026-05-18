@@ -25,8 +25,8 @@ from semabridge.core.run_summary import (
 )
 from semabridge.core.source_format import (
     SourceFormat,
-    from_fabric_tmsl,
-    from_pbix_tmsl,
+    from_fabric_tmdl,
+    from_pbix_tmdl,
     from_snowflake_metadata,
 )
 from semabridge.intermediate.models import OSIModel
@@ -81,6 +81,7 @@ def _step7_persist_artifacts(
         # Commit SML to DuckDB
         sml_dict = context.sml_model.model_dump(mode='json') if context.sml_model else {}
         sync_mode = getattr(context, 'sync_mode', 'copy')
+        source_format = str(getattr(context.source_format, "metadata_format", "tmdl") or "tmdl").strip().upper()
 
         committed, snapshot_id = self.db_manager.commit_model(
             project_id=context.project_id,
@@ -90,6 +91,7 @@ def _step7_persist_artifacts(
             duration_ms=int((time.time() - context.start_time) * 1000),
             run_id=context.run_id,
             sync_mode=sync_mode,
+            source_format=source_format,
         )
 
         context.sml_snapshot_id = snapshot_id

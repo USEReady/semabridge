@@ -26,8 +26,8 @@ from semabridge.core.run_summary import (
 )
 from semabridge.core.source_format import (
     SourceFormat,
-    from_fabric_tmsl,
-    from_pbix_tmsl,
+    from_fabric_tmdl,
+    from_pbix_tmdl,
     from_snowflake_metadata,
 )
 from semabridge.intermediate.models import OSIModel
@@ -106,7 +106,15 @@ def _step6_convert_to_sml(
 
         # Normalize relationship names/deduplication here so all downstream
         # target conversions and deployments operate on the same final model.
-        self._normalize_relationships_for_target(sml_model)
+        # Important: only prune transitive/cycle edges for targets that require
+        # ambiguity reduction (Fabric). Snowflake semantic views can preserve
+        # the full modeled relationship graph.
+        target_type = str(getattr(context, "target_type", "") or "").strip().lower()
+        prune_transitive_paths = target_type in {"fabric", "pbix"}
+        self._normalize_relationships_for_target(
+            sml_model,
+            prune_transitive_paths=prune_transitive_paths,
+        )
         
         # Apply sync_mode logic after source conversion so target-only Snowflake
         # objects are preserved before target-format generation/deployment.
@@ -149,7 +157,11 @@ def _step6_convert_to_sml(
         self._record_step(6, StepStatus.FAILED, str(e))
         raise ConversionError(f"SML conversion failed: {e}") from e
 
-def _normalize_relationships_for_target(self, model: SMLModel) -> None:
+def _normalize_relationships_for_target(
+    self,
+    model: SMLModel,
+    prune_transitive_paths: bool = True,
+) -> None:
     """Canonicalize and deduplicate relationships on the final SML model.
 
     Stage placement is intentional: after canonical SML creation and before
@@ -212,35 +224,39 @@ def _normalize_relationships_for_target(self, model: SMLModel) -> None:
         else:
             candidate_rels.append(rel_group[0])
 
-    # Third pass: detect and break cycles/transitive ambiguities
-    # Build a graph to detect if keeping A->B creates redundant paths
-    graph: dict[str, set[str]] = {}
-    for rel in candidate_rels:
-        from_table = rel.from_dataset.upper()
-        to_table = rel.to_dataset.upper()
-        if from_table not in graph:
-            graph[from_table] = set()
-        graph[from_table].add(to_table)
-
-    # Check each relationship to see if removing it eliminates cycles
+    # Third pass (optional): detect and break cycles/transitive ambiguities.
+    # This is required for Fabric ambiguous-path handling but should be
+    # disabled for Snowflake semantic view parity.
     final_rels: list[SMLRelationship] = []
-    for rel in candidate_rels:
-        from_table = rel.from_dataset.upper()
-        to_table = rel.to_dataset.upper()
+    if prune_transitive_paths:
+        graph: dict[str, set[str]] = {}
+        for rel in candidate_rels:
+            from_table = rel.from_dataset.upper()
+            to_table = rel.to_dataset.upper()
+            if from_table not in graph:
+                graph[from_table] = set()
+            graph[from_table].add(to_table)
 
-        # Check if there's an alternate path (excluding this direct edge)
-        has_alternate_path = self._has_path(from_table, to_table, graph, exclude_edge=(from_table, to_table))
+        # Check each relationship to see if removing it eliminates cycles
+        for rel in candidate_rels:
+            from_table = rel.from_dataset.upper()
+            to_table = rel.to_dataset.upper()
 
-        if has_alternate_path:
-            logger.info(
-                "Cycle detected for %s -> %s: removing direct edge (alternate path exists via other tables)",
-                from_table,
-                to_table,
-            )
-            deduped_count += 1
-            # Skip this relationship - the alternate path will handle connectivity
-        else:
-            final_rels.append(rel)
+            # Check if there's an alternate path (excluding this direct edge)
+            has_alternate_path = self._has_path(from_table, to_table, graph, exclude_edge=(from_table, to_table))
+
+            if has_alternate_path:
+                logger.info(
+                    "Cycle detected for %s -> %s: removing direct edge (alternate path exists via other tables)",
+                    from_table,
+                    to_table,
+                )
+                deduped_count += 1
+                # Skip this relationship - the alternate path will handle connectivity
+            else:
+                final_rels.append(rel)
+    else:
+        final_rels = candidate_rels
 
     # Fourth pass: canonicalize names
     for rel in final_rels:

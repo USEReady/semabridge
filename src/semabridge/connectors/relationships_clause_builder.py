@@ -2,11 +2,23 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, Dict, List, Set, Tuple
 
 from semabridge.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+class BidirectionalFilterWarning(UserWarning):
+    """
+    Raised when a relationship uses bi-directional cross-filtering.
+
+    Snowflake Semantic Views do not enforce bi-directional filter propagation
+    at the DDL level.  If a Power BI model relies on this for a calculation,
+    query results against the Snowflake view may differ unless the consuming
+    BI tool handles the reverse join explicitly.
+    """
 
 
 class RelationshipsClauseBuilder:
@@ -58,8 +70,80 @@ class RelationshipsClauseBuilder:
         is_osi: bool
     ) -> List[str]:
         rel_lines = []
+        # Track (from_dataset, to_dataset) pairs already emitted so we never
+        # declare two relationships between the same table pair — Snowflake
+        # would either reject the DDL or produce an ambiguous join path.
+        emitted_pairs: Set[Tuple[str, str]] = set()
+
         for rel in relationships:
+            # Inactive relationships (e.g. USERELATIONSHIP() alternates in Power BI)
+            # have no equivalent in Snowflake Semantic Views.  Emitting them would
+            # create duplicate or ambiguous join paths, so we skip them entirely.
             if not rel.is_active:
+                logger.info(
+                    "Skipping inactive relationship '%s' -> '%s': "
+                    "Snowflake Semantic Views do not support inactive/alternate relationships. "
+                    "Use USERELATIONSHIP() logic in DAX measures instead.",
+                    rel.from_dataset,
+                    rel.to_dataset,
+                )
+                continue
+
+            if rel.from_dataset not in dataset_by_name or rel.to_dataset not in dataset_by_name:
+                logger.info(
+                    "Skipping relationship '%s' -> '%s': endpoint outside current dataset scope.",
+                    rel.from_dataset,
+                    rel.to_dataset,
+                )
+                continue
+
+            # Bi-directional cross-filtering: Snowflake Semantic Views do not
+            # enforce reverse filter propagation at the DDL level.  The DDL is
+            # emitted unchanged, but we surface a warning so developers know
+            # that calculations relying on bi-directional filtering may produce
+            # different numbers when queried directly from Snowflake.
+            from semabridge.sml.models import CrossFilterDirection  # local import avoids circular deps
+            if getattr(rel, "cross_filter", None) == CrossFilterDirection.BOTH:
+                msg = (
+                    f"Relationship '{rel.from_dataset}' -> '{rel.to_dataset}' uses "
+                    "bi-directional cross-filtering. Snowflake Semantic Views do not "
+                    "enforce reverse filter propagation natively; measures that depend "
+                    "on this behaviour may return different results when queried directly "
+                    "from Snowflake unless the consuming BI tool handles the reverse join."
+                )
+                warnings.warn(msg, BidirectionalFilterWarning, stacklevel=2)
+                logger.warning(msg)
+
+            # Many-to-many (bridge table) guard: Snowflake expects standard
+            # dimensional modelling (Fact -> Dimension).  Bridge tables are
+            # accepted as long as we don't accidentally declare a PK on a
+            # column that is not unique in that table.  We detect M:M
+            # cardinality and log a notice so the caller can verify uniqueness.
+            from semabridge.sml.models import Cardinality  # local import avoids circular deps
+            if getattr(rel, "cardinality", None) == Cardinality.MANY_TO_MANY:
+                logger.info(
+                    "Many-to-many relationship detected: '%s' -> '%s'. "
+                    "Ensure the join column on '%s' is unique (i.e. it is a true bridge/dimension key) "
+                    "before declaring it as a PRIMARY KEY in the Snowflake Semantic View. "
+                    "Snowflake will accept the relationship DDL, but an incorrect PK declaration "
+                    "on a non-unique column will produce incorrect query results.",
+                    rel.from_dataset,
+                    rel.to_dataset,
+                    rel.to_dataset,
+                )
+
+            # Guard against duplicate active relationships between the same table pair.
+            # This can happen when a model has multiple active paths (e.g. role-playing
+            # dimensions) that were not fully de-activated in the source.
+            pair = (rel.from_dataset, rel.to_dataset)
+            if pair in emitted_pairs:
+                logger.warning(
+                    "Skipping duplicate active relationship '%s' -> '%s': "
+                    "a relationship between these tables has already been emitted. "
+                    "Snowflake does not support multiple join paths between the same table pair.",
+                    rel.from_dataset,
+                    rel.to_dataset,
+                )
                 continue
 
             from_alias = dataset_aliases.get(rel.from_dataset)
@@ -150,5 +234,6 @@ class RelationshipsClauseBuilder:
                 rel_lines.append(f'  {rel_name} AS {from_alias} ({from_ref}) REFERENCES {ref_clause}')
             else:
                 rel_lines.append(f'  {from_alias} ({from_ref}) REFERENCES {ref_clause}')
+            emitted_pairs.add(pair)
         
         return rel_lines

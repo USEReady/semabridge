@@ -1,0 +1,1 @@
+SUM(CASE WHEN `sales`.`region` = 'North' THEN `sales`.`revenue` ELSE 0 END)

@@ -17,8 +17,16 @@ logger = get_logger(__name__)
 
 
 class MetricExpressionTranslator:
-    def __init__(self, identifier_sanitizer: Any = None) -> None:
+    def __init__(
+        self,
+        identifier_sanitizer: Any = None,
+        dialect: str = "snowflake",
+        behavior: Any = None,
+    ) -> None:
         self._id = identifier_sanitizer
+        self.dialect = dialect
+        self.behavior = behavior
+        self._common_dax_translator = None
     def _sanitize_semantic_name(self, name: str) -> str:
         """Sanitize semantic name and ensure it does not start with a digit."""
         sanitized = self._id.sanitize_column(name)
@@ -27,10 +35,21 @@ class MetricExpressionTranslator:
         return sanitized
 
     def _sanitize_sql_markdown(self, sql: str) -> str:
-        if not sql: return ""
-        sql = re.sub(r"```sql\s*", "", sql, flags=re.IGNORECASE)
-        sql = re.sub(r"```\s*", "", sql, flags=re.IGNORECASE)
-        return sql.strip()
+        if not sql:
+            return ""
+        try:
+            from semabridge.converter.dax_engine import sanitize_llm_sql
+
+            return sanitize_llm_sql(sql)
+        except Exception:
+            sql = re.sub(r"```sql\s*", "", sql, flags=re.IGNORECASE)
+            sql = re.sub(r"```\s*", "", sql, flags=re.IGNORECASE)
+            sql = re.sub(r"(?m)^.*\bVAR\b.*$", "", sql, flags=re.IGNORECASE)
+            if re.match(r"^\s*SELECT\s+", sql, re.IGNORECASE):
+                match = re.search(r"SELECT\s+(.*?)\s+FROM\b", sql, re.IGNORECASE | re.DOTALL)
+                if match:
+                    sql = match.group(1)
+            return sql.strip()
 
 
     # Implementations lifted from SnowflakeEmitter. These use the emitter
@@ -168,26 +187,43 @@ class MetricExpressionTranslator:
                 is_simple_metric,
                 rule_based_translation,
             )
-            if is_simple_metric(dax_expression):
+            rule_table_alias = table_alias.lower()
+            owner_match = re.search(
+                r"\b(?:SUM|AVERAGE|COUNT|MIN|MAX)\s*\(\s*'([^']+)'\s*\[",
+                dax_expression,
+                re.IGNORECASE,
+            )
+            if owner_match:
+                owner_dataset = owner_match.group(1)
+                rule_table_alias = (
+                    dataset_aliases.get(owner_dataset)
+                    or alias_by_raw.get(owner_dataset)
+                    or alias_by_raw.get(owner_dataset.upper())
+                    or alias_by_raw.get(self._id.sanitize_alias(owner_dataset))
+                    or rule_table_alias
+                )
+            local_expr = rule_based_translation(
+                dax_expression,
+                rule_table_alias,
+                metric_name=getattr(metric, "unique_name", "") or metric_name,
+                dialect=self.dialect,
+            )
+            if local_expr:
+                candidate_expressions.append(local_expr)
+            elif is_simple_metric(dax_expression):
                 local_expr = rule_based_translation(
                     dax_expression,
                     table_alias.lower(),
+                    dialect=self.dialect
                 )
                 if local_expr:
                     candidate_expressions.append(local_expr)
         except Exception as ex:
             logger.debug(f"Local fallback unavailable for metric '{metric.unique_name}': {ex}")
 
-        try:
-            from semabridge.converter.gemini_dax_translator import get_gemini_translator
-            translator = get_gemini_translator()
-        except Exception as ex:
-            logger.debug(f"LLM fallback unavailable for metric '{metric.unique_name}': {ex}")
-            translator = None
-
-        if translator and getattr(translator, "use_gemini", False) and getattr(translator, "api_key", None):
+        if self._is_common_llm_dax_enabled():
             schema_context = {ds_name: sorted(list(cols)) for ds_name, cols in dataset_col_lookup.items()}
-            llm_result = translator.translate(
+            llm_result = self._translate_with_common_dax_translator(
                 dax=dax_expression,
                 table_alias=table_alias.lower(),
                 dataset_name=metric.dataset,
@@ -195,14 +231,24 @@ class MetricExpressionTranslator:
                 schema_context=schema_context,
             )
 
-            if llm_result and llm_result.is_valid and llm_result.sql:
+            if (
+                llm_result
+                and llm_result.is_valid
+                and llm_result.sql
+                and not getattr(llm_result, "fallback_used", False)
+            ):
                 candidate_expressions.append(llm_result.sql)
             else:
                 logger.debug(f"LLM fallback failed for metric '{metric.unique_name}': {getattr(llm_result, 'error', 'invalid translation')}")
 
         for candidate_sql in candidate_expressions:
             expr = self._sanitize_sql_markdown(candidate_sql)
-            if not expr or "SELECT" in expr.upper():
+            if not expr:
+                continue
+            
+            # CRITICAL: Reject expressions containing DAX 'VAR' keyword leakage
+            if re.search(r'\bVAR\b', expr.upper()):
+                logger.warning("Metric '%s': rejecting LLM translation containing 'VAR' keyword: %s", metric_name, expr)
                 continue
 
             expr = self._id.resolve_dot_notation(
@@ -252,6 +298,48 @@ class MetricExpressionTranslator:
             return expr
 
         return None
+
+    def _is_common_llm_dax_enabled(self) -> bool:
+        behavior = getattr(self, "behavior", None)
+        dbx_behavior = getattr(behavior, "databricks", None)
+        if dbx_behavior is not None:
+            return bool(getattr(dbx_behavior, "enable_llm_dax_translation", False))
+        return os.getenv("ENABLE_LLM_DAX_TRANSLATION", "").lower() in {"1", "true", "yes", "on"}
+
+    def _translate_with_common_dax_translator(
+        self,
+        *,
+        dax: str,
+        table_alias: str,
+        dataset_name: str,
+        metric_name: str,
+        schema_context: Dict[str, List[str]],
+    ) -> Any:
+        try:
+            from semabridge.converter.common_dax_translator import CommonDAXTranslator, SQLDialect
+
+            if self._common_dax_translator is None:
+                dbx_behavior = getattr(getattr(self, "behavior", None), "databricks", None)
+                self._common_dax_translator = CommonDAXTranslator(
+                    dialect=SQLDialect.SNOWFLAKE,
+                    provider_order=list(getattr(dbx_behavior, "llm_dax_provider_order", []) or []),
+                    timeout_seconds=int(getattr(dbx_behavior, "llm_dax_timeout_seconds", 20) or 20),
+                    cache_enabled=bool(getattr(dbx_behavior, "llm_dax_cache_enabled", True)),
+                    fallback_to_placeholder=bool(
+                        getattr(dbx_behavior, "llm_dax_fallback_to_placeholder", True)
+                    ),
+                    placeholder_sql="0",
+                )
+            return self._common_dax_translator.translate(
+                dax=dax,
+                table_alias=table_alias,
+                dataset_name=dataset_name,
+                metric_name=metric_name,
+                schema_context=schema_context,
+            )
+        except Exception as ex:
+            logger.debug("Common LLM fallback unavailable for metric '%s': %s", metric_name, ex)
+            return None
 
     def _validate_metric_column_references(
         self,
@@ -576,9 +664,13 @@ class MetricExpressionTranslator:
         if is_flag:
             return f"SUM(IFF({expr_sql} = 1 OR {expr_sql} = TRUE, 1, 0))"
 
-        if expr_sql.strip().upper().endswith("::FLOAT"):
-            return f"SUM({expr_sql})"
-        return f"SUM({expr_sql}::FLOAT)"
+        expr = expr_sql.strip()
+        if re.match(r"(?is)^CASE\b.*\bEND(?:\s*::\s*FLOAT)?$", expr):
+            expr = re.sub(r"(?is)\s*::\s*FLOAT\s*$", "", expr).strip()
+            return f"SUM(CAST(({expr}) AS FLOAT))"
+        if expr.upper().endswith("::FLOAT"):
+            return f"SUM({expr})"
+        return f"SUM({expr}::FLOAT)"
 
     # Internal Translation Helpers (Migrated from Emitter)
     

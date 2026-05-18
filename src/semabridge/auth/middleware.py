@@ -16,9 +16,8 @@ The following paths are **always** accessible without a token:
 
 Toggle
 ------
-Set ``AUTH_ENABLED=false`` (or omit) to bypass enforcement entirely.
-This allows the existing frontend to keep working while auth is
-integrated progressively.
+Set ``AUTH_ENABLED=false`` to bypass enforcement entirely.
+Auth is enabled by default.
 """
 
 from __future__ import annotations
@@ -66,14 +65,15 @@ PUBLIC_PREFIXES = (
 class AuthMiddleware(BaseHTTPMiddleware):
     """Reject requests without a valid JWT on protected paths.
 
-    Skips enforcement entirely when ``AUTH_ENABLED`` is not ``"true"``.
+    Skips enforcement entirely when ``AUTH_ENABLED`` is explicitly disabled.
     """
 
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
-        # Feature flag — off by default so nothing breaks during rollout
-        if os.environ.get("AUTH_ENABLED", "").lower() != "true":
+        # Feature flag — enabled by default unless explicitly disabled
+        auth_flag = os.environ.get("AUTH_ENABLED", "true").lower()
+        if auth_flag in {"false", "0", "no"}:
             return await call_next(request)
 
         path = request.url.path.rstrip("/")

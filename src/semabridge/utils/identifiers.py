@@ -29,6 +29,8 @@ SNOWFLAKE_RESERVED_WORDS: Set[str] = {
     # SQL Keywords
     "table", "column", "date", "group", "order", "join", "view", "select", "from", "where",
     "and", "or", "not", "null", "true", "false", "as", "by", "on", "in", "is",
+    # JOIN / SET keywords that are also common column names
+    "to", "of", "at", "do", "if", "no",
     # Additional SQL clauses
     "having", "limit", "offset", "union", "except", "intersect", "into",
     "insert", "update", "delete", "create", "drop", "alter", "grant", "revoke",

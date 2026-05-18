@@ -20,13 +20,22 @@ class MappingService:
         }
         return await auto_map_compat(payload)
 
-    async def update_mapping_compat(self, mapping_id: str, target_name: str, target_data_type: Optional[str] = None, status: str = "manual") -> Dict[str, Any]:
+    async def update_mapping_compat(
+        self,
+        mapping_id: str,
+        target_name: str,
+        target_data_type: Optional[str] = None,
+        synonyms: Optional[List[str]] = None,
+        status: str = "manual",
+    ) -> Dict[str, Any]:
         payload = {
             "target_name": target_name,
             "status": status,
         }
         if target_data_type is not None:
             payload["target_data_type"] = target_data_type
+        if synonyms is not None:
+            payload["synonyms"] = synonyms
         return await update_mapping_compat(mapping_id, payload)
 
     async def manual_deploy_compat(self, project_id: str, field_mappings: List[Dict[str, Any]]) -> Dict[str, Any]:

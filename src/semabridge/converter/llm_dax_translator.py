@@ -278,9 +278,13 @@ TRANSLATION RULES
 7. FORMAT(expr, fmt) → date_format(expr, fmt) (only for date columns)
 8. IF(cond, true_val, false_val) → CASE WHEN cond THEN true_val ELSE false_val END
 9. BLANK() → NULL
-10. Time intelligence (SAMEPERIODLASTYEAR, TOTALYTD, etc.) → not supported directly. Instead, pre‑compute the needed period columns in a dimension table.
-11. Measure references [Measure Name] → use the pre‑computed snake_case column name if available, otherwise inline the resolved SQL (but avoid recursion).
-12. String literals: DAX "text" → SQL 'text'
+281. Time intelligence (SAMEPERIODLASTYEAR, TOTALYTD, etc.) → not supported directly. Instead, use conditional aggregation with `_current_fiscal_period` where applicable.
+282. For measures involving fiscal year periods and `_current_fiscal_period`, use:
+     SUM(CASE WHEN `joined_table`.`fiscal_yr_period` < _current_fiscal_period THEN `joined_table`.`column_name` ELSE NULL END)
+283. For "Last Refreshed" patterns, use:
+     CONCAT('Last Refreshed - ', CAST(MAX(`gl_refresh_datetime`) AS STRING))
+284. Measure references [Measure Name] → use the pre‑computed snake_case column name if available, otherwise inline the resolved SQL (but avoid recursion).
+285. String literals: DAX "text" → SQL 'text'
 13. No SELECT, FROM, WHERE, GROUP BY – output only the expression.
 
 ═══════════════════════════════════════════
@@ -341,12 +345,16 @@ Databricks SQL expression (only one line, no subqueries, no extra text):"""
         """
         sql = response.strip()
         
-        # Remove markdown code blocks if present
-        if sql.startswith("```"):
-            # Extract content between backticks
-            match = re.search(r"```(?:sql)?\s*(.*?)\s*```", sql, re.DOTALL)
-            if match:
-                sql = match.group(1).strip()
+        try:
+            from semabridge.converter.dax_engine import sanitize_llm_sql
+
+            sql = sanitize_llm_sql(sql)
+        except Exception:
+            # Remove markdown code blocks if present
+            if sql.startswith("```"):
+                match = re.search(r"```(?:sql)?\s*(.*?)\s*```", sql, re.DOTALL)
+                if match:
+                    sql = match.group(1).strip()
         
         # Remove trailing semicolon
         sql = sql.rstrip(";").strip()

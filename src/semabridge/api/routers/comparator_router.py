@@ -2,7 +2,7 @@
 Semantic Comparator API Router
 ==============================
 Provides YAML parsing, structural diff (Level 1), and LLM semantic comparison (Level 2)
-for semantic model files in OSI, SML, TSML, and Snowflake YAML dialects.
+for semantic model files in OSI, SML, and Snowflake YAML dialects.
 
 Industry patterns applied:
   - Format detection: structural-marker sniffing (OSI v1.0 spec, Yamale approach)
@@ -241,41 +241,6 @@ class OsiAdapter(BaseSemanticAdapter):
                 "right_column": r_cols[0] if isinstance(r_cols, list) else str(r_cols),
                 "cardinality": r.get("cardinality", "Unknown")
             }
-        return norm
-
-class TsmlAdapter(BaseSemanticAdapter):
-    @classmethod
-    def handles(cls, data: dict) -> bool:
-        model = data.get("model", {})
-        return isinstance(model, dict) and "tables" in model
-
-    @classmethod
-    def parse(cls, data: dict) -> dict:
-        norm = _empty_normalized()
-        norm["format"] = "TSML"
-        model = data.get("model", {})
-        for tbl in model.get("tables", []):
-            if not isinstance(tbl, dict): continue
-            tbl_name = tbl.get("name", "Unknown")
-            cols, measures = tbl.get("columns", []), tbl.get("measures", [])
-            norm["tables"][tbl_name] = {
-                "name": tbl_name, "column_count": len(cols), "metric_count": len(measures), "relationship_count": 0
-            }
-            for col in cols:
-                if not isinstance(col, dict): continue
-                col_name = col.get("name", "Unknown")
-                norm["columns"][f"{tbl_name}.{col_name}"] = {"name": col_name, "table": tbl_name, "type": col.get("dataType", col.get("type", "Unknown")), "is_key": col.get("isKey", False)}
-            for m in measures:
-                if not isinstance(m, dict): continue
-                m_name = m.get("name", "Unknown")
-                norm["metrics"][f"{tbl_name}.{m_name}"] = {"name": m_name, "table": tbl_name, "definition": str(m.get("expression", "Unknown")), "description": m.get("description", "")}
-        
-        for r in model.get("relationships", []):
-            if not isinstance(r, dict): continue
-            left = r.get("fromTable", "Unknown")
-            if left in norm["tables"]: norm["tables"][left]["relationship_count"] += 1
-            r_name = r.get("name", f"{left}-{r.get('toTable')}")
-            norm["relationships"][r_name] = {"name": r_name, "left_table": left, "right_table": r.get("toTable", "Unknown"), "left_column": r.get("fromColumn", "Unknown"), "right_column": r.get("toColumn", "Unknown"), "cardinality": r.get("crossFilteringBehavior", "Unknown")}
         return norm
 
 class SnowflakeAdapter(BaseSemanticAdapter):
@@ -753,7 +718,7 @@ class SemabridgeDDLAdapter(BaseSemanticAdapter):
                         norm["tables"][tbl] = {"name": tbl, "column_count": 0, "metric_count": 0, "relationship_count": 0}
 
 
-class SnowflakeTsmlAdapter(BaseSemanticAdapter):
+class SnowflakeSourceAdapter(BaseSemanticAdapter):
     @classmethod
     def handles(cls, data: dict) -> bool:
         return str(data.get("source_type", "")).lower() == "snowflake" and "tables" in data and isinstance(data["tables"], dict)
@@ -761,7 +726,7 @@ class SnowflakeTsmlAdapter(BaseSemanticAdapter):
     @classmethod
     def parse(cls, data: dict) -> dict:
         norm = _empty_normalized()
-        norm["format"] = "SNOWFLAKE_TSML"
+        norm["format"] = "SNOWFLAKE_SOURCE"
         
         tables = data.get("tables", {})
         columns = data.get("columns", {})
@@ -917,7 +882,7 @@ _TYPE_NORMALISE: dict[str, str] = {
     "date": "date", "datetime": "datetime", "timestamp": "datetime",
     "timestamp_ntz": "datetime", "timestamp_tz": "datetime", "timestamp_ltz": "datetime",
     "time": "time", "variant": "variant", "object": "variant", "array": "variant",
-    # TSML / Power BI
+    # Power BI / Fabric
     "int64": "integer", "int32": "integer", "int16": "integer", "int": "integer",
     "integer": "integer", "bigint": "integer", "smallint": "integer", "tinyint": "integer",
     "double": "float", "single": "float", "decimal": "decimal", "currency": "decimal",
@@ -1097,14 +1062,13 @@ def _build_file_summary(osi: dict) -> dict:
 class SemanticRegistry:
     ADAPTERS = [
         OsiAdapter,
-        TsmlAdapter,
         SnowflakeAdapter,
         AtScaleAdapter,
         CubeAdapter,
         DbtAdapter,
         SmlAdapter,
         SemabridgeDDLAdapter,
-        SnowflakeTsmlAdapter,
+        SnowflakeSourceAdapter,
         GenericAdapter
     ]
 
@@ -1303,7 +1267,7 @@ async def parse_single_yaml(file: UploadFile = File(...)):
     """
     Parse a single YAML file and return statistics.
 
-    Accepts any of: OSI, SML, TSML, Snowflake Cortex semantic YAML.
+    Accepts any of: OSI, SML, or Snowflake Cortex semantic YAML.
     Auto-detects format via structural-marker sniffing.
     Enforces Canonical OSI mapping via Pydantic models.
 
@@ -1350,7 +1314,7 @@ def compare_yamls(req: CompareRequest):
 
     Both files are first converted into OSI canonical format (normalised types,
     cardinalities) before comparison. This ensures apples-to-apples diffs
-    regardless of source format (Snowflake vs TSML vs dbt etc.).
+    regardless of source format (Snowflake vs dbt etc.).
 
     If provider/model are specified, modified metrics are automatically sent
     to the LLM. Metrics judged EQUIVALENT are reclassified as 'identical'.

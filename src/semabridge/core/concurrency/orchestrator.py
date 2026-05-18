@@ -13,7 +13,6 @@ import signal
 import time
 import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional
 
 from semabridge.core.concurrency.config_resolver import ConfigurationResolver
 from semabridge.core.concurrency.error_classifier import ErrorClassifier
@@ -24,7 +23,6 @@ from semabridge.core.concurrency.model_processor import (
 )
 from semabridge.core.concurrency.models import (
     BatchResult,
-    BroadcastResult,
     ConcurrencyConfig,
     ExecutionMode,
     ModelResult,
@@ -73,17 +71,17 @@ class ConcurrencyOrchestrator:
     def __init__(
         self,
         config,
-        concurrency_config: Optional[ConcurrencyConfig] = None,
-        retry_config: Optional[RetryConfig] = None,
+        concurrency_config: ConcurrencyConfig | None = None,
+        retry_config: RetryConfig | None = None,
         source: str = "snowflake",
-        target: Optional[str] = None,
-        db_path: Optional[str] = None,
-        config_path: Optional[str] = None,
+        target: str | None = None,
+        db_path: str | None = None,
+        config_path: str | None = None,
         deploy: bool = True,
-        tag: Optional[str] = None,
+        tag: str | None = None,
         dry_run: bool = False,
-        dataset_id: Optional[str] = None,
-        workspace_id: Optional[str] = None,
+        dataset_id: str | None = None,
+        workspace_id: str | None = None,
         mode: ExecutionMode = ExecutionMode.BEST_EFFORT,
         show_dashboard: bool = True,
         db_manager=None,
@@ -128,7 +126,7 @@ class ConcurrencyOrchestrator:
 
     def run(
         self,
-        models: Optional[List[str]] = None,
+        models: list[str] | None = None,
     ) -> BatchResult:
         """Execute parallel model synchronization.
 
@@ -179,7 +177,7 @@ class ConcurrencyOrchestrator:
         reporter.start()
 
         # 5. Dispatch to workers
-        results: List[ModelResult] = []
+        results: list[ModelResult] = []
         try:
             self._install_signal_handlers()
             results = self._dispatch_models(
@@ -285,7 +283,7 @@ class ConcurrencyOrchestrator:
     # Internal
     # ------------------------------------------------------------------
 
-    def _resolve_models(self) -> List[str]:
+    def _resolve_models(self) -> list[str]:
         """Resolve model list from configuration.
 
         Uses explicit ``source.models`` when available, falls back to
@@ -327,10 +325,10 @@ class ConcurrencyOrchestrator:
 
     def _dispatch_models(
         self,
-        models: List[str],
+        models: list[str],
         worker_count: int,
         reporter: ProgressReporter,
-    ) -> List[ModelResult]:
+    ) -> list[ModelResult]:
         """Submit models to ProcessPoolExecutor and collect results."""
         processor = ModelProcessor(
             source=self._source,
@@ -345,7 +343,7 @@ class ConcurrencyOrchestrator:
             workspace_id=self._workspace_id,
         )
 
-        results: List[ModelResult] = []
+        results: list[ModelResult] = []
 
         with ProcessPoolExecutor(max_workers=worker_count) as executor:
             future_to_model = {}

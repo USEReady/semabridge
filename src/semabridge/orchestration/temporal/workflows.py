@@ -1,12 +1,12 @@
-"""
+﻿"""
 Temporal Workflow Definitions for Semabridge.
 
 Each workflow models the durable, resumable lifecycle of a single
 semantic-model synchronisation pipeline:
 
-    1. Extract  – pull metadata from Snowflake
-    2. Diff     – compute incremental delta (via Ray actors)
-    3. Emit     – deploy TMSL to Microsoft Fabric
+    1. Extract  â€“ pull metadata from Snowflake
+    2. Diff     â€“ compute incremental delta (via Ray actors)
+    3. Emit     â€“ deploy semantic model payloads to Microsoft Fabric
 
 Workflows can yield on external signals (e.g. Fabric 429 back-off)
 and resume without holding worker memory.
@@ -131,10 +131,10 @@ class SyncModelWorkflow:
     Durable, resumable pipeline for a single semantic model.
 
     Phases:
-        extract  → pull metadata from Snowflake (activity)
-        diff     → compute incremental delta via Ray (activity)
-        emit     → deploy TMSL to Fabric (activity, yields on 429)
-        snapshot → persist diff result to repository (activity)
+        extract  â†’ pull metadata from Snowflake (activity)
+        diff     â†’ compute incremental delta via Ray (activity)
+        emit     â†’ deploy semantic model payloads to Fabric (activity, yields on 429)
+        snapshot â†’ persist diff result to repository (activity)
     """
 
     def __init__(self) -> None:
@@ -205,7 +205,7 @@ class SyncModelWorkflow:
         result.changes_detected = diff_out.total_changes
 
         if diff_out.total_changes == 0 and not inp.force_full_sync:
-            # Nothing changed — skip emit, persist snapshot, return early
+            # Nothing changed â€” skip emit, persist snapshot, return early
             result.phase = SyncPhase.COMPLETED.value
             result.deployed = False
             await workflow.execute_activity(
@@ -344,4 +344,5 @@ class BatchSyncWorkflow:
             final_results.extend(sublist)
             
         return final_results
+
 

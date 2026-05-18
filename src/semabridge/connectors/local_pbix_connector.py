@@ -1,4 +1,4 @@
-"""
+﻿"""
 Local PBIX Connector.
 
 Air-gapped semantic model extraction from local .pbix (Power BI Desktop)
@@ -8,10 +8,10 @@ archive files. Parses the internal ZIP structure to extract:
 - M Code / Power Query scripts
 - Row-Level Security (RLS) roles
 
-This connector operates entirely offline — no Microsoft cloud dependency.
+This connector operates entirely offline â€” no Microsoft cloud dependency.
 
 Architecture:
-    .pbix file → BaseConnector.extract() → OSI intermediate model
+    .pbix file â†’ BaseConnector.extract() â†’ OSI intermediate model
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ class LocalPBIXConnector(BaseConnector):
         self._connections: Optional[List[Dict[str, Any]]] = None
 
     def extract(self) -> Dict[str, Any]:
-        """Extract raw PBIX semantic-model metadata as Fabric-like TMSL.
+        """Extract raw PBIX semantic-model metadata as Fabric-like TMDL.
 
         Returns:
             A dictionary shaped like the Fabric model-definition payload:
@@ -72,7 +72,7 @@ class LocalPBIXConnector(BaseConnector):
 
         Raises:
             PBIXParsingError: If the PBIX file is missing, corrupt, or the
-                semantic model cannot be parsed into a valid JSON/TMSL payload.
+                semantic model cannot be parsed into a valid JSON/TMDL payload.
         """
         self.authenticate()
         self._open_archive()
@@ -88,7 +88,7 @@ class LocalPBIXConnector(BaseConnector):
             raw_tmsl = {"model": model_payload}
             raw_json = json.dumps(raw_tmsl, ensure_ascii=False)
             logger.debug(
-                "PBIX raw TMSL extracted from %s (%s bytes JSON)",
+                "PBIX raw TMDL extracted from %s (%s bytes JSON)",
                 self._pbix_path,
                 len(raw_json.encode("utf-8")),
             )
@@ -393,7 +393,7 @@ class LocalPBIXConnector(BaseConnector):
         }
 
     def _build_tmsl_from_fallback(self, fallback_result: Dict[str, Any]) -> Dict[str, Any]:
-        """Build a Fabric-like TMSL payload from pbixray fallback fields.
+        """Build a Fabric-like TMDL payload from pbixray fallback fields.
 
         This prevents downstream conversion from seeing an empty model when
         JSON DataModelSchema parsing fails but fallback extraction succeeds.
@@ -499,7 +499,7 @@ class LocalPBIXConnector(BaseConnector):
             model_payload["culture"] = str(model_meta.get("culture", "en-US"))
 
         logger.info(
-            "pbixray fallback TMSL assembled: %s tables, %s relationships",
+            "pbixray fallback TMDL assembled: %s tables, %s relationships",
             len(model_payload["tables"]),
             len(relationships),
         )
@@ -507,7 +507,7 @@ class LocalPBIXConnector(BaseConnector):
 
     @staticmethod
     def _normalize_pbixray_data_type(raw_type: Any) -> str:
-        """Map pbixray/Pandas dtypes into TMSL-like dataType values."""
+        """Map pbixray/Pandas dtypes into TMDL-like dataType values."""
         text = str(raw_type or "").strip().lower()
         mapping = {
             "int64": "int64",
@@ -842,3 +842,4 @@ class LocalPBIXConnector(BaseConnector):
             conn_string,
         )
         return match.group(0) if match else None
+

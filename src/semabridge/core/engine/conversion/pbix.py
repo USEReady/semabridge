@@ -25,8 +25,8 @@ from semabridge.core.run_summary import (
 )
 from semabridge.core.source_format import (
     SourceFormat,
-    from_fabric_tmsl,
-    from_pbix_tmsl,
+    from_fabric_tmdl,
+    from_pbix_tmdl,
     from_snowflake_metadata,
 )
 from semabridge.intermediate.models import OSIModel
@@ -48,13 +48,13 @@ from semabridge.core.engine.exceptions import (
 logger = get_logger(__name__)
 
 def _convert_pbix_to_sml(self, context: RunContext) -> SMLModel:
-    """Convert PBIX DataModelSchema (TMSL) to SML via the mandatory OSI intermediate layer.
+    """Convert PBIX DataModelSchema (TMDL) to SML via the mandatory OSI intermediate layer.
 
     The DataModelSchema inside a .pbix archive is structurally identical to the
-    Fabric TMSL model definition, so we reuse TMSLToOSIConverter for Phase 1.
-    Flow: TMSL → OSIModel → SMLModel
+    Fabric TMDL model definition, so we reuse TMDLToOSIConverter for Phase 1.
+    Flow: TMDL → OSIModel → SMLModel
     """
-    from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
+    from semabridge.converter.tmsl_to_osi import TMDLToOSIConverter
     from semabridge.converter.osi_to_sml import OSIToSMLConverter
 
     sf = context.source_format
@@ -62,13 +62,13 @@ def _convert_pbix_to_sml(self, context: RunContext) -> SMLModel:
     ws_id = "local"
     ds_id = context.project_id
 
-    # Phase 1: TMSL → OSI
+    # Phase 1: TMDL → OSI
     source_data = {
-        "tmsl": sf.tmsl_definition,
+        "tmdl": sf.tmdl_definition,
         "workspace_id": ws_id,
         "dataset_id": ds_id,
     }
-    osi_model = TMSLToOSIConverter().to_osi(source_data)
+    osi_model = TMDLToOSIConverter().to_osi(source_data)
     context.osi_model = osi_model
     logger.debug(
         f"PBIX OSI intermediate: {len(osi_model.datasets)} datasets, "

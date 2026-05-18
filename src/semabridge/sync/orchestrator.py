@@ -16,11 +16,13 @@ resumable execution via checkpoints.
 from __future__ import annotations
 
 import time
+import json
+import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from semabridge.core.exceptions import ConflictError, SyncError
-from semabridge.intermediate.models import OSIModel
+from semabridge.intermediate.models import OSIDataType, OSIModel
 from semabridge.sync.conflict_resolver import ConflictResolver
 from semabridge.sync.models import (
     ConflictResolution,
@@ -41,6 +43,96 @@ from semabridge.utils.logger import get_logger
 from semabridge.utils.relationship_naming import RelationshipNameTracker
 
 logger = get_logger(__name__)
+
+
+def _write_relationship_debug_artifact(
+    model_name: str,
+    raw_model: dict[str, Any],
+    osi_model: OSIModel,
+) -> None:
+    """Persist raw vs converted relationship diagnostics for Fabric extraction."""
+    try:
+        safe_model = re.sub(r"[^A-Za-z0-9_.-]", "_", str(model_name or "model"))
+        safe_model = re.sub(r"_+", "_", safe_model).strip("._") or "model"
+        out_dir = Path("output") / "debug" / safe_model
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_file = out_dir / "fabric_relationship_debug.json"
+
+        raw_relationships = raw_model.get("relationships", []) if isinstance(raw_model, dict) else []
+        if not isinstance(raw_relationships, list):
+            raw_relationships = []
+
+        kept_keys = {
+            (
+                str(r.from_dataset or "").strip().casefold(),
+                str((r.from_columns[0] if r.from_columns else "") or "").strip().casefold(),
+                str(r.to_dataset or "").strip().casefold(),
+                str((r.to_columns[0] if r.to_columns else "") or "").strip().casefold(),
+            )
+            for r in (osi_model.relationships or [])
+        }
+
+        raw_items: list[dict[str, Any]] = []
+        for idx, rel in enumerate(raw_relationships, start=1):
+            if not isinstance(rel, dict):
+                raw_items.append(
+                    {
+                        "index": idx,
+                        "kept_in_osi": False,
+                        "note": "non-dict relationship row",
+                        "raw": rel,
+                    }
+                )
+                continue
+
+            from_table = str(rel.get("fromTable") or rel.get("from_table") or rel.get("sourceTable") or "").strip()
+            from_column = str(rel.get("fromColumn") or rel.get("from_column") or rel.get("sourceColumn") or "").strip()
+            to_table = str(rel.get("toTable") or rel.get("to_table") or rel.get("targetTable") or "").strip()
+            to_column = str(rel.get("toColumn") or rel.get("to_column") or rel.get("targetColumn") or "").strip()
+
+            endpoint_key = (
+                from_table.casefold(),
+                from_column.casefold(),
+                to_table.casefold(),
+                to_column.casefold(),
+            )
+            raw_items.append(
+                {
+                    "index": idx,
+                    "name": rel.get("name"),
+                    "fromTable": from_table,
+                    "fromColumn": from_column,
+                    "toTable": to_table,
+                    "toColumn": to_column,
+                    "isActive": rel.get("isActive"),
+                    "kept_in_osi": endpoint_key in kept_keys,
+                    "raw": rel,
+                }
+            )
+
+        payload = {
+            "model_name": model_name,
+            "raw_table_count": len(raw_model.get("tables", []) if isinstance(raw_model, dict) else []),
+            "raw_relationship_count": len(raw_relationships),
+            "osi_relationship_count": len(osi_model.relationships or []),
+            "osi_relationships": [
+                {
+                    "name": r.unique_name,
+                    "from_dataset": r.from_dataset,
+                    "from_column": r.from_columns[0] if r.from_columns else None,
+                    "to_dataset": r.to_dataset,
+                    "to_column": r.to_columns[0] if r.to_columns else None,
+                    "is_active": r.is_active,
+                }
+                for r in (osi_model.relationships or [])
+            ],
+            "raw_relationships_analysis": raw_items,
+        }
+
+        out_file.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+        logger.info("Wrote Fabric relationship debug artifact: %s", out_file)
+    except Exception as exc:
+        logger.warning("Failed to write Fabric relationship debug artifact: %s", exc)
 
 
 class SyncOrchestrator:
@@ -677,9 +769,9 @@ class SyncOrchestrator:
         """
         Extract source data and convert to OSI model.
 
-        For PBIX: Use LocalPBIXConnector → TMSLToOSIConverter.
+        For PBIX: Use LocalPBIXConnector → TMDLToOSIConverter.
         For Snowflake: Use SnowflakeExtractor → metadata-to-OSI.
-        For Fabric (semantic model): Use FabricExtractor → TMSLToOSIConverter.
+        For Fabric (semantic model): Use FabricExtractor → TMDLToOSIConverter.
         For Snowflake semantic view: Use SnowflakeExtractor DDL → SemanticViewToOSIConverter.
         """
         if config.direction in (
@@ -709,20 +801,20 @@ class SyncOrchestrator:
             )
 
     def _extract_pbix_to_osi(self, item: SyncJobItem) -> OSIModel:
-        """Extract PBIX file and convert to OSI model."""
+        """Extract PBIX file and convert to OSI model using TMDL payloads."""
         from semabridge.connectors.local_pbix_connector import LocalPBIXConnector
-        from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
+        from semabridge.converter.tmdl_to_osi import TMDLToOSIConverter
 
         connector = LocalPBIXConnector({"pbix_path": item.source_path})
-        raw_tmsl = connector.extract()
-        converter = TMSLToOSIConverter()
-        tmsl_data = {
-            "tmsl": raw_tmsl,
+        raw_tmdl = connector.extract()
+        converter = TMDLToOSIConverter()
+        tmdl_data = {
+            "tmdl": raw_tmdl,
             "workspace_id": "local",
             "dataset_id": item.model_name,
         }
 
-        osi_model = converter.to_osi(tmsl_data)
+        osi_model = converter.to_osi(tmdl_data)
         logger.info(
             f"Extracted '{item.model_name}' → OSI: "
             f"{len(osi_model.datasets)} datasets, "
@@ -735,23 +827,31 @@ class SyncOrchestrator:
         """
         Extract a Fabric semantic model definition and convert to OSI.
 
-        Uses ``FabricExtractor.get_model_definition()`` (TMSL JSON) and
-        pipes it through the existing ``TMSLToOSIConverter``.
+        Uses ``FabricExtractor.get_model_definition()`` (TMDL JSON payload)
+        and pipes it through ``TMDLToOSIConverter``.
         """
         from semabridge.connectors.fabric_extractor import FabricExtractor
-        from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
+        from semabridge.converter.tmdl_to_osi import TMDLToOSIConverter
         from semabridge.core.settings import get_settings
 
         settings = get_settings()
         extractor = FabricExtractor(settings.fabric)
         # item.source_path holds the Fabric dataset GUID
         dataset_id: str = item.source_path or item.model_name
-        tmsl_data = extractor.get_model_definition(dataset_id)
+        tmdl_data = extractor.get_model_definition(dataset_id)
+        raw_model = tmdl_data.get("model", {}) if isinstance(tmdl_data, dict) else {}
+        raw_relationships = raw_model.get("relationships", []) if isinstance(raw_model, dict) else []
+        logger.info(
+            "Fabric extract raw payload for '%s': tables=%s relationships=%s",
+            item.model_name,
+            len(raw_model.get("tables", []) if isinstance(raw_model, dict) else []),
+            len(raw_relationships) if isinstance(raw_relationships, list) else 0,
+        )
 
-        converter = TMSLToOSIConverter()
+        converter = TMDLToOSIConverter()
         osi_model = converter.to_osi(
             {
-                "tmsl": tmsl_data,
+                "tmdl": tmdl_data,
                 "workspace_id": settings.fabric.workspace_id,
                 "dataset_id": item.model_name,
             }
@@ -762,6 +862,11 @@ class SyncOrchestrator:
             f"{len(osi_model.datasets)} datasets, "
             f"{len(osi_model.metrics)} metrics, "
             f"{len(osi_model.relationships)} relationships"
+        )
+        _write_relationship_debug_artifact(
+            model_name=item.model_name,
+            raw_model=raw_model if isinstance(raw_model, dict) else {},
+            osi_model=osi_model,
         )
         return osi_model
 
@@ -826,7 +931,6 @@ class SyncOrchestrator:
         from semabridge.intermediate.models import (
             OSIColumn,
             OSIDataset,
-            OSIDataType,
             OSIModel,
             OSIRelationship,
         )
@@ -894,6 +998,8 @@ class SyncOrchestrator:
             return self._deploy_to_snowflake(osi_model, config)
         elif config.direction == SyncDirection.SNOWFLAKE_TO_PBI:
             return self._deploy_to_powerbi(osi_model, config)
+        elif config.direction == SyncDirection.PBIX_TO_DATABRICKS:
+            return self._deploy_to_databricks(osi_model, config)
         elif config.direction == SyncDirection.BIDIRECTIONAL:
             # Deploy to both — Snowflake first, then Power BI
             sf_id = self._deploy_to_snowflake(osi_model, config)
@@ -902,6 +1008,8 @@ class SyncOrchestrator:
         # ── Fabric ↔ Snowflake semantic model directions ─────────────────
         elif config.direction == SyncDirection.FABRIC_TO_SNOWFLAKE:
             return self._deploy_to_snowflake(osi_model, config)
+        elif config.direction == SyncDirection.FABRIC_TO_DATABRICKS:
+            return self._deploy_to_databricks(osi_model, config)
         elif config.direction == SyncDirection.SNOWFLAKE_TO_FABRIC:
             return self._deploy_to_powerbi(osi_model, config)
         elif config.direction == SyncDirection.FABRIC_SNOWFLAKE_BIDIRECTIONAL:
@@ -921,7 +1029,8 @@ class SyncOrchestrator:
         settings = get_settings()
 
         # Convert OSI → SML
-        converter = OSIToSMLConverter()
+        dialect = "snowflake" if config.direction in (SyncDirection.PBIX_TO_SNOWFLAKE, SyncDirection.FABRIC_TO_SNOWFLAKE) else "snowflake"
+        converter = OSIToSMLConverter(target_dialect=dialect)
         sml_model = converter.from_osi(osi_model)
 
         # Deploy via SnowflakeEmitter
@@ -934,17 +1043,36 @@ class SyncOrchestrator:
         logger.info(f"Deployed '{osi_model.unique_name}' to Snowflake: {target_id}")
         return target_id
 
+    def _deploy_to_databricks(
+        self, osi_model: OSIModel, config: SyncConfig
+    ) -> Optional[str]:
+        """Convert OSI to SML and deploy to Databricks."""
+        from semabridge.converter.osi_to_sml import OSIToSMLConverter
+        from semabridge.core.settings import get_settings
+
+        settings = get_settings()
+        converter = OSIToSMLConverter(target_dialect="databricks")
+        sml_model = converter.from_osi(osi_model)
+
+        from semabridge.connectors.databricks_emitter import DatabricksEmitter
+        emitter = DatabricksEmitter(config=settings.databricks)
+        emitter.deploy(sml_model)
+
+        target_id = f"databricks://{config.databricks_catalog}/{config.databricks_schema}"
+        logger.info(f"Deployed '{osi_model.unique_name}' to Databricks: {target_id}")
+        return target_id
+
     def _deploy_to_powerbi(
         self, osi_model: OSIModel, config: SyncConfig
     ) -> Optional[str]:
-        """Convert OSI to TMSL and publish to Power BI Fabric."""
+        """Convert OSI to TMDL and publish to Power BI Fabric."""
         from semabridge.converter.osi_to_sml import OSIToSMLConverter
         from semabridge.core.settings import get_settings
 
         settings = get_settings()
 
-        # Convert OSI → SML → TMSL → Fabric
-        converter = OSIToSMLConverter()
+        # Convert OSI → SML → TMDL → Fabric
+        converter = OSIToSMLConverter(target_dialect="snowflake") # Fabric uses Snowflake-ish T-SQL/DAX
         sml_model = converter.from_osi(osi_model)
 
         from semabridge.connectors.fabric_publisher import FabricPublisher

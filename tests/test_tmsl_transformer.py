@@ -1,7 +1,7 @@
-"""
-Unit tests for TMSL to SML transformation.
+﻿"""
+Unit tests for Fabric semantic-model JSON to SML transformation.
 
-Tests the TMSLTransformer class in transform/tmsl_to_sml.py including:
+Tests the TMDLTransformer class in transform/tmsl_to_sml.py including:
 - Table parsing
 - Column type mapping
 - Measure parsing with DAX
@@ -14,17 +14,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from semabridge.converter.tmsl_to_sml import TMSLTransformer, TransformationError
+from semabridge.converter.tmsl_to_sml import TMDLTransformer, TransformationError
 from semabridge.sml.models import DataType, AggregationType, Cardinality, SourcePlatform
 
 
-class TestTMSLTransformerBasic:
+class TestTMDLTransformerBasic:
     """Basic transformation tests."""
     
     @pytest.fixture
     def transformer(self):
         """Create a transformer instance."""
-        return TMSLTransformer()
+        return TMDLTransformer()
     
     def test_transform_empty_model(self, transformer):
         """Test transformation of minimal model."""
@@ -53,17 +53,17 @@ class TestTMSLTransformerBasic:
 
 
 class TestTableParsing:
-    """Tests for TMSL table parsing."""
+    """Tests for semantic-model table parsing."""
     
     @pytest.fixture
     def transformer(self):
-        return TMSLTransformer()
+        return TMDLTransformer()
     
-    def test_parse_simple_table(self, transformer, sample_tmsl_json):
-        """Test parsing tables from TMSL."""
-        sml = transformer.transform(sample_tmsl_json, "ws-1", "ds-1")
+    def test_parse_simple_table(self, transformer, sample_tmdl_json):
+        """Test parsing tables from semantic-model JSON."""
+        sml = transformer.transform(sample_tmdl_json, "ws-1", "ds-1")
         
-        # Note: TMSLTransformer injects a Calendar dimension if none exists
+        # Note: TMDLTransformer injects a Calendar dimension if none exists
         # So we expect 3 datasets: Sales, Customer, and Date (auto-injected)
         assert len(sml.datasets) >= 2  # At least the original 2 tables
         
@@ -114,10 +114,10 @@ class TestColumnParsing:
     
     @pytest.fixture
     def transformer(self):
-        return TMSLTransformer()
+        return TMDLTransformer()
     
     def test_column_type_mapping(self, transformer):
-        """Test TMSL to SML data type mapping."""
+        """Test semantic-model JSON to SML data type mapping."""
         tmsl = {
             "model": {
                 "name": "Test",
@@ -205,11 +205,11 @@ class TestMeasureParsing:
     
     @pytest.fixture
     def transformer(self):
-        return TMSLTransformer()
+        return TMDLTransformer()
     
-    def test_parse_measures(self, transformer, sample_tmsl_json):
-        """Test parsing measures from TMSL."""
-        sml = transformer.transform(sample_tmsl_json, "ws-1", "ds-1")
+    def test_parse_measures(self, transformer, sample_tmdl_json):
+        """Test parsing measures from semantic-model JSON."""
+        sml = transformer.transform(sample_tmdl_json, "ws-1", "ds-1")
         
         # There should be at least 1 metric from the model
         # (may have additional auto-detected metrics)
@@ -294,11 +294,11 @@ class TestRelationshipParsing:
     
     @pytest.fixture
     def transformer(self):
-        return TMSLTransformer()
+        return TMDLTransformer()
     
-    def test_parse_relationships(self, transformer, sample_tmsl_json):
-        """Test parsing relationships from TMSL."""
-        sml = transformer.transform(sample_tmsl_json, "ws-1", "ds-1")
+    def test_parse_relationships(self, transformer, sample_tmdl_json):
+        """Test parsing relationships from semantic-model JSON."""
+        sml = transformer.transform(sample_tmdl_json, "ws-1", "ds-1")
         
         assert len(sml.relationships) == 1
         
@@ -361,7 +361,7 @@ class TestTransformationErrors:
     
     @pytest.fixture
     def transformer(self):
-        return TMSLTransformer()
+        return TMDLTransformer()
     
     def test_malformed_relationship_skipped(self, transformer):
         """Test that malformed relationships are skipped without crashing."""
@@ -385,7 +385,7 @@ class TestTransformationErrors:
 # Fix: invalid identifier 'SALESFACT.SCORE' (Snowflake error 000904)
 # =============================================================================
 
-_TMSL_SALESFACT = {
+_TMDL_SALESFACT = {
     "model": {
         "name": "SalesModel",
         "tables": [
@@ -404,7 +404,7 @@ _TMSL_SALESFACT = {
 }
 
 
-class TestTMSLTransformerAutomatedTranslation:
+class TestTMDLTransformerAutomatedTranslation:
     """Verify automated DAX translation paths for SalesFact measures.
 
     Manual SQL overrides are no longer supported in the transform pipeline.
@@ -412,11 +412,11 @@ class TestTMSLTransformerAutomatedTranslation:
 
     @pytest.fixture
     def transformer(self):
-        return TMSLTransformer()
+        return TMDLTransformer()
 
     def test_automated_translation_uses_safe_alias(self, transformer) -> None:
         """Automated translation emits lowercase alias + quoted identifiers."""
-        sml = transformer.transform(_TMSL_SALESFACT, "ws-1", "ds-1")
+        sml = transformer.transform(_TMDL_SALESFACT, "ws-1", "ds-1")
         metric = next(
             (m for m in sml.metrics if m.unique_name == "Score Total"), None
         )
@@ -429,7 +429,7 @@ class TestTMSLTransformerAutomatedTranslation:
         """Manual override injection is intentionally unsupported."""
         with pytest.raises(TypeError):
             transformer.transform(
-                _TMSL_SALESFACT,
+                _TMDL_SALESFACT,
                 "ws-1",
                 "ds-1",
                 metric_overrides={"Score Total": "SUM(SALESFACT.SCORE)"},
@@ -444,7 +444,7 @@ class TestTMSLTransformerAutomatedTranslation:
 
     def test_no_overrides_uses_dax_translation(self, transformer) -> None:
         """Automated translator still produces valid sql_expression."""
-        sml = transformer.transform(_TMSL_SALESFACT, "ws-1", "ds-1")
+        sml = transformer.transform(_TMDL_SALESFACT, "ws-1", "ds-1")
         metric = next(
             (m for m in sml.metrics if m.unique_name == "Score Total"), None
         )
@@ -452,3 +452,6 @@ class TestTMSLTransformerAutomatedTranslation:
         assert metric.sql_expression is not None
         assert 'salesfact."SCORE"' in metric.sql_expression
         assert "SALESFACT.SCORE" not in metric.sql_expression
+
+
+

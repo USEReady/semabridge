@@ -51,14 +51,27 @@ class TablesClauseBuilder:
         relationship_target_alias: dict[tuple[str, str], str] = {}
         declared_pk_by_alias: dict[str, list[str]] = {}
 
+        # Only active relationships drive PK derivation and bridge detection.
+        # Inactive rels (USERELATIONSHIP alternates) are skipped in the
+        # RELATIONSHIPS clause and must not influence PK assignment either.
+        active_relationships = [r for r in relationships if getattr(r, "is_active", True)]
+
         relationship_pk_map = {}
-        for rel in relationships:
-            if rel.is_active and rel.to_dataset and rel.to_columns:
+        for rel in active_relationships:
+            if rel.to_dataset and rel.to_columns:
                 if rel.to_dataset not in relationship_pk_map:
                     relationship_pk_map[rel.to_dataset] = []
                 for col in rel.to_columns:
                     if col not in relationship_pk_map[rel.to_dataset]:
                         relationship_pk_map[rel.to_dataset].append(col)
+
+        # Bridge tables appear as both a FK source (from_dataset) and a PK target
+        # (to_dataset) in active relationships.  Their join columns are not unique,
+        # so assigning a PRIMARY KEY would be incorrect and could mislead Snowflake's
+        # query planner.  We suppress PK emission for these tables.
+        active_from_datasets = {r.from_dataset for r in active_relationships}
+        active_to_datasets = {r.to_dataset for r in active_relationships}
+        bridge_datasets = active_from_datasets & active_to_datasets
 
         dataset_col_lookup: dict[str, set[str]] = {}
         dataset_by_name: dict[str, Any] = {d.unique_name: d for d in datasets}
@@ -67,8 +80,10 @@ class TablesClauseBuilder:
                 modeled_cols = {self.identifier_sanitizer.sanitize_column(c.unique_name) for c in dataset.columns}
             else:
                 modeled_cols = set(self.schema_manager._collect_physical_source_columns(dataset).keys())
-            
             source_table = dataset.source_table or dataset.unique_name
+            if str(source_table).upper().endswith("_SEMABRIDGE_FISCAL"):
+                modeled_cols.add("_CURRENT_FISCAL_PERIOD")
+            
             source_key = self.identifier_sanitizer.sanitize_table_name(source_table).upper()
             live_cols = self.live_schema_metadata.get(source_key, set())
             dataset_col_lookup[dataset.unique_name] = set(live_cols) if live_cols else modeled_cols
@@ -97,6 +112,15 @@ class TablesClauseBuilder:
 
             if is_measure_only:
                 pk_cols = []
+            elif dataset.unique_name in bridge_datasets:
+                # Bridge table: columns are not unique (they appear as both FK and PK
+                # endpoints), so no PRIMARY KEY should be declared.
+                pk_cols = []
+                logger.info(
+                    "Suppressing PRIMARY KEY for bridge table '%s': "
+                    "it participates as both source and target in active relationships.",
+                    dataset.unique_name,
+                )
             elif relationship_pk_cols:
                 pk_cols = [f'"{relationship_pk_cols[0]}"']
             else:
@@ -110,10 +134,26 @@ class TablesClauseBuilder:
                     col_name = dataset.columns[0].unique_name if dataset.columns else "ID"
                     pk_cols = [f'"{self.identifier_sanitizer.sanitize_column(col_name)}"']
 
-            # Verification
-            verified_pk = [p for p in pk_cols if p.strip('"') in known_phys]
+            # Verification: use case-insensitive matching so relationship-derived PKs
+            # (e.g. "Customer") are not silently dropped when live schema metadata
+            # stores column names in a different case (e.g. "CUSTOMER").
+            # Falling back to sorted(known_phys)[0] was the root cause of the bug
+            # where CITY (alphabetically first) replaced CUSTOMER as the PK.
+            known_phys_upper = {c.upper() for c in known_phys}
+            verified_pk = [p for p in pk_cols if not known_phys or p.strip('"').upper() in known_phys_upper]
             if not verified_pk and known_phys:
-                verified_pk = [f'"{sorted(list(known_phys))[0]}"']
+                # Last resort: prefer the relationship-derived PK if it exists in the
+                # live schema (case-insensitive), otherwise fall back to alphabetical.
+                rel_pk_candidates = [
+                    p for p in pk_cols
+                    if p.strip('"').upper() in known_phys_upper
+                ]
+                if rel_pk_candidates:
+                    verified_pk = rel_pk_candidates
+                else:
+                    # Resolve the canonical casing from live schema for the fallback
+                    first_phys = sorted(known_phys, key=str.upper)[0]
+                    verified_pk = [f'"{first_phys}"']
 
             if verified_pk:
                 declared_pk_by_alias[alias] = [c.strip('"') for c in verified_pk]

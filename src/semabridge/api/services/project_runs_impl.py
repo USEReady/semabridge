@@ -563,6 +563,58 @@ async def list_project_snapshots_compat(
             out.pop("state", None)
             out.pop("project_config_yaml", None)
         rows.append(out)
+    # Fallback to ORM snapshots when compat store is empty/stale.
+    if not rows:
+        try:
+            from sqlalchemy import select
+            from semabridge.repository.orm.models import SnapshotRow
+            from semabridge.repository.orm.session_factory import db_manager as orm_db_manager
+
+            with orm_db_manager.get_session() as session:
+                db_rows = (
+                    session.execute(
+                        select(SnapshotRow)
+                        .where(SnapshotRow.project_id == str(project_id))
+                        .order_by(SnapshotRow.timestamp.desc())
+                        .limit(limit)
+                    )
+                    .scalars()
+                    .all()
+                )
+            for snap in db_rows:
+                stage_val = str(getattr(snap, "trigger", "") or "").lower() or "after"
+                role_val = "source"
+                origin_val = str(getattr(snap, "trigger", "") or "auto").upper()
+                out = {
+                    "snapshot_id": getattr(snap, "snapshot_id", None),
+                    "project_id": getattr(snap, "project_id", project_id),
+                    "run_id": getattr(snap, "run_id", None),
+                    "stage": stage_val,
+                    "timing": stage_val,
+                    "role": role_val,
+                    "system_role": role_val.upper(),
+                    "snapshot_origin": origin_val,
+                    "intermediate_format": "sml",
+                    "created_at": getattr(snap, "timestamp", None).isoformat() if getattr(snap, "timestamp", None) else None,
+                    "timestamp": getattr(snap, "timestamp", None).isoformat() if getattr(snap, "timestamp", None) else None,
+                    "connector": getattr(snap, "connector_id", None),
+                    "connector_identifier": getattr(snap, "connector_id", None),
+                    "sync_mode": getattr(snap, "sync_mode", None),
+                }
+                if include_state:
+                    blob = getattr(snap, "sml_blob", None)
+                    out["state"] = blob if isinstance(blob, dict) else {}
+                if role and str(out.get("role") or "").lower() != str(role).lower():
+                    continue
+                if stage and str(out.get("stage") or "").lower() != str(stage).lower():
+                    continue
+                if origin and str(out.get("snapshot_origin") or "").upper() != str(origin).upper():
+                    continue
+                if run_id and str(out.get("run_id") or "") != str(run_id):
+                    continue
+                rows.append(out)
+        except Exception as exc:
+            logger.debug("ORM snapshot fallback failed for project %s: %s", project_id, exc)
     return {"project_id": project_id, "count": len(rows[:limit]), "snapshots": rows[:limit]}
 
 
@@ -629,12 +681,12 @@ async def compare_project_snapshots_compat(
     left_state = from_row.get("state")
     if isinstance(left_state, str):
         try: left_state = json.loads(left_state)
-        except: left_state = {}
+        except Exception: left_state = {}
         
     right_state = to_row.get("state")
     if isinstance(right_state, str):
         try: right_state = json.loads(right_state)
-        except: right_state = {}
+        except Exception: right_state = {}
 
     if not isinstance(left_state, dict): left_state = {}
     if not isinstance(right_state, dict): right_state = {}
@@ -1290,9 +1342,63 @@ async def move_project_to_folder_compat(project_id: str, payload: dict):
 
 
 async def list_job_runs_compat():
+    _compat_ensure_loaded()
     all_runs: List[Dict[str, Any]] = []
     for runs in _compat_project_runs.values():
         all_runs.extend(runs)
+
+    # Reconcile with ORM-backed runs so UI status reflects latest persisted state.
+    try:
+        from semabridge.repository.orm.models import Run
+        from semabridge.repository.orm.session_factory import db_manager
+        from sqlalchemy import select
+
+        session = db_manager._session()
+        try:
+            rows = session.execute(
+                select(Run).order_by(Run.started_at.desc()).limit(500)
+            ).scalars().all()
+        finally:
+            session.close()
+
+        by_run_id: Dict[str, Dict[str, Any]] = {}
+        for run in all_runs:
+            rid = str(run.get("run_id") or run.get("id") or "").strip()
+            if rid:
+                by_run_id[rid] = run
+
+        for row in rows:
+            run_id = str(getattr(row, "run_id", "") or "").strip()
+            if not run_id:
+                continue
+
+            existing = by_run_id.get(run_id)
+            if existing is not None:
+                existing["status"] = str(getattr(row, "status", existing.get("status") or "unknown") or "unknown")
+                if getattr(row, "completed_at", None):
+                    existing["completed_at"] = row.completed_at.isoformat()
+                if getattr(row, "started_at", None):
+                    existing["started_at"] = row.started_at.isoformat()
+                continue
+
+            all_runs.append(
+                {
+                    "run_id": run_id,
+                    "id": run_id,
+                    "project_id": getattr(row, "project_id", None),
+                    "run_type": getattr(row, "run_type", "SYNC") or "SYNC",
+                    "sync_mode": _compat_normalize_sync_mode(getattr(row, "sync_mode", None)) or "copy",
+                    "status": str(getattr(row, "status", "unknown") or "unknown"),
+                    "started_at": row.started_at.isoformat() if getattr(row, "started_at", None) else None,
+                    "completed_at": row.completed_at.isoformat() if getattr(row, "completed_at", None) else None,
+                    "before_target_snapshot_ids": [],
+                    "after_target_snapshot_ids": [],
+                    "after_tgt_snapshots": [],
+                }
+            )
+    except Exception as exc:
+        logger.debug("list_job_runs_compat ORM reconciliation skipped: %s", exc)
+
     all_runs.sort(key=lambda x: x.get("started_at") or "", reverse=True)
     return all_runs
 
@@ -2310,7 +2416,7 @@ async def preview_restore_compat(project_id: str, snapshot_id: str) -> Dict[str,
     target_state = target_snap.get("state") or {}
     if isinstance(target_state, str):
         try: target_state = json.loads(target_state)
-        except: target_state = {}
+        except Exception: target_state = {}
         
     # 3. Diff them
     diff_results = _diff_models(current_state, target_state)
@@ -2417,7 +2523,7 @@ async def get_model_history_compat(project_id: str, model_name: str) -> List[Dic
         state = snap.get("state") or {}
         if isinstance(state, str):
             try: state = json.loads(state)
-            except: state = {}
+            except Exception: state = {}
             
         models = state.get("models", [])
         model = next((m for m in models if m.get("name") == model_name), None)
@@ -2464,7 +2570,7 @@ async def get_snapshot_content_compat(project_id: str, snapshot_id: str) -> Dict
     state = snap.get("sml_blob") or snap.get("state") or {}
     if isinstance(state, str):
         try: state = json.loads(state)
-        except: state = {}
+        except Exception: state = {}
         
     return {
         "snapshot_id": snapshot_id,
@@ -2498,7 +2604,7 @@ async def get_snapshot_report_compat(project_id: str, snapshot_id: str) -> Dict[
     state = snap.get("sml_blob") or snap.get("state") or {}
     if isinstance(state, str):
         try: state = json.loads(state)
-        except: state = {}
+        except Exception: state = {}
     
     # Extract conversion summary from state
     datasets = state.get("datasets") or state.get("models") or []

@@ -1,7 +1,7 @@
-"""
+﻿"""
 End-to-End Snowflake Deployment Test
 
-Pipeline: Fabric Dataset → SML Model → Snowflake Semantic View → Query Execution
+Pipeline: Fabric Dataset â†’ SML Model â†’ Snowflake Semantic View â†’ Query Execution
 
 This validates:
 1. Measure extraction + DAX translation
@@ -20,7 +20,7 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from semabridge.connectors.fabric_extractor import FabricExtractor
-from semabridge.converter.tmsl_to_sml import TMSLTransformer
+from semabridge.converter.tmsl_to_sml import TMDLTransformer
 from semabridge.converter.dax_translator import DAXTranslator
 from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
 from semabridge.core.settings import get_settings
@@ -30,7 +30,7 @@ logger = get_logger(__name__)
 
 
 class DeploymentValidator:
-    """Validates end-to-end Fabric → SML → Snowflake pipeline."""
+    """Validates end-to-end Fabric â†’ SML â†’ Snowflake pipeline."""
     
     def __init__(self, dataset_id: str, workspace_id: str = ""):
         self.dataset_id = dataset_id
@@ -61,17 +61,17 @@ class DeploymentValidator:
 
     def log_error(self, msg: str):
         """Log error."""
-        logger.error(f"❌ {msg}")
+        logger.error(f"âŒ {msg}")
         self.results["errors"].append(msg)
 
     def log_warning(self, msg: str):
         """Log warning."""
-        logger.warning(f"⚠️  {msg}")
+        logger.warning(f"âš ï¸  {msg}")
         self.results["warnings"].append(msg)
 
     def log_success(self, msg: str):
         """Log success."""
-        logger.info(f"✅ {msg}")
+        logger.info(f"âœ… {msg}")
 
     # =========================================================================
     # STAGE 1: Extract from Fabric and Convert to SML
@@ -96,7 +96,7 @@ class DeploymentValidator:
             
             # Convert TMSL to SML
             logger.info("Converting TMSL to SML...")
-            tmsl_transformer = TMSLTransformer()
+            tmsl_transformer = TMDLTransformer()
             sml_model = tmsl_transformer.transform(
                 tmsl_json=tmsl_dict,
                 workspace_id=self.workspace_id,
@@ -152,7 +152,7 @@ class DeploymentValidator:
                         metric.complexity_tier = result.tier
                         metric.confidence = getattr(result, "confidence", 1.0)
                         translated_count += 1
-                        logger.debug(f"  ✓ {metric.unique_name}: Tier {result.tier}, Confidence {metric.confidence:.2f}")
+                        logger.debug(f"  âœ“ {metric.unique_name}: Tier {result.tier}, Confidence {metric.confidence:.2f}")
                     else:
                         failed_expressions.append(metric.unique_name)
                         self.log_warning(f"Failed to translate: {metric.unique_name}")
@@ -486,15 +486,15 @@ class DeploymentValidator:
     def run(self) -> Dict:
         """Run complete validation pipeline."""
         logger.info(f"""
-╔════════════════════════════════════════════════════════════════════════════╗
-║                                                                            ║
-║            END-TO-END SNOWFLAKE DEPLOYMENT VALIDATION                     ║
-║                                                                            ║
-║  Pipeline: Fabric → SML → Snowflake → Query Execution                    ║
-║  Dataset:  {self.dataset_id:<60}║
-║  Started:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S'):<56}║
-║                                                                            ║
-╚════════════════════════════════════════════════════════════════════════════╝
+â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+â•‘                                                                            â•‘
+â•‘            END-TO-END SNOWFLAKE DEPLOYMENT VALIDATION                     â•‘
+â•‘                                                                            â•‘
+â•‘  Pipeline: Fabric â†’ SML â†’ Snowflake â†’ Query Execution                    â•‘
+â•‘  Dataset:  {self.dataset_id:<60}â•‘
+â•‘  Started:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S'):<56}â•‘
+â•‘                                                                            â•‘
+â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         """)
         
         # Stage 1: Extract from Fabric and convert to SML
@@ -524,32 +524,32 @@ class DeploymentValidator:
     def _finalize(self) -> Dict:
         """Finalize and print results."""
         logger.info(f"""
-╔════════════════════════════════════════════════════════════════════════════╗
-║                          VALIDATION SUMMARY                               ║
-╚════════════════════════════════════════════════════════════════════════════╝
+â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+â•‘                          VALIDATION SUMMARY                               â•‘
+â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-📊 METRICS:
-   • Extracted:  {self.results['metrics']['extracted']} measures
-   • Translated: {self.results['metrics']['translated']} measures
-   • Deployed:   {self.results['metrics']['deployed']} DDL statements
-   • Queried:    {self.results['metrics']['queried']} successful metrics
+ðŸ“Š METRICS:
+   â€¢ Extracted:  {self.results['metrics']['extracted']} measures
+   â€¢ Translated: {self.results['metrics']['translated']} measures
+   â€¢ Deployed:   {self.results['metrics']['deployed']} DDL statements
+   â€¢ Queried:    {self.results['metrics']['queried']} successful metrics
 
-🔧 STAGES:
+ðŸ”§ STAGES:
 """)
         
         for stage, result in self.results["stages"].items():
-            icon = "✅" if result == "SUCCESS" else "⚠️ " if result == "PARTIAL" else "⏭️ " if result == "SKIPPED" else "❌"
+            icon = "âœ…" if result == "SUCCESS" else "âš ï¸ " if result == "PARTIAL" else "â­ï¸ " if result == "SKIPPED" else "âŒ"
             logger.info(f"   {icon} {stage}: {result}")
         
         if self.results["errors"]:
-            logger.info(f"\n⚠️  ERRORS ({len(self.results['errors'])}):")
+            logger.info(f"\nâš ï¸  ERRORS ({len(self.results['errors'])}):")
             for err in self.results["errors"]:
-                logger.info(f"   • {err}")
+                logger.info(f"   â€¢ {err}")
         
         if self.results["warnings"]:
-            logger.info(f"\n📝 WARNINGS ({len(self.results['warnings'])}):")
+            logger.info(f"\nðŸ“ WARNINGS ({len(self.results['warnings'])}):")
             for warn in self.results["warnings"][:5]:  # Show first 5
-                logger.info(f"   • {warn}")
+                logger.info(f"   â€¢ {warn}")
         
         logger.info(f"\n{'='*80}\n")
         
@@ -589,3 +589,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

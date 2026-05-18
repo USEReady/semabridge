@@ -1,4 +1,4 @@
-"""Integration tests for Fabric (BIM) to Snowflake (Semantic View) synchronization."""
+﻿"""Integration tests for Fabric (BIM) to Snowflake (Semantic View) synchronization."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
+from semabridge.converter.tmsl_to_osi import TMDLToOSIConverter
 from semabridge.connectors.ddl_builder import SemanticViewBuilder
 from semabridge.core.behavior import ConnectorBehavior
 from semabridge.core.settings import SnowflakeConfig
@@ -41,9 +41,9 @@ def test_sync_identity_bim_to_snowflake(sample_tmsl_json, snowflake_config, conn
     os.environ["SNOWFLAKE_SCHEMA"] = "TEST_SCHEMA"
     
     # 1. Convert TMSL to OSI
-    converter = TMSLToOSIConverter()
+    converter = TMDLToOSIConverter()
     source_data = {
-        "tmsl": sample_tmsl_json,
+        "tmdl": sample_tmsl_json,
         "dataset_id": "SalesModel",
         "workspace_id": "test-workspace-id"
     }
@@ -88,4 +88,5 @@ def test_sync_identity_bim_to_snowflake(sample_tmsl_json, snowflake_config, conn
     # Verify METRICS clause
     assert "METRICS (" in semantic_view_ddl
     assert 'SALES."TOTAL_REVENUE" AS' in semantic_view_ddl
+
 

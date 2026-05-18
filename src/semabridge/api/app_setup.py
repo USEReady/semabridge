@@ -54,6 +54,7 @@ def _apply_schema_compatibility_fixes() -> None:
     from sqlalchemy import inspect, text
 
     from semabridge.repository.orm.session_factory import get_engine
+    from semabridge.repository.schema_compat import widen_project_id_columns
 
     engine = get_engine()
     inspector = inspect(engine)
@@ -100,6 +101,8 @@ def _apply_schema_compatibility_fixes() -> None:
             pending_alters.append(f"ALTER TABLE snapshots ADD COLUMN deleted_at {expires_type}")
         if "sync_mode" not in snapshot_columns:
             pending_alters.append("ALTER TABLE snapshots ADD COLUMN sync_mode VARCHAR(20) NOT NULL DEFAULT 'copy'")
+        if "source_format" not in snapshot_columns:
+            pending_alters.append("ALTER TABLE snapshots ADD COLUMN source_format VARCHAR(20) NOT NULL DEFAULT 'TMDL'")
 
     if "model_versions" in set(inspector.get_table_names()):
         mv_columns = {col["name"] for col in inspector.get_columns("model_versions")}
@@ -143,10 +146,10 @@ def _apply_schema_compatibility_fixes() -> None:
         except Exception as e:
             logger.warning("Could not inspect constraints on accounts table: %s", e)
 
-    if not pending_alters:
-        return
-
     with engine.begin() as conn:
+        widened = widen_project_id_columns(conn)
+        if not pending_alters and not widened:
+            return
         for ddl in pending_alters:
             conn.execute(text(ddl))
         # Backfill ORM canonical column from legacy column when both exist.
@@ -452,7 +455,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception as exc:
             logger.debug('MSAL warm-up skipped (no network?): %s', exc)
 
-    asyncio.get_event_loop().run_in_executor(None, _prime_msal)
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, _prime_msal)
 
     try:
         from semabridge.core.settings import reload_settings

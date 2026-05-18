@@ -229,7 +229,7 @@ class BaseConverter(ABC):
         Convert source format to OSI intermediate.
 
         Args:
-            source_data: Data in source format (e.g., TMSL, Power BI).
+            source_data: Data in source format (e.g., TMDL, Power BI).
 
         Returns:
             OSIModel instance.

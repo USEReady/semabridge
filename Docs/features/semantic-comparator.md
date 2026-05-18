@@ -6,7 +6,6 @@ semantic diffs across multiple formats.
 ## Supported Formats
 - OSI
 - SML
-- TSML
 - Snowflake semantic model YAML
 
 ## API Endpoints

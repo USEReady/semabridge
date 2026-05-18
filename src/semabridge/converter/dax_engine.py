@@ -16,17 +16,125 @@ This engine aims for 80-90% deterministic coverage, using LLM only as fallback.
 import hashlib
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Dict, Optional, List, Tuple, Any
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from enum import Enum
 
-from semabridge.converter.dax_ast_parser import DaxAstParser, DaxSqlRenderer, DaxNode
+from semabridge.converter.dax_ast_parser import DaxAstParser, DaxSqlRenderer, DaxNode, FunctionCallNode
+from semabridge.converter.complex_calculate_translator import ComplexCalculateTranslator
+from semabridge.converter.row_context_translator import RowContextTranslator
+from semabridge.converter.iterator_translator import IteratorTranslator
+from semabridge.converter.llm_translator import LlmTranslator
 from semabridge.utils.logger import get_logger
 from semabridge.utils.naming import sanitize_column
+from semabridge.converter.dax_rule_translator import rule_based_translation
 
 logger = get_logger(__name__)
+
+
+def _paren_delta_outside_quotes(sql: str) -> int:
+    """Return open-minus-close parentheses count, ignoring quoted strings."""
+    delta = 0
+    quote: str | None = None
+    idx = 0
+    while idx < len(sql):
+        ch = sql[idx]
+        if quote:
+            if ch == quote:
+                if quote == "'" and idx + 1 < len(sql) and sql[idx + 1] == "'":
+                    idx += 2
+                    continue
+                quote = None
+            idx += 1
+            continue
+        if ch in {"'", '"'}:
+            quote = ch
+        elif ch == "(":
+            delta += 1
+        elif ch == ")":
+            delta -= 1
+        idx += 1
+    return delta
+
+
+def balance_parentheses(sql: str) -> str:
+    """Ensure parentheses are balanced by adding missing ones at the end."""
+    if not sql or not isinstance(sql, str):
+        return sql
+    
+    # Only balance if there are more opens than closes
+    # This repairs (query(query) type truncation from LLMs
+    delta = _paren_delta_outside_quotes(sql)
+    if delta > 0:
+        sql = sql + (')' * delta)
+    return sql
+
+
+def sanitize_llm_sql(sql: str) -> str:
+    """Remove DAX leakage and unwrap simple SELECT projections from LLM SQL.
+    
+    Repairs common LLM failures like missing trailing parentheses or 
+    wrapping the entire expression in an unnecessary SELECT subquery.
+    """
+    if not sql or not isinstance(sql, str):
+        return ""
+
+    cleaned = re.sub(
+        r"^\s*```(?:sql|python|javascript|js|\w*)?\s*\n?",
+        "",
+        sql.strip(),
+        flags=re.MULTILINE | re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\n?\s*```\s*$", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"(?is)^\s*sql\s*:\s*", "", cleaned).strip()
+    cleaned = cleaned.strip().rstrip(";").strip()
+
+    # If the model accidentally returned DAX with RETURN, keep the expression after RETURN.
+    # We take everything after the LAST RETURN to be safe.
+    # Do NOT delete VAR lines here; deleting full lines can drop parentheses.
+    m_return = re.search(r"(?is).*\bRETURN\b\s*(.*)$", cleaned)
+    if m_return:
+        cleaned = m_return.group(1).strip()
+    elif re.search(r"(?i)\bVAR\b", cleaned):
+        # Some providers prepend a DAX VAR assignment before a usable SQL
+        # projection on the same line. Keep the SQL projection instead of
+        # rejecting the whole response as DAX leakage.
+        m_select = re.search(r"(?is)\bSELECT\b.*$", cleaned)
+        if m_select:
+            cleaned = m_select.group(0).strip()
+
+    # Unwrap simple SELECT projections (including parenthesized subquery forms)
+    # into scalar expressions usable in metric contexts.
+    selectish = cleaned
+    
+    # Repair missing closing parentheses before checking for SELECT wrap
+    selectish = balance_parentheses(selectish)
+    
+    if re.match(r"(?is)^\(\s*SELECT\b", selectish) and selectish.strip().endswith(")"):
+        # Safely unwrap (SELECT ...) only if it's the entire string
+        unwrapped = selectish.strip()[1:-1].strip()
+        # Ensure we didn't break balance by unwrapping
+        if unwrapped.count('(') == unwrapped.count(')'):
+            selectish = unwrapped
+
+    if re.match(r"(?is)^SELECT\b", selectish):
+        # Extract projection portion from SELECT ... FROM ...
+        match = re.search(r"(?is)SELECT\s+(.*?)\s+FROM\b", selectish)
+        if match:
+            cleaned = match.group(1).strip()
+        else:
+            # SELECT without FROM: take the projection portion
+            cleaned = re.sub(r"(?is)^SELECT\s+", "", selectish).strip()
+    else:
+        cleaned = selectish
+
+    # Final balance check after all transformations
+    cleaned = balance_parentheses(cleaned)
+    
+    return " ".join(cleaned.split())
 
 
 class TranslationStrategy(Enum):
@@ -150,13 +258,13 @@ class CapabilityDetector:
         r"SAMEPERIODLASTYEAR|PREVIOUSYEAR|PREVIOUSMONTH|PREVIOUSQUARTER",
         r"IF\s*\(|SWITCH\s*\(|IFERROR\s*\(",
         r"ALL\s*\(|ALLEXCEPT\s*\(",
+        r"EARLIER\s*\(",           # Phase 2 support
+        r"RANKX\s*\(",             # Phase 2 support
+        r"SUMX\s*\(|AVERAGEX\s*\(", # Phase 2 support
     ]
     
     # Unsupported patterns (require DAX engine)
     UNSUPPORTED_PATTERNS = [
-        r"SUMX\s*\(.*FILTER\s*\(",  # SUMX with FILTER - complex iteration
-        r"EARLIER\s*\(",           # Row context - not translatable
-        r"RANKX\s*\(",             # Ranking - not translatable
         r"GENERATE\s*\(",          # Table generation - complex
         r"SUMMARIZECOLUMNS\s*\(",  # Multi-table aggregation
         r"USERELATIONSHIP\s*\(",   # Dynamic relationships
@@ -222,6 +330,12 @@ class DaxTranslationEngine:
         self.detector = CapabilityDetector()
         self.parser = DaxAstParser()
         self.metrics_log: List[TranslationMetrics] = []
+        
+        # Phase 2 Specialized Translators
+        self.calculate_translator = ComplexCalculateTranslator()
+        self.row_context_translator = RowContextTranslator()
+        self.iterator_translator = IteratorTranslator()
+        self.llm_translator = LlmTranslator()
     
     def translate(
         self,
@@ -231,21 +345,23 @@ class DaxTranslationEngine:
         date_alias: str = "calendar",
         measure_map: Optional[Dict[str, str]] = None,
         metric_name: str = "",
+        target_dialect: str = "snowflake"
     ) -> Tuple[Optional[str], TranslationMetrics]:
         """
-        Translate a DAX expression to Snowflake SQL.
+        Translate a DAX expression to SQL.
         
         Args:
             dax: DAX expression to translate
             table_alias: SQL table alias (e.g., "sales")
-            dataset_name: Name of dataset (for context)
-            date_alias: SQL alias for date dimension
-            measure_map: Map of [MeasureName] to SQL expression
-            metric_name: Name of metric (for logging)
-        
-        Returns:
-            (sql: Optional[str], metrics: TranslationMetrics)
+            dataset_name: Name of the dataset
+            date_alias: Calendar table alias
+            measure_map: Pre-calculated measures mapping
+            metric_name: Current metric name for caching
+            target_dialect: snowflake or databricks
         """
+        # Set LLM dialect
+        self.llm_translator.dialect = target_dialect
+        self.llm_translator.prompt_template = self.llm_translator.SYSTEM_PROMPT.format(dialect=target_dialect)
         import time
         start_time = time.time()
         
@@ -281,31 +397,50 @@ class DaxTranslationEngine:
                 logger.debug(f"✓ Cache hit for: {metric_name or clean_dax[:50]}")
                 return cached["sql"], metrics
         
-        # Step 2: Detect capability
+        # Step 2: Try rule-based translation (fast path)
+        sql = rule_based_translation(
+            clean_dax, 
+            table_alias, 
+            metric_name=metric_name,
+            dialect=target_dialect
+        )
+        
+        if sql:
+            strategy = TranslationStrategy.RULE_BASED
+            confidence = 1.0
+            elapsed = (time.time() - start_time) * 1000
+            
+            if self.cache:
+                self.cache.put(clean_dax, table_alias, sql, strategy)
+                
+            metrics = TranslationMetrics(
+                dax=clean_dax,
+                strategy=strategy,
+                capability=CapabilityLevel.FULLY_SUPPORTED,
+                sql=sql,
+                confidence=confidence,
+                execution_time_ms=elapsed,
+                cached=False,
+            )
+            self.metrics_log.append(metrics)
+            return sql, metrics
+
+        # Step 3: Detect capability
         can_translate, capability = self.detector.can_translate(clean_dax)
         
         if not can_translate:
-            elapsed = (time.time() - start_time) * 1000
-            metrics = TranslationMetrics(
-                dax=clean_dax,
-                strategy=TranslationStrategy.FAILED,
-                capability=capability,
-                sql=None,
-                confidence=0.0,
-                execution_time_ms=elapsed,
-                cached=False,
-                error=f"Not translatable: {capability.value}",
+            logger.info(f"⚠ Pattern not deterministically supported, checking LLM fallback...")
+            # We don't return None here, we proceed to try LLM at the end
+            # but we skip Step 3 (Deterministic)
+            sql = None
+        else:
+            # Step 3: Try deterministic translation (AST-based)
+            sql = self._try_ast_translation(
+                clean_dax,
+                table_alias,
+                date_alias,
+                measure_map or {},
             )
-            logger.warning(f"✗ Not translatable: {clean_dax[:50]}")
-            return None, metrics
-        
-        # Step 3: Try deterministic translation (AST-based)
-        sql = self._try_ast_translation(
-            clean_dax,
-            table_alias,
-            date_alias,
-            measure_map or {},
-        )
         
         elapsed = (time.time() - start_time) * 1000
         
@@ -336,24 +471,78 @@ class DaxTranslationEngine:
             return sql, metrics
         
         # Step 4: Fallback to LLM (if available)
-        logger.warning(
-            f"⚠ Deterministic translation failed, would fallback to LLM: "
+        logger.info(
+            f"⚠ Deterministic translation failed, falling back to LLM: "
             f"{metric_name or clean_dax[:50]}"
         )
         
+        llm_sql = sanitize_llm_sql(self.llm_translator.translate(clean_dax) or "")
+        if re.search(r"(?i)\b(VAR|RETURN|SELECT|FROM|WITH|JOIN|WHERE|GROUP\s+BY|HAVING|ORDER\s+BY)\b", llm_sql):
+            logger.warning(
+                "Rejected LLM fallback for %s because it was not a scalar metric expression: %s",
+                metric_name or clean_dax[:50],
+                llm_sql[:160],
+            )
+            llm_sql = ""
+        elapsed = (time.time() - start_time) * 1000
+        
+        if llm_sql:
+            strategy = TranslationStrategy.LLM_FALLBACK
+            metrics = TranslationMetrics(
+                dax=clean_dax,
+                strategy=strategy,
+                capability=capability,
+                sql=llm_sql,
+                confidence=0.7, # LLM is less certain than AST
+                execution_time_ms=elapsed,
+                cached=False,
+            )
+            
+            if self.cache:
+                self.cache.put(clean_dax, table_alias, llm_sql, strategy)
+                
+            self.metrics_log.append(metrics)
+            return llm_sql, metrics
+        
         metrics = TranslationMetrics(
             dax=clean_dax,
-            strategy=TranslationStrategy.LLM_FALLBACK,
+            strategy=TranslationStrategy.FAILED,
             capability=capability,
             sql=None,
             confidence=0.0,
             execution_time_ms=elapsed,
             cached=False,
-            error="Deterministic translation failed, requires LLM",
+            error="LLM translation failed",
         )
         
         self.metrics_log.append(metrics)
         return None, metrics
+
+    def analyze_complexity(self, expression: str) -> Dict[str, Any]:
+        """
+        Analyze DAX complexity to match legacy interface.
+        """
+        if not expression:
+            return {
+                "tier": 1,
+                "requires_time_intel": False,
+                "group_by_dimensions": [],
+                "depends_on_measures": [],
+                "sync_enabled": True,
+                "failure_reason": None
+            }
+            
+        # Basic heuristic for now (real logic is inside translate)
+        is_complex = any(kw in expression.upper() for kw in ["CALCULATE", "SUMX", "TOTALYTD", "FILTER"])
+        
+        return {
+            "tier": 4 if is_complex else 1,
+            "requires_time_intel": "DATE" in expression.upper() or "YTD" in expression.upper(),
+            "group_by_dimensions": [],
+            "depends_on_measures": [],
+            "sync_enabled": True,
+            "failure_reason": None
+        }
     
     def _try_ast_translation(
         self,
@@ -367,6 +556,16 @@ class DaxTranslationEngine:
             ast = self.parser.parse(dax)
             if ast is None:
                 return None
+            
+            # Phase 2: Check for specialized translation needs
+            if isinstance(ast, FunctionCallNode):
+                fname = ast.func.upper()
+                if fname == "CALCULATE":
+                    return self.calculate_translator.translate_to_ctes(ast)
+                elif fname in ("EARLIER", "EARLIEST"):
+                    return self.row_context_translator.translate(ast)
+                elif fname in ("SUMX", "AVERAGEX", "RANKX"):
+                    return self.iterator_translator.translate(ast)
             
             renderer = DaxSqlRenderer(
                 table_alias=table_alias,
@@ -412,9 +611,9 @@ class DaxTranslationEngine:
 _engine = None
 
 
-def get_translation_engine() -> DaxTranslationEngine:
+def get_translation_engine(cache_enabled: bool = True, target_dialect: str = "snowflake") -> DaxTranslationEngine:
     """Get singleton translation engine."""
     global _engine
     if _engine is None:
-        _engine = DaxTranslationEngine(cache_enabled=True)
+        _engine = DaxTranslationEngine(cache_enabled=cache_enabled)
     return _engine

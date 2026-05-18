@@ -18,8 +18,8 @@ from semabridge.core.engine import (  # noqa: F401
 )
 from semabridge.core.source_format import (  # noqa: F401
     SourceFormat,
-    from_fabric_tmsl,
-    from_pbix_tmsl,
+    from_fabric_tmdl,
+    from_pbix_tmdl,
     from_snowflake_metadata,
 )
 from semabridge.intermediate.models import OSIModel  # noqa: F401

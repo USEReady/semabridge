@@ -1,4 +1,5 @@
 from semabridge.api.services.project_shared import *
+import asyncio
 
 async def import_pbix(payload: Dict[str, Any]):
     """Import a local .pbix file and extract its semantic model.
@@ -49,19 +50,22 @@ async def browse_pbix_files(directory: str = ""):
     Returns:
         List of .pbix file paths found.
     """
-    scan_dir = Path(directory) if directory else _resolve_models_path()
+    scan_dir = Path(directory) if directory else await asyncio.to_thread(_resolve_models_path)
     if not scan_dir.exists():
         return {"files": [], "directory": str(scan_dir)}
 
-    pbix_files = [
-        {
+    pbix_files = []
+    for f in scan_dir.rglob("*.pbix"):
+        try:
+            stat = await asyncio.to_thread(f.stat)
+        except OSError:
+            continue
+        pbix_files.append({
             "name": f.name,
             "path": str(f.resolve()),
-            "size_bytes": f.stat().st_size,
-            "modified": f.stat().st_mtime,
-        }
-        for f in scan_dir.rglob("*.pbix")
-    ]
+            "size_bytes": stat.st_size,
+            "modified": stat.st_mtime,
+        })
 
     return {"files": pbix_files, "directory": str(scan_dir)}
 

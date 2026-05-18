@@ -161,6 +161,25 @@ function MappingRow({ row, onEdit }) {
             </span>
           )}
         </div>
+        {/* Synonym Badges */}
+        {Array.isArray(row.synonyms) && row.synonyms.length > 0 && (
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+            {row.synonyms.map((syn, idx) => (
+              <span key={idx} style={{
+                fontSize: 9,
+                fontWeight: 600,
+                padding: '1px 5px',
+                borderRadius: 3,
+                background: 'rgba(255, 255, 255, 0.05)',
+                color: 'var(--text-tertiary)',
+                border: '1px solid var(--border-main)',
+                whiteSpace: 'nowrap',
+              }}>
+                {syn}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Target Field */}

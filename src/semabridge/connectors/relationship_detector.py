@@ -178,6 +178,7 @@ class RelationshipDetector:
                         return (target_table, target_pk)
         
         return None
+
     
     def _find_matching_table(self, base_name: str) -> Optional[str]:
         """Find a table that matches the base name."""

@@ -69,3 +69,22 @@ def test_generate_lookup_ddl():
     assert "('MSH', 'Text''s')" in ddl
     assert "('__DEFAULT__', 'Default')" in ddl
 
+
+def test_normalize_leaked_divide_sql_expression_for_databricks():
+    translator = DatabricksMeasureTranslator(
+        behavior=DatabricksBehavior(),
+        sanitize_identifier=lambda x: str(x or "").upper(),
+        build_aggregation_sql=lambda x: "",
+        distinct_count_expression=lambda x: f"COUNT(DISTINCT `{x}`)",
+    )
+
+    sql = translator.normalize_dax_leakage_in_sql_expression(
+        "DIVIDE(SUM('Fact'[Profit]), SUM('Fact'[Revenue]), 0)"
+    )
+
+    assert "DIVIDE(" not in sql.upper()
+    assert "COALESCE(" in sql
+    assert "NULLIF(" in sql
+    assert "SUM(`PROFIT`)" in sql
+    assert "SUM(`REVENUE`)" in sql
+

@@ -1,7 +1,7 @@
 """
 Fabric Semantic Model Extractor.
 
-Handles authentication with Azure AD and extraction of semantic model definitions (TMSL)
+Handles authentication with Azure AD and extraction of semantic model definitions (TMDL)
 from Microsoft Fabric/Power BI using the REST APIs.
 """
 
@@ -17,8 +17,10 @@ from typing import Any, Optional
 import requests
 from requests.exceptions import RequestException
 
+from semabridge.adapters.tmsl_translator import translate_tmsl_to_internal_sml
 from semabridge.core.env import get_fabric_access_token_from_env
 from semabridge.core.settings import FabricConfig
+from semabridge.sml.models import SMLModel
 from semabridge.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -413,7 +415,7 @@ class FabricExtractor:
     
     def get_model_definition(self, dataset_id: str) -> dict[str, Any]:
         """
-        Get the TMSL definition of a semantic model.
+        Get the TMDL definition of a semantic model.
         
         This handles the long-running async operation:
         1. POST /getDefinition
@@ -432,7 +434,8 @@ class FabricExtractor:
             logger.info(f"Resolved '{dataset_id}' -> '{resolved_id}'")
         
         # 1. Initiate Export
-        api_url = f"{self.config.api_base_url}/workspaces/{workspace_id}/semanticModels/{resolved_id}/getDefinition?format=TMSL"
+        # Request TMDL definition format for the semantic model payload.
+        api_url = f"{self.config.api_base_url}/workspaces/{workspace_id}/semanticModels/{resolved_id}/getDefinition?format=TMDL"
         
         result = {}
         try:
@@ -477,6 +480,19 @@ class FabricExtractor:
             
         except RequestException as e:
             raise FabricExtractionError(f"Failed to initiate model extraction: {e}")
+
+    def get_semantic_model(self, dataset_id: str) -> SMLModel:
+        """Get semantic model in internal SML form from Fabric TMDL ingress."""
+        resolved_id = self.resolve_model_id(dataset_id)
+        raw_tmdl_payload = self.get_model_definition(resolved_id)
+        row_counts = self.get_table_row_counts(resolved_id)
+        workspace_id = self.resolve_workspace_id(self.config.workspace_id)
+        return translate_tmsl_to_internal_sml(
+            raw_tmdl_payload,
+            workspace_id=workspace_id,
+            dataset_id=resolved_id,
+            row_counts=row_counts,
+        )
     
     def _poll_operation(self, operation_url: str, retry_interval: int) -> dict[str, Any]:
         """Poll the long-running operation until completion."""
@@ -505,29 +521,89 @@ class FabricExtractor:
                     # Case B: Definition is in a nested result object
                     if "result" in data and "definition" in data["result"]:
                          return self._parse_definition_response(data["result"])
-                         
-                    # Case C: Explicit /result endpoint (Common Fabric pattern)
-                    # We assume operation_url is like .../operations/{id}
-                    # Result is at .../operations/{id}/result
-                    result_url = f"{operation_url}/result"
-                    logger.info(f"Fetching operation result from {result_url}...")
-                    
-                    try:
-                        res_response = requests.get(result_url, headers=self._get_headers(), timeout=30)
-                        res_response.raise_for_status()
-                        res_data = res_response.json()
-                        
-                        if "definition" in res_data:
-                            return self._parse_definition_response(res_data)
-                        
-                        if "definition" in res_data.get("result", {}):
-                             return self._parse_definition_response(res_data["result"])
 
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch result from {result_url}: {e}")
+                    # Case C: Definition is behind a result URL (varies by Fabric endpoint)
+                    result_url_candidates: list[str] = []
+
+                    # Poll response headers can expose canonical result URL
+                    for header_name in ("Location", "Operation-Location", "x-ms-operation-result-url"):
+                        header_url = response.headers.get(header_name)
+                        if header_url:
+                            result_url_candidates.append(header_url)
+
+                    # Response body may include explicit links
+                    for key in ("resultUrl", "resourceLocation", "location"):
+                        candidate = data.get(key)
+                        if isinstance(candidate, str) and candidate:
+                            result_url_candidates.append(candidate)
+
+                    # Default fallback if no explicit location is returned
+                    result_url_candidates.append(f"{operation_url}/result")
+
+                    # Preserve order while removing duplicates
+                    unique_result_urls: list[str] = []
+                    seen_urls: set[str] = set()
+                    for candidate in result_url_candidates:
+                        if candidate not in seen_urls:
+                            unique_result_urls.append(candidate)
+                            seen_urls.add(candidate)
+
+                    for result_url in unique_result_urls:
+                        logger.info(f"Fetching operation result from {result_url}...")
+                        try:
+                            # Some result endpoints are also long-running operations.
+                            # Poll a handful of times before giving up on this URL.
+                            for _ in range(6):
+                                res_response = requests.get(result_url, headers=self._get_headers(), timeout=30)
+                                res_response.raise_for_status()
+                                res_data = res_response.json()
+
+                                if "definition" in res_data:
+                                    return self._parse_definition_response(res_data)
+
+                                if "definition" in res_data.get("result", {}):
+                                    return self._parse_definition_response(res_data["result"])
+
+                                res_status = res_data.get("status")
+                                if res_status in ("Failed", "Canceled"):
+                                    error = res_data.get("error", {})
+                                    raise FabricExtractionError(
+                                        f"Extraction failed while fetching result: "
+                                        f"{error.get('message', 'Unknown error')} ({error.get('code')})"
+                                    )
+
+                                # Some URLs return another status envelope first; if a follow-up
+                                # location is present, attempt it in this same loop.
+                                follow_up_url = (
+                                    res_response.headers.get("Location")
+                                    or res_response.headers.get("Operation-Location")
+                                    or res_data.get("resultUrl")
+                                    or res_data.get("resourceLocation")
+                                    or res_data.get("location")
+                                )
+                                if isinstance(follow_up_url, str) and follow_up_url and follow_up_url not in seen_urls:
+                                    unique_result_urls.append(follow_up_url)
+                                    seen_urls.add(follow_up_url)
+
+                                if res_status in ("Running", "NotStarted", "InProgress", None):
+                                    time.sleep(retry_interval)
+                                    continue
+                                break
+                        except FabricExtractionError:
+                            # Preserve semantic errors from nested result polling.
+                            raise
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch result from {result_url}: {e}")
                     
                     # Log full debug info if we still fail
                     logger.debug(f"Response Body: {json.dumps(data, indent=2)}")
+                    if isinstance(data.get("error"), dict):
+                        err = data["error"]
+                        msg = err.get("message", "Unknown error")
+                        code = err.get("code")
+                        raise FabricExtractionError(
+                            f"Extraction failed: {msg} ({code})"
+                        )
                     raise FabricExtractionError(f"Model definition missing in operation result. Keys: {list(data.keys())}")
                 
                 elif status in ("Failed", "Canceled"):
@@ -545,30 +621,519 @@ class FabricExtractor:
 
     def _parse_definition_response(self, payload: dict[str, Any]) -> dict[str, Any]:
         """
-        Parse the definition response and extract model.bim.
-        
-        Response -> definition -> parts -> [path="model.bim", payload="base64...", payloadType="InlineBase64"]
+        Parse the definition response and extract the semantic model JSON.
+
+        Primary expectation is a ``model.bim`` part payload (base64 JSON).
+        Some API responses vary part path casing/separators, so matching is
+        normalized and case-insensitive.
         """
-        definition = payload.get("definition", payload) # Handle if passed 'definition' sub-object or full payload
+        definition = payload.get("definition", payload)  # Handle sub-object or full payload
         parts = definition.get("parts", [])
-        
+
+        def _decode_json_part(part: dict[str, Any]) -> dict[str, Any]:
+            encoded_payload = part.get("payload")
+            payload_type = part.get("payloadType")
+            if payload_type != "InlineBase64":
+                raise FabricExtractionError(f"Unsupported payload type: {payload_type}")
+            try:
+                decoded_bytes = base64.b64decode(encoded_payload)
+                decoded_str = decoded_bytes.decode("utf-8-sig")
+                parsed = json.loads(decoded_str)
+            except Exception as e:
+                raise FabricExtractionError(f"Failed to decode model definition payload: {e}")
+            if not isinstance(parsed, dict):
+                raise FabricExtractionError("Decoded model definition payload is not a JSON object")
+            return parsed
+
+        candidate_parts: list[dict[str, Any]] = []
+        discovered_paths: list[str] = []
+
         for part in parts:
-            if part.get("path") == "model.bim":
-                encoded_payload = part.get("payload")
-                payload_type = part.get("payloadType")
-                
-                if payload_type == "InlineBase64":
-                    try:
-                        decoded_bytes = base64.b64decode(encoded_payload)
-                        # BOM handling: Microsoft often adds UTF-8 BOM
-                        decoded_str = decoded_bytes.decode("utf-8-sig")
-                        return json.loads(decoded_str)
-                    except Exception as e:
-                        raise FabricExtractionError(f"Failed to decode model.bim: {e}")
-                else:
-                    raise FabricExtractionError(f"Unsupported payload type: {payload_type}")
-        
-        raise FabricExtractionError("model.bim not found in definition parts")
+            part_path = str(part.get("path", ""))
+            discovered_paths.append(part_path)
+            normalized_path = part_path.replace("\\", "/").strip().lower()
+            if normalized_path == "model.bim" or normalized_path.endswith("/model.bim"):
+                return _decode_json_part(part)
+            candidate_parts.append(part)
+
+        # Fallback: some service variants may not expose model.bim with a canonical
+        # path. Try decoding other JSON-like parts and select one that has a model.
+        for part in candidate_parts:
+            try:
+                parsed = _decode_json_part(part)
+            except FabricExtractionError:
+                continue
+            if isinstance(parsed.get("model"), dict):
+                return parsed
+
+        # TMDL package fallback: build a model-like JSON payload from
+        # definition/*.tmdl parts so downstream converters can continue.
+        tmdl_model = self._parse_tmdl_package_parts(parts)
+        if tmdl_model is not None:
+            return tmdl_model
+
+        raise FabricExtractionError(
+            "model.bim not found in definition parts; discovered paths: "
+            f"{discovered_paths}"
+        )
+
+    @staticmethod
+    def _strip_tmdl_identifier(raw: str) -> str:
+        text = (raw or "").strip().rstrip(":")
+        if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
+            text = text[1:-1]
+        return text.strip()
+
+    @staticmethod
+    def _parse_tmdl_relationship_endpoint(raw: str) -> tuple[str, str] | None:
+        """
+        Parse TMDL relationship endpoint into (table, column).
+
+        Handles all forms emitted by the Fabric API:
+          - Standard TMDL dot notation:  TableName.'Column Name'
+          - Standard TMDL dot notation:  TableName.ColumnName
+          - Legacy bracket notation:     'Table Name'[Column Name]
+          - Legacy bracket notation:     TableName[ColumnName]
+        """
+        text = (raw or "").strip()
+        if not text:
+            return None
+
+        # ── Form 1: dot notation  TableName.'Column'  or  TableName.ColumnName ──
+        dot_match = re.match(
+            r"""^\s*['\"]?([^'\".\[]+)['\"]?\.\s*['\"]?([^'\".\]]+)['\"]?\s*$""",
+            text,
+        )
+        if dot_match:
+            table_name = FabricExtractor._strip_tmdl_identifier(dot_match.group(1))
+            column_name = FabricExtractor._strip_tmdl_identifier(dot_match.group(2))
+            if table_name and column_name:
+                return table_name, column_name
+
+        # ── Form 2: bracket notation  'Table Name'[Column Name] ─────────────────
+        bracket_match = re.match(r"^\s*['\"]?([^'\"]+)['\"]?\[([^\]]+)\]\s*$", text)
+        if bracket_match:
+            table_name = FabricExtractor._strip_tmdl_identifier(bracket_match.group(1))
+            column_name = FabricExtractor._strip_tmdl_identifier(bracket_match.group(2))
+            if table_name and column_name:
+                return table_name, column_name
+
+        return None
+
+    def _parse_tmdl_package_parts(self, parts: list[dict[str, Any]]) -> dict[str, Any] | None:
+        decoded_text_by_path: dict[str, str] = {}
+        decoded_json_by_path: dict[str, dict[str, Any]] = {}
+        for part in parts or []:
+            path = str(part.get("path", "")).replace("\\", "/").strip()
+            payload_type = part.get("payloadType")
+            payload = part.get("payload")
+            if not path or payload_type != "InlineBase64" or not payload:
+                continue
+            try:
+                decoded = base64.b64decode(payload).decode("utf-8-sig")
+                decoded_text_by_path[path] = decoded
+                try:
+                    parsed_json = json.loads(decoded)
+                    if isinstance(parsed_json, dict):
+                        decoded_json_by_path[path] = parsed_json
+                except Exception:
+                    pass
+            except Exception:
+                continue
+
+        if not decoded_text_by_path:
+            return None
+
+        tmdl_paths = [p for p in decoded_text_by_path if p.lower().endswith(".tmdl")]
+        if not tmdl_paths:
+            return None
+
+        model_name = "FabricModel"
+        pbism_path = next(
+            (p for p in decoded_json_by_path if p.replace("\\", "/").lower().endswith("definition.pbism")),
+            None,
+        )
+        if pbism_path:
+            pbism = decoded_json_by_path.get(pbism_path) or {}
+            candidate = (
+                pbism.get("displayName")
+                or pbism.get("name")
+                or ((pbism.get("model") or {}).get("name") if isinstance(pbism.get("model"), dict) else None)
+            )
+            if isinstance(candidate, str) and candidate.strip():
+                model_name = candidate.strip()
+
+        model_tmdl_path = next(
+            (p for p in tmdl_paths if p.replace("\\", "/").lower().endswith("definition/model.tmdl")),
+            None,
+        )
+        if model_tmdl_path:
+            for line in decoded_text_by_path[model_tmdl_path].splitlines():
+                m = re.match(r"^\s*model\s+(.+?)\s*$", line)
+                if m:
+                    parsed_name = self._strip_tmdl_identifier(m.group(1))
+                    if parsed_name:
+                        model_name = parsed_name
+                    break
+
+        tables: list[dict[str, Any]] = []
+        for path, text in decoded_text_by_path.items():
+            normalized = path.replace("\\", "/").lower()
+            if "/tables/" not in normalized or not normalized.endswith(".tmdl"):
+                continue
+
+            table_name = Path(path).stem
+            columns: list[dict[str, Any]] = []
+            measures: list[dict[str, Any]] = []
+            current_measure: dict[str, str] | None = None
+
+            for line in text.splitlines():
+                stripped = line.strip()
+                if not stripped:
+                    continue
+
+                col_match = re.match(r"^\s*(?:column|calculatedColumn)\s+(.+?)\s*$", line)
+                if col_match:
+                    current_measure = None
+                    col_name = self._strip_tmdl_identifier(col_match.group(1))
+                    if col_name:
+                        columns.append({"name": col_name, "dataType": "string"})
+                    continue
+
+                measure_match = re.match(r"^\s*measure\s+(.+?)\s*$", line)
+                if measure_match:
+                    raw_measure = self._strip_tmdl_identifier(measure_match.group(1))
+                    measure_name = raw_measure
+                    measure_expr = ""
+                    if "=" in raw_measure:
+                        name_part, expr_part = raw_measure.split("=", 1)
+                        measure_name = self._strip_tmdl_identifier(name_part)
+                        measure_expr = expr_part.strip()
+                    if measure_name:
+                        current_measure = {"name": measure_name, "expression": measure_expr}
+                        measures.append(current_measure)
+                    continue
+
+                expr_match = re.match(r"^\s*expression\s*:\s*(.+?)\s*$", line)
+                if expr_match and current_measure is not None:
+                    current_measure["expression"] = expr_match.group(1).strip()
+                    continue
+
+                # Continuation lines for multi-line measure expressions.
+                if current_measure is not None and not re.match(
+                    r"^\s*(?:table|column|calculatedColumn|measure|partition|annotation|lineageTag|formatString|displayFolder)\b",
+                    line,
+                ):
+                    prior = str(current_measure.get("expression") or "").strip()
+                    continuation = stripped
+                    current_measure["expression"] = f"{prior} {continuation}".strip() if prior else continuation
+
+                table_match = re.match(r"^\s*table\s+(.+?)\s*$", line)
+                if table_match:
+                    current_measure = None
+                    parsed_table_name = self._strip_tmdl_identifier(table_match.group(1))
+                    if parsed_table_name:
+                        table_name = parsed_table_name
+
+            tables.append({"name": table_name, "columns": columns, "measures": measures})
+
+        rels: list[dict[str, Any]] = []
+        # Relationships in a TMDL package live in a dedicated `relationships.tmdl`
+        # file (or occasionally inline in `model.tmdl`).  The Fabric API returns
+        # paths with a variable-depth prefix (e.g. "SemanticModel/definition/…"
+        # or "MyModel.SemanticModel/definition/…"), so we must use a substring
+        # check rather than startswith("definition/").
+        rel_paths = [
+            p
+            for p in decoded_text_by_path
+            if p.replace("\\", "/").lower().endswith(".tmdl")
+            and (
+                "/definition/" in p.replace("\\", "/").lower()
+                or p.replace("\\", "/").lower().startswith("definition/")
+            )
+        ]
+        for rel_path in sorted(rel_paths):
+            rel_text = decoded_text_by_path[rel_path]
+            current_rel: dict[str, Any] | None = None
+            for line in rel_text.splitlines():
+                # ── Format 1 (legacy / inline): single-line arrow notation ──────
+                # relationship 'FromTable'[FromCol] -> 'ToTable'[ToCol]
+                m = re.match(
+                    r"^\s*relationship\s+['\"]?([^'\"]+)['\"]?\[([^\]]+)\]\s*->\s*['\"]?([^'\"]+)['\"]?\[([^\]]+)\]",
+                    line,
+                )
+                if m:
+                    from_table, from_column, to_table, to_column = m.groups()
+                    rels.append(
+                        {
+                            "name": f"REL_{from_table}_{from_column}__{to_table}_{to_column}",
+                            "fromTable": from_table.strip(),
+                            "fromColumn": from_column.strip(),
+                            "toTable": to_table.strip(),
+                            "toColumn": to_column.strip(),
+                            "isActive": True,
+                        }
+                    )
+                    current_rel = None
+                    continue
+
+                # ── Format 2 (standard TMDL): block declaration ──────────────
+                # relationship <guid-or-name>
+                #     fromColumn: TableName.'ColumnName'
+                #     toColumn: TableName.'ColumnName'
+                #     isActive: false          (optional; default true)
+                #     crossFilteringBehavior: bothDirections  (optional)
+                #     cardinality: manyToOne   (optional)
+                #
+                # Guard: a line that starts with "relationship" but also contains
+                # a colon is a property line (e.g. "relationshipType: ..."), not a
+                # new relationship declaration.
+                rel_decl = re.match(r"^\s*relationship\s+(\S+)\s*$", line)
+                if rel_decl:
+                    rel_name = self._strip_tmdl_identifier(rel_decl.group(1)) or f"REL_{len(rels)+1}"
+                    current_rel = {"name": rel_name, "isActive": True}
+                    rels.append(current_rel)
+                    continue
+
+                if current_rel is not None:
+                    kv = re.match(
+                        r"^\s*(fromTable|fromColumn|toTable|toColumn|isActive"
+                        r"|crossFilteringBehavior|crossFilterBehavior|cardinality)\s*:\s*(.+?)\s*$",
+                        line,
+                    )
+                    if kv:
+                        key, raw_val = kv.groups()
+                        val = self._strip_tmdl_identifier(raw_val)
+                        if key == "isActive":
+                            current_rel[key] = str(val).strip().lower() != "false"
+                        elif key in ("fromColumn", "toColumn"):
+                            # Real TMDL format: "TableName.'ColumnName'" or "TableName[ColumnName]"
+                            endpoint = self._parse_tmdl_relationship_endpoint(raw_val)
+                            if endpoint:
+                                tbl_name, col_name = endpoint
+                                current_rel["fromTable" if key == "fromColumn" else "toTable"] = tbl_name
+                                current_rel[key] = col_name
+                            else:
+                                current_rel[key] = val
+                        else:
+                            # crossFilteringBehavior, cardinality, fromTable, toTable
+                            current_rel[key] = val
+                    elif re.match(r"^\s*\S", line) and not line.strip().startswith("#"):
+                        # A non-indented, non-comment line closes the current block.
+                        current_rel = None
+
+        if not tables:
+            return None
+
+        # Keep only relationships with complete endpoints.
+        rels = [
+            r for r in rels
+            if all(str(r.get(k) or "").strip() for k in ("fromTable", "fromColumn", "toTable", "toColumn"))
+        ]
+
+        # Heuristic recovery for TMDL packages where explicit relationships are
+        # sparse/missing: infer FACT -> DIM relationships on shared *_KEY columns.
+        table_columns_map: dict[str, set[str]] = {
+            str(t.get("name") or "").strip(): {
+                str(c.get("name") or "").strip()
+                for c in (t.get("columns") or [])
+                if str(c.get("name") or "").strip()
+            }
+            for t in tables
+            if str(t.get("name") or "").strip()
+        }
+        existing_rel_keys = {
+            (
+                str(r.get("fromTable") or "").strip().casefold(),
+                str(r.get("fromColumn") or "").strip().casefold(),
+                str(r.get("toTable") or "").strip().casefold(),
+                str(r.get("toColumn") or "").strip().casefold(),
+            )
+            for r in rels
+        }
+
+        # Detect fact tables: exact "fact" name, or tables whose name ends with
+        # "_fact" / starts with "fact_" (e.g. "spend_fact", "spend_details_fact").
+        # Collect all matching fact tables so multi-fact models are handled.
+        fact_tables: list[str] = [
+            name for name in table_columns_map
+            if (
+                name.strip().casefold() == "fact"
+                or name.strip().casefold().endswith("_fact")
+                or name.strip().casefold().startswith("fact_")
+            )
+        ]
+        # Legacy single-fact variable kept for backward compat with Strategy B loop.
+        fact_table = fact_tables[0] if fact_tables else None
+        inferred_rel_count = 0
+
+        def _try_add_rel(from_table: str, from_col: str, to_table: str, to_col: str) -> bool:
+            """Add an inferred relationship if it doesn't already exist. Returns True if added."""
+            rel_key = (
+                from_table.casefold(),
+                from_col.casefold(),
+                to_table.casefold(),
+                to_col.casefold(),
+            )
+            if rel_key in existing_rel_keys:
+                return False
+            rels.append(
+                {
+                    "name": f"REL_{from_table}_{from_col}__{to_table}_{to_col}",
+                    "fromTable": from_table,
+                    "fromColumn": from_col,
+                    "toTable": to_table,
+                    "toColumn": to_col,
+                    "isActive": True,
+                }
+            )
+            existing_rel_keys.add(rel_key)
+            return True
+
+        def _find_pk_col_in_table(table_name: str, dim_cols: set[str], base_name: str) -> str | None:
+            """
+            Given a base name (e.g. "Customer"), find the best PK candidate in dim_cols.
+            Priority:
+              1. <BaseName>_Dim_CK / <BaseName>_CK (Snowflake/enterprise surrogate key pattern)
+              2. <BaseName>Code, <BaseName>ID, <BaseName>Key (natural key pattern)
+              3. Plain "ID", "Code", or "<TableName>_CK" column
+              4. Exact match on base name (last resort — often the descriptive column)
+            """
+            base_up = base_name.replace(" ", "_").upper()
+            # 1. Enterprise CK patterns (most specific)
+            for ck_suffix in ("_DIM_CK", "_CK"):
+                for dc in dim_cols:
+                    if dc.replace(" ", "_").upper() == f"{base_up}{ck_suffix}":
+                        return dc
+            # 2. <Base>Code / <Base>ID / <Base>Key
+            for suffix in ("CODE", "ID", "KEY"):
+                for dc in dim_cols:
+                    if dc.replace(" ", "_").upper() == f"{base_up}{suffix}":
+                        return dc
+            # 3. Bare surrogate key columns
+            for bare in ("ID", "CODE"):
+                for dc in dim_cols:
+                    if dc.replace(" ", "_").upper() == bare:
+                        return dc
+            # Also accept a bare <TableName>_CK column (e.g. "Diversity_Key" in diversity_dim)
+            for dc in dim_cols:
+                dc_up = dc.replace(" ", "_").upper()
+                if dc_up.endswith("_CK") or dc_up.endswith("_KEY"):
+                    return dc
+            # 4. Exact match (e.g. "Customer" column in Customer table)
+            for dc in dim_cols:
+                if dc.replace(" ", "_").upper() == base_up:
+                    return dc
+            return None
+
+        # ── Pass 1: Fact → Dim heuristics ────────────────────────────────────
+        # Build a set of (from_table, from_col, to_table) triples already covered
+        # so we don't add a second inferred rel when a raw one already exists.
+        covered_triples: set[tuple[str, str, str]] = {
+            (
+                str(r.get("fromTable") or "").strip().casefold(),
+                str(r.get("fromColumn") or "").strip().casefold(),
+                str(r.get("toTable") or "").strip().casefold(),
+            )
+            for r in rels
+        }
+
+        for fact_table in fact_tables:
+            fact_cols = table_columns_map.get(fact_table, set())
+            for dim_table, dim_cols in table_columns_map.items():
+                if dim_table == fact_table:
+                    continue
+                for fact_col in fact_cols:
+                    norm_fact_col = fact_col.replace(" ", "_").upper()
+
+                    # Strategy A: exact column name match, but only for columns that
+                    # look like join keys (end in a key suffix) or whose name exactly
+                    # matches the target table name (e.g. YearPeriod → Calendar).
+                    # This prevents generic attribute columns like "Source_System_Name"
+                    # or "Currency" from creating spurious relationships.
+                    _FACT_KEY_SUFFIXES = ("_CK", "_KEY", "_ID", "_CODE", "_DIM_CK")
+                    col_looks_like_key = any(norm_fact_col.endswith(s) for s in _FACT_KEY_SUFFIXES)
+                    col_matches_table = norm_fact_col == dim_table.replace(" ", "_").upper()
+                    if col_looks_like_key or col_matches_table:
+                        for dc in dim_cols:
+                            if dc.replace(" ", "_").upper() == norm_fact_col:
+                                if _try_add_rel(fact_table, fact_col, dim_table, dc):
+                                    inferred_rel_count += 1
+                                # Mark triple covered regardless — raw rel may already exist
+                                covered_triples.add((fact_table.casefold(), fact_col.casefold(), dim_table.casefold()))
+                                break
+
+                    # Strategy B: <DimTable>_Key / <DimTable>_ID / <DimTable>_CK → dim PK
+                    # e.g. "Customer Key" → Customer table, PK col "Customer"
+                    # e.g. "Supplier_Dim_CK" → supplier table, PK col "Supplier_Dim_CK"
+                    # Skip if a raw rel already covers this (from, col, to) triple.
+                    triple = (fact_table.casefold(), fact_col.casefold(), dim_table.casefold())
+                    if triple in covered_triples:
+                        continue
+                    dim_up = dim_table.replace(" ", "_").upper()
+                    stripped = None
+                    for suffix in ("_KEY", "_ID", "_CK", "_DIM_CK"):
+                        if norm_fact_col == f"{dim_up}{suffix}":
+                            stripped = dim_table
+                            break
+                    if stripped:
+                        pk_col = _find_pk_col_in_table(dim_table, dim_cols, stripped)
+                        if pk_col:
+                            if _try_add_rel(fact_table, fact_col, dim_table, pk_col):
+                                inferred_rel_count += 1
+                                covered_triples.add(triple)
+
+        # ── Pass 2: Cross-dimension / any-table heuristics ───────────────────
+        # For every table pair (A → B) not yet covered, look for FK columns in A
+        # whose name encodes a reference to table B.
+        # Only consider columns that look like keys (ending in _CK, _KEY, _ID, _Code,
+        # _Dim_CK) to avoid false positives from shared attribute columns like
+        # "Source_System_Name" or "Currency" that appear in many tables.
+        _KEY_SUFFIXES = ("_CK", "_KEY", "_ID", "_CODE", "_DIM_CK")
+
+        for from_table, from_cols in table_columns_map.items():
+            for to_table, to_cols in table_columns_map.items():
+                if from_table == to_table:
+                    continue
+                to_up = to_table.replace(" ", "_").upper()
+                for fc in from_cols:
+                    fc_up = fc.replace(" ", "_").upper()
+                    # Skip if already covered by a raw or previously inferred rel
+                    triple = (from_table.casefold(), fc.casefold(), to_table.casefold())
+                    if triple in covered_triples:
+                        continue
+                    # Only consider columns that look like surrogate/natural keys
+                    if not any(fc_up.endswith(s) for s in _KEY_SUFFIXES):
+                        continue
+                    # Pattern: "<ToTable>" / "<ToTable>_ID" / "<ToTable>_KEY" / "<ToTable>_CODE"
+                    # Also handles enterprise CK patterns: "<ToTable>_CK" / "<ToTable>_DIM_CK"
+                    is_fk = (
+                        fc_up == to_up
+                        or fc_up in (f"{to_up}_ID", f"{to_up}_KEY", f"{to_up}_CODE",
+                                     f"{to_up}_CK", f"{to_up}_DIM_CK")
+                        or fc_up in (f"{to_up}ID", f"{to_up}KEY", f"{to_up}CODE")
+                    )
+                    if not is_fk:
+                        continue
+                    pk_col = _find_pk_col_in_table(to_table, to_cols, to_table)
+                    if pk_col:
+                        if _try_add_rel(from_table, fc, to_table, pk_col):
+                            inferred_rel_count += 1
+                            covered_triples.add(triple)
+
+        for table in tables:
+            for measure in table.get("measures", []):
+                expr = str(measure.get("expression") or "").strip()
+                if not expr:
+                    measure["expression"] = "BLANK()"
+
+        logger.info(
+            "Parsed Fabric TMDL package fallback: tables=%s relationships=%s (inferred=%s)",
+            len(tables),
+            len(rels),
+            inferred_rel_count,
+        )
+        return {"model": {"name": model_name, "tables": tables, "relationships": rels}}
 
     def execute_dax_query(self, dataset_id: str, dax_query: str, silent: bool = False) -> list[dict[str, Any]]:
         """

@@ -25,8 +25,8 @@ from semabridge.core.run_summary import (
 )
 from semabridge.core.source_format import (
     SourceFormat,
-    from_fabric_tmsl,
-    from_pbix_tmsl,
+    from_fabric_tmdl,
+    from_pbix_tmdl,
     from_snowflake_metadata,
 )
 from semabridge.intermediate.models import OSIModel
@@ -48,12 +48,12 @@ from semabridge.core.engine.exceptions import (
 logger = get_logger(__name__)
 
 def _convert_to_fabric_target(self, context: RunContext) -> None:
-    """Generate Fabric TMSL."""
-    from semabridge.connectors.tmsl_generator import TMSLGenerator
+    """Generate Fabric TMDL."""
+    from semabridge.connectors.tmsl_generator import TMDLGenerator
 
     config = context.config
 
-    generator = TMSLGenerator(
+    generator = TMDLGenerator(
         context.sml_model,
         snowflake_server=config.snowflake.account,
         snowflake_warehouse=config.snowflake.warehouse,

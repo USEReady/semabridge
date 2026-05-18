@@ -25,8 +25,8 @@ from semabridge.core.run_summary import (
 )
 from semabridge.core.source_format import (
     SourceFormat,
-    from_fabric_tmsl,
-    from_pbix_tmsl,
+    from_fabric_tmdl,
+    from_pbix_tmdl,
     from_snowflake_metadata,
 )
 from semabridge.intermediate.models import OSIModel
@@ -53,37 +53,46 @@ def _convert_fabric_to_sml(
     workspace_id: Optional[str],
     dataset_id: Optional[str],
 ) -> SMLModel:
-    """Convert Fabric TMSL to SML via the mandatory OSI intermediate layer.
+    """Convert Fabric TMDL to SML via the mandatory OSI intermediate layer.
 
-    Flow: TMSL → OSIModel (TMSLToOSIConverter) → SMLModel (OSIToSMLConverter)
+    Flow: TMDL → OSIModel (TMDLToOSIConverter) → SMLModel (OSIToSMLConverter)
     The OSIModel is stored on context.osi_model for auditing / step-7 persistence.
     """
-    from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
-    from semabridge.converter.osi_to_sml import OSIToSMLConverter
+    from semabridge.connectors.metadata_connectors import (
+        TmdlConnector,
+    )
 
     sf = context.source_format
     ws_id = workspace_id or sf.workspace_id
     ds_id = dataset_id or sf.dataset_id
+    conversion_path = "fabric_boundary_sml"
 
-    # Phase 1: TMSL → OSI
-    source_data = {
-        "tmsl": sf.tmsl_definition,
-        "workspace_id": ws_id,
-        "dataset_id": ds_id,
-        "display_name": sf.dataset_name or None,
-    }
-    osi_model = TMSLToOSIConverter().to_osi(source_data)
-    context.osi_model = osi_model  # Store on context for step-7 persistence
-    logger.debug(
-        f"OSI intermediate: {len(osi_model.datasets)} datasets, "
-        f"{len(osi_model.metrics)} metrics, {len(osi_model.relationships)} relationships"
-    )
+    if sf.internal_sml_model:
+        sml_model = SMLModel.model_validate(sf.internal_sml_model)
+        sf.metadata_format = "tmdl"
+        logger.debug(
+            "Using pre-translated internal SML model from Fabric extraction boundary"
+        )
+    else:
+        source_data = {
+            "tmdl": sf.tmdl_definition,
+            "workspace_id": ws_id,
+            "dataset_id": ds_id,
+            "display_name": sf.dataset_name or None,
+        }
+        primary_connector = TmdlConnector()
+        conversion_path = primary_connector.source_format
+        osi_model, sml_model = primary_connector.parse_to_sml(source_data, row_counts=sf.row_counts)
+        context.osi_model = osi_model  # Store on context for step-7 persistence
 
-    # Phase 2: OSI → SML
-    sml_model = OSIToSMLConverter().from_osi(
-        osi_model,
-        row_counts=sf.row_counts,
-    )
+        sf.metadata_format = "tmdl"
+        logger.debug(
+            "OSI intermediate (%s): %d datasets, %d metrics, %d relationships",
+            primary_connector.source_format,
+            len(osi_model.datasets),
+            len(osi_model.metrics),
+            len(osi_model.relationships),
+        )
 
     # Allow the project config's model_name / project_name to override the
     # SML model's unique_name.  This lets users control the Snowflake view
@@ -101,7 +110,7 @@ def _convert_fabric_to_sml(
 
     self._record_step(
         6, StepStatus.SUCCESS,
-        f"{sml_model.dataset_count} datasets, {sml_model.metric_count} metrics (via OSI)"
+        f"{sml_model.dataset_count} datasets, {sml_model.metric_count} metrics (via {conversion_path})"
     )
 
     return sml_model

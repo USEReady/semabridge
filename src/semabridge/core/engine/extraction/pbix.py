@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import time
 import uuid
@@ -25,8 +25,8 @@ from semabridge.core.run_summary import (
 )
 from semabridge.core.source_format import (
     SourceFormat,
-    from_fabric_tmsl,
-    from_pbix_tmsl,
+    from_fabric_tmdl,
+    from_pbix_tmdl,
     from_snowflake_metadata,
 )
 from semabridge.intermediate.models import OSIModel
@@ -83,20 +83,20 @@ def _extract_pbix(
 
     connector = LocalPBIXConnector({"pbix_path": pbix_path})
     discovered = connector.discover()
-    tmsl = connector.extract() if discovered.get("raw_tmsl") is None else discovered.get("raw_tmsl")
+    tmdl = connector.extract() if discovered.get("raw_tmsl") is None else discovered.get("raw_tmsl")
 
-    if not tmsl:
+    if not tmdl:
         raise ExtractionError(
             f"Could not extract DataModelSchema from {pbix_path}"
         )
 
     logger.debug(
-        "PBIX -> TMSL transition complete for %s (%s tables)",
+        "PBIX -> TMDL transition complete for %s (%s tables)",
         pbix_path,
-        len(tmsl.get("model", {}).get("tables", [])),
+        len(tmdl.get("model", {}).get("tables", [])),
     )
     try:
-        model_obj = tmsl.get("model", {})
+        model_obj = tmdl.get("model", {})
         table_defs = model_obj.get("tables", []) or []
         table_names = [str(t.get("name", "")).strip() or "<unnamed>" for t in table_defs]
         measure_count = sum(len((t.get("measures", []) or [])) for t in table_defs if isinstance(t, dict))
@@ -110,17 +110,18 @@ def _extract_pbix(
     except Exception as exc:
         logger.debug("PBIX extraction debug summary skipped: %s", exc)
 
-    source_format = from_pbix_tmsl(
+    source_format = from_pbix_tmdl(
         project_id=context.project_id,
         run_id=context.run_id,
-        tmsl=tmsl,
+        tmdl=tmdl,
         pbix_path=pbix_path,
     )
 
-    table_count = len(tmsl.get("model", {}).get("tables", []))
+    table_count = len(tmdl.get("model", {}).get("tables", []))
     self._record_step(
         4, StepStatus.SUCCESS,
         f"Extracted {table_count} tables from {p.name}"
     )
 
     return source_format
+

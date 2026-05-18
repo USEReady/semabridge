@@ -8,7 +8,7 @@ following the mandatory 10-step flow. Also exports exceptions and interfaces.
 
 from semabridge.core.executor import CLIExecutor, ExecutionError
 from semabridge.core.execution_config import ExecutionConfig, SourceConfig, TargetConfig, LoggingConfig
-from semabridge.core.source_format import SourceFormat, from_snowflake_metadata, from_fabric_tmsl
+from semabridge.core.source_format import SourceFormat, from_snowflake_metadata
 from semabridge.core.run_summary import (
     RunSummary, RunStatus, StepStatus, STEP_NAMES, create_run_summary
 )
@@ -40,7 +40,6 @@ __all__ = [
     # Source Format
     "SourceFormat",
     "from_snowflake_metadata",
-    "from_fabric_tmsl",
     # Run Summary
     "RunSummary",
     "RunStatus",

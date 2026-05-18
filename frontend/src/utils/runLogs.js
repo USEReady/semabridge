@@ -41,6 +41,34 @@ function levelFromStatus(status) {
   return 'INFO';
 }
 
+const LIVE_RUN_STAGES = [
+  'Validating source format...',
+  'Converting metadata to SML...',
+  'Parsing semantic view...',
+  'Persisting generated artifacts...',
+  'Generating TMDL payload...',
+  'Deploying semantic model to Fabric...',
+];
+
+function buildProgressiveRunLogs(run = {}, seedLines = []) {
+  if (normalizeStatus(run.status) !== 'running') return [];
+
+  const startedAtMs = run.started_at ? Date.parse(run.started_at) : NaN;
+  const elapsedMs = Number.isFinite(startedAtMs) ? Math.max(0, Date.now() - startedAtMs) : 0;
+  const visibleStageCount = Math.min(LIVE_RUN_STAGES.length, Math.max(1, Math.floor(elapsedMs / 3500) + 1));
+  const lines = Array.isArray(seedLines) && seedLines.length
+    ? seedLines.map((line) => String(line))
+    : [`LIVE ${timestampFromIso(run.started_at)} Run queued. Waiting for execution engine...`];
+
+  LIVE_RUN_STAGES.slice(0, visibleStageCount).forEach((stage, index) => {
+    if (lines.some((line) => line.includes(stage))) return;
+    const timestamp = timestampFromIso((startedAtMs || Date.now()) + ((index + 1) * 3500));
+    lines.push(`LIVE ${timestamp} ${stage}`);
+  });
+
+  return lines;
+}
+
 function collectStepLogs(summary, prefix = '') {
   const steps = Array.isArray(summary?.steps_completed) ? summary.steps_completed : [];
   const errors = Array.isArray(summary?.errors) ? summary.errors : [];
@@ -107,7 +135,7 @@ export function buildMockRunLogs(run = {}) {
     `INFO ${startedAt} Converting metadata to SML...`,
     `INFO ${startedAt} Parsing semantic view...`,
     `INFO ${startedAt} Persisting generated artifacts...`,
-    `INFO ${startedAt} Generating TMSL payload...`,
+    `INFO ${startedAt} Generating TMDL payload...`,
   ];
 
   if (normalizedStatus === 'failed') {
@@ -132,6 +160,9 @@ export function saveRunLogs(runId, logs) {
 export function getRunLogs(run) {
   if (!run) return [];
   const summaryLogs = buildSummaryRunLogs(run);
+  if (normalizeStatus(run.status) === 'running' && !run.summary && !run.results) {
+    return buildProgressiveRunLogs(run, summaryLogs);
+  }
   if (summaryLogs.length) return summaryLogs;
   const store = readStore();
   const stored = store[String(run.id)];

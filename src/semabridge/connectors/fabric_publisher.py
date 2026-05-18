@@ -18,7 +18,7 @@ import msal
 
 from semabridge.core.env import get_fabric_access_token_from_env
 from semabridge.core.settings import FabricConfig
-from semabridge.connectors.tmsl_generator import TMSLGenerator
+from semabridge.connectors.tmsl_generator import TMDLGenerator
 from semabridge.sml.models import SMLModel
 from semabridge.utils.logger import get_logger
 from semabridge.utils.relationship_naming import generate_relationship_name
@@ -350,8 +350,8 @@ class FabricPublisher:
         if existing_model and not overwrite:
             raise PublishError(f"Model '{display_name}' already exists and overwrite=False")
         
-        # Generate TMSL
-        generator = TMSLGenerator(
+        # Generate TMDL model payload
+        generator = TMDLGenerator(
             sml_model,
             snowflake_server=snowflake_server,
             snowflake_warehouse=snowflake_warehouse,

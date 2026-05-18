@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from semabridge.core.execution_config import ExecutionConfig
-from semabridge.core.source_format import SourceFormat, from_snowflake_metadata, from_fabric_tmsl
+from semabridge.core.source_format import SourceFormat, from_snowflake_metadata, from_fabric_tmdl
 from semabridge.core.run_summary import (
     RunSummary, RunStatus, StepStatus, STEP_NAMES, create_run_summary
 )
@@ -531,15 +531,15 @@ class CLIExecutor:
         if not dataset_id:
             raise ExecutionError(4, "dataset_id is required for Fabric source")
         
-        tmsl = extractor.get_model_definition(dataset_id)
+        tmdl = extractor.get_model_definition(dataset_id)
         row_counts = extractor.get_table_row_counts(dataset_id)
         
         workspace_id = self.config.source.workspace_id or settings.fabric.workspace_id
         
-        return from_fabric_tmsl(
+        return from_fabric_tmdl(
             project_id=self.project_id,
             run_id=self.run_id,
-            tmsl=tmsl,
+            tmdl=tmdl,
             workspace_id=workspace_id,
             dataset_id=dataset_id,
             row_counts=row_counts,
@@ -744,12 +744,12 @@ class CLIExecutor:
     
     def _convert_fabric_to_sml(self, settings):
         """Convert Fabric source format to SML."""
-        from semabridge.converter.tmsl_to_sml import TMSLTransformer
+        from semabridge.converter.tmsl_to_sml import TMDLTransformer
 
         behavior = getattr(self.config, "behavior", None)
-        transformer = TMSLTransformer()
+        transformer = TMDLTransformer()
         return transformer.transform(
-            self._source_format.tmsl_definition,
+            self._source_format.tmdl_definition,
             self._source_format.workspace_id,
             self._source_format.dataset_id,
             row_counts=self._source_format.row_counts,
@@ -873,9 +873,9 @@ class CLIExecutor:
     
     def _convert_sml_to_fabric(self, settings):
         """Convert SML to Fabric model.bim."""
-        from semabridge.connectors.tmsl_generator import TMSLGenerator
+        from semabridge.connectors.tmsl_generator import TMDLGenerator
         
-        generator = TMSLGenerator(
+        generator = TMDLGenerator(
             self._sml_model,
             snowflake_server=settings.snowflake.account,
             snowflake_warehouse=settings.snowflake.warehouse,

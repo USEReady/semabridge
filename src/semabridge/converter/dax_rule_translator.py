@@ -11,7 +11,7 @@ Key functions:
 """
 
 import re
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Tuple, Any
 from semabridge.utils.logger import get_logger
 from semabridge.converter.api_usage_tracker import log_complexity_classification, log_rule_based_result
 
@@ -26,7 +26,7 @@ SIMPLE_AGGREGATIONS = {
     'COUNT': 'COUNT',
     'COUNTA': 'COUNT',
     'COUNTROWS': 'COUNT(*)',
-    'COUNTBLANK': 'COUNT(*)',
+    'COUNTBLANK': 'COUNT_IF',
     'MIN': 'MIN',
     'MINX': 'MIN',
     'MAX': 'MAX',
@@ -69,13 +69,15 @@ COMPLEXITY_INDICATORS = {
     'SAMPLE': r'SAMPLE\s*\(',
     'GENERATE': r'GENERATE\s*\(',
     'GENERATESERIES': r'GENERATESERIES\s*\(',
+    'VAR_DAX': r'\bVAR\b',
+    'RETURN_DAX': r'\bRETURN\b',
 }
 
 # Simple patterns that can be translated without LLM
 SIMPLE_PATTERNS = {
     # Pattern name: (regex, translation function)
     'direct_agg': (
-        r"^\s*(SUM|AVERAGE|AVERAGEX|COUNT|COUNTA|MIN|MINX|MAX|MAXX|DISTINCTCOUNT)\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*$",
+        r"^\s*(SUM|AVERAGE|AVERAGEX|COUNT|COUNTA|COUNTBLANK|MIN|MINX|MAX|MAXX|DISTINCTCOUNT)\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*$",
         'translate_direct_agg',
     ),
     'sum_simple_arithmetic': (
@@ -86,10 +88,85 @@ SIMPLE_PATTERNS = {
         r"^\s*(?:DISTINCTCOUNT|VALUES)\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*$",
         'translate_count_distinct',
     ),
+    'divide': (
+        r'^\s*DIVIDE\s*\(\s*(.+?)\s*,\s*(.+?)\s*,\s*(.+?)\s*\)\s*$',
+        'translate_divide',
+    ),
+    'totalytd': (
+        r'^\s*TOTALYTD\s*\(\s*(.+?)\s*,\s*(.+?)\s*\)\s*$',
+        'translate_totalytd',
+    ),
+    'today': (
+        r'^\s*TODAY\s*\(\s*\)\s*$',
+        'translate_today',
+    ),
+    'concatenate': (
+        r'^\s*CONCATENATE\s*\(\s*"([^"]+)"\s*,\s*MAX\s*\(\s*(?:\[([^\]]+)\]|.+?\[([^\]]+)\])\s*\)\s*\)\s*$',
+        'translate_concatenate',
+    ),
+    'sameperiodlastyear': (
+        r'^\s*SAMEPERIODLASTYEAR\s*\(\s*(?:\[(.+?)\]|.+?\[(.+?)\])\s*\)\s*$',
+        'translate_sply',
+    ),
+    'dateadd': (
+        r'^\s*DATEADD\s*\(\s*(?:\[(.+?)\]|.+?\[(.+?)\])\s*,\s*(-?\d+)\s*,\s*(\w+)\s*\)\s*$',
+        'translate_dateadd',
+    ),
+    'sumx': (
+        r'^\s*SUMX\s*\(\s*(?:.+?)\s*,\s*(.+?)\s*\)\s*$',
+        'translate_sumx',
+    ),
+    'isblank_if': (
+        r'^\s*IF\s*\(\s*ISBLANK\s*\(\s*(.+?)\s*\)\s*,\s*(.+?)\s*,\s*(.+?)\s*\)\s*$',
+        'translate_isblank_if',
+    ),
 }
 
 
-def is_simple_metric_with_resolution(dax: str, resolver: 'MeasureDependencyResolver' = None) -> bool:
+def translate_fiscal_calculate(
+    dax_expr: str,
+    table_alias: str = "fact",
+    dialect: str = "snowflake",
+) -> Optional[str]:
+    """
+    Convert the Corporate DSI fiscal cutoff VAR/RETURN pattern into a
+    single metrics-clause aggregate expression.
+    """
+    if not dax_expr:
+        return None
+
+    if not re.search(r"\bCALCULATE\s*\(", dax_expr, re.IGNORECASE):
+        return None
+    if not re.search(r"\bFISCAL_YR_PERIOD\b\s*\]?\s*<", dax_expr, re.IGNORECASE):
+        return None
+
+    sum_match = re.search(
+        r"\bRETURN\s+CALCULATE\s*\(\s*"
+        r"(SUM|AVERAGE|COUNT|MIN|MAX)\s*\(\s*"
+        r"(?:(?:'[^']+'|[A-Za-z_][\w\s]*)\s*)?\[\s*([^\]]+?)\s*\]\s*"
+        r"\)",
+        dax_expr,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not sum_match:
+        return None
+
+    func = sum_match.group(1).upper()
+    column = sum_match.group(2).strip()
+    sql_func = SIMPLE_AGGREGATIONS.get(func, "SUM")
+    safe_col = _quote_identifier(column)
+    fiscal_cutoff = (
+        f"{table_alias}._current_fiscal_period"
+        if dialect == "snowflake"
+        else "_current_fiscal_period"
+    )
+    return (
+        f"{sql_func}(CASE WHEN {table_alias}.FISCAL_YR_PERIOD < {fiscal_cutoff} "
+        f"THEN {table_alias}.{safe_col} ELSE 0 END)"
+    )
+
+
+def is_simple_metric_with_resolution(dax: str, resolver: Optional['MeasureDependencyResolver'] = None) -> bool:
     """
     Classify metric considering measure dependencies.
     
@@ -139,6 +216,12 @@ def is_simple_metric(dax: str) -> bool:
     # ========================================================================
     # Step 1: Check for TRUE COMPLEXITY (TIER 4+) that needs LLM
     # ========================================================================
+    # Explicitly check for VAR/RETURN early as they are never simple
+    if re.search(r'\b(VAR|RETURN)\b', clean_dax, re.IGNORECASE):
+        logger.debug(f"TIER 4+ detected: VAR/RETURN keyword in: {clean_dax[:60]}...")
+        log_complexity_classification(False)
+        return False
+
     for indicator_name, pattern in COMPLEXITY_INDICATORS.items():
         if re.search(pattern, clean_dax, re.IGNORECASE):
             logger.debug(f"TIER 4+ detected: {indicator_name} in: {clean_dax[:60]}...")
@@ -225,26 +308,31 @@ def is_simple_metric(dax: str) -> bool:
     temp = re.sub(r"[\(\),\+\-\*/=<>!]", "", temp)  # Remove operators
     temp = re.sub(r"\s+", "", temp)  # Remove whitespace
     
-    if not temp or len(temp) < 5:  # Very simple after cleanup
+    # DANGEROUS HEURISTIC REMOVED: len(temp) < 5 was incorrectly marking VAR/RETURN as simple
+    if not temp:  # Only whitespace/operators/numbers left
         logger.debug(f"SIMPLE (heuristic): {clean_dax[:60]}...")
         log_complexity_classification(True)  # Log as simple
         return True
     
-    logger.debug(f"COMPLEX (failed all checks): {clean_dax[:60]}...")
+    logger.debug(f"COMPLEX (failed all checks): {clean_dax[:60]}... (remnant: {temp})")
     log_complexity_classification(False)  # Log as complex
     return False
 
 
-def rule_based_translation(dax: str, table_alias: str) -> Optional[str]:
+def rule_based_translation(
+    dax: str, 
+    table_alias: str = "fact", 
+    metric_name: str = "",
+    dialect: str = "snowflake"
+) -> Optional[str]:
     """
-    Translate simple DAX expressions to SQL using deterministic rules.
-    
-    This function ONLY handles simple aggregations. Returns None for complex expressions
-    that should be sent to LLM.
+    Deterministic rule-based translation for common DAX patterns.
     
     Args:
         dax: DAX expression to translate
         table_alias: SQL table alias to use in output
+        metric_name: Name of the metric (used for pattern matching Tier 5)
+        dialect: snowflake or databricks
         
     Returns:
         SQL aggregation expression, or None if cannot translate
@@ -252,8 +340,45 @@ def rule_based_translation(dax: str, table_alias: str) -> Optional[str]:
     if not dax or not isinstance(dax, str):
         return None
     
-    clean_dax = dax.strip()
+    # Normalize DAX: Strip preamble and extra whitespace
+    clean_dax = re.sub(r"(?i)^\s*MEASURE\s+.+?\[.+?\]\s*=\s*", "", dax.strip())
     
+    # Step 0: Handle Enterprise Tier 5 patterns (by Name)
+    if metric_name:
+        # Normalize name for matching (Space -> Underscore, Lowercase)
+        norm_name = metric_name.replace(" ", "_").strip().lower()
+        
+        # Rule 4: "Last Refreshed" generic pattern (by name)
+        if "last_refreshed" in norm_name:
+            return f"CONCAT('Last Refreshed - ', CAST(MAX({table_alias}.\"GL_REFRESH_DATETIME\") AS STRING))"
+
+        # Pattern 4: Callout / Commentary measures (by name)
+        if "callout" in norm_name or "commentary" in norm_name:
+            # Try to extract first string literal from DAX if possible
+            str_match = re.search(r'"([^"]{20,})"', clean_dax)
+            if str_match:
+                preview = str_match.group(1)[:100].replace("'", "''")
+                return f"CAST('{preview}...' AS STRING)"
+            return f"CAST('Informational Callout: See Semantic Model Documentation' AS STRING)"
+
+    fiscal_sql = translate_fiscal_calculate(clean_dax, table_alias, dialect=dialect)
+    if fiscal_sql:
+        return fiscal_sql
+
+    # ========================================================================
+    # Step 1: Universal Pattern Rules (Deterministic)
+    # ========================================================================
+    
+    # Try complex pattern detectors first (SWITCH, etc.)
+    switch_sql = translate_switch_case(clean_dax, table_alias)
+    if switch_sql:
+        return switch_sql
+        
+    # Pattern 5: Static Text (Rule 6)
+    if clean_dax.startswith('"') and clean_dax.endswith('"') and clean_dax.count('"') == 2:
+        text = clean_dax[1:-1].replace("'", "''")
+        return f"'{text}'"
+
     # Try each simple pattern
     for pattern_name, (regex, handler_name) in SIMPLE_PATTERNS.items():
         match = re.match(regex, clean_dax, re.IGNORECASE)
@@ -261,7 +386,7 @@ def rule_based_translation(dax: str, table_alias: str) -> Optional[str]:
             handler = globals().get(handler_name)
             if handler:
                 try:
-                    result = handler(clean_dax, table_alias, match)
+                    result = handler(clean_dax, table_alias, match, dialect=dialect)
                     if result:
                         logger.info(f"Rule-based translation successful: {pattern_name} -> {result[:80]}")
                         log_rule_based_result(True)  # Log success
@@ -279,31 +404,29 @@ def rule_based_translation(dax: str, table_alias: str) -> Optional[str]:
 # Pattern-specific translation handlers
 # ============================================================================
 
-def translate_direct_agg(dax: str, table_alias: str, match: re.Match) -> Optional[str]:
+def translate_direct_agg(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
     """
     Translate direct aggregations like SUM([Column]), AVG([Column]), etc.
-    
-    Handler for pattern: (SUM|AVERAGE|...) ( [Column] )
     """
     try:
         func_name = match.group(1).upper()
         col_name = match.group(2) or match.group(3)
         
-        # Map DAX functions to SQL functions
         sql_func = SIMPLE_AGGREGATIONS.get(func_name)
         if not sql_func:
-            logger.warning(f"Unknown aggregation function: {func_name}")
             return None
         
-        # Build column reference - use table alias and uppercase column name
         col_ref = f"{table_alias}.{_quote_identifier(col_name)}"
         
-        # Snowflake: cast to FLOAT for SUM/AVG to handle BOOLEAN columns safely
-        cast = "::FLOAT" if func_name in ("SUM", "AVERAGE", "AVERAGEX", "AVG") else ""
+        # Snowflake-specific cast
+        cast = ""
+        if dialect == "snowflake" and func_name in ("SUM", "AVERAGE", "AVERAGEX", "AVG"):
+            cast = "::FLOAT"
         
-        # Handle DISTINCTCOUNT specially
         if sql_func == 'COUNT(DISTINCT':
             return f"COUNT(DISTINCT {col_ref})"
+        elif sql_func == 'COUNT_IF':
+            return f"COUNT_IF({col_ref} IS NULL)"
         else:
             return f"{sql_func}({col_ref}{cast})"
     
@@ -312,28 +435,157 @@ def translate_direct_agg(dax: str, table_alias: str, match: re.Match) -> Optiona
         return None
 
 
-def translate_simple_arithmetic(dax: str, table_alias: str, match: re.Match) -> Optional[str]:
-    """
-    Translate simple arithmetic: SUM([Column]) + 5
-    
-    Currently not implemented - too complex for deterministic rules.
-    """
+def translate_simple_arithmetic(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
     return None
 
-
-def translate_count_distinct(dax: str, table_alias: str, match: re.Match) -> Optional[str]:
-    """
-    Translate DISTINCTCOUNT or VALUES functions.
-    
-    Handler for: DISTINCTCOUNT([Column]) or VALUES([Column])
-    """
+def translate_count_distinct(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
     try:
         col_name = match.group(1) or match.group(2)
         col_ref = f"{table_alias}.{_quote_identifier(col_name)}"
         return f"COUNT(DISTINCT {col_ref})"
-    
     except Exception as e:
         logger.error(f"Error translating count distinct: {e}")
+        return None
+
+def translate_divide(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
+    """
+    Translate DIVIDE(numerator, denominator, alternate)
+    """
+    try:
+        numerator = match.group(1).strip()
+        denominator = match.group(2).strip()
+        alternate = match.group(3).strip()
+        
+        # We need to ensure numerator/denominator are also translated if they are simple refs
+        # But for now, if they are just [Col] or Table[Col], we quote them
+        
+        def clean_ref(ref):
+            m = re.match(r"^(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])$", ref)
+            if m:
+                col = m.group(1) or m.group(2)
+                return f"{table_alias}.{_quote_identifier(col)}"
+            return ref
+            
+        num_sql = clean_ref(numerator)
+        den_sql = clean_ref(denominator)
+        alt_sql = clean_ref(alternate)
+        
+        return f"COALESCE({num_sql} / NULLIF({den_sql}, 0), {alt_sql})"
+    except Exception as e:
+        logger.error(f"Error translating divide: {e}")
+        return None
+
+
+def translate_totalytd(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
+    """
+    Translate TOTALYTD(expression, dates) to Window Function.
+    """
+    try:
+        expression = match.group(1).strip()
+        dates = match.group(2).strip()
+        
+        m_date = re.search(r"(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])", dates)
+        date_col = m_date.group(1) or m_date.group(2) if m_date else "CALENDAR_DATE"
+        
+        agg_match = re.search(r"(SUM|AVERAGE|COUNT|MIN|MAX)\s*\(\s*(?:'?.+?'?\[(.+?)\]|\[(.+?)\])\s*\)", expression, re.IGNORECASE)
+        
+        if agg_match:
+            func = agg_match.group(1).upper()
+            col = agg_match.group(2) or agg_match.group(3)
+            sql_func = SIMPLE_AGGREGATIONS.get(func, "SUM")
+            
+            # Use appropriate window function syntax
+            return f'{sql_func}({table_alias}.\"{col}\") OVER (PARTITION BY YEAR({table_alias}.\"{date_col}\") ORDER BY {table_alias}.\"{date_col}\" ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)'
+        
+        return f"SUM({expression}) OVER (ORDER BY {table_alias}.\"{date_col}\")"
+    except Exception as e:
+        logger.error(f"Error translating totalytd: {e}")
+        return None
+
+def translate_today(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
+    return "MAX(CURRENT_DATE())"
+
+def translate_concatenate(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
+    """Translate CONCATENATE(text, expr) to CONCAT"""
+    try:
+        prefix = match.group(1)
+        col = match.group(2) or match.group(3)
+        return f"CONCAT('{prefix}', CAST(MAX({table_alias}.\"{col}\") AS STRING))"
+    except Exception as e:
+        logger.error(f"Error translating concatenate: {e}")
+        return None
+
+def translate_sply(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
+    """Translate SAMEPERIODLASTYEAR to Window Function with offset"""
+    try:
+        date_col = match.group(1) or match.group(2)
+        # SPLY logic: Look back 365/366 days or use DATEADD logic in window
+        return f"SUM(MEASURE_VALUE) OVER (ORDER BY {table_alias}.\"{date_col}\" RANGE BETWEEN INTERVAL '1 YEAR' PRECEDING AND INTERVAL '1 YEAR' PRECEDING)"
+    except Exception as e:
+        logger.error(f"Error translating sply: {e}")
+        return None
+
+def translate_dateadd(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
+    """Translate DATEADD(dates, number, interval)"""
+    try:
+        date_col = match.group(1) or match.group(2)
+        number = match.group(3)
+        interval = match.group(4).upper()
+        # Snowflake DATEADD: DATEADD(year, -1, col)
+        return f"DATEADD({interval}, {number}, {table_alias}.\"{date_col}\")"
+    except Exception as e:
+        logger.error(f"Error translating dateadd: {e}")
+        return None
+
+def translate_sumx(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
+    """Translate SUMX(table, expr) to SUM(expr)"""
+    try:
+        expr = match.group(1)
+        # Simplify SUMX to standard SUM if table context allows
+        return f"SUM({expr})"
+    except Exception as e:
+        logger.error(f"Error translating sumx: {e}")
+        return None
+
+def translate_isblank_if(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
+    """Translate IF(ISBLANK(x), val1, x) to COALESCE"""
+    try:
+        check_expr = match.group(1)
+        val_if_blank = match.group(2)
+        val_if_not_blank = match.group(3)
+        
+        if check_expr.strip() == val_if_not_blank.strip():
+            return f"COALESCE({check_expr}, {val_if_blank})"
+        return f"CASE WHEN {check_expr} IS NULL THEN {val_if_blank} ELSE {val_if_not_blank} END"
+    except Exception as e:
+        logger.error(f"Error translating isblank_if: {e}")
+        return None
+
+
+def translate_switch_case(dax: str, table_alias: str) -> Optional[str]:
+    """Rule 5: SWITCH(TRUE(), ...) -> CASE WHEN ..."""
+    if "SWITCH" not in dax.upper() or "TRUE()" not in dax.upper():
+        return None
+        
+    try:
+        # Extract SELECTEDVALUE dimension
+        sel_match = re.search(r"SELECTEDVALUE\s*\(\s*(?:.+?\[([^\]]+)\]|\[([^\]]+)\])\s*\)", dax, re.IGNORECASE)
+        dim_col = sel_match.group(1) or sel_match.group(2) if sel_match else "BUSINESS_UNIT"
+        
+        # Extract conditions: _sel = "Value", "Result"
+        conditions = re.findall(r'_sel\s*=\s*"([^"]+)",\s*"([^"]+)"', dax, re.IGNORECASE | re.DOTALL)
+        
+        if not conditions:
+            return None
+            
+        case_stmt = "ANY_VALUE(CASE\n"
+        for val, res in conditions:
+            res_escaped = res.replace("'", "''")
+            case_stmt += f"  WHEN {table_alias}.\"{dim_col}\" = '{val}' THEN '{res_escaped}'\n"
+        case_stmt += "  ELSE ''\nEND)"
+        return case_stmt
+    except Exception as e:
+        logger.error(f"Error translating switch: {e}")
         return None
 
 
@@ -872,9 +1124,9 @@ def translate_dax_with_fallback(
     measure_name: str,
     table_alias: str,
     dataset_name: str,
-    resolver: 'MeasureDependencyResolver' = None,
-    batcher: 'TranslationBatcher' = None,
-    dax_translator_instance = None,
+    resolver: Optional['MeasureDependencyResolver'] = None,
+    batcher: Optional['TranslationBatcher'] = None,
+    dax_translator_instance: Any = None,
 ) -> Optional[str]:
     """
     Translate DAX with fallback: Local → LLM (never None/skipped).

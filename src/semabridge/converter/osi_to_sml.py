@@ -1,4 +1,4 @@
-"""
+﻿"""
 OSI to SML Converter.
 
 Converts OSI (Open Semantic Interchange) canonical models into the SML (Semantic Modeling Language)
@@ -42,11 +42,12 @@ from semabridge.sml.models import (
     CrossFilterDirection as SMLCrossFilterDirection,
     SourcePlatform,
 )
-from semabridge.converter.dax_translator import DAXTranslator
+from semabridge.converter.dax_engine import get_translation_engine
 from semabridge.connectors.inference_engine import SmlInferenceEngine
 from semabridge.connectors.measure_detector import MeasureDetector
 from semabridge.utils.logger import get_logger
 from semabridge.utils.naming import to_alias
+from semabridge.utils.synonyms import generate_auto_synonyms
 
 logger = get_logger(__name__)
 
@@ -56,8 +57,9 @@ class OSIToSMLConverter(BaseConverter):
     Transforms OSI Model into SML Model with semantic enrichment.
     """
 
-    def __init__(self):
-        self.dax_translator = DAXTranslator()
+    def __init__(self, target_dialect: str = "snowflake"):
+        self.target_dialect = target_dialect
+        self.dax_translator = get_translation_engine(target_dialect=target_dialect)
 
     def to_osi(self, sml_model: SMLModel) -> OSIModel:
         """
@@ -121,32 +123,8 @@ class OSIToSMLConverter(BaseConverter):
             self._resolve_metric_dependencies(sml)
 
             # Step 3c: Collect unresolved metrics for Tier-5 batch fallback.
-            tier5_candidates = []  # (metric_name, dax, table_alias, dataset_name)
-            for sml_metric in sml.metrics:
-                if (
-                    not sml_metric.sql_expression
-                    and sml_metric.expression
-                    and sml_metric.expression.strip()
-                ):
-                    dax = sml_metric.expression.strip()
-                    table_alias = to_alias(sml_metric.dataset)
-                    tier5_candidates.append((sml_metric.unique_name, dax, table_alias, sml_metric.dataset))
-            
-            # Step 3d: Batch translate all Tier 5 candidates at once (reduces API calls by 90%)
-            if tier5_candidates:
-                logger.info(f"📦 Batch translating {len(tier5_candidates)} Tier 5 metrics...")
-                batch_results = self.dax_translator.batch_translate_tier5(tier5_candidates)
-                
-                # Apply batch translation results back to metrics
-                for metric in sml.metrics:
-                    if metric.unique_name in batch_results and batch_results[metric.unique_name]:
-                        translation = batch_results[metric.unique_name]
-                        if translation and translation.is_success:
-                            metric.sql_expression = translation.sql
-                            metric.complexity_tier = translation.tier
-                            metric.sync_enabled = True
-                            metric.sync_failure_reason = None
-                            logger.debug(f"✓ Applied batch translation for '{metric.unique_name}'")
+            # (Now handled individually by DaxTranslationEngine.translate in _convert_metric)
+            pass
 
             # 4. Convert Relationships
             for osi_rel in osi_model.relationships:
@@ -155,7 +133,7 @@ class OSIToSMLConverter(BaseConverter):
                     sml.relationships.append(sml_rel)
 
             # 4b. Fabric/PBIX extractions can legitimately surface 0 explicit
-            # measures in TMSL. Reuse the older heuristic detector so downstream
+            # measures in TMDL. Reuse the older heuristic detector so downstream
             # publishers still have simple metrics to materialize.
             self._auto_detect_metrics(sml, row_counts=row_counts)
 
@@ -195,6 +173,7 @@ class OSIToSMLConverter(BaseConverter):
             unique_name=osi_col.unique_name,
             label=osi_col.label,
             data_type=sml_type,
+            source_expression=osi_col.source_expression,
             description=osi_col.description or "",
             is_hidden=osi_col.is_hidden,
             is_key=osi_col.is_key,
@@ -258,19 +237,20 @@ class OSIToSMLConverter(BaseConverter):
         if expression:
             from semabridge.utils.naming import to_alias
             safe_alias = to_alias(osi_metric.dataset)
-            translation = self.dax_translator.translate(
+            sql, metrics = self.dax_translator.translate(
                 expression,
                 safe_alias,
                 osi_metric.dataset,
-                metric_name=metric.unique_name
+                metric_name=metric.unique_name,
+                target_dialect=self.target_dialect
             )
             
-            if translation.is_success:
-                metric.sql_expression = translation.sql
-                metric.complexity_tier = translation.tier
+            if sql and sql != '0':
+                metric.sql_expression = sql
+                metric.complexity_tier = 4 if metrics.strategy.value == "llm_based" else 1
                 metric.sync_enabled = True
             elif metric.sync_enabled:
-                 metric.sync_failure_reason = f"DAX translation deferred to Tier-5 batch (Tier {translation.tier})"
+                 metric.sync_failure_reason = str("DAX translation deferred to Tier-5 batch")
 
         # Propagate Cortex AI metadata from OSI layer
         metric.access_modifier = osi_metric.access_modifier
@@ -294,16 +274,40 @@ class OSIToSMLConverter(BaseConverter):
                     continue
 
                 safe_alias = to_alias(metric.dataset)
-                translation = self.dax_translator.translate(
-                    metric.expression,
+                # Convert sml.metrics to a measure_map (unique_name -> sql_expression) for the engine
+                measure_map = {m.unique_name: m.sql_expression for m in sml.metrics if m.sql_expression}
+                
+                # Pre-processing: If expression contains bracketed refs, try expanding them
+                processed_expr = metric.expression
+                if "[" in processed_expr and "]" in processed_expr:
+                    import re
+                    for m_name, m_sql in measure_map.items():
+                        # Simple replacement for [Measure] -> (sql)
+                        pattern = rf"\[{re.escape(m_name)}\]"
+                        processed_expr = re.sub(pattern, f"({m_sql})", processed_expr, flags=re.IGNORECASE)
+
+                # Tier-2 Arithmetic Optimization:
+                # If we've successfully expanded all bracketed references, we have valid SQL.
+                # We can skip the translation engine and use this directly.
+                if "[" not in processed_expr and "]" not in processed_expr:
+                    metric.sql_expression = processed_expr
+                    metric.complexity_tier = 2
+                    metric.sync_enabled = True
+                    metric.sync_failure_reason = None
+                    resolved_this_pass += 1
+                    continue
+
+                sql, metrics = self.dax_translator.translate(
+                    processed_expr,
                     safe_alias,
                     metric.dataset,
+                    measure_map=measure_map,
                     metric_name=metric.unique_name,
-                    metrics_context=sml.metrics,
                 )
-                if translation.is_success and translation.sql:
-                    metric.sql_expression = translation.sql
-                    metric.complexity_tier = translation.tier
+                
+                if sql and sql != '0':
+                    metric.sql_expression = sql
+                    metric.complexity_tier = 4 if metrics.strategy.value == "llm_based" else 1
                     metric.sync_enabled = True
                     metric.sync_failure_reason = None
                     resolved_this_pass += 1
@@ -432,6 +436,9 @@ class OSIToSMLConverter(BaseConverter):
                 aggregation_sql = agg.value.upper()
                 table_alias = to_alias(table_name)
 
+                # Generate automated synonyms for detected metric
+                auto_syns = generate_auto_synonyms(measure_name)
+
                 sml.metrics.append(
                     SMLMetric(
                         unique_name=measure_name,
@@ -444,6 +451,7 @@ class OSIToSMLConverter(BaseConverter):
                         confidence=float(measure.get("confidence", 0.7)),
                         sync_enabled=True,
                         complexity_tier=1,
+                        synonyms=auto_syns
                     )
                 )
                 existing_metrics.add(measure_name.upper())
@@ -451,3 +459,4 @@ class OSIToSMLConverter(BaseConverter):
 
         if added:
             logger.info("Auto-detected %d simple metrics because OSI contained no explicit measures", added)
+

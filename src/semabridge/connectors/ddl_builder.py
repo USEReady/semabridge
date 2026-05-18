@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from semabridge.intermediate.models import OSIDataset, OSIModel
-from semabridge.sml.models import SMLDataset, SMLModel
+from semabridge.sml.models import DataType, SMLColumn, SMLDataset, SMLModel
 from semabridge.utils.identifiers import IdentifierSanitizer
 from semabridge.utils.logger import get_logger
 from semabridge.connectors.ddl_helpers import (
@@ -66,6 +66,51 @@ class SemanticViewBuilder:
             identifier_sanitizer, schema_manager, self.sanitizer, translator, config, dup_name_repo
         )
 
+    def _build_history_snapshot_ddls_for_sml(self, sml: SMLModel) -> tuple[list[str], dict[str, str]]:
+        """Proxy for history snapshot DDL generation (SML)."""
+        return self.snapshot_orchestrator.build_for_sml(sml)
+
+    def _build_history_snapshot_ddls_for_osi(self, osi: OSIModel) -> tuple[list[str], dict[str, str]]:
+        """Proxy for history snapshot DDL generation (OSI)."""
+        return self.snapshot_orchestrator.build_for_osi(osi)
+
+    def _build_current_fiscal_period_views(self, sml: SMLModel) -> tuple[list[str], dict[str, str]]:
+        fiscal_metrics = [
+            getattr(metric, "expression", "") or ""
+            for metric in getattr(sml, "metrics", []) or []
+            if re.search(r"\bFISCAL_YR_PERIOD\b\s*\]?\s*<", getattr(metric, "expression", "") or "", re.IGNORECASE)
+        ]
+        if not fiscal_metrics:
+            return [], {}
+
+        ddls: list[str] = []
+        overrides: dict[str, str] = {}
+        dates_table = f'"{self.config.database}"."{self.config.schema_name}"."DATES"'
+
+        for dataset in getattr(sml, "datasets", []) or []:
+            modeled_cols = {
+                self.identifier_sanitizer.sanitize_column(getattr(col, "unique_name", ""))
+                for col in getattr(dataset, "columns", []) or []
+            }
+            if "FISCAL_YR_PERIOD" not in modeled_cols:
+                continue
+
+            source_table = dataset.source_table or dataset.unique_name
+            safe_table = self.identifier_sanitizer.sanitize_table_name(source_table)
+            support_view = f"{safe_table}_SEMABRIDGE_FISCAL"
+            source_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
+            support_ref = f'"{self.config.database}"."{self.config.schema_name}"."{support_view}"'
+            ddls.append(
+                "CREATE OR REPLACE VIEW "
+                f"{support_ref} AS SELECT base.*, "
+                f"(SELECT MAX(\"FISCAL_YR_PERIOD\") FROM {dates_table} "
+                "WHERE \"CAL_DT\" = CURRENT_DATE()) AS \"_CURRENT_FISCAL_PERIOD\" "
+                f"FROM {source_ref} base"
+            )
+            overrides[dataset.unique_name] = support_view
+
+        return ddls, overrides
+
     def generate_ddls(self, sml: SMLModel) -> list[str]:
         if not sml.datasets:
             return []
@@ -78,19 +123,36 @@ class SemanticViewBuilder:
         )
         snapshot_ddls, source_overrides = self.snapshot_orchestrator.build_for_sml(sml)
         all_ddls = list(snapshot_ddls)
+        fiscal_view_ddls, fiscal_overrides = self._build_current_fiscal_period_views(sml)
+        all_ddls.extend(fiscal_view_ddls)
 
         original_sources: dict[str, str] = {}
+        original_columns: dict[str, list[Any]] = {}
         try:
             for dataset in sml.datasets:
-                if dataset.unique_name in source_overrides:
+                override = fiscal_overrides.get(dataset.unique_name) or source_overrides.get(dataset.unique_name)
+                if override:
                     original_sources[dataset.unique_name] = dataset.source_table
-                    dataset.source_table = source_overrides[dataset.unique_name]
+                    dataset.source_table = override
+                if dataset.unique_name in fiscal_overrides:
+                    original_columns[dataset.unique_name] = list(dataset.columns)
+                    if not any(
+                        str(getattr(col, "unique_name", "")).lower() == "_current_fiscal_period"
+                        for col in dataset.columns
+                    ):
+                        dataset.columns.append(
+                            SMLColumn(
+                                unique_name="_current_fiscal_period",
+                                data_type=DataType.STRING,
+                            )
+                        )
 
             semantic_ddl = self.sanitizer.sanitize_structure(self._generate_semantic_view(sml))
 
             self._guard_relationship_clause(
                 model_name=sml.unique_name or sml.label or "model",
                 relationships=getattr(sml, "relationships", []),
+                dataset_names={str(ds.unique_name) for ds in getattr(sml, "datasets", []) or []},
                 semantic_ddl=semantic_ddl,
                 fail_on_missing=bool(getattr(self.behavior.snowflake, "fail_on_missing_relationships", True)),
             )
@@ -105,6 +167,8 @@ class SemanticViewBuilder:
             for dataset in sml.datasets:
                 if dataset.unique_name in original_sources:
                     dataset.source_table = original_sources[dataset.unique_name]
+                if dataset.unique_name in original_columns:
+                    dataset.columns = original_columns[dataset.unique_name]
 
         return [*all_ddls, semantic_ddl]
 
@@ -127,6 +191,7 @@ class SemanticViewBuilder:
             self._guard_relationship_clause(
                 model_name=osi.unique_name or osi.label or "model",
                 relationships=getattr(osi, "relationships", []),
+                dataset_names={str(ds.unique_name) for ds in getattr(osi, "datasets", []) or []},
                 semantic_ddl=semantic_ddl,
                 fail_on_missing=bool(getattr(self.behavior.snowflake, "fail_on_missing_relationships", True)),
             )
@@ -156,7 +221,7 @@ class SemanticViewBuilder:
         metric_counts = {}
         for m in sml.metrics:
             if m.dataset: metric_counts[m.dataset] = metric_counts.get(m.dataset, 0) + 1
-        related_ds = {r.from_dataset for r in sml.relationships if r.is_active} | {r.to_dataset for r in sml.relationships if r.is_active}
+        related_ds = {r.from_dataset for r in sml.relationships} | {r.to_dataset for r in sml.relationships}
 
         # TABLES
         tbuilder = TablesClauseBuilder(self.identifier_sanitizer, self.schema_manager, self.config, self.behavior, self.live_schema_metadata)
@@ -190,6 +255,18 @@ class SemanticViewBuilder:
         if metrics_lines: definitions.append("METRICS (\n" + ",\n".join(metrics_lines) + "\n)")
 
         final_ddl = lines[0] + "\n" + "\n".join(definitions) + ";"
+        
+        # DEBUG: Dump DDL to file for inspection
+        try:
+            debug_path = os.path.join("output", "debug", f"ddl_{safe_view_name}.sql")
+            os.makedirs(os.path.dirname(debug_path), exist_ok=True)
+            with open(debug_path, "w", encoding="utf-8") as f:
+                f.write(final_ddl)
+            logger.info(f"DEBUG: Dumped DDL to {debug_path}")
+        except Exception as e:
+            logger.debug(f"Could not dump debug DDL: {e}")
+
+        from semabridge.connectors.ddl_helpers import fix_global_sums
         return fix_global_sums(final_ddl, self.translator)
 
     def _generate_semantic_view_from_osi(self, osi: OSIModel) -> str:
@@ -209,7 +286,7 @@ class SemanticViewBuilder:
         metric_counts = {}
         for m in osi.metrics:
             if m.dataset: metric_counts[m.dataset] = metric_counts.get(m.dataset, 0) + 1
-        related_ds = {r.from_dataset for r in osi.relationships if r.is_active} | {r.to_dataset for r in osi.relationships if r.is_active}
+        related_ds = {r.from_dataset for r in osi.relationships} | {r.to_dataset for r in osi.relationships}
 
         # TABLES
         tbuilder = TablesClauseBuilder(self.identifier_sanitizer, self.schema_manager, self.config, self.behavior, self.live_schema_metadata)
@@ -242,6 +319,18 @@ class SemanticViewBuilder:
         if metrics_lines: definitions.append("METRICS (\n" + ",\n".join(metrics_lines) + "\n)")
 
         final_ddl = lines[0] + "\n" + "\n".join(definitions) + ";"
+
+        # DEBUG: Dump DDL to file for inspection
+        try:
+            debug_path = os.path.join("output", "debug", f"ddl_{safe_view_name}.sql")
+            os.makedirs(os.path.dirname(debug_path), exist_ok=True)
+            with open(debug_path, "w", encoding="utf-8") as f:
+                f.write(final_ddl)
+            logger.info(f"DEBUG: Dumped DDL to {debug_path}")
+        except Exception as e:
+            logger.debug(f"Could not dump debug DDL: {e}")
+
+        from semabridge.connectors.ddl_helpers import fix_global_sums
         return fix_global_sums(final_ddl, self.translator)
 
     @staticmethod
@@ -531,24 +620,34 @@ class SemanticViewBuilder:
         self,
         model_name: str,
         relationships: list[Any],
+        dataset_names: set[str] | None,
         semantic_ddl: str,
         *,
         fail_on_missing: bool,
     ) -> None:
         """Detect and block relationship loss between model and emitted DDL."""
-        active_relationships = 0
+        model_relationships = 0
         for rel in relationships or []:
+            # Only active relationships are emitted to the Snowflake DDL.
+            # Inactive rels (USERELATIONSHIP alternates) are intentionally skipped,
+            # so they must not be counted here or the guard will raise a false alarm.
             if not getattr(rel, "is_active", True):
                 continue
+            if dataset_names:
+                from_ds = str(getattr(rel, "from_dataset", "") or "")
+                to_ds = str(getattr(rel, "to_dataset", "") or "")
+                if from_ds not in dataset_names or to_ds not in dataset_names:
+                    # Relationship endpoints were filtered out of this deploy scope.
+                    continue
             if (
                 getattr(rel, "from_dataset", None)
                 and getattr(rel, "to_dataset", None)
                 and (getattr(rel, "from_columns", None) or [])
                 and (getattr(rel, "to_columns", None) or [])
             ):
-                active_relationships += 1
+                model_relationships += 1
 
-        if active_relationships == 0:
+        if model_relationships == 0:
             return
 
         has_relationship_clause = bool(
@@ -558,7 +657,7 @@ class SemanticViewBuilder:
             return
 
         msg = (
-            f"Model '{model_name}' has {active_relationships} active relationship(s), "
+            f"Model '{model_name}' has {model_relationships} relationship(s), "
             "but generated semantic-view DDL has no RELATIONSHIPS clause. "
             "Aborting deploy to prevent relationship loss in Snowflake."
         )

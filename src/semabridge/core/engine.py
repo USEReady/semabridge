@@ -645,14 +645,14 @@ class SemaBridgeEngine:
         The pipeline stays in OSI format.  SML conversion is no longer used
         in the default sync path (isolated for future use).
         """
-        from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
+        from semabridge.converter.tmsl_to_osi import TMDLToOSIConverter
         
         logger.debug(f"Converting {model_id} to OSI")
         
-        # TMSL -> OSI pipeline (no SML conversion)
-        tmsl_converter = TMSLToOSIConverter()
-        osi_model = tmsl_converter.to_osi({
-            "tmsl": metadata,
+        # TMDL -> OSI pipeline (no SML conversion)
+        tmdl_converter = TMDLToOSIConverter()
+        osi_model = tmdl_converter.to_osi({
+            "tmdl": metadata,
             "dataset_id": model_id,
         })
         print("\n===== TABLES USED BY MODEL =====")
@@ -998,7 +998,7 @@ class FabricSourceAdapter(SourceConnectorBase):
         ]
     
     def extract(self, model_id: str, exclusions: Optional[Dict[str, List[str]]] = None) -> Dict[str, Any]:
-        """Extract TMSL definition from Fabric."""
+        """Extract TMDL definition from Fabric."""
         # Resolve name to ID if needed
         resolved_id = self._extractor.resolve_model_id(model_id)
         return self._extractor.get_model_definition(resolved_id)

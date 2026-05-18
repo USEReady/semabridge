@@ -1,17 +1,17 @@
-"""
+﻿"""
 Temporal Activity Implementations for Semabridge.
 
 Activities are the *side-effectful* units of work invoked by workflows.
 Each activity is:
-    • Idempotent – safe to retry without duplication.
-    • Explicit  – receives all context via dataclass inputs (no globals).
-    • Timeout-aware – designed for the timeout budgets defined in workflows.py.
+    â€¢ Idempotent â€“ safe to retry without duplication.
+    â€¢ Explicit  â€“ receives all context via dataclass inputs (no globals).
+    â€¢ Timeout-aware â€“ designed for the timeout budgets defined in workflows.py.
 
 The four core activities mirror the legacy SyncOrchestrator phases:
-    1. extract_metadata   → query Snowflake via SnowflakeExtractor
-    2. compute_diff       → compute SML delta (delegates to Ray when available)
-    3. emit_to_fabric     → deploy TMSL via FabricPublisher (handles 429)
-    4. persist_snapshot    → store snapshot in the repository ORM
+    1. extract_metadata   â†’ query Snowflake via SnowflakeExtractor
+    2. compute_diff       â†’ compute SML delta (delegates to Ray when available)
+    3. emit_to_fabric     â†’ deploy semantic model payloads via FabricPublisher (handles 429)
+    4. persist_snapshot    â†’ store snapshot in the repository ORM
 """
 
 from __future__ import annotations
@@ -134,6 +134,8 @@ class SnapshotInput:
     version_tag: str = ""
     run_id: str = ""
     status: str = "success"
+    # Default is TMDL for forward consistency with current sync metadata.
+    source_format: str = "TMDL"
 
 
 @dataclass
@@ -320,7 +322,7 @@ async def compute_diff(inp: DiffInput) -> DiffOutput:
                 previous_json = row.sml_blob
 
         if previous_json is None or inp.force_full:
-            # No baseline → treat everything as new
+            # No baseline â†’ treat everything as new
             elapsed = int((time.monotonic() - start) * 1000)
             return DiffOutput(
                 diff_json="{}",
@@ -335,7 +337,7 @@ async def compute_diff(inp: DiffInput) -> DiffOutput:
             from semabridge.distributed.ray.coordinator import submit_diff
             diff_result = await submit_diff(current, _parse_sml_payload(previous_json))
         except ImportError:
-            # Ray not installed – local fallback
+            # Ray not installed â€“ local fallback
             diff_engine = SemanticDiffEngine()
             diff_result = diff_engine.compute_diff_dicts(
                 _parse_sml_payload(previous_json), current
@@ -373,7 +375,7 @@ class FabricThrottledError(Exception):
 
     def __init__(self, retry_after: int, message: str = ""):
         self.retry_after = retry_after
-        super().__init__(message or f"Fabric throttled – retry after {retry_after}s")
+        super().__init__(message or f"Fabric throttled â€“ retry after {retry_after}s")
 
 
 class PermanentDeploymentError(Exception):
@@ -384,7 +386,7 @@ class PermanentDeploymentError(Exception):
 @activity.defn(name="emit_to_fabric")
 async def emit_to_fabric(inp: EmitInput) -> EmitOutput:
     """
-    Convert the SML JSON into a TMSL .bim payload and publish it
+    Convert the SML JSON into a Fabric semantic-model payload and publish it
     to the specified Fabric workspace.
 
     On HTTP 429 responses the activity raises ``FabricThrottledError``
@@ -393,7 +395,7 @@ async def emit_to_fabric(inp: EmitInput) -> EmitOutput:
     """
     start = time.monotonic()
     try:
-        activity.heartbeat("Preparing TMSL payload")
+        activity.heartbeat("Preparing Fabric payload")
 
         config = FabricConfig(workspace_id=inp.fabric_workspace_id)
         publisher = FabricPublisher(config=config)
@@ -418,7 +420,7 @@ async def emit_to_fabric(inp: EmitInput) -> EmitOutput:
             # Permanent errors (auth, bad model)
             if any(k in error_msg.lower() for k in ("unauthorized", "forbidden", "bad request")):
                 raise PermanentDeploymentError(error_msg)
-            raise  # transient – let Temporal retry
+            raise  # transient â€“ let Temporal retry
 
         elapsed = int((time.monotonic() - start) * 1000)
         return EmitOutput(
@@ -474,6 +476,7 @@ async def persist_snapshot(inp: SnapshotInput) -> SnapshotOutput:
                 sml_blob=_serialize_canonical_sml(inp.sml_json),
                 status=inp.status,
                 run_id=inp.run_id or None,
+                source_format=(inp.source_format or "TMDL"),
             )
             session.add(row)
             session.commit()
@@ -481,3 +484,4 @@ async def persist_snapshot(inp: SnapshotInput) -> SnapshotOutput:
         return SnapshotOutput(snapshot_id=snapshot_id)
     except Exception as exc:
         return SnapshotOutput(error=f"{type(exc).__name__}: {exc}")
+

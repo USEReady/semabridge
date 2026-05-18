@@ -25,8 +25,8 @@ from semabridge.core.run_summary import (
 )
 from semabridge.core.source_format import (
     SourceFormat,
-    from_fabric_tmsl,
-    from_pbix_tmsl,
+    from_fabric_tmdl,
+    from_pbix_tmdl,
     from_snowflake_metadata,
 )
 from semabridge.intermediate.models import OSIModel
@@ -44,6 +44,7 @@ from semabridge.core.engine.exceptions import (
     PersistenceError,
     DeploymentError,
 )
+from semabridge.adapters.tmsl_translator import translate_tmsl_to_internal_sml
 
 logger = get_logger(__name__)
 
@@ -77,25 +78,21 @@ def _extract_fabric(
         )
 
         with open(offline_path, "r", encoding="utf-8") as f:
-            tmsl = json.load(f)
-
-        # Accept both full TMSL and flattened model payloads.
-        if isinstance(tmsl, dict) and "model" not in tmsl and "tables" in tmsl:
-            tmsl = {"model": tmsl}
+            tmdl = json.load(f)
 
         resolved_dataset_id = dataset_id or context.project_id
         row_counts: dict[str, int] = {}
 
-        source_format = from_fabric_tmsl(
+        source_format = from_fabric_tmdl(
             project_id=context.project_id,
             run_id=context.run_id,
-            tmsl=tmsl,
+            tmdl=tmdl,
             workspace_id=ws_id,
             dataset_id=resolved_dataset_id,
             row_counts=row_counts,
         )
 
-        table_count = len(tmsl.get("model", {}).get("tables", []))
+        table_count = len(tmdl.get("model", {}).get("tables", []))
         self._record_step(4, StepStatus.SUCCESS, f"OFFLINE extract loaded {table_count} tables")
         return source_format
 
@@ -210,22 +207,42 @@ def _extract_fabric(
         extractor._token_expires_at = time.time() + 1800
 
     resolved_dataset_id = extractor.resolve_model_id(dataset_id)
+    resolved_display_name = extractor.get_model_display_name(resolved_dataset_id)
 
-    tmsl = extractor.get_model_definition(resolved_dataset_id)
+    tmdl = extractor.get_model_definition(resolved_dataset_id)
+    if isinstance(tmdl, dict):
+        model_obj = tmdl.get("model")
+        if isinstance(model_obj, dict):
+            model_name = str(model_obj.get("name") or "").strip()
+            if not model_name or model_name.lower() in {"model", "fabricmodel"}:
+                if resolved_display_name:
+                    model_obj["name"] = resolved_display_name
+
     row_counts = extractor.get_table_row_counts(resolved_dataset_id)
-
-    source_format = from_fabric_tmsl(
-        project_id=context.project_id,
-        run_id=context.run_id,
-        tmsl=tmsl,
+    internal_sml_model = translate_tmsl_to_internal_sml(
+        tmdl,
         workspace_id=ws_id,
         dataset_id=resolved_dataset_id,
         row_counts=row_counts,
+    ).model_dump()
+    if isinstance(internal_sml_model, dict) and resolved_display_name:
+        internal_sml_model["unique_name"] = resolved_display_name
+        if not internal_sml_model.get("label"):
+            internal_sml_model["label"] = resolved_display_name
+
+    source_format = from_fabric_tmdl(
+        project_id=context.project_id,
+        run_id=context.run_id,
+        tmdl=tmdl,
+        workspace_id=ws_id,
+        dataset_id=resolved_dataset_id,
+        row_counts=row_counts,
+        internal_sml_model=internal_sml_model,
     )
     
     # Ensure display name is explicitly resolved and stored for naming resolution
-    source_format.dataset_name = extractor.get_model_display_name(resolved_dataset_id)
+    source_format.dataset_name = resolved_display_name
 
-    self._record_step(4, StepStatus.SUCCESS, f"Extracted TMSL definition for '{source_format.dataset_name}'")
+    self._record_step(4, StepStatus.SUCCESS, f"Extracted TMDL definition for '{source_format.dataset_name}'")
 
     return source_format

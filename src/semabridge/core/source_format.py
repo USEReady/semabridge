@@ -59,6 +59,7 @@ class SourceFormat(BaseModel):
     
     format_version: str = "1.0"
     source_type: Literal["snowflake", "fabric", "pbix"]
+    metadata_format: Literal["tmdl", "snowflake", "pbix"] = "snowflake"
     extraction_timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     
     # Execution context
@@ -76,7 +77,8 @@ class SourceFormat(BaseModel):
     semantic_view_ddl: Optional[str] = None
     
     # For Fabric source
-    tmsl_definition: Optional[Dict[str, Any]] = None
+    tmdl_definition: Optional[Dict[str, Any]] = None
+    internal_sml_model: Optional[Dict[str, Any]] = None
     workspace_id: Optional[str] = None
     dataset_id: Optional[str] = None
     dataset_name: Optional[str] = None
@@ -164,11 +166,11 @@ class SourceFormat(BaseModel):
         """Validate Fabric-specific source format."""
         issues = []
         
-        if not self.tmsl_definition:
+        if not self.tmdl_definition and not self.internal_sml_model:
             issues.append(ValidationIssue(
                 severity="error",
-                code="NO_TMSL",
-                message="TMSL definition is required for Fabric source",
+                code="NO_FABRIC_MODEL",
+                message="Either TMDL definition or internal SML model is required for Fabric source",
             ))
         
         if not self.workspace_id:
@@ -191,11 +193,11 @@ class SourceFormat(BaseModel):
         """Validate PBIX-specific source format."""
         issues = []
         
-        if not self.tmsl_definition:
+        if not self.tmdl_definition:
             issues.append(ValidationIssue(
                 severity="error",
-                code="NO_TMSL",
-                message="TMSL/DataModelSchema is required for PBIX source",
+                code="NO_TMDL",
+                message="TMDL/DataModelSchema is required for PBIX source",
             ))
         
         if not self.pbix_path:
@@ -273,6 +275,7 @@ def from_snowflake_metadata(
     
     return SourceFormat(
         source_type="snowflake",
+        metadata_format="snowflake",
         project_id=project_id,
         run_id=run_id,
         database=metadata.get("database", ""),
@@ -286,28 +289,31 @@ def from_snowflake_metadata(
     )
 
 
-def from_fabric_tmsl(
+def from_fabric_tmdl(
     project_id: str,
     run_id: str,
-    tmsl: Dict[str, Any],
+    tmdl: Dict[str, Any],
     workspace_id: str,
     dataset_id: str,
     row_counts: Optional[Dict[str, int]] = None,
+    internal_sml_model: Optional[Dict[str, Any]] = None,
 ) -> SourceFormat:
     """
-    Create SourceFormat from Fabric TMSL extraction.
+    Create SourceFormat from Fabric TMDL extraction.
     
     This is the parsing instruction for Fabric source format.
     """
-    # Extract dataset name from TMSL
-    model = tmsl.get("model", {})
+    # Extract dataset name from the model payload.
+    model = tmdl.get("model", {})
     dataset_name = model.get("name", "")
     
     return SourceFormat(
         source_type="fabric",
+        metadata_format="tmdl",
         project_id=project_id,
         run_id=run_id,
-        tmsl_definition=tmsl,
+        tmdl_definition=tmdl,
+        internal_sml_model=internal_sml_model,
         workspace_id=workspace_id,
         dataset_id=dataset_id,
         dataset_name=dataset_name,
@@ -315,32 +321,33 @@ def from_fabric_tmsl(
     )
 
 
-def from_pbix_tmsl(
+def from_pbix_tmdl(
     project_id: str,
     run_id: str,
-    tmsl: Dict[str, Any],
+    tmdl: Dict[str, Any],
     pbix_path: str,
 ) -> SourceFormat:
     """
     Create SourceFormat from local PBIX DataModelSchema extraction.
 
-    The PBIX DataModelSchema is structurally identical to Fabric TMSL,
-    so the same TMSLTransformer can convert it to SML.
+    The PBIX DataModelSchema is structurally identical to the Fabric model
+    definition, so the same transformer path can convert it to SML.
 
     Args:
         project_id: Project identifier (model name).
         run_id: Unique run identifier.
-        tmsl: Raw DataModelSchema dict extracted from the .pbix archive.
+        tmdl: Raw DataModelSchema dict extracted from the .pbix archive.
         pbix_path: Absolute path to the source .pbix file.
     """
-    model = tmsl.get("model", {})
+    model = tmdl.get("model", {})
     dataset_name = model.get("name", "")
 
     return SourceFormat(
         source_type="pbix",
+        metadata_format="tmdl",
         project_id=project_id,
         run_id=run_id,
-        tmsl_definition=tmsl,
+        tmdl_definition=tmdl,
         dataset_name=dataset_name,
         pbix_path=pbix_path,
     )

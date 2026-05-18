@@ -1,7 +1,7 @@
-"""
-TMSL to SML Transformer.
+﻿"""
+TMDL to SML Transformer.
 
-Converts Fabric Model Definitions (TMSL JSON) into the Semantic Modeling Language (SML)
+Converts Fabric Model Definitions (TMDL JSON) into the Semantic Modeling Language (SML)
 intermediate representation.
 """
 
@@ -12,7 +12,9 @@ import hashlib
 import re
 import unicodedata
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+from semabridge.utils.synonyms import merge_synonyms, generate_auto_synonyms
 
 from semabridge.sml.models import (
     SMLModel, SMLDataset, SMLColumn, SMLMetric, SMLRelationship, SMLDimension, SMLAttribute,
@@ -32,9 +34,9 @@ class TransformationError(Exception):
     pass
 
 
-class TMSLTransformer:
+class TMDLTransformer:
     """
-    Transforms Fabric TMSL JSON into SML Model.
+    Transforms Fabric TMDL JSON into SML Model.
     """
 
     AUTO_HIDDEN_TABLE_PREFIXES = (
@@ -91,7 +93,7 @@ class TMSLTransformer:
     
     def transform(self, tmsl_json: Dict[str, Any], workspace_id: str, dataset_id: str, row_counts: Dict[str, int] = None, behavior: Optional[ConnectorBehavior] = None) -> SMLModel:
         """
-        Transform TMSL dictionary to SML object.
+        Transform TMDL dictionary to SML object.
         
         Args:
             tmsl_json: Decoded model.bim JSON
@@ -127,7 +129,7 @@ class TMSLTransformer:
                 partition_count = len(table.get("partitions", []) or [])
 
                 logger.info(
-                    "TMSL table discovered: %s (columns=%s, partitions=%s, hidden=%s)",
+                    "TMDL table discovered: %s (columns=%s, partitions=%s, hidden=%s)",
                     table_name or "<unnamed>",
                     column_count,
                     partition_count,
@@ -187,7 +189,7 @@ class TMSLTransformer:
             
             # Step 2b: Batch translate all Tier 5 candidates at once (reduces API calls by 90%)
             if tier5_candidates:
-                logger.info(f"📦 Batch translating {len(tier5_candidates)} Tier 5 metrics...")
+                logger.info(f"ðŸ“¦ Batch translating {len(tier5_candidates)} Tier 5 metrics...")
                 batch_results = self.dax_translator.batch_translate_tier5(tier5_candidates)
                 
                 # Apply batch translation results back to metrics
@@ -199,7 +201,7 @@ class TMSLTransformer:
                             metric.complexity_tier = translation.tier
                             metric.sync_enabled = True
                             metric.sync_failure_reason = None
-                            logger.debug(f"✓ Applied batch translation for '{metric.unique_name}'")
+                            logger.debug(f"âœ“ Applied batch translation for '{metric.unique_name}'")
             
             # 3. Process Relationships
             # Build case-insensitive map of valid datasets so relationship
@@ -234,7 +236,7 @@ class TMSLTransformer:
             pks_meta = {}
             
             for ds in sml.datasets:
-                tables_meta[ds.unique_name] = {"row_count": 0} # Row count unavail in TMSL
+                tables_meta[ds.unique_name] = {"row_count": 0} # Row count unavail in TMDL
                 columns_meta[ds.unique_name] = [{"name": c.unique_name, "data_type": c.data_type.value} for c in ds.columns]
                 # Assume columns ending in ID matching the table name are PKs
                 pks_meta[ds.unique_name] = [c.unique_name for c in ds.columns if c.is_key]
@@ -281,7 +283,7 @@ class TMSLTransformer:
 
             # --- NEW: Populate SML Dimensions from Datasets ---
             # SML Dimensions are required for proper Snowflake/Cortex generation.
-            # In the absence of explicit dimensions in TMSL, we map each Table -> Dimension.
+            # In the absence of explicit dimensions in TMDL, we map each Table -> Dimension.
             
             for ds in sml.datasets:
                 # specific logic to skip internal tables if needed
@@ -370,6 +372,9 @@ class TMSLTransformer:
                     aggregation_type = m.get("aggregation", "sum").upper()
                     sql_expr = f'{aggregation_type}({table_alias}."{column_name}")'
                     
+                    # Generate synonyms for auto-detected metrics
+                    auto_syns = generate_auto_synonyms(measure_name)
+                    
                     metric = SMLMetric(
                         unique_name=measure_name,
                         label=measure_name,
@@ -380,7 +385,8 @@ class TMSLTransformer:
                         aggregation=AggregationType(m["aggregation"]),
                         confidence=m["confidence"],
                         sync_enabled=True,
-                        complexity_tier=1
+                        complexity_tier=1,
+                        synonyms=auto_syns
                     )
                     sml.metrics.append(metric)
                     existing_metrics.add(measure_name)
@@ -392,7 +398,7 @@ class TMSLTransformer:
             
         except Exception as e:
             logger.error(f"Transformation failed: {e}")
-            raise TransformationError(f"Failed to transform TMSL to SML: {e}")
+            raise TransformationError(f"Failed to transform TMDL to SML: {e}")
             
     def _classify_tables(self, sml: SMLModel, relationships: List[Dict[str, Any]] = None, row_counts: Dict[str, int] = None) -> None:
         """
@@ -465,7 +471,7 @@ class TMSLTransformer:
         sml.datasets.append(date_ds)
     
     def _parse_table(self, table_def: Dict[str, Any]) -> SMLDataset:
-        """Parse a TMSL table into SMLDataset."""
+        """Parse a TMDL table into SMLDataset."""
         name = table_def["name"]
         
         columns = []
@@ -498,7 +504,7 @@ class TMSLTransformer:
         )
     
     def _parse_column(self, col_def: Dict[str, Any]) -> SMLColumn:
-        """Parse a TMSL column into SMLColumn."""
+        """Parse a TMDL column into SMLColumn."""
         import re
         
         tmsl_type = col_def.get("dataType", "string")
@@ -512,7 +518,7 @@ class TMSLTransformer:
                 col_name or "<unnamed>",
             )
         
-        # Robust, case-insensitive Fabric/TMSL -> SML type mapping
+        # Robust, case-insensitive Fabric/TMDL -> SML type mapping
         type_map = {
             # String-like
             "string": DataType.STRING,
@@ -589,12 +595,12 @@ class TMSLTransformer:
             r"\$",            # Currency symbol
             r"#,##0",         # Number formatting
             r"0\.00%",        # Percentage
-            r"€|£|¥",         # Other currency symbols
+            r"â‚¬|Â£|Â¥",         # Other currency symbols
         ]
         
         is_measure_candidate = False
         
-        # 1. Explicit TMSL Override: Check summarizeBy property
+        # 1. Explicit TMDL Override: Check summarizeBy property
         #    summarizeBy = "sum" | "avg" | "count" | "max" | "min" | "none"
         summarize_by = col_def.get("summarizeBy", "").lower()
         if summarize_by and summarize_by != "none":
@@ -644,6 +650,16 @@ class TMSLTransformer:
         if mapped_type == DataType.STRING and normalized_type != "string":
             logger.debug(f"Column '{col_name}' has type '{tmsl_type}', falling back to STRING")
             
+        # Merge user-defined synonyms with auto-generated heuristics
+        user_synonyms = col_def.get("synonyms") or []
+        if not isinstance(user_synonyms, list):
+            user_synonyms = []
+        auto_synonyms = generate_auto_synonyms(col_name)
+        merged_synonyms = merge_synonyms(user_synonyms, auto_synonyms)
+
+        if user_synonyms:
+            logger.debug("Column '%s': loaded %d user-defined synonyms from TMDL", col_name, len(user_synonyms))
+
         return SMLColumn(
             unique_name=col_name,
             label=col_name,
@@ -653,14 +669,15 @@ class TMSLTransformer:
             is_hidden=col_def.get("isHidden", False),
             is_measure_candidate=is_measure_candidate,
             format_string=format_string,
-            folder=col_def.get("displayFolder")
+            folder=col_def.get("displayFolder"),
+            synonyms=merged_synonyms
         )
 
     def _parse_measure(self, measure_def: Dict[str, Any], table_name: str, overrides: Dict[str, str] = None, metrics_context: List[Any] = None) -> SMLMetric:
-        """Parse a TMSL measure into SMLMetric with complexity analysis."""
+        """Parse a TMDL measure into SMLMetric with complexity analysis."""
         dax = self._extract_measure_expression(measure_def)
         if isinstance(dax, list):
-            dax = "\n".join(dax)  # TMSL expressions can be arrays of strings
+            dax = "\n".join(dax)  # TMDL expressions can be arrays of strings
         display_name = self._measure_display_name(measure_def)
         
         # EDGE CASE 1: Handle empty/null expressions
@@ -710,6 +727,17 @@ class TMSLTransformer:
                     complexity["failure_reason"] = reason
                     break
         
+        # Extract and merge synonyms from TMDL measure definition
+        user_synonyms = measure_def.get("synonyms") or []
+        if not isinstance(user_synonyms, list):
+            user_synonyms = []
+            
+        auto_synonyms = generate_auto_synonyms(display_name)
+        merged_synonyms = merge_synonyms(user_synonyms, auto_synonyms)
+
+        if user_synonyms:
+            logger.debug("Metric '%s': loaded %d user-defined synonyms from TMDL", measure_def["name"], len(user_synonyms))
+
         metric = SMLMetric(
             unique_name=measure_def["name"],
             label=display_name or measure_def["name"],
@@ -729,6 +757,7 @@ class TMSLTransformer:
             sync_failure_reason=complexity["failure_reason"],
             # Default partition to Year for Time Intelligence measures
             partition_dimension="'Date'[Year]" if complexity["requires_time_intel"] else None,
+            synonyms=merged_synonyms
         )
 
         # Apply direct transpiler output before standard translator path.
@@ -739,7 +768,7 @@ class TMSLTransformer:
             metric.sync_failure_reason = None
             return metric
         
-        # Attempt Translation — use centralized alias that matches the emitter
+        # Attempt Translation â€” use centralized alias that matches the emitter
         safe_alias = to_alias(table_name)
         
         translation = self.dax_translator.translate(
@@ -774,9 +803,9 @@ class TMSLTransformer:
 
     @staticmethod
     def _iter_table_measures(table_def: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Return any measure definitions attached to a TMSL table.
+        """Return any measure definitions attached to a TMDL table.
 
-        TMSL model payloads usually use `measures`, but some export paths and
+        TMDL model payloads usually use `measures`, but some export paths and
         older fixtures use `metrics`.  We accept both so broken or renamed
         payloads do not silently drop measures during extraction.
         """
@@ -934,7 +963,13 @@ class TMSLTransformer:
             if total > 1 and raw_name:
                 idx = name_seen.get(key, 0) + 1
                 name_seen[key] = idx
-                cloned["name"] = f"{raw_name}_{idx}"
+                # Sanitize the base name before appending the numeric suffix so
+                # special characters (e.g. single quotes from TMDL artifacts) in
+                # raw_name don't produce invalid Snowflake identifiers like
+                # "COST_THIRD_PARTY_4'_2".  The original name is preserved in
+                # displayName for human-readable labels.
+                safe_base = re.sub(r"[^A-Za-z0-9_ ]", "", raw_name).strip()
+                cloned["name"] = f"{safe_base}_{idx}"
                 cloned.setdefault("displayName", raw_name)
             output.append(cloned)
 
@@ -950,7 +985,7 @@ class TMSLTransformer:
 
     @staticmethod
     def _extract_measure_expression(measure_def: Dict[str, Any]) -> Any:
-        """Read the raw DAX expression from a TMSL measure definition."""
+        """Read the raw DAX expression from a TMDL measure definition."""
         for key in ("expression", "formula", "dax", "value"):
             if key not in measure_def:
                 continue
@@ -960,8 +995,8 @@ class TMSLTransformer:
         return ""
 
     def _parse_relationship(self, rel_def: Dict[str, Any], sml_context: SMLModel) -> Optional[SMLRelationship]:
-        """Parse TMSL relationship."""
-        # TMSL: fromTable, fromColumn, toTable, toColumn
+        """Parse TMDL relationship."""
+        # TMDL: fromTable, fromColumn, toTable, toColumn
         
         try:
              def _normalize_rel_identifier(value: str) -> str:
@@ -1004,16 +1039,40 @@ class TMSLTransformer:
                  "manytomany": Cardinality.MANY_TO_MANY
              }
              raw_card = rel_def.get("cardinality", "ManyToOne").lower()
-             
+             cardinality = card_map.get(raw_card, Cardinality.MANY_TO_ONE)
+
+             # Capture cross-filter direction from TMDL.
+             # Power BI uses "BothDirections" / "OneDirection"; SML normalises to "both" / "single".
+             raw_cross = str(
+                 rel_def.get("crossFilteringBehavior")
+                 or rel_def.get("crossFilterBehavior")
+                 or rel_def.get("cross_filtering_behavior")
+                 or "OneDirection"
+             ).lower().replace(" ", "").replace("_", "")
+             cross_filter = (
+                 CrossFilterDirection.BOTH
+                 if "both" in raw_cross
+                 else CrossFilterDirection.SINGLE
+             )
+
+             is_active = bool(rel_def.get("isActive", True))
+
              return SMLRelationship(
                  unique_name=name,
                  from_dataset=from_table,
                  from_columns=[from_column],
                  to_dataset=to_table,
                  to_columns=[to_column],
-                 cardinality=card_map.get(raw_card, Cardinality.MANY_TO_ONE),
-                 is_active=rel_def.get("isActive", True)
+                 cardinality=cardinality,
+                 cross_filter=cross_filter,
+                 is_active=is_active,
              )
         except Exception as e:
             logger.warning(f"Failed to parse relationship: {e}")
             return None
+
+
+class TMSLTransformer(TMDLTransformer):
+    """Backward-compatible alias for legacy TMSL naming."""
+
+

@@ -89,7 +89,9 @@ class SnowflakeEmitter(BaseEmitter):
             dup_name_repo=self._dup_name_repo,
         )
         self.translator = MetricExpressionTranslator(
-            identifier_sanitizer=self._id
+            identifier_sanitizer=self._id,
+            dialect="snowflake",
+            behavior=self.behavior,
         )
         self.measure_synchronizer = MeasureSynchronizer(
             config=self.config,
@@ -352,10 +354,12 @@ class SnowflakeEmitter(BaseEmitter):
         return self.measure_synchronizer.sync_all_measures(sml, fabric_extractor, dataset_id, grain_dimensions)
 
     def _build_history_snapshot_ddls_for_sml(self, sml: SMLModel) -> list[str]:
-        return self.semantic_view_builder._build_history_snapshot_ddls_for_sml(sml)
+        ddls, _ = self.schema_manager._build_history_snapshot_ddls_for_sml(sml)
+        return ddls
 
     def _build_history_snapshot_ddls_for_osi(self, osi: OSIModel) -> list[str]:
-        return self.semantic_view_builder._build_history_snapshot_ddls_for_osi(osi)
+        ddls, _ = self.schema_manager._build_history_snapshot_ddls_for_osi(osi)
+        return ddls
 
     def generate_cortex_yaml(self, sml: SMLModel) -> str:
         return _renderers.generate_cortex_yaml(self, sml)
@@ -457,7 +461,8 @@ class SnowflakeEmitter(BaseEmitter):
         return self.connection_manager._execute_sql(cursor, sql, context=context)
 
     def _drop_deprecated_views(self, cursor: Any, model: Any) -> None:
-        view_name = self._id.sanitize_column(getattr(model, "unique_name", None) or getattr(model, "label", None))
+        raw_name = str(getattr(model, "unique_name", None) or getattr(model, "label", None) or "model")
+        view_name = self._id.sanitize_column(raw_name)
         legacy_view = f"{self.config.database}.{self.config.schema_name}.{view_name}_SV"
         try:
             self.connection_manager._execute_sql(cursor, f"DROP VIEW IF EXISTS {legacy_view}")
@@ -619,10 +624,6 @@ class SnowflakeEmitter(BaseEmitter):
             # Validate relationships
             relationships = list(getattr(model, "relationships", []) or [])
             for rel in relationships:
-                is_active = getattr(rel, "is_active", True)
-                if not is_active:
-                    continue
-                
                 from_dataset = getattr(rel, "from_dataset", None)
                 to_dataset = getattr(rel, "to_dataset", None)
                 from_column = getattr(rel, "from_column", None)
@@ -803,14 +804,14 @@ class SnowflakeEmitter(BaseEmitter):
             return {}
 
     def _validate_relationships_measures_on_existing_tables(self, cursor: Any, model: Any, 
-                                                           existing_tables: dict, is_osi: bool) -> list:
+                                                           existing_tables: dict, is_osi: bool) -> tuple[list[str], list[str]]:
         """
         Validate that relationships and measures work correctly with existing tables.
         
         Returns: list of error messages (empty if all valid)
         """
         errors = []
-        incompatible_datasets = set()
+        incompatible_datasets: set[str] = set()
         
         try:
             def resolve_table_columns(dataset_name: str) -> set[str]:
@@ -858,9 +859,6 @@ class SnowflakeEmitter(BaseEmitter):
             # Check relationships
             relationships = getattr(model, 'relationships', []) or []
             for rel in relationships:
-                if not getattr(rel, 'is_active', True):
-                    continue
-                
                 from_dataset = getattr(rel, 'from_dataset', None)
                 to_dataset = getattr(rel, 'to_dataset', None)
                 from_columns = [str(col).upper() for col in (getattr(rel, 'from_columns', []) or [])]
@@ -878,7 +876,8 @@ class SnowflakeEmitter(BaseEmitter):
                                 errors.append(
                                     f"Relationship {rel.unique_name}: column type mismatch for {dataset_label(from_dataset)}.{col} (expected {expected_type}, found {actual_type})"
                                 )
-                                incompatible_datasets.add(from_dataset)
+                                if from_dataset:
+                                    incompatible_datasets.add(from_dataset)
                         
                         missing_from = [col for col in from_columns if col not in available_columns]
                         if missing_from:
@@ -899,7 +898,8 @@ class SnowflakeEmitter(BaseEmitter):
                                 errors.append(
                                     f"Relationship {rel.unique_name}: column type mismatch for {dataset_label(to_dataset)}.{col} (expected {expected_type}, found {actual_type})"
                                 )
-                                incompatible_datasets.add(to_dataset)
+                                if to_dataset:
+                                    incompatible_datasets.add(to_dataset)
                         
                         missing_to = [col for col in to_columns if col not in available_columns]
                         if missing_to:
@@ -932,7 +932,8 @@ class SnowflakeEmitter(BaseEmitter):
                                 errors.append(
                                     f"Metric {metric.unique_name}: source_column type mismatch for {dataset_label(metric_dataset)}.{source_column} (expected {expected_type}, found {actual_type})"
                                 )
-                                incompatible_datasets.add(metric_dataset)
+                                if metric_dataset:
+                                    incompatible_datasets.add(metric_dataset)
                 
                 logger.info("Metric validation: %s (dataset=%s)", metric.unique_name, metric_dataset)
             
@@ -945,7 +946,7 @@ class SnowflakeEmitter(BaseEmitter):
             
         except Exception as exc:
             logger.error("Error during relationship/measure validation: %s", exc, exc_info=True)
-            return [f"Validation error: {str(exc)}"]
+            return [f"Validation error: {str(exc)}"], []
 
     def _filter_ddls_for_existing_tables(self, ddls: list, existing_tables: dict) -> list:
         """

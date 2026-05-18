@@ -196,6 +196,7 @@ export default function ProjectJobsPage() {
 
   useEffect(() => {
     let cancelled = false;
+    let isInitialLoad = true;
 
     const loadPageData = async () => {
       try {
@@ -219,8 +220,9 @@ export default function ProjectJobsPage() {
         setRuns([]);
         setSchedules([]);
       } finally {
-        if (!cancelled) {
+        if (!cancelled && isInitialLoad) {
           setLoading(false);
+          isInitialLoad = false;
         }
       }
     };

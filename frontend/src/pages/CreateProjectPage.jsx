@@ -1794,6 +1794,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       await api.updateMapping(projectId, rowId, {
         target_name: updates.target_name,
         target_data_type: updates.target_data_type,
+        synonyms: updates.synonyms,
         status: 'manual',
       });
 
@@ -1804,6 +1805,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               ...row,
               target_field: updates.target_name,
               target_type: updates.target_data_type,
+              synonyms: updates.synonyms,
               status: 'manual',
               isDirty: true,
             }

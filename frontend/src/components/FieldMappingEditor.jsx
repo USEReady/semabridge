@@ -70,6 +70,7 @@ export default function FieldMappingEditor({
 }) {
   const [targetName, setTargetName] = useState('');
   const [targetDataType, setTargetDataType] = useState('');
+  const [synonyms, setSynonyms] = useState('');
   const [validationResult, setValidationResult] = useState(null);
 
   // Initialise controlled fields whenever the row changes
@@ -77,6 +78,7 @@ export default function FieldMappingEditor({
     if (!row) return;
     setTargetName(String(row.target_field || ''));
     setTargetDataType(String(row.target_type || ''));
+    setSynonyms(Array.isArray(row.synonyms) ? row.synonyms.join(', ') : '');
     setValidationResult(null);
   }, [row]);
 
@@ -119,7 +121,12 @@ export default function FieldMappingEditor({
     );
     setValidationResult(result);
     if (!result.isValid) return; // keep modal open, error already shown
-    onSave?.(row.id, { target_name: targetName, target_data_type: targetDataType });
+    const synonymList = synonyms.split(',').map(s => s.trim()).filter(Boolean);
+    onSave?.(row.id, { 
+      target_name: targetName, 
+      target_data_type: targetDataType,
+      synonyms: synonymList
+    });
   }
 
   function handleApplySuggestion() {
@@ -386,6 +393,25 @@ export default function FieldMappingEditor({
                 <option key={dt} value={dt}>{dt}</option>
               ))}
             </select>
+          </div>
+
+          {/* synonyms */}
+          <div>
+            <label htmlFor="fme-synonyms" style={LABEL}>
+              Synonyms (comma separated)
+            </label>
+            <input
+              id="fme-synonyms"
+              type="text"
+              value={synonyms}
+              onChange={(e) => setSynonyms(e.target.value)}
+              disabled={isSaving}
+              style={INPUT}
+              placeholder="e.g. Sales, Total Revenue, turnover"
+            />
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+              Add synonyms to help Snowflake Cortex Analyst discover this field.
+            </div>
           </div>
         </div>
       </form>

@@ -1,13 +1,13 @@
-"""
+﻿"""
 OSI (Open Semantic Interchange) Intermediate Models.
 
 This module defines the canonical intermediate representation for semantic models.
 All conversions must pass through these OSI models:
-    - Source → OSI (extraction)
-    - OSI → Target (emission)
+    - Source â†’ OSI (extraction)
+    - OSI â†’ Target (emission)
 
 These models serve as the "Rosetta Stone" between platforms like:
-    - Microsoft Fabric (Power BI / TMSL)
+    - Microsoft Fabric (Power BI / semantic-model payloads)
     - Snowflake (Semantic Views / Cortex Analyst)
 
 Note:
@@ -646,7 +646,7 @@ class OSIModel(OSIBaseModel):
 
 
 # =============================================================================
-# Expression Dialects — Multi-Dialect Expression Support
+# Expression Dialects â€” Multi-Dialect Expression Support
 # =============================================================================
 
 
@@ -676,4 +676,5 @@ class OSIExpressionDialect(OSIBaseModel):
         ...,
         description="Expression text in the specified dialect"
     )
+
 

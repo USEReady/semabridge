@@ -117,7 +117,7 @@ class ConversionError(SemaBridgeError):
     """
     Error during format conversion.
 
-    Raised when converting between formats (e.g., TMSL to SML,
+    Raised when converting between formats (e.g., TMDL to SML,
     SML to Snowflake) fails due to incompatible data or logic errors.
 
     Args:

@@ -33,6 +33,46 @@ def test_model_repository_backfills_missing_run_sync_mode_column(tmp_path):
     finally:
         conn.close()
 
+
+def test_model_repository_backfills_missing_snapshot_source_format_column(tmp_path):
+    db_path = tmp_path / "legacy_snapshots.db"
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE snapshots (
+                snapshot_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                version_tag TEXT,
+                sml_blob TEXT,
+                status TEXT NOT NULL DEFAULT 'success',
+                duration_ms INTEGER,
+                error_message TEXT,
+                initiated_by TEXT NOT NULL DEFAULT 'cli',
+                run_id TEXT,
+                deleted_at TEXT,
+                connector_id TEXT,
+                trigger TEXT,
+                sync_mode TEXT NOT NULL DEFAULT 'copy'
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Triggers schema backfill on existing DB.
+    ModelRepository(url_override=f"sqlite:///{db_path.as_posix()}")
+
+    conn = sqlite3.connect(db_path)
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(snapshots)")}
+        assert "source_format" in columns
+    finally:
+        conn.close()
+
     repo = ModelRepository(url_override=f"sqlite:///{db_path.as_posix()}")
     repo.record_run_start(
         run_id="run-legacy-sync-mode",

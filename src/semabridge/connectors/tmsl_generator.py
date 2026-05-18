@@ -1,5 +1,5 @@
-"""
-TMSL Generator.
+﻿"""
+TMDL Generator.
 
 Generates Fabric-compatible model.bim (Tabular Model Scripting Language)
 JSON files from SML models.
@@ -29,9 +29,9 @@ from semabridge.utils.relationship_naming import RelationshipNameTracker
 logger = get_logger(__name__)
 
 
-class TMSLGenerator:
+class TMDLGenerator:
     """
-    Generates Fabric TMSL (model.bim) from SML models.
+    Generates Fabric TMDL (model.bim) from SML models.
     
     Creates JSON structure compatible with:
     - Fabric SemanticModel REST API
@@ -71,9 +71,9 @@ class TMSLGenerator:
         Generate the complete model.bim structure.
         
         Returns:
-            TMSL JSON structure
+            TMDL JSON structure
         """
-        logger.info(f"Generating TMSL for model: {self.model.unique_name}")
+        logger.info(f"Generating TMDL for model: {self.model.unique_name}")
         
         tables = self._build_tables()
         relationships = self._build_relationships()
@@ -107,7 +107,7 @@ class TMSLGenerator:
             },
         }
         
-        logger.info(f"Generated TMSL: {len(tables)} tables, {len(relationships)} relationships")
+        logger.info(f"Generated TMDL: {len(tables)} tables, {len(relationships)} relationships")
         return model_bim
     
     def _build_tables(self) -> list[dict[str, Any]]:
@@ -154,10 +154,11 @@ class TMSLGenerator:
         # Build columns
         columns = []
         for col in dataset.columns:
+            source_column = col.unique_name
             col_def = {
                 "name": col.unique_name,
                 "dataType": col.data_type.to_powerbi(),
-                "sourceColumn": col.unique_name,
+                "sourceColumn": source_column,
                 # Prevent numeric columns from being treated as implicit
                 # measure-like fields in Fabric/Power BI model explorers.
                 "summarizeBy": "none",
@@ -249,13 +250,39 @@ class TMSLGenerator:
         database = dataset.source_database or self.sf_database or "{{database}}"
         schema = dataset.source_schema or self.sf_schema or "{{schema}}"
         
+        select_list = self._build_select_list(dataset)
+
         # Use Snowflake.Query for a more direct SQL approach
         m_expr = f'''let
-    Source = Value.NativeQuery(Snowflake.Databases("{server}", "{warehouse}"){{[Name="{database}"]}}[Data]{{[Name="{schema}", Kind="Schema"]}}[Data], "SELECT * FROM ""{schema}"".""{table_name}""", null, [EnableFolding=true])
+    Source = Value.NativeQuery(Snowflake.Databases("{server}", "{warehouse}"){{[Name="{database}"]}}[Data]{{[Name="{schema}", Kind="Schema"]}}[Data], "SELECT {select_list} FROM ""{schema}"".""{table_name}""", null, [EnableFolding=true])
 in
     Source'''
         
         return m_expr
+
+    def _build_select_list(self, dataset: SMLDataset) -> str:
+        """Build a SELECT projection matching semantic model column names."""
+        if not dataset.columns:
+            return "*"
+
+        parts: list[str] = []
+        for col in dataset.columns:
+            source_expr = (getattr(col, "source_expression", None) or col.unique_name).strip()
+            source_sql = self._quote_identifier(source_expr)
+            alias_sql = self._quote_identifier(col.unique_name)
+            if source_sql == alias_sql:
+                parts.append(source_sql)
+            else:
+                parts.append(f"{source_sql} AS {alias_sql}")
+
+        return ", ".join(parts)
+
+    @staticmethod
+    def _quote_identifier(identifier: str) -> str:
+        """Quote a simple Snowflake identifier for SQL embedded in M."""
+        clean = identifier.strip().strip('"')
+        clean = clean.replace('""', '"').replace('"', '""')
+        return f'""{clean}""'
     
     def _build_relationships(self) -> list[dict[str, Any]]:
         """Build relationship definitions."""
@@ -330,7 +357,7 @@ in
     
     def save(self, output_path: Path | str) -> Path:
         """
-        Save the generated TMSL to a file.
+        Save the generated TMDL to a file.
         
         Args:
             output_path: Path for the output file
@@ -380,3 +407,9 @@ in
             "relationships": len(self.model.relationships),
             "hierarchies": sum(len(d.hierarchies) for d in self.model.dimensions),
         }
+
+
+class TMSLGenerator(TMDLGenerator):
+    """Backward-compatible alias for legacy TMSL naming."""
+
+

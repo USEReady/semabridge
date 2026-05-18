@@ -1,5 +1,3 @@
-// ...existing code...
-// (Removed duplicate export of api. Only export once at the end of the file, with getDatabricksSources included as a method.)
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
 const TOKEN_KEY = 'semabridge-token';
 const FABRIC_TOKEN_KEY = 'semabridge-fabric-token';
@@ -159,7 +157,6 @@ function getFabricAuthHeaders() {
     if (token && Date.now() < expiresAt) {
         return { Authorization: `Bearer ${token}` };
     }
-    // Token expired or missing - clean up stale values.
     localStorage.removeItem(FABRIC_TOKEN_KEY);
     localStorage.removeItem(FABRIC_TOKEN_EXPIRES_KEY);
     return {};
@@ -169,6 +166,21 @@ function hasValidFabricToken() {
     const token = localStorage.getItem(FABRIC_TOKEN_KEY);
     const expiresAt = parseInt(localStorage.getItem(FABRIC_TOKEN_EXPIRES_KEY) || '0', 10);
     return Boolean(token && Date.now() < expiresAt);
+}
+
+function storeFabricToken(token, expiresInSeconds = 3600) {
+    if (!token) {
+        clearFabricToken();
+        return;
+    }
+    localStorage.setItem(FABRIC_TOKEN_KEY, token);
+    const expiresAt = Date.now() + (Number(expiresInSeconds) || 3600) * 1000;
+    localStorage.setItem(FABRIC_TOKEN_EXPIRES_KEY, String(expiresAt));
+}
+
+function clearFabricToken() {
+    localStorage.removeItem(FABRIC_TOKEN_KEY);
+    localStorage.removeItem(FABRIC_TOKEN_EXPIRES_KEY);
 }
 
 const AUTH_BASE = (import.meta.env.VITE_AUTH_BASE_URL || '/auth').replace(/\/$/, '');
@@ -234,7 +246,9 @@ async function handleResponse(res) {
             if (data?.error === 'reauth_required' || data?.detail?.error === 'reauth_required') {
                 return data.detail || data;
             }
-        } catch (e) { }
+        } catch (e) {
+            console.debug('Failed to parse 401 response payload.', e);
+        }
 
         // Try refresh + auto-login before giving up
         const _retryFn = res._retryFn;
@@ -266,7 +280,9 @@ async function handleResponse(res) {
             } else if (typeof parsed?.message === 'string' && parsed.message.trim()) {
                 detail = parsed.message;
             }
-        } catch (e) { }
+        } catch (e) {
+            console.debug('Failed to parse error payload.', e);
+        }
         const error = new Error(`API Error ${res.status}: ${detail}`);
         error.status = res.status;
         error.payload = parsed;
@@ -284,7 +300,9 @@ async function authFetch(url, options = {}) {
     let workspaceId = null;
     try {
         workspaceId = localStorage.getItem('FABRIC_WORKSPACE_ID');
-    } catch (e) { }
+    } catch (e) {
+        console.debug('Failed to read Fabric workspace ID from storage.', e);
+    }
     const headers = { ...getAuthHeaders(), ...options.headers };
     if (workspaceId) {
         headers['X-Fabric-Context'] = workspaceId;
@@ -699,9 +717,7 @@ export const api = {
 
         // On success, store the MSAL token in localStorage for Bearer passthrough.
         if (data.status === 'success' && data.access_token) {
-            localStorage.setItem(FABRIC_TOKEN_KEY, data.access_token);
-            const expiresAt = Date.now() + (data.expires_in || 3600) * 1000;
-            localStorage.setItem(FABRIC_TOKEN_EXPIRES_KEY, String(expiresAt));
+            storeFabricToken(data.access_token, data.expires_in || 3600);
         }
         return data;
     },
@@ -719,8 +735,7 @@ export const api = {
     },
 
     async fabricLogout() {
-        localStorage.removeItem(FABRIC_TOKEN_KEY);
-        localStorage.removeItem(FABRIC_TOKEN_EXPIRES_KEY);
+        clearFabricToken();
         const res = await authFetch(`${API_BASE_URL}/connections/fabric/logout`, {
             method: 'POST',
         });
@@ -1419,8 +1434,8 @@ export const api = {
         const cacheKey = 'discovery:fabric:workspaces';
         const cached = getCachedApiValue(cacheKey);
         if (cached) return cached;
-        const res = await fetch(`${API_BASE_URL}/connections/fabric/workspaces`, {
-            headers: { ...getAuthHeaders(), ...getFabricAuthHeaders() },
+        const res = await authFetch(`${API_BASE_URL}/connections/fabric/workspaces`, {
+            headers: { ...getFabricAuthHeaders() },
         });
         const data = await handleResponse(res);
         const normalized = (data.workspaces || data || []).map(normalizeWorkspace);

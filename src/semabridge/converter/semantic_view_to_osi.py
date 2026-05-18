@@ -367,9 +367,9 @@ class SemanticViewToOSIConverter(BaseConverter):
             if not entry:
                 continue
 
-            # Pattern: [relationship_name AS] alias ("col") REFERENCES alias2
+            # Pattern: [relationship_name AS] alias ("col") REFERENCES alias2 [("col2")]
             m = re.match(
-                r'(?:(\w+)\s+AS\s+)?(\w+)\s*\(\s*"?(\w+)"?\s*\)\s*REFERENCES\s+(\w+)',
+                r'(?:(\w+)\s+AS\s+)?(\w+)\s*\(\s*"?(\w+)"?\s*\)\s*REFERENCES\s+(\w+)(?:\s*\(\s*"?(\w+)"?\s*\))?',
                 entry,
                 re.IGNORECASE,
             )
@@ -377,25 +377,34 @@ class SemanticViewToOSIConverter(BaseConverter):
                 logger.debug(f"Could not parse RELATIONSHIPS entry: {entry!r}")
                 continue
 
-            rel_identifier, from_alias, fk_col, to_alias = m.group(1), m.group(2), m.group(3), m.group(4)
+            rel_identifier, from_alias, fk_col, to_alias, explicit_to_col = (
+                m.group(1),
+                m.group(2),
+                m.group(3),
+                m.group(4),
+                m.group(5),
+            )
             from_table = table_map.get(from_alias, {}).get("table_name", from_alias)
             to_table = table_map.get(to_alias, {}).get("table_name", to_alias)
             to_pk_cols = table_map.get(to_alias, {}).get("pk_columns", [])
-            to_col = to_pk_cols[0] if to_pk_cols else fk_col
+            to_col = explicit_to_col or (to_pk_cols[0] if to_pk_cols else fk_col)
 
+            canonical_rel_name = generate_relationship_name(
+                from_table,
+                fk_col,
+                to_table,
+                to_col,
+            )
+            rel_name = canonical_rel_name
             if rel_identifier:
-                rel_name = rel_identifier.upper()
-                # Snowflake layer may intentionally omit REL_. Keep canonical
-                # REL_ prefix inside OSI/SML models.
-                if not rel_name.startswith("REL_"):
-                    rel_name = f"REL_{rel_name}"
-            else:
-                rel_name = generate_relationship_name(
-                    from_table,
-                    fk_col,
-                    to_table,
-                    to_col,
-                )
+                candidate_name = rel_identifier.upper()
+                if not candidate_name.startswith("REL_"):
+                    candidate_name = f"REL_{candidate_name}"
+                if re.match(
+                    r"^REL_[A-Z0-9_]+_[A-Z0-9_]+__[A-Z0-9_]+_[A-Z0-9_]+(?:_[0-9]+)?$",
+                    candidate_name,
+                ):
+                    rel_name = candidate_name
 
             rels.append(
                 OSIRelationship(
@@ -421,13 +430,17 @@ class SemanticViewToOSIConverter(BaseConverter):
         """
         Build ``OSIDataset`` objects from the TABLES clause + optional column metadata.
         """
-        # Collect columns referenced in DIMENSIONS clause per alias
+        # Collect semantic columns referenced by the semantic-view DDL. Live
+        # metadata can be narrower than the DDL projection, so keep the DDL as
+        # the source of truth for model-facing column names.
         dim_columns = self._collect_dimension_columns(ddl)
+        rel_columns = self._collect_relationship_columns(ddl, table_map)
 
         datasets: list[OSIDataset] = []
         for alias, info in table_map.items():
             table_name = info["table_name"]
             pk_columns = set(info["pk_columns"])
+            pk_upper = {p.upper() for p in pk_columns}
 
             raw_cols: list[dict[str, Any]] = col_meta.get(table_name, [])
             osi_columns: list[OSIColumn] = []
@@ -440,33 +453,55 @@ class SemanticViewToOSIConverter(BaseConverter):
                             label=col["name"].replace("_", " ").title(),
                             data_type=_map_sf_type(col.get("data_type", "VARCHAR")),
                             description=col.get("comment") or "",
-                            is_key=col["name"].upper() in {p.upper() for p in pk_columns},
+                            is_key=col["name"].upper() in pk_upper,
                             is_hidden=False,
                         )
                     )
             else:
                 # Derive columns from dimension references in DDL
-                for col_name in dim_columns.get(alias, []):
+                for col_name, source_expr in dim_columns.get(alias, {}).items():
                     osi_columns.append(
                         OSIColumn(
                             unique_name=col_name,
                             label=col_name.replace("_", " ").title(),
                             data_type=OSIDataType.STRING,
-                            is_key=col_name.upper() in {p.upper() for p in pk_columns},
+                            is_key=col_name.upper() in pk_upper,
+                            source_expression=source_expr,
                         )
                     )
-                # Always include PK columns even if not in dimensions
-                existing = {c.unique_name.upper() for c in osi_columns}
-                for pk in pk_columns:
-                    if pk.upper() not in existing:
-                        osi_columns.append(
-                            OSIColumn(
-                                unique_name=pk,
-                                label=pk.replace("_", " ").title(),
-                                data_type=OSIDataType.INTEGER,
-                                is_key=True,
-                            )
-                        )
+
+            # Always include semantic DDL columns used by dimensions, keys, and
+            # relationships. This prevents Fabric model.bim from containing
+            # relationships to columns that were omitted because live metadata
+            # had a narrower physical projection.
+            existing_by_upper = {c.unique_name.upper(): c for c in osi_columns}
+            referenced_columns: dict[str, Optional[str]] = {}
+            referenced_columns.update(dim_columns.get(alias, {}))
+            for col_name in rel_columns.get(alias, []):
+                referenced_columns.setdefault(col_name, None)
+            for pk in pk_columns:
+                referenced_columns.setdefault(pk, None)
+
+            for col_name, source_expr in referenced_columns.items():
+                existing = existing_by_upper.get(col_name.upper())
+                if existing:
+                    if col_name.upper() in pk_upper:
+                        existing.is_key = True
+                    if source_expr and not existing.source_expression:
+                        existing.source_expression = source_expr
+                    continue
+
+                is_key = col_name.upper() in pk_upper
+                osi_columns.append(
+                    OSIColumn(
+                        unique_name=col_name,
+                        label=col_name.replace("_", " ").title(),
+                        data_type=OSIDataType.INTEGER if is_key else OSIDataType.STRING,
+                        is_key=is_key,
+                        source_expression=source_expr,
+                    )
+                )
+                existing_by_upper[col_name.upper()] = osi_columns[-1]
 
             datasets.append(
                 OSIDataset(
@@ -481,24 +516,66 @@ class SemanticViewToOSIConverter(BaseConverter):
 
     def _collect_dimension_columns(
         self, ddl: str
-    ) -> dict[str, list[str]]:
+    ) -> dict[str, dict[str, str]]:
         """
-        Collect { alias: [col_name, ...] } from the DIMENSIONS clause.
+        Collect { alias: {semantic_col: source_col} } from DIMENSIONS.
 
-        Handles: ``alias."col" AS "label"`` and ``alias."col"``.
+        Handles both ``alias."src" AS alias."semantic"`` and
+        ``alias."col"``. The semantic column name is what relationships and
+        Fabric model columns must reference; the source column is used later for
+        the physical SELECT projection.
         """
         content = _extract_clause(ddl, "DIMENSIONS")
         if not content:
             return {}
 
-        result: dict[str, list[str]] = {}
+        result: dict[str, dict[str, str]] = {}
         for entry in _split_clause_entries(content):
             entry = entry.strip()
-            m = re.match(r'(\w+)\."?(\w+)"?', entry)
+            m = re.match(
+                r'(\w+)\."?(\w+)"?(?:\s+AS\s+(?:(\w+)\.)?"?(\w+)"?)?',
+                entry,
+                re.IGNORECASE,
+            )
             if m:
-                alias, col = m.group(1), m.group(2)
-                result.setdefault(alias, []).append(col)
+                source_alias, source_col = m.group(1), m.group(2)
+                semantic_alias = m.group(3) or source_alias
+                semantic_col = m.group(4) or source_col
+                result.setdefault(semantic_alias, {})[semantic_col] = source_col
 
+        return result
+
+    def _collect_relationship_columns(
+        self,
+        ddl: str,
+        table_map: dict[str, dict[str, Any]],
+    ) -> dict[str, list[str]]:
+        """Collect semantic columns referenced by RELATIONSHIPS endpoints."""
+        result: dict[str, list[str]] = {}
+        content = _extract_clause(ddl, "RELATIONSHIPS")
+        if not content:
+            return result
+
+        for entry in _split_clause_entries(content):
+            m = re.match(
+                r'(?:(\w+)\s+AS\s+)?(\w+)\s*\(\s*"?(\w+)"?\s*\)\s*REFERENCES\s+(\w+)(?:\s*\(\s*"?(\w+)"?\s*\))?',
+                entry.strip(),
+                re.IGNORECASE,
+            )
+            if not m:
+                continue
+            from_alias, fk_col, to_alias, explicit_to_col = (
+                m.group(2),
+                m.group(3),
+                m.group(4),
+                m.group(5),
+            )
+            to_pk_cols = table_map.get(to_alias, {}).get("pk_columns", [])
+            to_col = explicit_to_col or (to_pk_cols[0] if to_pk_cols else fk_col)
+            for alias, col in ((from_alias, fk_col), (to_alias, to_col)):
+                result.setdefault(alias, [])
+                if col not in result[alias]:
+                    result[alias].append(col)
         return result
 
     def _parse_dimensions_clause(

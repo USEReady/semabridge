@@ -102,14 +102,48 @@ def try_llm_metric_fallback_expression(
     except Exception:
         pass
 
+    # Deterministic AST translation (Tier 3/4 style): helps with time-intelligence
+    # and common CALCULATE patterns without relying on LLM providers.
     try:
-        from semabridge.converter.gemini_dax_translator import get_gemini_translator
-        translator = get_gemini_translator()
-    except Exception:
-        translator = None
+        from semabridge.converter.dax_ast_parser import try_ast_translate
 
-    if translator and getattr(translator, "use_gemini", False) and getattr(translator, "api_key", None):
+        alias_map: Dict[str, str] = {}
+        for raw, alias in (alias_by_raw or {}).items():
+            if raw and alias:
+                alias_map[str(raw).strip().lower()] = str(alias).strip()
+        for ds_name, alias in (dataset_aliases or {}).items():
+            if ds_name and alias:
+                alias_map[str(ds_name).strip().lower()] = str(alias).strip()
+
+        date_alias = None
+        for ds_name, alias in (dataset_aliases or {}).items():
+            if not ds_name or not alias:
+                continue
+            ds_lower = str(ds_name).lower()
+            if "date" in ds_lower or "calendar" in ds_lower:
+                date_alias = str(alias).strip()
+                break
+        date_alias = date_alias or table_alias
+
+        ast_sql = try_ast_translate(
+            dax_expression,
+            table_alias=table_alias,
+            date_alias=date_alias,
+            table_alias_map=alias_map,
+        )
+        if ast_sql:
+            candidate_expressions.append(ast_sql)
+    except Exception:
+        pass
+
+    try:
+        from semabridge.converter.common_dax_translator import CommonDAXTranslator, SQLDialect
+
         schema_context = {ds_name: sorted(list(cols)) for ds_name, cols in dataset_col_lookup.items()}
+        translator = CommonDAXTranslator(
+            dialect=SQLDialect.SNOWFLAKE,
+            placeholder_sql="0",
+        )
         llm_result = translator.translate(
             dax=dax_expression,
             table_alias=table_alias.lower(),
@@ -117,8 +151,15 @@ def try_llm_metric_fallback_expression(
             metric_name=metric.unique_name,
             schema_context=schema_context,
         )
-        if llm_result and llm_result.is_valid and llm_result.sql:
+        if (
+            llm_result
+            and llm_result.is_valid
+            and llm_result.sql
+            and not getattr(llm_result, "fallback_used", False)
+        ):
             candidate_expressions.append(llm_result.sql)
+    except Exception:
+        pass
 
     for candidate_sql in candidate_expressions:
         expr = sanitize_sql_markdown(candidate_sql)
