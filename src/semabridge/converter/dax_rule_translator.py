@@ -11,11 +11,14 @@ Key functions:
 """
 
 import re
+import threading
 from typing import Optional, Dict, List, Tuple, Any
 from semabridge.utils.logger import get_logger
 from semabridge.converter.api_usage_tracker import log_complexity_classification, log_rule_based_result
 
 logger = get_logger(__name__)
+
+_local_state = threading.local()
 
 
 # Common DAX aggregation functions
@@ -408,12 +411,18 @@ def translate_fiscal_calculate(
     if not re.search(r"\bFISCAL_YR_PERIOD\b\s*\]?\s*<", dax_expr, re.IGNORECASE):
         return None
 
+    # Detect the RETURN statement and only search inside the substring after it to avoid matching VAR declarations
+    dax_to_search = dax_expr
+    return_match = re.search(r"\bRETURN\b", dax_expr, re.IGNORECASE)
+    if return_match:
+        dax_to_search = dax_expr[return_match.end():]
+
     sum_match = re.search(
-        r"\bRETURN\s+CALCULATE\s*\(\s*"
+        r"(?:\bRETURN\s+)?CALCULATE\s*\(\s*"
         r"(SUM|AVERAGE|COUNT|MIN|MAX)\s*\(\s*"
         r"(?:(?:'[^']+'|[A-Za-z_][\w\s]*)\s*)?\[\s*([^\]]+?)\s*\]\s*"
         r"\)",
-        dax_expr,
+        dax_to_search,
         re.IGNORECASE | re.DOTALL,
     )
     if not sum_match:
@@ -625,6 +634,18 @@ def rule_based_translation(
     Returns:
         SQL aggregation expression, or None if cannot translate
     """
+    _local_state.dialect = dialect
+    try:
+        return _rule_based_translation_inner(dax, table_alias, metric_name, dialect)
+    finally:
+        _local_state.dialect = "snowflake"
+
+def _rule_based_translation_inner(
+    dax: str, 
+    table_alias: str = "fact", 
+    metric_name: str = "",
+    dialect: str = "snowflake"
+) -> Optional[str]:
     if not dax or not isinstance(dax, str):
         return None
     
@@ -638,7 +659,19 @@ def rule_based_translation(
         
         # Rule 4: "Last Refreshed" generic pattern (by name)
         if "last_refreshed" in norm_name:
-            return f"CONCAT('Last Refreshed - ', CAST(MAX({table_alias}.\"GL_REFRESH_DATETIME\") AS STRING))"
+            # Try to extract prefix from DAX if it's a CONCATENATE
+            prefix = "Last Refreshed - "
+            pref_match = re.search(r'(?:CONCATENATE|CONCAT)\s*\(\s*"([^"]+)"', clean_dax, re.IGNORECASE)
+            if pref_match:
+                prefix = pref_match.group(1)
+            # Quote the date column safely
+            date_col = "GL_REFRESH_DATETIME"
+            col_match = re.search(r'\[([^\]]+)\]', clean_dax)
+            if col_match:
+                date_col = col_match.group(1)
+            
+            quoted_col = _quote_identifier(date_col)
+            return f"ANY_VALUE(CONCAT('{prefix}', CAST(MAX({table_alias}.{quoted_col}) AS STRING)))"
 
         # Pattern 4: Callout / Commentary measures (by name)
         if "callout" in norm_name or "commentary" in norm_name:
@@ -646,8 +679,8 @@ def rule_based_translation(
             str_match = re.search(r'"([^"]{20,})"', clean_dax)
             if str_match:
                 preview = str_match.group(1)[:100].replace("'", "''")
-                return f"CAST('{preview}...' AS STRING)"
-            return f"CAST('Informational Callout: See Semantic Model Documentation' AS STRING)"
+                return f"ANY_VALUE(CAST('{preview}...' AS STRING))"
+            return f"ANY_VALUE(CAST('Informational Callout: See Semantic Model Documentation' AS STRING))"
 
     fiscal_sql = translate_fiscal_calculate(clean_dax, table_alias, dialect=dialect)
     if fiscal_sql:
@@ -1010,9 +1043,6 @@ def translate_calculate_filters(dax: str, table_alias: str, match: re.Match, dia
             if not filt_clean:
                 continue
             if upper_filt.startswith(("ALL(", "REMOVEFILTERS(", "ALLEXCEPT(", "USERELATIONSHIP(", "CROSSFILTER(", "TREATAS(", "TOPN(", "RANKX(")):
-                # ALL/REMOVEFILTERS/ALLEXCEPT clear filters; relationship overrides are not deterministic here.
-                if upper_filt.startswith(("ALL(", "REMOVEFILTERS(", "ALLEXCEPT(")):
-                    continue
                 return None
             if upper_filt.startswith("DATESINPERIOD("):
                 date_pred = _datesinperiod_predicate(filt_clean, table_alias)
@@ -1094,17 +1124,22 @@ def translate_switch_case(dax: str, table_alias: str) -> Optional[str]:
 
 def _quote_identifier(name: str) -> str:
     """
-    Sanitize and quote identifier safely for Snowflake.
+    Sanitize and quote identifier safely.
     """
-    name = name.strip().strip('"').strip("'")
+    dialect = getattr(_local_state, "dialect", "snowflake")
+    name = name.strip().strip('"').strip("'").strip('`')
     try:
         from semabridge.utils.identifiers import IdentifierSanitizer
         sanitizer = IdentifierSanitizer()
         safe_name = sanitizer.sanitize_column(name)
+        if dialect == "databricks":
+            return f'`{safe_name}`'
         return f'"{safe_name}"'
     except ImportError:
         import re
         safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', name).upper()
+        if dialect == "databricks":
+            return f'`{safe_name}`'
         return f'"{safe_name}"'
 
 

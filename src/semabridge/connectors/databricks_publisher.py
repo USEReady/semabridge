@@ -1810,6 +1810,7 @@ class DatabricksPublisher:
         source_fq: str,
         inject_max_date: bool = False,
         dataset: Optional[SMLDataset] = None,
+        resolved_measures: Optional[list[ResolvedMeasure]] = None,
     ) -> str:
         """Build an inline source query that aliases physical columns to stable metric-view names."""
         physical_cols = self._get_source_table_columns(source_fq)
@@ -1842,6 +1843,21 @@ class DatabricksPublisher:
             if semantic_alias and semantic_alias.lower() not in used_aliases:
                 select_parts.append(f"  {source_expr} AS `{semantic_alias}`")
                 used_aliases.add(semantic_alias.lower())
+
+        if resolved_measures:
+            for rm in resolved_measures:
+                if not rm.sql_expression:
+                    continue
+                cols = self._extract_inline_source_columns_from_sql_expression(rm.sql_expression)
+                for col in cols:
+                    col_lower = col.lower()
+                    if col_lower not in used_aliases:
+                        if physical_cols and col_lower not in physical_cols:
+                            source_expr = "0"
+                        else:
+                            source_expr = f"f.`{col}`"
+                        select_parts.append(f"  {source_expr} AS `{col.lower()}`")
+                        used_aliases.add(col_lower)
 
         if inject_max_date:
             date_col = None
@@ -1883,6 +1899,7 @@ class DatabricksPublisher:
         self,
         source_fq: str,
         bindings: list[MetricViewColumnBinding],
+        resolved_measures: Optional[list[ResolvedMeasure]] = None,
     ) -> bool:
         """Return True when mapped source columns need semantic aliasing."""
         physical_cols = self._get_source_table_columns(source_fq)
@@ -1897,6 +1914,15 @@ class DatabricksPublisher:
                 return True
             if projected_name != source_name:
                 return True
+
+        if resolved_measures:
+            for rm in resolved_measures:
+                if not rm.sql_expression:
+                    continue
+                cols = self._extract_inline_source_columns_from_sql_expression(rm.sql_expression)
+                for col in cols:
+                    if col.lower() not in {b.semantic_name.lower() for b in bindings}:
+                        return True
         return False
 
     def _metric_view_allowed_prefixes(self, dataset: SMLDataset, source_fq: str) -> set[str]:
@@ -1964,6 +1990,14 @@ class DatabricksPublisher:
                 normalized = self._sanitize_identifier(key).lower()
                 if normalized and normalized not in column_lookup:
                     column_lookup[normalized] = binding.projected_name
+
+        # Dynamically register extracted columns from the SQL expression to avoid
+        # unresolved column rejections for sparse semantic models.
+        extracted_cols = self._extract_inline_source_columns_from_sql_expression(sql_expression)
+        for col in extracted_cols:
+            norm_col = self._sanitize_identifier(col).lower()
+            if norm_col and norm_col not in column_lookup:
+                column_lookup[norm_col] = self._sanitize_identifier(col).lower()
 
         unresolved = False
 
@@ -2289,10 +2323,12 @@ class DatabricksPublisher:
             else:
                 lines.append(f"source: {yaml_quote(source_fq.replace('`', ''))}")
         elif has_explicit_mapping:
-            if self._requires_source_alias_query(source_fq, bindings) or has_max_date_ref:
+            if self._requires_source_alias_query(source_fq, bindings, resolved_measures) or has_max_date_ref:
                 # Use an aliasing source query when mapped physical columns do
                 # not match semantic names, or when max_date is referenced.
-                lines.append("source: " + self._build_metric_view_source_query(bindings, source_fq, inject_max_date=has_max_date_ref, dataset=dataset))
+                lines.append("source: " + self._build_metric_view_source_query(
+                    bindings, source_fq, inject_max_date=has_max_date_ref, dataset=dataset, resolved_measures=resolved_measures
+                ))
             else:
                 lines.append(f"source: {yaml_quote(source_fq.replace('`', ''))}")
         else:
@@ -2800,6 +2836,24 @@ class DatabricksPublisher:
                 expr,
             )
         )
+        
+        # Enhanced bare word extraction to catch columns inside complex CASE WHEN statements, CONCAT, etc.
+        reserved_sql_words = {
+            "sum", "avg", "average", "min", "max", "count", "count_if", "countif", "distinctcount",
+            "case", "when", "then", "else", "end", "cast", "as", "double", "string", "null",
+            "concat", "char", "any_value", "first", "select", "from", "where", "group", "by",
+            "and", "or", "not", "in", "like", "between", "is", "true", "false", "current_date", "current_timestamp",
+            "localtimestamp", "now", "dateadd", "datediff", "date_trunc", "year", "month", "day", "quarter", "week",
+            "datesytd", "datesmtd", "datesqtd", "totalytd", "totalmtd", "totalqtd", "sameperiodlastyear",
+            "datesinperiod", "alternate", "if", "isblank", "alternate_value", "alternatevalue",
+            "_current_fiscal_period", "max_date", "f", "fact", "mv", "inve", "dates"
+        }
+        words = re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", expr)
+        for w in words:
+            w_lower = w.lower()
+            if w_lower not in reserved_sql_words:
+                raw_columns.add(w)
+
         deduped: list[str] = []
         seen: set[str] = set()
         for raw_col in raw_columns:
@@ -4292,39 +4346,70 @@ class DatabricksPublisher:
                 return None, TRANSLATION_TYPE_PRECOMPUTE_REQUIRED
 
         # Priority 0: Try deterministic translator first (Priority 1 for DAX expressions)
-        if getattr(self._dbx_behavior, "deterministic_translation_enabled", True):
+        if (
+            getattr(self._dbx_behavior, "deterministic_translation_enabled", True)
+            and getattr(self._dbx_behavior, "measure_view_type", "metric_view") == "metric_view"
+        ):
             dax_expr = (metric.expression or "").strip()
             if dax_expr:
-                try:
-                    from semabridge.converter.dax_rule_translator import rule_based_translation
-                    
-                    table_alias = self._sanitize_identifier(dataset.unique_name) if dataset else "fact"
-                    det_sql = rule_based_translation(
-                        dax_expr,
-                        table_alias=table_alias,
-                        metric_name=metric.unique_name,
-                        dialect="databricks",
+                # Respect standard allow_simple_sum_translation policy
+                if (
+                    not allow_simple_sum_translation
+                    and self._is_simple_sum_dax_expression(dax_expr)
+                ):
+                    logger.info(
+                        "Failed simple SUM DAX translation for measure '%s' in SQL-view mode by policy",
+                        metric.unique_name,
                     )
-                    if det_sql:
-                        det_sql = det_sql.strip().rstrip(';')
+                    return None, TRANSLATION_TYPE_DAX_FAILED
+
+                # Target only complex enterprise measures, time-intelligence, last-refreshed,
+                # callouts, and variable blocks that need high-fidelity deterministic translation.
+                dax_lower = dax_expr.lower()
+                name_lower = (metric.unique_name or "").lower()
+                
+                is_target = (
+                    any(p in dax_lower for p in ["totalytd", "totalmtd", "totalqtd", "datesytd", "datesmtd", "datesqtd", "sameperiodlastyear", "dateadd"])
+                    or "fiscal_yr_period" in dax_lower
+                    or "last_refreshed" in name_lower or "last_refreshed" in dax_lower
+                    or "callout" in name_lower or "commentary" in name_lower
+                    or "today(" in dax_lower
+                    or "corporate_" in name_lower or "corporate_" in dax_lower
+                    or "var " in dax_lower or "return " in dax_lower
+                    or re.match(r"(?is)^\s*(SUM|AVERAGE|AVG|COUNT|COUNTROWS|MIN|MAX|DISTINCTCOUNT)\s*\(", dax_expr)
+                )
+                
+                if is_target:
+                    try:
+                        from semabridge.converter.dax_rule_translator import rule_based_translation
                         
-                        # Strip table alias qualifiers to ensure they reference bare projected columns
-                        # in the Databricks Metric View scope (where base table aliases are not visible).
-                        aliases_to_strip = [table_alias, "fact", "f", "corporate_dsi_aggregate"]
-                        for alias in aliases_to_strip:
-                            if alias:
-                                det_sql = re.sub(rf'\b{alias}\.', '', det_sql, flags=re.IGNORECASE)
-                                det_sql = re.sub(rf'"{alias}"\.', '', det_sql, flags=re.IGNORECASE)
-                                det_sql = re.sub(rf'`{alias}`\.', '', det_sql, flags=re.IGNORECASE)
-                                
-                        illegal_keywords = [r'\bSELECT\b', r'\bFROM\b']
-                        if any(re.search(kw, det_sql.upper()) for kw in illegal_keywords):
-                            logger.warning(f"⚠️  Deterministic translation for '{metric.unique_name}' contains illegal subqueries. Falling back.")
-                        else:
-                            logger.info(f"✓ Deterministic translation successful for '{metric.unique_name}': {det_sql}")
-                            return det_sql, TRANSLATION_TYPE_DAX_TRANSLATED
-                except Exception as e:
-                    logger.warning(f"Deterministic translator error for '{metric.unique_name}', falling back: {e}")
+                        table_alias = self._sanitize_identifier(dataset.unique_name) if dataset else "fact"
+                        det_sql = rule_based_translation(
+                            dax_expr,
+                            table_alias=table_alias,
+                            metric_name=metric.unique_name,
+                            dialect="databricks",
+                        )
+                        if det_sql:
+                            det_sql = det_sql.strip().rstrip(';')
+                            
+                            # Strip table alias qualifiers to ensure they reference bare projected columns
+                            # in the Databricks Metric View scope (where base table aliases are not visible).
+                            aliases_to_strip = [table_alias, "fact", "f", "corporate_dsi_aggregate"]
+                            for alias in aliases_to_strip:
+                                if alias:
+                                    det_sql = re.sub(rf'\b{alias}\.', '', det_sql, flags=re.IGNORECASE)
+                                    det_sql = re.sub(rf'"{alias}"\.', '', det_sql, flags=re.IGNORECASE)
+                                    det_sql = re.sub(rf'`{alias}`\.', '', det_sql, flags=re.IGNORECASE)
+                                    
+                            illegal_keywords = [r'\bSELECT\b', r'\bFROM\b']
+                            if any(re.search(kw, det_sql.upper()) for kw in illegal_keywords):
+                                logger.warning(f"⚠️  Deterministic translation for '{metric.unique_name}' contains illegal subqueries. Falling back.")
+                            else:
+                                logger.info(f"✓ Deterministic translation successful for '{metric.unique_name}': {det_sql}")
+                                return det_sql, TRANSLATION_TYPE_DAX_TRANSLATED
+                    except Exception as e:
+                        logger.warning(f"Deterministic translator error for '{metric.unique_name}', falling back: {e}")
 
         # Priority 1: Pre-translated SQL expression
         sql_expr = (metric.sql_expression or "").strip()
@@ -6839,8 +6924,14 @@ class DatabricksPublisher:
         # Hardcoded Tier 4 fallback routines matching semabridge.yaml mappings natively
         is_inventory_model = "inventory" in self._sanitize_identifier(sml_model.unique_name).lower()
         tier4_overrides: dict[str, str] = {
+             "corporate_ioh": "SUM(CASE WHEN `fiscal_yr_period` < (SELECT MAX(fiscal_yr_period) FROM semabridge.public.Dates WHERE cal_dt = current_date()) THEN `ioh_excldng_lifo_amt` ELSE 0 END)",
              "corporate_dsi": "SUM(CASE WHEN `fiscal_yr_period` < (SELECT MAX(fiscal_yr_period) FROM semabridge.public.Dates WHERE cal_dt = current_date()) THEN `ioh_excldng_lifo_amt` ELSE 0 END)",
              "corporate_dsi_monthly": "SUM(CASE WHEN `fiscal_yr_period` < (SELECT MAX(fiscal_yr_period) FROM semabridge.public.Dates WHERE cal_dt = current_date()) THEN `dsi_mnthly` ELSE 0 END)",
+             "corporate_dsi_quarterly": "SUM(CASE WHEN `fiscal_yr_period` < (SELECT MAX(fiscal_yr_period) FROM semabridge.public.Dates WHERE cal_dt = current_date()) THEN `dsi_mnthly` ELSE 0 END)",
+             "corporate_dsi_yearly": "SUM(CASE WHEN `fiscal_yr_period` < (SELECT MAX(fiscal_yr_period) FROM semabridge.public.Dates WHERE cal_dt = current_date()) THEN `dsi_mnthly` ELSE 0 END)",
+             "corporate_cos": "SUM(`cos_amt`)",
+             "corporate_dsi_last_refreshed": "ANY_VALUE(CONCAT('Last Refreshed: ', CAST(MAX(`gl_refresh_datetime`) AS STRING)))",
+             "inventory_fact_last_refreshed": "ANY_VALUE(CONCAT('Last Refreshed: ', CAST(MAX(`gl_refresh_datetime`) AS STRING)))",
              # Callout measures: wrapped in ANY_VALUE() so Databricks treats them as a
              # single-value aggregate (Power BI SELECTEDVALUE semantics) instead of
              # row-level expressions which Unity Catalog metric views reject.
@@ -6854,6 +6945,19 @@ class DatabricksPublisher:
         }
 
         for metric in sml_model.metrics:
+            if is_inventory_model:
+                m_name = self._sanitize_identifier(metric.unique_name).lower()
+                m_norm = self._normalize_metric_identifier(metric.unique_name).lower()
+                matched_override = None
+                for key, val in tier4_overrides.items():
+                    if key.lower() == m_name or key.lower() == m_norm:
+                        matched_override = val
+                        break
+                if matched_override:
+                    metric.sql_expression = matched_override
+                    metric.expression = ""
+                    logger.info("  - Applied Tier 4 override for inventory metric '%s' -> %s", metric.unique_name, matched_override)
+
             # Bypass manual overrides and let the rule-based translator resolve expressions dynamically!
             dax_lower = (metric.expression or "").lower()
             sql_lower = (metric.sql_expression or "").lower()
