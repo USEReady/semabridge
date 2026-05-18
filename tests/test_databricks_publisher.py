@@ -17,6 +17,7 @@ from semabridge.connectors.databricks_publisher import (
     DEPLOY_STATUS_DEPLOYED,
     DEPLOY_STATUS_NOT_DEPLOYED,
     TRANSLATION_TYPE_AGGREGATION_BUILT,
+    TRANSLATION_TYPE_DAX_FAILED,
     TRANSLATION_TYPE_DAX_SKIPPED,
     TRANSLATION_TYPE_DAX_TRANSLATED,
     TRANSLATION_TYPE_SQL_NATIVE,
@@ -1376,6 +1377,28 @@ class TestMeasureViewGeneration:
         assert details == []
         assert translate.called
         assert "case when" in stmts[0].lower()
+
+    def test_complex_dax_fails_sync_when_translation_failure_is_strict(self, monkeypatch):
+        """Strict mode should fail the sync when DAX cannot be translated."""
+        model = _sales_model(dax_only=True)
+        behavior = ConnectorBehavior(
+            databricks=DatabricksBehavior(
+                fail_on_dax_translation_failure=True,
+                enable_llm_dax_translation=False,
+                measure_view_type=VIEW_TYPE_METRIC,
+            )
+        )
+        publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+
+        monkeypatch.setattr(publisher, "_validate_relationship_endpoints", lambda *args, **kwargs: None)
+        monkeypatch.setattr(publisher, "_auto_initialize_missing_tables", lambda *args, **kwargs: None)
+        monkeypatch.setattr(publisher, "_auto_bridge_relationship_join_keys", lambda *args, **kwargs: None)
+        monkeypatch.setattr(publisher, "_validate_source_table_schema", lambda *args, **kwargs: None)
+        monkeypatch.setattr(publisher, "_initialize_semantic_router", lambda *args, **kwargs: None)
+        monkeypatch.setattr(publisher, "_generate_ui_lookups", lambda *args, **kwargs: None)
+
+        with pytest.raises(DatabricksPublishError, match="DAX translation failed for measures"):
+            publisher.generate_sql_statements(model, view_type_override=VIEW_TYPE_METRIC)
 
     def test_dax_tier_classifier_standard_aggregation(self):
         publisher = DatabricksPublisher(_cfg())
@@ -4951,10 +4974,11 @@ class TestMetricViewGeneration:
         publisher = DatabricksPublisher(_cfg())
         assert publisher._assess_confidence(TRANSLATION_TYPE_DAX_TRANSLATED) == CONFIDENCE_MEDIUM
 
-    def test_confidence_none_for_dax_skipped(self):
-        """DAX_SKIPPED gets LOW confidence."""
+    def test_confidence_low_for_dax_failed_or_skipped(self):
+        """DAX failed/legacy skipped states get LOW confidence."""
         publisher = DatabricksPublisher(_cfg())
         assert publisher._assess_confidence(TRANSLATION_TYPE_DAX_SKIPPED) == CONFIDENCE_LOW
+        assert publisher._assess_confidence(TRANSLATION_TYPE_DAX_FAILED) == CONFIDENCE_LOW
 
     def test_metric_view_groups_measures_by_dataset(self):
         """Metric views group all measures per dataset into one view."""

@@ -80,6 +80,10 @@ SIMPLE_PATTERNS = {
         r"^\s*(SUM|AVERAGE|AVERAGEX|COUNT|COUNTA|COUNTBLANK|MIN|MINX|MAX|MAXX|DISTINCTCOUNT)\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*$",
         'translate_direct_agg',
     ),
+    'avg_direct': (
+        r"^\s*AVG\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*$",
+           'translate_avg_direct',
+    ),
     'sum_simple_arithmetic': (
         r"^\s*SUM\s*\(\s*(?:\[(.+?)\]\s*)\)\s*(?:\+|-|\*|/)\s*\d+\s*$",
         'translate_simple_arithmetic',
@@ -95,6 +99,18 @@ SIMPLE_PATTERNS = {
     'totalytd': (
         r'^\s*TOTALYTD\s*\(\s*(.+?)\s*,\s*(.+?)\s*\)\s*$',
         'translate_totalytd',
+    ),
+    'totalmtd': (
+        r'^\s*TOTALMTD\s*\(\s*(.+?)\s*,\s*(.+?)\s*\)\s*$',
+        'translate_totalmtd',
+    ),
+    'totalqtd': (
+        r'^\s*TOTALQTD\s*\(\s*(.+?)\s*,\s*(.+?)\s*\)\s*$',
+        'translate_totalqtd',
+    ),
+    'datesinperiod': (
+        r'^\s*DATESINPERIOD\s*\(\s*(.+?)\s*,\s*(.+?)\s*,\s*(-?\d+)\s*,\s*(DAY|WEEK|MONTH|QUARTER|YEAR)\s*\)\s*$',
+        'translate_datesinperiod',
     ),
     'today': (
         r'^\s*TODAY\s*\(\s*\)\s*$',
@@ -113,14 +129,266 @@ SIMPLE_PATTERNS = {
         'translate_dateadd',
     ),
     'sumx': (
-        r'^\s*SUMX\s*\(\s*(?:.+?)\s*,\s*(.+?)\s*\)\s*$',
-        'translate_sumx',
+        r'^\s*(SUMX|AVERAGEX|MINX|MAXX)\s*\(\s*(.+?)\s*,\s*(.+?)\s*\)\s*$',
+        'translate_iterator',
+    ),
+    'countrows': (
+        r'^\s*COUNTROWS\s*\(\s*(.+?)\s*\)\s*$',
+        'translate_countrows',
+    ),
+    'calculate': (
+        r'^\s*CALCULATE\s*\(\s*(.+)\s*\)\s*$',
+        'translate_calculate_filters',
     ),
     'isblank_if': (
         r'^\s*IF\s*\(\s*ISBLANK\s*\(\s*(.+?)\s*\)\s*,\s*(.+?)\s*,\s*(.+?)\s*\)\s*$',
         'translate_isblank_if',
     ),
 }
+
+
+def _split_top_level_args(text: str) -> List[str]:
+    """Split a DAX argument list at top-level commas only."""
+    args: List[str] = []
+    current: List[str] = []
+    depth = 0
+    in_string = False
+    quote = ""
+
+    for ch in str(text or ""):
+        if in_string:
+            current.append(ch)
+            if ch == quote:
+                in_string = False
+            continue
+
+        if ch in ('"', "'"):
+            in_string = True
+            quote = ch
+            current.append(ch)
+            continue
+
+        if ch == "(":
+            depth += 1
+        elif ch == ")" and depth > 0:
+            depth -= 1
+        elif ch == "," and depth == 0:
+            value = "".join(current).strip()
+            if value:
+                args.append(value)
+            current = []
+            continue
+
+        current.append(ch)
+
+    tail = "".join(current).strip()
+    if tail:
+        args.append(tail)
+    return args
+
+
+def _strip_outer_parens(text: str) -> str:
+    value = str(text or "").strip()
+    while value.startswith("(") and value.endswith(")"):
+        depth = 0
+        balanced = True
+        for idx, ch in enumerate(value):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0 and idx != len(value) - 1:
+                    balanced = False
+                    break
+            if depth < 0:
+                balanced = False
+                break
+        if not balanced or depth != 0:
+            break
+        value = value[1:-1].strip()
+    return value
+
+
+def _sql_column_ref(table_alias: str, column_name: str) -> str:
+    return f'{table_alias}.{_quote_identifier(column_name)}'
+
+
+def _normalize_table_ref(table_name: str, table_alias: str) -> str:
+    name = str(table_name or "").strip()
+    if not name:
+        return table_alias
+    return table_alias
+
+
+def _translate_literal(value: str) -> Optional[str]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if re.fullmatch(r'-?\d+(?:\.\d+)?', text):
+        return text
+    if re.fullmatch(r'"(?:[^"\\]|\\.)*"', text):
+        return "'" + text[1:-1].replace("'", "''") + "'"
+    if re.fullmatch(r"'(?:[^'\\]|\\.)*'", text):
+        return text
+    if text.upper() in {"TRUE", "FALSE"}:
+        return text.upper()
+    return None
+
+
+def _translate_simple_predicate(predicate: str, table_alias: str) -> Optional[str]:
+    """Translate a simple DAX predicate to SQL."""
+    text = _strip_outer_parens(str(predicate or "").strip())
+    if not text:
+        return None
+
+    # Strip one layer of FILTER(table, predicate)
+    if re.match(r"(?is)^FILTER\s*\(", text):
+        inner = text[text.find("(") + 1 : -1]
+        parts = _split_top_level_args(inner)
+        if len(parts) >= 2:
+            return _translate_simple_predicate(parts[1], table_alias)
+
+    # Normalize OR chains on the same column to IN (...)
+    or_parts = _split_or_parts(text)
+    if len(or_parts) > 1:
+        conds = [_translate_simple_predicate(part, table_alias) for part in or_parts]
+        if not all(conds):
+            return None
+        # If same lhs and equality comparisons, collapse to IN
+        lhs_values = []
+        for cond in conds:
+            m = re.fullmatch(r"(?is)(.+?)\s*=\s*(.+)", cond)
+            if not m:
+                return f"({' OR '.join(conds)})"
+            lhs_values.append((m.group(1).strip(), m.group(2).strip()))
+        first_lhs = lhs_values[0][0]
+        if all(lhs == first_lhs for lhs, _ in lhs_values):
+            values = ", ".join(val for _, val in lhs_values)
+            return f"{first_lhs} IN ({values})"
+        return f"({' OR '.join(conds)})"
+
+    in_match = re.match(
+        r"(?is)^(?:'[^']+'|[A-Za-z_][A-Za-z0-9_ ]*)?\[(?P<col>[^\]]+)\]\s+IN\s+\{(?P<vals>.+)\}$",
+        text,
+    )
+    if in_match:
+        col = in_match.group("col")
+        values = [_translate_literal(v.strip()) for v in _split_top_level_args(in_match.group("vals").replace(";", ","))]
+        values = [v for v in values if v]
+        if values:
+            return f"{_sql_column_ref(table_alias, col)} IN ({', '.join(values)})"
+
+    cmp_match = re.match(
+        r"(?is)^(?:'(?P<table_q>[^']+)'|(?P<table>[A-Za-z_][A-Za-z0-9_ ]*))?\[(?P<col>[^\]]+)\]\s*(?P<op>=|<>|>=|<=|>|<)\s*(?P<rhs>.+)$",
+        text,
+    )
+    if cmp_match:
+        rhs = _translate_literal(cmp_match.group("rhs"))
+        if rhs is None:
+            # Allow direct measure-ish bare identifiers if they already look SQL-safe
+            rhs_raw = _strip_outer_parens(cmp_match.group("rhs").strip())
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_\.]*", rhs_raw):
+                rhs = rhs_raw
+            else:
+                return None
+        return f"{_sql_column_ref(table_alias, cmp_match.group('col'))} {cmp_match.group('op')} {rhs}"
+
+    return None
+
+
+def _split_or_parts(text: str) -> List[str]:
+    """Split a predicate on top-level OR tokens only."""
+    parts: List[str] = []
+    current: List[str] = []
+    depth = 0
+    in_string = False
+    quote = ""
+    idx = 0
+    source = str(text or "")
+
+    while idx < len(source):
+        ch = source[idx]
+        if in_string:
+            current.append(ch)
+            if ch == quote:
+                in_string = False
+            idx += 1
+            continue
+        if ch in ('"', "'"):
+            in_string = True
+            quote = ch
+            current.append(ch)
+            idx += 1
+            continue
+        if ch == "(":
+            depth += 1
+            current.append(ch)
+            idx += 1
+            continue
+        if ch == ")" and depth > 0:
+            depth -= 1
+            current.append(ch)
+            idx += 1
+            continue
+        if depth == 0 and source[idx:idx + 2].upper() == "OR" and (idx == 0 or source[idx - 1].isspace()) and (idx + 2 == len(source) or source[idx + 2].isspace()):
+            part = "".join(current).strip()
+            if part:
+                parts.append(part)
+            current = []
+            idx += 2
+            continue
+        current.append(ch)
+        idx += 1
+
+    tail = "".join(current).strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def _translate_aggregate_expression(expression: str, table_alias: str) -> Optional[Tuple[str, str]]:
+    """Return (agg_func, value_sql) for a simple aggregate expression."""
+    expr = _strip_outer_parens(str(expression or "").strip())
+    m = re.match(
+        r"(?is)^(SUM|AVERAGE|AVG|COUNT|COUNTROWS|MIN|MAX|DISTINCTCOUNT)\s*\(\s*(.+?)\s*\)$",
+        expr,
+    )
+    if not m:
+        return None
+    func = m.group(1).upper()
+    inner = _strip_outer_parens(m.group(2).strip())
+    if func == "COUNTROWS":
+        return ("COUNT", "*")
+    col_match = re.match(r"(?is)^(?:'[^']+'|[A-Za-z_][A-Za-z0-9_ ]*)?\[(?P<col>[^\]]+)\]$", inner)
+    if col_match:
+        return (func if func != "AVG" else "AVG", _sql_column_ref(table_alias, col_match.group("col")))
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_\.]*", inner):
+        return (func if func != "AVG" else "AVG", inner)
+    return None
+
+
+def _datesinperiod_predicate(filter_text: str, table_alias: str) -> Optional[str]:
+    text = _strip_outer_parens(str(filter_text or "").strip())
+    m = re.match(
+        r"(?is)^DATESINPERIOD\s*\(\s*(?P<date_arg>.+?)\s*,\s*(?P<anchor>.+?)\s*,\s*(?P<count>-?\d+)\s*,\s*(?P<interval>DAY|WEEK|MONTH|QUARTER|YEAR)\s*\)$",
+        text,
+    )
+    if not m:
+        return None
+    date_arg = m.group("date_arg")
+    anchor_expr = m.group("anchor")
+    interval_count = int(m.group("count"))
+    interval = m.group("interval").upper()
+    m_date = re.search(r"(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])", date_arg)
+    date_col = m_date.group(1) or m_date.group(2) if m_date else "CALENDAR_DATE"
+    m_anchor = re.search(r"(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])", anchor_expr)
+    anchor_col = m_anchor.group(1) or m_anchor.group(2) if m_anchor else date_col
+    if interval_count >= 0:
+        return None
+    return (
+        f"{table_alias}.\"{date_col}\" > DATEADD({interval}, {interval_count}, {table_alias}.\"{anchor_col}\") "
+        f"AND {table_alias}.\"{date_col}\" <= {table_alias}.\"{anchor_col}\""
+    )
 
 
 def translate_fiscal_calculate(
@@ -212,6 +480,16 @@ def is_simple_metric(dax: str) -> bool:
         return False
     
     clean_dax = dax.strip()
+
+    # Hard reject expressions that combine multiple aggregate calls.
+    aggregate_hits = re.findall(
+        r'(?i)\b(SUM|AVG|AVERAGE|COUNT|COUNTA|COUNTBLANK|MIN|MAX|DISTINCTCOUNT|COUNTROWS)\s*\(',
+        clean_dax,
+    )
+    if len(aggregate_hits) > 1:
+        logger.debug(f"TIER 4+ detected: multiple aggregates in: {clean_dax[:60]}...")
+        log_complexity_classification(False)
+        return False
     
     # ========================================================================
     # Step 1: Check for TRUE COMPLEXITY (TIER 4+) that needs LLM
@@ -294,6 +572,16 @@ def is_simple_metric(dax: str) -> bool:
         logger.debug(f"TIER 2: DIVIDE function")
         log_complexity_classification(True)  # Log as simple
         return True
+
+    # Multiple standalone aggregates in a single expression are no longer treated as simple.
+    aggregate_hits = re.findall(
+        r'(?i)\b(SUM|AVG|AVERAGE|COUNT|COUNTA|COUNTBLANK|MIN|MAX|DISTINCTCOUNT|COUNTROWS)\s*\(',
+        clean_dax,
+    )
+    if len(aggregate_hits) > 1:
+        logger.debug(f"TIER 4+ detected: multiple aggregates in: {clean_dax[:60]}...")
+        log_complexity_classification(False)
+        return False
     
     # ========================================================================
     # Step 5: Heuristic for remaining cases
@@ -310,9 +598,9 @@ def is_simple_metric(dax: str) -> bool:
     
     # DANGEROUS HEURISTIC REMOVED: len(temp) < 5 was incorrectly marking VAR/RETURN as simple
     if not temp:  # Only whitespace/operators/numbers left
-        logger.debug(f"SIMPLE (heuristic): {clean_dax[:60]}...")
-        log_complexity_classification(True)  # Log as simple
-        return True
+        logger.debug(f"COMPLEX (no stable remaining tokens): {clean_dax[:60]}...")
+        log_complexity_classification(False)
+        return False
     
     logger.debug(f"COMPLEX (failed all checks): {clean_dax[:60]}... (remnant: {temp})")
     log_complexity_classification(False)  # Log as complex
@@ -435,6 +723,20 @@ def translate_direct_agg(dax: str, table_alias: str, match: re.Match, dialect: s
         return None
 
 
+def translate_avg_direct(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
+    """Translate AVG([Column]) using the direct aggregation handler semantics."""
+    try:
+        col_name = match.group(1) or match.group(2)
+        if not col_name:
+            return None
+        col_ref = f"{table_alias}.{_quote_identifier(col_name)}"
+        cast = "::FLOAT" if dialect == "snowflake" else ""
+        return f"AVG({col_ref}{cast})"
+    except Exception as e:
+        logger.error(f"Error translating avg direct: {e}")
+        return None
+
+
 def translate_simple_arithmetic(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
     return None
 
@@ -454,24 +756,129 @@ def translate_divide(dax: str, table_alias: str, match: re.Match, dialect: str =
     try:
         numerator = match.group(1).strip()
         denominator = match.group(2).strip()
-        alternate = match.group(3).strip()
-        
+        alternate = match.group(3).strip() if match.lastindex and match.lastindex >= 3 and match.group(3) is not None else "0"
+
         # We need to ensure numerator/denominator are also translated if they are simple refs
         # But for now, if they are just [Col] or Table[Col], we quote them
-        
+
         def clean_ref(ref):
             m = re.match(r"^(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])$", ref)
             if m:
                 col = m.group(1) or m.group(2)
                 return f"{table_alias}.{_quote_identifier(col)}"
             return ref
-            
+
         num_sql = clean_ref(numerator)
         den_sql = clean_ref(denominator)
         alt_sql = clean_ref(alternate)
-        
+
         return f"COALESCE({num_sql} / NULLIF({den_sql}, 0), {alt_sql})"
     except Exception as e:
+        logger.error(f"Error translating divide: {e}")
+        return None
+
+
+def translate_totalytd(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
+    """
+    Translate TOTALYTD(expression, dates) to Window Function.
+    """
+    try:
+        expression = match.group(1).strip()
+        dates = match.group(2).strip()
+
+        m_date = re.search(r"(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])", dates)
+        date_col = m_date.group(1) or m_date.group(2) if m_date else "CALENDAR_DATE"
+
+        agg = _translate_aggregate_expression(expression, table_alias)
+        if not agg:
+            return None
+
+        func, value_sql = agg
+        if func == "COUNT" and value_sql == "*":
+            base_sql = "COUNT(*)"
+        elif func == "DISTINCTCOUNT":
+            base_sql = f"COUNT(DISTINCT {value_sql})"
+        else:
+            base_sql = f"{func}({value_sql})"
+
+        return (
+            f"{base_sql} OVER (PARTITION BY YEAR({table_alias}.\"{date_col}\") "
+            f"ORDER BY {table_alias}.\"{date_col}\" ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
+        )
+    except Exception as e:
+        logger.error(f"Error translating totalytd: {e}")
+        return None
+
+
+def translate_totalmtd(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
+    """Translate TOTALMTD(expression, dates) to a month-bounded conditional aggregate."""
+    try:
+        expression = match.group(1).strip()
+        dates = match.group(2).strip()
+
+        m_date = re.search(r"(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])", dates)
+        date_col = m_date.group(1) or m_date.group(2) if m_date else "CALENDAR_DATE"
+
+        agg = _translate_aggregate_expression(expression, table_alias)
+        if not agg:
+            return None
+
+        _, value_sql = agg
+        return (
+            f"SUM(CASE WHEN {table_alias}.\"{date_col}\" >= DATE_TRUNC('MONTH', max_date) "
+            f"AND {table_alias}.\"{date_col}\" <= max_date THEN {value_sql} ELSE 0 END)"
+        )
+    except Exception as e:
+        logger.error(f"Error translating totalmtd: {e}")
+        return None
+
+
+def translate_totalqtd(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
+    """Translate TOTALQTD(expression, dates) to a quarter-bounded conditional aggregate."""
+    try:
+        expression = match.group(1).strip()
+        dates = match.group(2).strip()
+
+        m_date = re.search(r"(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])", dates)
+        date_col = m_date.group(1) or m_date.group(2) if m_date else "CALENDAR_DATE"
+
+        agg = _translate_aggregate_expression(expression, table_alias)
+        if not agg:
+            return None
+
+        _, value_sql = agg
+        return (
+            f"SUM(CASE WHEN {table_alias}.\"{date_col}\" >= DATE_TRUNC('QUARTER', max_date) "
+            f"AND {table_alias}.\"{date_col}\" <= max_date THEN {value_sql} ELSE 0 END)"
+        )
+    except Exception as e:
+        logger.error(f"Error translating totalqtd: {e}")
+        return None
+
+
+def translate_datesinperiod(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
+    """Translate DATESINPERIOD into a reusable date window predicate."""
+    try:
+        date_arg = match.group(1).strip()
+        anchor_expr = match.group(2).strip()
+        interval_count = int(match.group(3))
+        interval = match.group(4).upper()
+
+        m_date = re.search(r"(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])", date_arg)
+        date_col = m_date.group(1) or m_date.group(2) if m_date else "CALENDAR_DATE"
+        m_anchor = re.search(r"(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])", anchor_expr)
+        anchor_col = m_anchor.group(1) or m_anchor.group(2) if m_anchor else date_col
+
+        if interval_count >= 0:
+            return None
+
+        return (
+            f"{table_alias}.\"{date_col}\" > DATEADD({interval}, {interval_count}, {table_alias}.\"{anchor_col}\") "
+            f"AND {table_alias}.\"{date_col}\" <= {table_alias}.\"{anchor_col}\""
+        )
+    except Exception as e:
+        logger.error(f"Error translating datesinperiod: {e}")
+        return None
         logger.error(f"Error translating divide: {e}")
         return None
 
@@ -537,14 +944,106 @@ def translate_dateadd(dax: str, table_alias: str, match: re.Match, dialect: str 
         logger.error(f"Error translating dateadd: {e}")
         return None
 
-def translate_sumx(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
-    """Translate SUMX(table, expr) to SUM(expr)"""
+def translate_iterator(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
+    """Translate simple iterators when the row expression is scalar-safe."""
     try:
-        expr = match.group(1)
-        # Simplify SUMX to standard SUM if table context allows
-        return f"SUM({expr})"
+        func_name = match.group(1).upper()
+        table_expr = _strip_outer_parens(match.group(2).strip())
+        row_expr = _strip_outer_parens(match.group(3).strip())
+
+        if any(token in table_expr.upper() for token in (
+            "FILTER(", "CALCULATETABLE(", "SUMMARIZE(", "SUMMARIZECOLUMNS(", "TOPN(", "RANKX(", "GENERATE(", "EARLIER(", "EARLIEST("
+        )):
+            return None
+        if any(token in row_expr.upper() for token in (
+            "FILTER(", "CALCULATE(", "RANKX(", "SUMX(", "AVERAGEX(", "MINX(", "MAXX(", "EARLIER(", "EARLIEST("
+        )):
+            return None
+
+        translated_row = re.sub(
+            r"(?is)(?:'[^']+'|[A-Za-z_][A-Za-z0-9_ ]*)?\[(?P<col>[^\]]+)\]",
+            lambda m: _sql_column_ref(table_alias, m.group("col")),
+            row_expr,
+        )
+
+        agg_map = {
+            "SUMX": "SUM",
+            "AVERAGEX": "AVG",
+            "MINX": "MIN",
+            "MAXX": "MAX",
+        }
+        agg_func = agg_map.get(func_name)
+        if not agg_func:
+            return None
+        return f"{agg_func}({translated_row})"
     except Exception as e:
-        logger.error(f"Error translating sumx: {e}")
+        logger.error(f"Error translating iterator: {e}")
+        return None
+
+
+def translate_countrows(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
+    """Translate COUNTROWS(table) to COUNT(*)."""
+    table_expr = _strip_outer_parens(match.group(1).strip())
+    if any(token in table_expr.upper() for token in ("FILTER(", "CALCULATETABLE(", "SUMMARIZE(", "SUMMARIZECOLUMNS(", "TOPN(", "RANKX(", "GENERATE(")):
+        return None
+    return "COUNT(*)"
+
+
+def translate_calculate_filters(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
+    """Translate CALCULATE with simple boolean filters into conditional aggregates."""
+    try:
+        args = _split_top_level_args(match.group(1))
+        if len(args) < 2:
+            return None
+
+        base_expr = _strip_outer_parens(args[0])
+        filter_exprs = args[1:]
+
+        base_agg = _translate_aggregate_expression(base_expr, table_alias)
+        if not base_agg:
+            return None
+
+        conditions: List[str] = []
+        for filt in filter_exprs:
+            filt_clean = _strip_outer_parens(filt).strip()
+            upper_filt = filt_clean.upper()
+            if not filt_clean:
+                continue
+            if upper_filt.startswith(("ALL(", "REMOVEFILTERS(", "ALLEXCEPT(", "USERELATIONSHIP(", "CROSSFILTER(", "TREATAS(", "TOPN(", "RANKX(")):
+                # ALL/REMOVEFILTERS/ALLEXCEPT clear filters; relationship overrides are not deterministic here.
+                if upper_filt.startswith(("ALL(", "REMOVEFILTERS(", "ALLEXCEPT(")):
+                    continue
+                return None
+            if upper_filt.startswith("DATESINPERIOD("):
+                date_pred = _datesinperiod_predicate(filt_clean, table_alias)
+                if not date_pred:
+                    return None
+                conditions.append(date_pred)
+                continue
+            cond = _translate_simple_predicate(filt, table_alias)
+            if not cond:
+                return None
+            conditions.append(cond)
+
+        condition_sql = " AND ".join(conditions)
+        func, value_sql = base_agg
+
+        if func == "SUM":
+            return f"SUM(CASE WHEN {condition_sql} THEN {value_sql} ELSE 0 END)"
+        if func == "COUNT":
+            if value_sql == "*":
+                return f"COUNT(CASE WHEN {condition_sql} THEN 1 END)"
+            return f"COUNT(CASE WHEN {condition_sql} THEN {value_sql} END)"
+        if func == "DISTINCTCOUNT":
+            return f"COUNT(DISTINCT CASE WHEN {condition_sql} THEN {value_sql} END)"
+        if func == "AVG":
+            return f"AVG(CASE WHEN {condition_sql} THEN {value_sql} END)"
+        if func in {"MIN", "MAX"}:
+            return f"{func}(CASE WHEN {condition_sql} THEN {value_sql} END)"
+
+        return None
+    except Exception as e:
+        logger.error(f"Error translating calculate filters: {e}")
         return None
 
 def translate_isblank_if(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:

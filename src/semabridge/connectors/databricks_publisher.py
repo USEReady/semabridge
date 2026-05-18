@@ -99,6 +99,7 @@ TRANSLATION_TYPE_AGGREGATION_BUILT = "AGGREGATION_BUILT"
 TRANSLATION_TYPE_DAX_TRANSLATED = "DAX_TRANSLATED"
 TRANSLATION_TYPE_DAX_LLM = "DAX_LLM_TRANSLATED"
 TRANSLATION_TYPE_DAX_SKIPPED = "DAX_SKIPPED"
+TRANSLATION_TYPE_DAX_FAILED = "DAX_FAILED"
 TRANSLATION_TYPE_PRECOMPUTED = "PRECOMPUTED_SQL"
 TRANSLATION_TYPE_PRECOMPUTE_REQUIRED = "PRECOMPUTE_REQUIRED"
 
@@ -1807,6 +1808,8 @@ class DatabricksPublisher:
         self,
         bindings: list[MetricViewColumnBinding],
         source_fq: str,
+        inject_max_date: bool = False,
+        dataset: Optional[SMLDataset] = None,
     ) -> str:
         """Build an inline source query that aliases physical columns to stable metric-view names."""
         physical_cols = self._get_source_table_columns(source_fq)
@@ -1840,6 +1843,26 @@ class DatabricksPublisher:
                 select_parts.append(f"  {source_expr} AS `{semantic_alias}`")
                 used_aliases.add(semantic_alias.lower())
 
+        if inject_max_date:
+            date_col = None
+            if dataset and dataset.columns:
+                for col in dataset.columns:
+                    col_name_lower = col.unique_name.lower()
+                    if "date" in col_name_lower or col_name_lower == "day":
+                        date_col = self._sanitize_identifier(col.unique_name)
+                        break
+            if not date_col and bindings:
+                for b in bindings:
+                    b_name_lower = b.semantic_name.lower()
+                    if "date" in b_name_lower or b_name_lower == "day":
+                        date_col = self._sanitize_identifier(b.source_column)
+                        break
+            
+            if date_col:
+                clean_source_fq = source_fq.replace('`', '')
+                select_parts.append(
+                    f"  (SELECT MAX(`{date_col}`) FROM {clean_source_fq}) AS `max_date`"
+                )
 
         if hasattr(self, "_config_source_sql") and self._config_source_sql:
             for source_inj in self._config_source_sql:
@@ -2238,6 +2261,7 @@ class DatabricksPublisher:
             f"comment: {yaml_quote(f'Semabridge: {model_label} - {ds_label}')}",
         ]
 
+        has_max_date_ref = any("max_date" in (rm.sql_expression or "").lower() for rm in resolved_measures)
         inline_measure_source_required = not bindings and not dataset.columns and resolved_measures
         inline_source_columns: set[str] = set()
 
@@ -2265,10 +2289,10 @@ class DatabricksPublisher:
             else:
                 lines.append(f"source: {yaml_quote(source_fq.replace('`', ''))}")
         elif has_explicit_mapping:
-            if self._requires_source_alias_query(source_fq, bindings):
+            if self._requires_source_alias_query(source_fq, bindings) or has_max_date_ref:
                 # Use an aliasing source query when mapped physical columns do
-                # not match semantic names.
-                lines.append("source: " + self._build_metric_view_source_query(bindings, source_fq))
+                # not match semantic names, or when max_date is referenced.
+                lines.append("source: " + self._build_metric_view_source_query(bindings, source_fq, inject_max_date=has_max_date_ref, dataset=dataset))
             else:
                 lines.append(f"source: {yaml_quote(source_fq.replace('`', ''))}")
         else:
@@ -2298,6 +2322,11 @@ class DatabricksPublisher:
                         f"{source_expr} AS `{semantic_alias}`"
                     )
                     used_aliases.add(semantic_alias.lower())
+            
+            if has_max_date_ref and "max_date" not in used_aliases:
+                inline_cols.append("CAST(NULL AS DATE) AS `max_date`")
+                used_aliases.add("max_date")
+
             if inline_cols:
                 inline_select = ", ".join(inline_cols)
                 lines.append("source: |")
@@ -3009,6 +3038,7 @@ class DatabricksPublisher:
             TRANSLATION_TYPE_DAX_LLM: CONFIDENCE_MEDIUM,
             TRANSLATION_TYPE_PRECOMPUTE_REQUIRED: CONFIDENCE_LOW,
             TRANSLATION_TYPE_DAX_SKIPPED: CONFIDENCE_LOW,
+            TRANSLATION_TYPE_DAX_FAILED: CONFIDENCE_LOW,
         }.get(translation_type, CONFIDENCE_NONE)
 
     def _build_draft_measure_expression(
@@ -4261,6 +4291,41 @@ class DatabricksPublisher:
                 )
                 return None, TRANSLATION_TYPE_PRECOMPUTE_REQUIRED
 
+        # Priority 0: Try deterministic translator first (Priority 1 for DAX expressions)
+        if getattr(self._dbx_behavior, "deterministic_translation_enabled", True):
+            dax_expr = (metric.expression or "").strip()
+            if dax_expr:
+                try:
+                    from semabridge.converter.dax_rule_translator import rule_based_translation
+                    
+                    table_alias = self._sanitize_identifier(dataset.unique_name) if dataset else "fact"
+                    det_sql = rule_based_translation(
+                        dax_expr,
+                        table_alias=table_alias,
+                        metric_name=metric.unique_name,
+                        dialect="databricks",
+                    )
+                    if det_sql:
+                        det_sql = det_sql.strip().rstrip(';')
+                        
+                        # Strip table alias qualifiers to ensure they reference bare projected columns
+                        # in the Databricks Metric View scope (where base table aliases are not visible).
+                        aliases_to_strip = [table_alias, "fact", "f", "corporate_dsi_aggregate"]
+                        for alias in aliases_to_strip:
+                            if alias:
+                                det_sql = re.sub(rf'\b{alias}\.', '', det_sql, flags=re.IGNORECASE)
+                                det_sql = re.sub(rf'"{alias}"\.', '', det_sql, flags=re.IGNORECASE)
+                                det_sql = re.sub(rf'`{alias}`\.', '', det_sql, flags=re.IGNORECASE)
+                                
+                        illegal_keywords = [r'\bSELECT\b', r'\bFROM\b']
+                        if any(re.search(kw, det_sql.upper()) for kw in illegal_keywords):
+                            logger.warning(f"⚠️  Deterministic translation for '{metric.unique_name}' contains illegal subqueries. Falling back.")
+                        else:
+                            logger.info(f"✓ Deterministic translation successful for '{metric.unique_name}': {det_sql}")
+                            return det_sql, TRANSLATION_TYPE_DAX_TRANSLATED
+                except Exception as e:
+                    logger.warning(f"Deterministic translator error for '{metric.unique_name}', falling back: {e}")
+
         # Priority 1: Pre-translated SQL expression
         sql_expr = (metric.sql_expression or "").strip()
         if sql_expr:
@@ -4282,10 +4347,10 @@ class DatabricksPublisher:
                     and self._is_simple_sum_dax_expression(dax_expr)
                 ):
                     logger.info(
-                        "Skipped simple SUM DAX translation for measure '%s' in SQL-view mode by policy",
+                        "Failed simple SUM DAX translation for measure '%s' in SQL-view mode by policy",
                         metric.unique_name,
                     )
-                    return None, TRANSLATION_TYPE_DAX_SKIPPED
+                    return None, TRANSLATION_TYPE_DAX_FAILED
 
                 translated = self._measure_translator.try_simple_dax_to_sql(dax_expr)
                 if translated:
@@ -4322,10 +4387,10 @@ class DatabricksPublisher:
 
         # Priority 4: Skip — complex DAX, no viable translation
         logger.warning(
-            "⚠️  Skipped measure '%s': no viable SQL translation (DAX too complex or translation disabled)",
+            "⚠  Failed measure '%s': no viable SQL translation (DAX too complex or translation disabled)",
             metric.unique_name,
         )
-        return None, TRANSLATION_TYPE_DAX_SKIPPED
+        return None, TRANSLATION_TYPE_DAX_FAILED
 
     def _try_simple_dax_to_sql(self, dax_expression: str) -> Optional[str]:
         """Translate common simple DAX patterns to Databricks SQL.
@@ -5472,7 +5537,7 @@ class DatabricksPublisher:
                         ResolvedMeasure(
                             name=measure_name,
                             sql_expression=DRAFT_MEASURE_SQL,
-                            translation_type=TRANSLATION_TYPE_DAX_SKIPPED,
+                            translation_type=TRANSLATION_TYPE_DAX_FAILED,
                             confidence=CONFIDENCE_LOW,
                             original_dax=(metric.expression or ""),
                             warnings=[DEPLOY_REASON_VALIDATION_FAILED],
@@ -5484,7 +5549,7 @@ class DatabricksPublisher:
                         {
                             "name": measure_name,
                             "reason": DEPLOY_REASON_VALIDATION_FAILED,
-                            "translation_type": TRANSLATION_TYPE_DAX_SKIPPED,
+                            "translation_type": TRANSLATION_TYPE_DAX_FAILED,
                         }
                     )
                 continue
@@ -6375,6 +6440,18 @@ class DatabricksPublisher:
             review_required_summary=review_required_summary,
         )
 
+        if getattr(self._dbx_behavior, "fail_on_dax_translation_failure", False):
+            failed_translations = [
+                item.get("name", "")
+                for item in skipped_details
+                if str(item.get("translation_type") or "").strip() in {TRANSLATION_TYPE_DAX_FAILED, TRANSLATION_TYPE_DAX_SKIPPED}
+                or str(item.get("reason") or "").strip() == DEPLOY_REASON_DAX_NOT_SUPPORTED
+            ]
+            if failed_translations:
+                raise DatabricksPublishError(
+                    "DAX translation failed for measures: " + ", ".join(sorted({name for name in failed_translations if name}))
+                )
+
         if not self._dbx_behavior.create_metadata_table:
             stmts.extend(view_stmts)
             return stmts
@@ -6424,7 +6501,7 @@ class DatabricksPublisher:
 
         # Build lookup from skipped details for translation type
         skipped_translation_types: dict[str, str] = {
-            d["name"]: d.get("translation_type", TRANSLATION_TYPE_DAX_SKIPPED)
+            d["name"]: d.get("translation_type", TRANSLATION_TYPE_DAX_FAILED)
             for d in skipped_details
         }
 
@@ -6471,11 +6548,11 @@ class DatabricksPublisher:
                 elif m_name in skipped_lookup:
                     deploy_status = DEPLOY_STATUS_NOT_DEPLOYED
                     deploy_reason = f"'{self._escape_literal(skipped_lookup[m_name])}'"
-                    t_type = f"'{skipped_translation_types.get(m_name, TRANSLATION_TYPE_DAX_SKIPPED)}'"
+                    t_type = f"'{skipped_translation_types.get(m_name, TRANSLATION_TYPE_DAX_FAILED)}'"
                 else:
                     deploy_status = DEPLOY_STATUS_NOT_DEPLOYED
                     deploy_reason = f"'{DEPLOY_REASON_DAX_NOT_SUPPORTED}'"
-                    t_type = f"'{TRANSLATION_TYPE_DAX_SKIPPED}'"
+                    t_type = f"'{TRANSLATION_TYPE_DAX_FAILED}'"
 
                 row_values.append(
                     (
@@ -6777,13 +6854,11 @@ class DatabricksPublisher:
         }
 
         for metric in sml_model.metrics:
-            if is_inventory_model:
-                normalized = self._sanitize_identifier(metric.unique_name).lower()
-                if normalized in tier4_overrides:
-                    metric.sql_expression = tier4_overrides[normalized]
-                    metric.expression = ""
-                    logger.debug("  - [Auto] Resolved untranslatable DAX mapping for '%s'", metric.unique_name)
-                    has_fiscal_nested = True
+            # Bypass manual overrides and let the rule-based translator resolve expressions dynamically!
+            dax_lower = (metric.expression or "").lower()
+            sql_lower = (metric.sql_expression or "").lower()
+            if "fiscal_yr_period" in dax_lower or "fiscal_yr_period" in sql_lower:
+                has_fiscal_nested = True
             
             if metric.sql_expression and target_subquery_regex.search(metric.sql_expression):
                 has_fiscal_nested = True
