@@ -379,7 +379,17 @@ export default function ProjectJobsPage() {
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setRuns([])}
+              onClick={async () => {
+                if (confirm('Are you sure you want to clear all run logs? This action cannot be undone.')) {
+                  try {
+                    await api.clearJobRuns();
+                    setRuns([]);
+                  } catch (err) {
+                    console.error('Failed to clear runs:', err);
+                    alert('Failed to clear runs: ' + err.message);
+                  }
+                }
+              }}
               className="text-[11px] text-tertiary hover:text-primary transition-colors bg-transparent border-none cursor-pointer"
             >
               Clear Logs

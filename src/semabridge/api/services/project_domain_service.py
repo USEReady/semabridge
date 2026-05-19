@@ -66,6 +66,7 @@ from semabridge.api.services.project_runs_impl import (
     get_project_schedule_compat,
     list_folders_compat,
     list_job_runs_compat,
+    clear_job_runs_compat,
     list_job_schedules_compat,
     list_project_snapshots_compat,
     list_snapshot_groups_compat,

@@ -15,11 +15,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from semabridge.converter.dax_rule_translator import is_simple_metric, rule_based_translation
-from semabridge.converter.api_usage_tracker import get_tracker
-
-
-def test_simple_metrics():
-    """Test that common simple metrics are correctly classified."""
+def _check_simple_metrics() -> bool:
+    """Return True when common simple metrics are correctly classified."""
     simple_dax_expressions = [
         # Direct aggregations
         ("SUM([Amount])", "Direct SUM"),
@@ -60,12 +57,16 @@ def test_simple_metrics():
     return failed == 0
 
 
-def test_complex_metrics():
-    """Test that complex metrics are correctly identified as non-simple."""
+def test_simple_metrics():
+    assert _check_simple_metrics()
+
+
+def _check_complex_metrics() -> bool:
+    """Return True when complex metrics are correctly identified as non-simple."""
     complex_dax_expressions = [
         ("CALCULATE(SUM([Amount]), FILTER(...))", "CALCULATE with FILTER"),
         ("SUMX(Table, [Amount])", "SUMX iterator"),
-        ("TOTALYTD(SUM([Amount]), [Date])", "Time intelligence"),
+        ("TOTALYTD(SUM([Amount]), [Date])", "Time intelligence (rule-handled)"),
         ("ALL([Table])", "ALL function"),
         ("EARLIER([Value])", "EARLIER context"),
         ("IF([Condition], [Value1], [Value2])", "IF statement"),
@@ -81,11 +82,12 @@ def test_complex_metrics():
     
     for dax, description in complex_dax_expressions:
         is_simple = is_simple_metric(dax)
-        status = "✓ PASS" if not is_simple else "✗ FAIL"
+        expected_simple = dax.upper().startswith("TOTALYTD(")
+        status = "✓ PASS" if is_simple == expected_simple else "✗ FAIL"
         print(f"{status}: {description}")
         print(f"        DAX: {dax}")
         
-        if not is_simple:
+        if is_simple == expected_simple:
             passed += 1
         else:
             failed += 1
@@ -94,15 +96,31 @@ def test_complex_metrics():
     return failed == 0
 
 
-def test_rule_based_translation():
-    """Test that rule-based translation works for simple metrics."""
+def test_complex_metrics():
+    assert _check_complex_metrics()
+
+
+def _check_rule_based_translation() -> bool:
+    """Return True when rule-based translation works for simple metrics."""
     test_cases = [
-        ("SUM([Amount])", "sales", "SUM(sales.AMOUNT)"),
-        ("AVERAGE([Quantity])", "orders", "AVG(orders.QUANTITY)"),
-        ("COUNT([CustomerID])", "customers", "COUNT(customers.CUSTOMERID)"),
-        ("DISTINCTCOUNT([ProductID])", "products", "COUNT(DISTINCT products.PRODUCTID)"),
-        ("MIN([Date])", "dates", "MIN(dates.DATE)"),
-        ("MAX([Price])", "pricing", "MAX(pricing.PRICE)"),
+        ("SUM([Amount])", "sales", 'SUM(sales."AMOUNT"::FLOAT)'),
+        ("AVERAGE([Quantity])", "orders", 'AVG(orders."QUANTITY"::FLOAT)'),
+        ("COUNT([CustomerID])", "customers", 'COUNT(customers."CUSTOMERID")'),
+        ("DISTINCTCOUNT([ProductID])", "products", 'COUNT(DISTINCT products."PRODUCTID")'),
+        ("MIN([Date])", "dates", 'MIN(dates."COL_DATE")'),
+        ("MAX([Price])", "pricing", 'MAX(pricing."PRICE")'),
+        ("COUNTROWS(Sales)", "sales", "COUNT(*)"),
+        ("SUMX('Sales', 'Sales'[Amount] * 1.1)", "sales", 'SUM(sales."AMOUNT" * 1.1)'),
+        (
+            "CALCULATE(SUM('Sales'[Amount]), 'Sales'[Region] = \"North\", 'Sales'[Channel] = \"Online\")",
+            "sales",
+            'SUM(CASE WHEN sales."REGION" = \'North\' AND sales."CHANNEL" = \'Online\' THEN sales."AMOUNT" ELSE 0 END)',
+        ),
+        (
+            "TOTALYTD(SUM('Sales'[Amount]), 'Date'[Date])",
+            "sales",
+            'OVER (PARTITION BY YEAR(sales."DATE") ORDER BY sales."DATE" ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)',
+        ),
     ]
     
     print("\n" + "="*80)
@@ -141,8 +159,12 @@ def test_rule_based_translation():
     return failed == 0
 
 
-def test_quota_savings():
-    """Test quota savings calculation."""
+def test_rule_based_translation():
+    assert _check_rule_based_translation()
+
+
+def _check_quota_savings() -> bool:
+    """Return True when quota savings calculation runs successfully."""
     print("\n" + "="*80)
     print("TEST 4: Quota Savings Analysis")
     print("="*80)
@@ -180,8 +202,12 @@ def test_quota_savings():
     return True
 
 
-def test_edge_cases():
-    """Test edge cases and boundary conditions."""
+def test_quota_savings():
+    assert _check_quota_savings()
+
+
+def _check_edge_cases() -> bool:
+    """Return True when edge cases and boundary conditions pass."""
     print("\n" + "="*80)
     print("TEST 5: Edge Cases")
     print("="*80)
@@ -193,6 +219,7 @@ def test_edge_cases():
         ("[Column]", False, "Single column reference"),
         ("SUM([A]) + SUM([B])", False, "Multiple aggregations (complex)"),
         ("SUM ( [ Amount ] )", True, "SUM with extra spaces"),
+        ("COUNTROWS(Sales)", True, "COUNTROWS simple table"),
     ]
     
     passed = 0
@@ -218,8 +245,12 @@ def test_edge_cases():
     return failed == 0
 
 
-def test_performance():
-    """Test performance of classifier on large batch."""
+def test_edge_cases():
+    assert _check_edge_cases()
+
+
+def _check_performance() -> bool:
+    """Return True when performance of classifier on a large batch is acceptable."""
     print("\n" + "="*80)
     print("TEST 6: Performance on Large Batch")
     print("="*80)
@@ -247,6 +278,10 @@ def test_performance():
     print(f"\n{status}: Performance check")
     
     return performance_ok
+
+
+def test_performance():
+    assert _check_performance()
 
 
 def main():

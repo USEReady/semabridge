@@ -177,6 +177,10 @@ class DatabricksBehavior(BaseModel):
         default="mv",
         description="Prefix for generated measure view names"
     )
+    deterministic_translation_enabled: bool = Field(
+        default=True,
+        description="Whether to use the single-source-of-truth deterministic translation first for all measures."
+    )
     enable_simple_dax_translation: bool = Field(
         default=True,
         description="Translate simple DAX patterns (SUM, COUNT, etc.) to SQL for view creation"
@@ -187,6 +191,13 @@ class DatabricksBehavior(BaseModel):
             "Use the common LLM DAX translator for complex expressions after "
             "deterministic translation fails. Disabled by default to preserve "
             "legacy skip behavior unless a project opts in."
+        ),
+    )
+    fail_on_dax_translation_failure: bool = Field(
+        default=False,
+        description=(
+            "When true, stop Databricks sync if any measure cannot be translated "
+            "to SQL instead of silently leaving it in a skipped state."
         ),
     )
     llm_dax_provider_order: list[str] = Field(

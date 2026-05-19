@@ -4,6 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from semabridge.converter.dax_engine import DaxTranslationEngine, sanitize_llm_sql
+from semabridge.converter.llm_dax_translator import LLMDAXTranslator
 from semabridge.converter.dax_rule_translator import rule_based_translation
 from semabridge.connectors.metrics_clause_builder import MetricsClauseBuilder
 from semabridge.connectors.translator import MetricExpressionTranslator
@@ -29,6 +30,378 @@ def test_sanitize_llm_sql_ignores_parentheses_inside_string_literals():
 
     assert sanitized == sql
     assert not sanitized.endswith("))")
+
+
+def test_llm_prompt_enforces_anchor_rules():
+    translator = LLMDAXTranslator()
+
+    prompt = translator._build_prompt(
+        dax="CALCULATE(SUM('Corporate DSI Aggregate'[IOH_EXCLDNG_LIFO_AMT]), Dates[FISCAL_YR_PERIOD] < fiscalMonth)",
+        table_alias="corporate_dsi_aggregate",
+        dataset_name="Inventory Semantic Model",
+        metric_name="Corporate IOH",
+        schema_context={
+            "dates": ["fiscal_yr_period", "cal_dt"],
+            "corporate_dsi_aggregate": ["ioh_excldng_lifo_amt", "_current_fiscal_period", "max_date"],
+        },
+    )
+
+    assert "Nested aggregates are FORBIDDEN" in prompt
+    assert "_current_fiscal_period" in prompt
+    assert "max_date" in prompt
+    assert "Corporate DSI style measures" in prompt
+
+
+def test_llm_validation_rejects_nested_aggregates():
+    translator = LLMDAXTranslator()
+
+    is_valid, error = translator._validate_sql(
+        "SUM(CASE WHEN dates.fiscal_yr_period < MAX(_current_fiscal_period) THEN amount ELSE 0 END)",
+        original_dax="CALCULATE(SUM(Sales[Amount]), Dates[FISCAL_YR_PERIOD] < fiscalMonth)",
+        table_alias="sales",
+    )
+
+    assert not is_valid
+    assert "Nested aggregate function detected" in error
+
+
+def test_llm_validation_allows_scalar_time_wrapper():
+    translator = LLMDAXTranslator()
+
+    is_valid, error = translator._validate_sql(
+        "MAX(current_date())",
+        original_dax="TODAY()",
+        table_alias="sales",
+    )
+
+    assert is_valid
+    assert error == ""
+
+
+def test_llm_parse_response_auto_fixes_bare_current_date():
+    translator = LLMDAXTranslator()
+
+    result = translator._parse_response(
+        "CURRENT_DATE",
+        original_dax="TODAY()",
+        table_alias="sales",
+        metric_name="Today",
+    )
+
+    assert result.is_valid
+    assert result.sql == "MAX(current_date())"
+
+
+def test_llm_validation_rejects_subquery_and_unsafe_division():
+    translator = LLMDAXTranslator()
+
+    subquery_valid, subquery_error = translator._validate_sql(
+        "SUM(CASE WHEN x > (SELECT MAX(y) FROM t) THEN 1 ELSE 0 END)",
+        original_dax="CALCULATE(SUM(X[Amount]), X[Flag] = 1)",
+        table_alias="x",
+        metric_name="",
+    )
+    division_valid, division_error = translator._validate_sql(
+        "SUM(amount) / SUM(cost)",
+        original_dax="DIVIDE([Amount], [Cost])",
+        table_alias="sales",
+        metric_name="",
+    )
+
+    assert not subquery_valid
+    assert "Subquery detected" in subquery_error
+    assert not division_valid
+    assert "requires NULLIF" in division_error
+
+
+def test_llm_business_rules_cover_dsi_and_share_metrics():
+    translator = LLMDAXTranslator()
+
+    dsi_valid, dsi_error = translator._validate_sql(
+        "SUM(CASE WHEN flag = 1 THEN amount ELSE 0 END)",
+        original_dax="[Corporate IOH]",
+        table_alias="sales",
+        metric_name="Corporate DSI Monthly",
+    )
+    share_valid, share_error = translator._validate_sql(
+        "COALESCE(SUM(a) / NULLIF(SUM(b), 0), 0)",
+        original_dax="[Market Share]",
+        table_alias="sales",
+        metric_name="Market Share",
+    )
+
+    assert not dsi_valid
+    assert "DSI measure must reference a DSI-related source column" in dsi_error
+    assert share_valid
+    assert share_error == ""
+
+
+def test_llm_validation_accepts_reference_metric_view_sql_forms():
+    translator = LLMDAXTranslator()
+
+    accepted_cases = [
+        "SUM(`sales`.`amount`)",
+        "AVG(`sales`.`amount`)",
+        "COUNT(DISTINCT `product`.`id`)",
+        "COUNT(*)",
+        "MAX(current_date())",
+        "SUM(CASE WHEN dates.fiscal_yr_period < _current_fiscal_period THEN corporate_dsi_aggregate.ioh_excldng_lifo_amt ELSE 0 END)",
+        "SUM(CASE WHEN date_col >= DATE_TRUNC('YEAR', max_date) AND date_col <= max_date THEN amount ELSE 0 END)",
+        "SUM(CASE WHEN date_col > DATEADD(month, -12, max_date) AND date_col <= max_date THEN amount ELSE 0 END)",
+        "SUM(CASE WHEN date_col >= DATE_TRUNC('YEAR', DATEADD(year, -1, max_date)) AND date_col <= DATEADD(year, -1, max_date) THEN amount ELSE 0 END)",
+        "ANY_VALUE(CASE WHEN businessunits.business_unit = 'USP' THEN 'text1' ELSE 'text2' END)",
+        "ANY_VALUE(CONCAT('Last Refreshed: ', DATE_FORMAT(table.gl_refresh_datetime, 'MM/dd/yyyy HH:mm:ss')))",
+        "ANY_VALUE(CASE WHEN businessunits.business_unit = 'USP' THEN 'bullet text' WHEN businessunits.business_unit = 'MSH' THEN 'other text' ELSE NULL END)",
+        "COALESCE(SUM(CASE WHEN product.isvanarsdel = 'Yes' THEN amount ELSE 0 END) / NULLIF(SUM(amount), 0), 0) * 100",
+        "COALESCE(SUM(CASE WHEN isvanarsdel = 'Yes' THEN units ELSE 0 END) / NULLIF(SUM(units), 0), 0)",
+        "COALESCE( A / NULLIF(B, 0), 0)",
+        "COALESCE(sales, 0)",
+        "COUNT_IF(`sales`.`amount` IS NULL)",
+        "SUM(corporate_dsi_aggregate.ioh_excldng_lifo_amt)",
+        "AVG(corporate_dsi_aggregate.dsi_mnthly)",
+    ]
+
+    for sql in accepted_cases:
+        is_valid, error = translator._validate_sql(
+            sql,
+            original_dax="placeholder",
+            table_alias="sales",
+            metric_name="Market Share" if "/" in sql and "share" in sql.lower() else "",
+        )
+        assert is_valid, sql
+        assert error == ""
+
+
+def test_llm_validation_rejects_reference_forbidden_patterns():
+    translator = LLMDAXTranslator()
+
+    forbidden_cases = [
+        ("SUMX(FILTER(Sales, Sales[Amount] > 100), Sales[Amount])", "Unsupported DAX construct"),
+        ("CALCULATE(SUM(Sales[Amount]), FILTER(Product, Product[Color] = 'Red'))", "Unsupported DAX construct"),
+        ("TOTALYTD(SUM(Sales[Amount]), 'Date'[Date], FILTER(ALL(Date), ...))", "Unsupported DAX construct"),
+        ("RANKX(ALL(Product), [Sales])", "Unsupported DAX construct"),
+        ("SUM(MAX(Sales[Amount]))", "Nested aggregate function detected"),
+        ("CURRENT_DATE", "CURRENT_DATE must be wrapped in MAX(current_date())"),
+        ("SUM(amount) / SUM(cost)", "Division operator (/) requires NULLIF"),
+        ("SUM(CASE WHEN x > (SELECT MAX(y) FROM t) THEN 1 ELSE 0 END)", "Subquery detected"),
+        ("FILTER(table, table.col = 1)", "Unsupported DAX construct"),
+        ("SELECTEDVALUE(businessunits.business_unit)", "Unsupported DAX construct"),
+        ("SWITCH(TRUE(), 1 = 1, 'x')", "Unsupported DAX construct"),
+        ("COUNTROWS(sales)", "Unsupported DAX construct"),
+        ("COUNTBLANK(sales.amount)", "Unsupported DAX construct"),
+    ]
+
+    for sql, expected_error in forbidden_cases:
+        is_valid, error = translator._validate_sql(
+            sql,
+            original_dax="placeholder",
+            table_alias="sales",
+        )
+        assert not is_valid, sql
+        assert expected_error in error, (sql, error)
+
+
+def test_llm_parse_response_matches_actual_failing_measures():
+    translator = LLMDAXTranslator()
+
+    cases = [
+        (
+            "Corporate IOH",
+            """
+VAR _today = [Today]
+VAR fiscalMonth = CALCULATE(MAX(Dates[FISCAL_YR_PERIOD]), Dates[CAL_DT] = _today)
+RETURN CALCULATE(SUM('Corporate DSI Aggregate'[IOH_EXCLDNG_LIFO_AMT]), Dates[FISCAL_YR_PERIOD] < fiscalMonth)
+""",
+            "SUM(CASE WHEN dates.fiscal_yr_period < _current_fiscal_period THEN corporate_dsi_aggregate.ioh_excldng_lifo_amt ELSE 0 END)",
+        ),
+        (
+            "Corporate DSI Monthly",
+            """
+VAR _today = [Today]
+VAR fiscalMonth = CALCULATE(MAX(Dates[FISCAL_YR_PERIOD]), Dates[CAL_DT] = _today)
+RETURN CALCULATE(SUM('Corporate DSI Aggregate'[DSI_MNTHLY]), Dates[FISCAL_YR_PERIOD] < fiscalMonth)
+""",
+            "SUM(CASE WHEN dates.fiscal_yr_period < _current_fiscal_period THEN corporate_dsi_aggregate.dsi_mnthly ELSE 0 END)",
+        ),
+        (
+            "Corporate DSI Quarterly",
+            """
+VAR _today = [Today]
+VAR fiscalMonth = CALCULATE(MAX(Dates[FISCAL_YR_PERIOD]), Dates[CAL_DT] = _today)
+RETURN CALCULATE(SUM('Corporate DSI Aggregate'[DSI_QTD]), Dates[FISCAL_YR_PERIOD] < fiscalMonth)
+""",
+            "SUM(CASE WHEN dates.fiscal_yr_period < _current_fiscal_period THEN corporate_dsi_aggregate.dsi_qtd ELSE 0 END)",
+        ),
+        (
+            "Corporate DSI Yearly",
+            """
+VAR _today = [Today]
+VAR fiscalMonth = CALCULATE(MAX(Dates[FISCAL_YR_PERIOD]), Dates[CAL_DT] = _today)
+RETURN CALCULATE(SUM('Corporate DSI Aggregate'[DSI_YRLY]), Dates[FISCAL_YR_PERIOD] < fiscalMonth)
+""",
+            "SUM(CASE WHEN dates.fiscal_yr_period < _current_fiscal_period THEN corporate_dsi_aggregate.dsi_yrly ELSE 0 END)",
+        ),
+        (
+            "Corporate COS",
+            """
+VAR _today = [Today]
+VAR fiscalMonth = CALCULATE(MAX(Dates[FISCAL_YR_PERIOD]), Dates[CAL_DT] = _today)
+RETURN CALCULATE(SUM('Corporate DSI Aggregate'[COS_EXCLDNG_LIFO_AMT]), Dates[FISCAL_YR_PERIOD] < fiscalMonth)
+""",
+            "SUM(CASE WHEN dates.fiscal_yr_period < _current_fiscal_period THEN corporate_dsi_aggregate.cos_excldng_lifo_amt ELSE 0 END)",
+        ),
+        (
+            "Corporate DSI Last Refreshed",
+            "= CONCATENATE(\"Last Refreshed: \", MAX('Corporate DSI Last Refreshed'[GL Refresh Datetime]))",
+            "ANY_VALUE(CONCAT('Last Refreshed: ', DATE_FORMAT(corporate_dsi_last_refreshed.gl_refresh_datetime, 'MM/dd/yyyy HH:mm:ss')))",
+        ),
+        (
+            "Inventory Fact Last Refreshed",
+            "= CONCATENATE(\"Last Refreshed: \", MAX('Inventory Fact Last Refreshed'[GL Refresh Datetime]))",
+            "ANY_VALUE(CONCAT('Last Refreshed: ', DATE_FORMAT(inventory_fact_last_refreshed.gl_refresh_datetime, 'MM/dd/yyyy HH:mm:ss')))",
+        ),
+        (
+            "Subledger Business Unit Callout",
+            """
+VAR _sel = SELECTEDVALUE('Business Units'[Business Unit])
+VAR _b = UNICHAR(8226)
+RETURN SWITCH(TRUE(), ISBLANK(_sel), \"\", _sel = \"USP\", _b & \" Source of dashboard is SAP...\", _sel = \"MSH\", _b & \" Source...\", \"\")
+""",
+            "ANY_VALUE(CASE WHEN businessunits.business_unit = 'USP' THEN '• Source of dashboard is SAP...' WHEN businessunits.business_unit = 'MSH' THEN '• Source...' ELSE NULL END)",
+        ),
+        (
+            "GL Business Unit Callout",
+            """
+VAR _sel = SELECTEDVALUE('Business Units'[Business Unit])
+RETURN SWITCH(TRUE(), ISBLANK(_sel), \"\", _sel = \"USP\", \"• GL data sourced from GRC (Oracle)\", _sel = \"MSH\", \"• GL data sourced from GRC (Oracle)\", \"\")
+""",
+            "ANY_VALUE(CASE WHEN businessunits.business_unit = 'USP' THEN '• GL data sourced from GRC (Oracle)' WHEN businessunits.business_unit = 'MSH' THEN '• GL data sourced from GRC (Oracle)' ELSE NULL END)",
+        ),
+        (
+            "DSI Calculation Callout",
+            """
+VAR _nl = UNICHAR(10)
+VAR _b = UNICHAR(8226)
+RETURN
+    _b & \" Inventory excluding LIFO & Reserve...\" & _nl &
+    _b & \" Cost of Sales excluding LIFO...\" & _nl &
+    _b & \" DSI (Monthly) = ...\"
+""",
+            "ANY_VALUE(CONCAT('• Inventory excluding LIFO & Reserve...', CHAR(10), '• Cost of Sales excluding LIFO...', CHAR(10), '• DSI (Monthly) = ...'))",
+        ),
+    ]
+
+    for metric_name, dax, expected_sql in cases:
+        result = translator._parse_response(
+            expected_sql,
+            original_dax=dax,
+            table_alias="fact",
+            metric_name=metric_name,
+        )
+
+        assert result.is_valid, metric_name
+        assert result.sql == expected_sql
+
+
+def test_llm_rejects_actual_forbidden_dax_shapes_in_expected_sql():
+    translator = LLMDAXTranslator()
+
+    forbidden_sql_cases = [
+        ("SUM(MAX(corporate_dsi_aggregate.ioh_excldng_lifo_amt))", "Nested aggregate function detected"),
+        ("SUM(CASE WHEN x > (SELECT MAX(y) FROM t) THEN 1 ELSE 0 END)", "Subquery detected"),
+        ("SUM(amount) / SUM(cost)", "Division operator (/) requires NULLIF to prevent division by zero"),
+        ("SUM(CASE WHEN x = 1 THEN amount FILTER (WHERE y = 2) ELSE 0 END)", "FILTER clause is not allowed inside aggregates"),
+        ("SUMX(FILTER(Sales, Sales[Amount] > 100), Sales[Amount])", "Unsupported DAX construct detected in SQL output"),
+        ("CURRENT_DATE", "CURRENT_DATE must be wrapped in MAX(current_date())"),
+    ]
+
+    for sql, expected_error in forbidden_sql_cases:
+        is_valid, error = translator._validate_sql(
+            sql,
+            original_dax="placeholder",
+            table_alias="sales",
+            metric_name="",
+        )
+
+        assert not is_valid, sql
+        assert expected_error in error, (sql, error)
+
+
+def test_llm_additional_real_world_cases_cover_time_iterators_and_filters():
+    translator = LLMDAXTranslator()
+
+    accepted_cases = [
+        (
+            "CALCULATE(SUM(Sales[Amount]), Product[Color] = \"Red\", Customer[City] = \"London\")",
+            "SUM(CASE WHEN product.color = 'Red' AND customer.city = 'London' THEN amount ELSE 0 END)",
+        ),
+        (
+            "CALCULATE(SUM(Sales[Amount]), Product[Color] = \"Red\" OR Product[Color] = \"Blue\")",
+            "SUM(CASE WHEN product.color IN ('Red', 'Blue') THEN amount ELSE 0 END)",
+        ),
+        (
+            "CALCULATE(COUNTROWS('Sales'), Sales[Amount] > 0)",
+            "COUNT(CASE WHEN amount > 0 THEN 1 ELSE NULL END)",
+        ),
+        (
+            "CALCULATE(CALCULATE(SUM(Sales[Amount]), Product[Color] = \"Red\"), Customer[City] = \"London\")",
+            "SUM(CASE WHEN product.color = 'Red' AND customer.city = 'London' THEN amount ELSE 0 END)",
+        ),
+        (
+            "SELECTEDVALUE(Product[Name])",
+            "ANY_VALUE(product.name)",
+        ),
+        (
+            "IF(ISBLANK(Product[Name]), \"Unknown\", Product[Name])",
+            "COALESCE(product.name, 'Unknown')",
+        ),
+        (
+            "CONCATENATE(\"Line1\", UNICHAR(10), \"Line2\")",
+            "CONCAT('Line1', CHAR(10), 'Line2')",
+        ),
+        (
+            "DIVIDE([A], [B], 0)",
+            "COALESCE( A / NULLIF(B, 0), 0)",
+        ),
+    ]
+
+    for dax, expected_sql in accepted_cases:
+        result = translator._parse_response(
+            expected_sql,
+            original_dax=dax,
+            table_alias="sales",
+            metric_name="test",
+        )
+
+        assert result.is_valid, dax
+        assert result.sql == expected_sql
+
+
+def test_llm_additional_real_world_cases_reject_time_intelligence_iterators_and_all_filters():
+    translator = LLMDAXTranslator()
+
+    rejected_cases = [
+        "CALCULATE(SUM(Sales[Amount]), SAMEPERIODLASTYEAR('Date'[Date]))",
+        "CALCULATE(SUM(Sales[Amount]), DATEADD('Date'[Date], -1, YEAR))",
+        "SUMX(FILTER(Sales, Sales[Amount] > 100), Sales[Amount])",
+        "AVERAGEX(VALUES(Product[Category]), [Sales])",
+        "CALCULATE(SUM(Sales[Amount]), ALL(Product))",
+        "CALCULATE(SUM(Sales[Amount]), ALLEXCEPT(Sales, Sales[Region]))",
+        "VAR MinDate = MIN('Date'[Date]) RETURN CALCULATE(SUM(Sales[Amount]), 'Date'[Date] > MinDate)",
+        "CALCULATE(DISTINCTCOUNT(Product[ID]), FILTER(Product, Product[Category] = \"Electronics\"))",
+        "FIRSTNONBLANK('Product'[Name], [Sales])",
+    ]
+
+    for dax in rejected_cases:
+        is_valid, error = translator._validate_sql(
+            dax,
+            original_dax=dax,
+            table_alias="sales",
+            metric_name="",
+        )
+
+        assert not is_valid, dax
+        assert error, dax
 
 
 def test_snowflake_metric_expression_normalizes_case_cast_inside_sum():
@@ -167,7 +540,7 @@ VAR _b  = UNICHAR(8226)
 RETURN
 SWITCH (
     TRUE(),
-    ISBLANK ( _sel ), "",
+    ISBLANK ( _sel ), "",  
     _sel = "USP", _b & " Source of dashboard is general ledger and total net inventory dollars are valued at MAC",
     _sel = "MSH", _b & " Source of dashboard is general ledger and total net inventory dollars are valued at WAC",
     _sel = "CMM", _b & " Source of dashboard is general ledger and total net inventory dollars are valued at WAC",
