@@ -90,7 +90,7 @@ export const ActionButton = ({ onClick, children, variant = "default", disabled 
 
 // --- DIFF VIEW COMPONENT ---
 
-function DiffView({ diffData, baseRun, targetRun, onBack }) {
+function DiffView({ diffData, baseRun, targetRun, onBack, onSelectModelHistory }) {
     const [expandedModels, setExpandedModels] = useState([]);
     const [viewMode, setViewMode] = useState('split');
 
@@ -236,11 +236,7 @@ function DiffView({ diffData, baseRun, targetRun, onBack }) {
                                 <Fragment key={idx}>
                                     <tr 
                                         onClick={() => {
-                                            if (m.status === 'MODIFIED' || hasColumns) {
-                                                toggleExpand(m.name);
-                                            } else {
-                                                setSelectedModelHistory(m.name);
-                                            }
+                                            toggleExpand(m.name);
                                         }}
                                         className="hover:bg-blue-500/5 transition-colors group cursor-pointer"
                                     >
@@ -271,7 +267,7 @@ function DiffView({ diffData, baseRun, targetRun, onBack }) {
                                                 <button 
                                                     onClick={(e) => {
                                                         e.stopPropagation();
-                                                        setSelectedModelHistory(m.name);
+                                                        onSelectModelHistory && onSelectModelHistory(m.name);
                                                     }}
                                                     className="p-1.5 opacity-0 group-hover:opacity-100 hover:bg-blue-500/10 rounded-lg text-blue-500 transition-all"
                                                     title="View History"
@@ -1406,6 +1402,7 @@ export default function VersionControlPage() {
                             baseRun={versions.find(v => v.run_id === diffSelection[0])}
                             targetRun={versions.find(v => v.run_id === diffSelection[1])}
                             onBack={() => setViewMode('history')} 
+                            onSelectModelHistory={setSelectedModelHistory}
                         />
                     )}
 

@@ -391,6 +391,42 @@ def _compat_diff_states(left: Any, right: Any, *, max_changes: int = 200) -> Dic
     return {"exact_match": total == 0, "summary": {**summary, "total_changes": total}, "changes": changes}
 
 
+def _diff_columns(left_cols: List[Dict[str, Any]], right_cols: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    left_map = {str(c.get("name")): c for c in left_cols if isinstance(c, dict) and c.get("name")}
+    right_map = {str(c.get("name")): c for c in right_cols if isinstance(c, dict) and c.get("name")}
+    all_names = sorted(set(left_map.keys()) | set(right_map.keys()))
+    results = []
+
+    for name in all_names:
+        l_col = left_map.get(name)
+        r_col = right_map.get(name)
+
+        if not l_col and r_col:
+            results.append({"name": name, "status": "ADDED", "type": r_col.get("type") or r_col.get("data_type")})
+        elif not r_col and l_col:
+            results.append({"name": name, "status": "REMOVED", "type": l_col.get("type") or l_col.get("data_type")})
+        elif l_col and r_col:
+            l_type = str(l_col.get("type") or l_col.get("data_type") or "")
+            r_type = str(r_col.get("type") or r_col.get("data_type") or "")
+            
+            changed = False
+            try:
+                if json.dumps(l_col, sort_keys=True) != json.dumps(r_col, sort_keys=True):
+                    changed = True
+            except Exception:
+                if l_col != r_col:
+                    changed = True
+                    
+            if changed:
+                col_res = {"name": name, "status": "MODIFIED", "type": r_type}
+                if l_type != r_type:
+                    col_res["previousType"] = l_type
+                results.append(col_res)
+            else:
+                results.append({"name": name, "status": "UNCHANGED", "type": r_type})
+    return results
+
+
 def _diff_models(left_state: Dict[str, Any], right_state: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Compare models/datasets between two states and return status for each."""
 
@@ -406,34 +442,68 @@ def _diff_models(left_state: Dict[str, Any], right_state: Dict[str, Any]) -> Lis
             }
         return {}
 
+    def _extract_columns(state: Dict[str, Any], model_name: str, model_obj: Dict[str, Any]) -> List[Dict[str, Any]]:
+        cols = model_obj.get("columns") or model_obj.get("fields")
+        
+        if not cols:
+            root_cols = state.get("columns")
+            if isinstance(root_cols, dict):
+                cols = root_cols.get(model_name)
+                
+        if not cols:
+            table_schemas = state.get("table_schemas")
+            if isinstance(table_schemas, dict):
+                schema = table_schemas.get(model_name)
+                if isinstance(schema, dict):
+                    cols = schema.get("columns") or schema.get("fields")
+
+        if not cols:
+            return []
+            
+        if isinstance(cols, dict):
+            return [{"name": str(k), **(v if isinstance(v, dict) else {})} for k, v in cols.items()]
+        if isinstance(cols, list):
+            return cols
+        return []
+
     left_models = _extract_models(left_state)
     right_models = _extract_models(right_state)
     all_names = sorted(set(left_models.keys()) | set(right_models.keys()))
     results: List[Dict[str, Any]] = []
 
     for name in all_names:
-        left_model = left_models.get(name)
-        right_model = right_models.get(name)
+        left_model = left_models.get(name) or {}
+        right_model = right_models.get(name) or {}
+        
+        left_cols = _extract_columns(left_state, name, left_model)
+        right_cols = _extract_columns(right_state, name, right_model)
+        col_diffs = _diff_columns(left_cols, right_cols)
 
-        if not left_model:
+        if not left_models.get(name):
             status = "ADDED"
             details = {"message": "New model detected in target snapshot"}
-        elif not right_model:
+        elif not right_models.get(name):
             status = "REMOVED"
             details = {"message": "Model removed in target snapshot"}
         else:
             try:
-                if json.dumps(left_model, sort_keys=True) == json.dumps(right_model, sort_keys=True):
+                if json.dumps(left_model, sort_keys=True) == json.dumps(right_model, sort_keys=True) and json.dumps(left_cols, sort_keys=True) == json.dumps(right_cols, sort_keys=True):
                     status = "UNCHANGED"
                     details = {}
                 else:
                     status = "MODIFIED"
-                    details = {"message": "Structural or metadata changes detected"}
+                    num_col_changes = sum(1 for c in col_diffs if c.get("status") != "UNCHANGED")
+                    details = {"message": f"Structural or metadata changes detected ({num_col_changes} column changes)"}
             except Exception:
                 status = "MODIFIED"
                 details = {"message": "Changes detected (failed to hash)"}
 
-        results.append({"name": name, "status": status, "details": details})
+        results.append({
+            "name": name, 
+            "status": status, 
+            "details": details,
+            "columns": col_diffs
+        })
 
     return results
 
