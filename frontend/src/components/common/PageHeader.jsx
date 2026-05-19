@@ -1,12 +1,26 @@
+import { createElement, isValidElement } from 'react';
+
 /**
  * PageHeader — standardised page title block.
  * Props:
  *   title        : string  (required)
  *   description  : string  (optional sub-title)
- *   action       : ReactNode | { label: string, icon: ReactNode, onClick: fn }
+ *   subtitle     : string  (optional alias for description)
+ *   action       : ReactNode | { label: string, icon: ReactNode | ComponentType, onClick: fn }
  *   breadcrumb   : string[]  (optional breadcrumb trail, e.g. ['Projects', 'Alpha'])
  */
-export default function PageHeader({ title, description, action, breadcrumb }) {
+function renderActionIcon(icon) {
+  if (!icon) return null;
+  if (isValidElement(icon)) return icon;
+  if (typeof icon === 'function' || (typeof icon === 'object' && icon.$$typeof)) {
+    return createElement(icon, { size: 16, 'aria-hidden': true });
+  }
+  return icon;
+}
+
+export default function PageHeader({ title, description, subtitle, action, breadcrumb }) {
+  const supportingText = description ?? subtitle;
+
   return (
     <div className="flex items-start justify-between mb-6 flex-shrink-0">
       <div>
@@ -38,9 +52,9 @@ export default function PageHeader({ title, description, action, breadcrumb }) {
         >
           {title}
         </h1>
-        {description && (
+        {supportingText && (
           <p className="text-tertiary text-sm mt-1" style={{ margin: '6px 0 0' }}>
-            {description}
+            {supportingText}
           </p>
         )}
       </div>
@@ -62,7 +76,7 @@ export default function PageHeader({ title, description, action, breadcrumb }) {
               onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.9'; }}
               onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
             >
-              {action.icon && action.icon}
+              {renderActionIcon(action.icon)}
               {action.label}
             </button>
           ) : (

@@ -225,7 +225,7 @@ class Account(Base):
         UniqueConstraint("owner_id", "tag", name="uq_account_owner_tag"),
     )
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
     connector_type: Mapped[str] = mapped_column(String(50), nullable=False)  # FABRIC, SNOWFLAKE, DATABRICKS
     tag: Mapped[str] = mapped_column(String(255), nullable=False)
     identity_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -289,7 +289,7 @@ class LocalFolder(Base):
         Index("ix_local_folders_is_active", "is_active"),
     )
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
     tag_name: Mapped[str] = mapped_column(String(255), nullable=False)
     absolute_path: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     is_active: Mapped[bool] = mapped_column(
@@ -311,7 +311,7 @@ class Project(Base):
 
     __tablename__ = "projects"
 
-    project_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     account_id: Mapped[Optional[str]] = mapped_column(ForeignKey("accounts.id"), nullable=True)
     workspace_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -350,7 +350,7 @@ class SnapshotRow(Base):
         Index("ix_snapshots_trigger", "trigger"),
     )
 
-    snapshot_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    snapshot_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     project_id: Mapped[str] = mapped_column(
         ForeignKey("projects.project_id"), nullable=False
     )
@@ -361,9 +361,9 @@ class SnapshotRow(Base):
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     initiated_by: Mapped[str] = mapped_column(String(20), nullable=False, default="cli")
-    run_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    run_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
-    connector_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    connector_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     trigger: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     sync_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="copy")
 
@@ -388,7 +388,7 @@ class Change(Base):
 
     __tablename__ = "changes"
 
-    change_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    change_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     snapshot_id: Mapped[str] = mapped_column(
         ForeignKey("snapshots.snapshot_id"), nullable=False
     )
@@ -419,7 +419,7 @@ class Run(Base):
         Index("ix_runs_project", "project_id"),
     )
 
-    run_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     project_id: Mapped[str] = mapped_column(
         ForeignKey("projects.project_id"), nullable=False
     )
@@ -433,8 +433,8 @@ class Run(Base):
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     run_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     sync_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="copy")
-    before_src_snapshot_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
-    restored_from_snapshot_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    before_src_snapshot_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    restored_from_snapshot_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     before_target_snapshot_ids: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     after_target_snapshot_ids: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -456,7 +456,7 @@ class SourceArtifact(Base):
 
     __tablename__ = "source_artifacts"
 
-    artifact_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    artifact_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.run_id"), nullable=False)
     source_type: Mapped[str] = mapped_column(String(50), nullable=False)
     content_json: Mapped[str] = mapped_column(Text, nullable=False)
@@ -483,7 +483,7 @@ class RetentionPolicy(Base):
         Index("ix_retention_project", "project_id", unique=True),
     )
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(String(255), primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id: Mapped[str] = mapped_column(
         ForeignKey("projects.project_id"), nullable=False, unique=True
     )
@@ -515,7 +515,7 @@ class ModelVersion(Base):
         Index("ix_mv_model_workspace", "model_id", "workspace_id"),
     )
 
-    version_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    version_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     model_id: Mapped[str] = mapped_column(String(255), nullable=False)
     workspace_id: Mapped[str] = mapped_column(String(255), nullable=False)
     author: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
@@ -529,7 +529,7 @@ class ModelVersion(Base):
         Boolean, nullable=False, default=False, server_default=false()
     )
     rollback_from_version: Mapped[Optional[str]] = mapped_column(
-        String(36), nullable=True
+        String(255), nullable=True
     )
     deleted_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
 
@@ -552,7 +552,7 @@ class SyncJob(Base):
 
     __tablename__ = "sync_jobs"
 
-    job_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     direction: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending")
     conflict_resolution: Mapped[str] = mapped_column(
@@ -597,7 +597,7 @@ class SyncJobItem(Base):
 
     __tablename__ = "sync_job_items"
 
-    item_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    item_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     job_id: Mapped[str] = mapped_column(ForeignKey("sync_jobs.job_id"), nullable=False)
     model_name: Mapped[str] = mapped_column(String(255), nullable=False)
     source_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -606,7 +606,7 @@ class SyncJobItem(Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     osi_snapshot: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    target_artifact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    target_artifact_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # Relationships
@@ -627,7 +627,7 @@ class ModelMappingRow(Base):
 
     __tablename__ = "model_mappings"
 
-    mapping_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    mapping_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     source_type: Mapped[str] = mapped_column(String(50), nullable=False)
     source_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
     target_type: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -657,7 +657,7 @@ class SchemaVersionRow(Base):
 
     __tablename__ = "schema_versions"
 
-    version_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    version_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     model_name: Mapped[str] = mapped_column(String(255), nullable=False)
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     schema_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -668,7 +668,7 @@ class SchemaVersionRow(Base):
     created_at: Mapped[Optional[datetime]] = mapped_column(
         _UTC_DT, server_default=func.now(), nullable=True
     )
-    created_by_job_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_by_job_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     def __repr__(self) -> str:
         return (
@@ -685,10 +685,10 @@ class SyncConflictRow(Base):
 
     __tablename__ = "sync_conflicts"
 
-    conflict_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    conflict_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     job_id: Mapped[Optional[str]] = mapped_column(ForeignKey("sync_jobs.job_id"), nullable=True)
     run_id: Mapped[Optional[str]] = mapped_column(ForeignKey("runs.run_id"), nullable=True)
-    item_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    item_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     model_name: Mapped[str] = mapped_column(String(255), nullable=False)
     change_type: Mapped[str] = mapped_column(String(50), nullable=False)
     severity: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -720,9 +720,9 @@ class SyncCheckpointRow(Base):
 
     __tablename__ = "sync_checkpoints"
 
-    checkpoint_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    checkpoint_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     job_id: Mapped[str] = mapped_column(ForeignKey("sync_jobs.job_id"), nullable=False)
-    last_processed_item_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    last_processed_item_id: Mapped[str] = mapped_column(String(255), nullable=False)
     last_processed_index: Mapped[int] = mapped_column(Integer, nullable=False)
     state_snapshot: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="{}")
     created_at: Mapped[Optional[datetime]] = mapped_column(
@@ -808,7 +808,7 @@ class CommandLog(Base):
         Index("ix_command_log_started", "started_at"),
     )
 
-    log_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    log_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     command: Mapped[str] = mapped_column(String(50), nullable=False)
     action_type: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -816,7 +816,7 @@ class CommandLog(Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     adapter: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    project_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    project_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     initiated_by: Mapped[str] = mapped_column(
         String(20), nullable=False, default="cli"
     )

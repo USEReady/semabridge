@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import {
   Map, FolderOpen, PlayCircle, Settings,
   Split, PanelLeftClose, PanelLeftOpen,
-  History as HistoryIcon,
+  History as HistoryIcon, Bell,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import ContextBadge from './ContextBadge';
@@ -47,6 +47,7 @@ export default function LeftNavigation({ onEmergencyReset, searchQuery = '' }) {
     { to: '/explore',       label: 'Explore',         icon: Map },
     { to: '/version-control', label: 'Version Control', icon: HistoryIcon },
     { to: '/comparator',    label: 'Comparator',      icon: Split },
+    { to: '/settings/notifications/channels', label: 'Notifications', icon: Bell },
     { to: '/settings',      label: 'Settings',        icon: Settings },
   ];
 

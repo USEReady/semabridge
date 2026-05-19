@@ -25,6 +25,13 @@ import ProjectDetailPage from './pages/ProjectDetailPage';
 import ComparatorPage from './pages/ComparatorPage';
 import VersionControlPage from './pages/VersionControlPage';
 
+// Notification Settings Pages
+import NotificationChannelsPage from './pages/settings/NotificationChannelsPage';
+import NotificationRoutingRulesPage from './pages/settings/NotificationRoutingRulesPage';
+import NotificationTemplatesPage from './pages/settings/NotificationTemplatesPage';
+import NotificationLogsPage from './pages/settings/NotificationLogsPage';
+import NotificationAnalyticsPage from './pages/settings/NotificationAnalyticsPage';
+
 /**
  * Auth gate — shows loading spinner while auth bootstrap resolves.
  * Temporary dev behavior: bypass login UI and route directly to app pages.
@@ -132,6 +139,11 @@ export default function App() {
           <Route path="/settings"      element={<SettingsPage />} />
           <Route path="/global-config" element={<GlobalConfigPage />} />
           <Route path="/version-control" element={<VersionControlPage />} />
+          <Route path="/settings/notifications/channels" element={<NotificationChannelsPage />} />
+          <Route path="/settings/notifications/routing" element={<NotificationRoutingRulesPage />} />
+          <Route path="/settings/notifications/templates" element={<NotificationTemplatesPage />} />
+          <Route path="/settings/notifications/logs" element={<NotificationLogsPage />} />
+          <Route path="/settings/notifications/analytics" element={<NotificationAnalyticsPage />} />
         </Route>
 
         {/* Fallback */}

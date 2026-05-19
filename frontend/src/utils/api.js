@@ -1584,6 +1584,197 @@ export const api = {
         if (res.status === 204) return null;
         return handleResponse(res);
     },
+
+    // ── Notification Channels ──────────────────────────────────────────────
+    async getNotificationChannels(skip = 0, limit = 50) {
+        const res = await authFetch(`${API_BASE_URL}/settings/notification-channels?skip=${skip}&limit=${limit}`);
+        return handleResponse(res);
+    },
+
+    async createNotificationChannel(payload) {
+        const res = await authFetch(`${API_BASE_URL}/settings/notification-channels`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res);
+    },
+
+    async updateNotificationChannel(channelId, payload) {
+        const res = await authFetch(`${API_BASE_URL}/settings/notification-channels/${channelId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res);
+    },
+
+    async deleteNotificationChannel(channelId) {
+        const res = await authFetch(`${API_BASE_URL}/settings/notification-channels/${channelId}`, {
+            method: 'DELETE',
+        });
+        if (res.status === 204) return null;
+        return handleResponse(res);
+    },
+
+    async testNotificationChannel(channelId) {
+        const res = await authFetch(`${API_BASE_URL}/settings/notification-channels/${channelId}/test`, {
+            method: 'POST',
+        });
+        return handleResponse(res);
+    },
+
+    // ── Notification Templates ─────────────────────────────────────────────
+    async getNotificationTemplates(channelId = null, level = null) {
+        let url = `${API_BASE_URL}/settings/notification-templates`;
+        const params = new URLSearchParams();
+        if (channelId) params.append('channel_id', channelId);
+        if (level !== null) params.append('level', level);
+        if (params.toString()) url += '?' + params.toString();
+        const res = await authFetch(url);
+        return handleResponse(res);
+    },
+
+    async createNotificationTemplate(payload) {
+        const res = await authFetch(`${API_BASE_URL}/settings/notification-templates`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res);
+    },
+
+    async updateNotificationTemplate(templateId, payload) {
+        const res = await authFetch(`${API_BASE_URL}/settings/notification-templates/${templateId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res);
+    },
+
+    async deleteNotificationTemplate(templateId) {
+        const res = await authFetch(`${API_BASE_URL}/settings/notification-templates/${templateId}`, {
+            method: 'DELETE',
+        });
+        if (res.status === 204) return null;
+        return handleResponse(res);
+    },
+
+    async validateNotificationTemplate(payload) {
+        const res = await authFetch(`${API_BASE_URL}/settings/notification-templates/validate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res);
+    },
+
+    async previewNotificationTemplate(payload) {
+        const res = await authFetch(`${API_BASE_URL}/settings/notification-templates/preview`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res);
+    },
+
+    // ── Notification Routing Rules ─────────────────────────────────────────
+    async getNotificationRoutingRules(skip = 0, limit = 50) {
+        const res = await authFetch(`${API_BASE_URL}/settings/notification-routing-rules?skip=${skip}&limit=${limit}`);
+        return handleResponse(res);
+    },
+
+    async createNotificationRoutingRule(payload) {
+        const res = await authFetch(`${API_BASE_URL}/settings/notification-routing-rules`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res);
+    },
+
+    async updateNotificationRoutingRule(ruleId, payload) {
+        const res = await authFetch(`${API_BASE_URL}/settings/notification-routing-rules/${ruleId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res);
+    },
+
+    async deleteNotificationRoutingRule(ruleId) {
+        const res = await authFetch(`${API_BASE_URL}/settings/notification-routing-rules/${ruleId}`, {
+            method: 'DELETE',
+        });
+        if (res.status === 204) return null;
+        return handleResponse(res);
+    },
+
+    async evaluateNotificationRoutingRules(payload) {
+        const res = await authFetch(`${API_BASE_URL}/settings/notification-routing-rules/evaluate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res);
+    },
+
+    // ── Notification Logs ──────────────────────────────────────────────────
+    async getNotificationLogs(filters = {}) {
+        const params = new URLSearchParams();
+        if (filters.skip !== undefined) params.append('skip', filters.skip);
+        if (filters.limit !== undefined) params.append('limit', filters.limit);
+        if (filters.channel_id) params.append('channel_id', filters.channel_id);
+        if (filters.status) params.append('status', filters.status);
+        if (filters.level) params.append('level', filters.level);
+        if (filters.since) params.append('since', filters.since);
+        if (filters.until) params.append('until', filters.until);
+        
+        const url = `${API_BASE_URL}/settings/notification-log${params.toString() ? '?' + params.toString() : ''}`;
+        const res = await authFetch(url);
+        return handleResponse(res);
+    },
+
+    async retryNotificationLog(logId) {
+        const res = await authFetch(`${API_BASE_URL}/settings/notification-log/retry`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ log_id: logId }),
+        });
+        return handleResponse(res);
+    },
+
+    async bulkRetryNotificationLogs(filters = {}) {
+        const res = await authFetch(`${API_BASE_URL}/settings/notification-log/retry`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(filters),
+        });
+        return handleResponse(res);
+    },
+
+    // ── Notification Analytics ────────────────────────────────────────────
+    async getNotificationDeliveryStats(filters = {}) {
+        const params = new URLSearchParams();
+        if (filters.range) params.append('range', filters.range);
+        if (filters.channel_id) params.append('channel_id', filters.channel_id);
+        if (filters.project_id) params.append('project_id', filters.project_id);
+        if (filters.since) params.append('since', filters.since);
+        if (filters.until) params.append('until', filters.until);
+        
+        const url = `${API_BASE_URL}/settings/notification-analytics/delivery-stats${params.toString() ? '?' + params.toString() : ''}`;
+        const res = await authFetch(url);
+        return handleResponse(res);
+    },
+
+    async getNotificationChannelHealth(channelId = null) {
+        const url = channelId
+            ? `${API_BASE_URL}/settings/notification-analytics/channel-health?channel_id=${channelId}`
+            : `${API_BASE_URL}/settings/notification-analytics/channel-health`;
+        const res = await authFetch(url);
+        return handleResponse(res);
+    },
 };
 
 // ---------------------------------------------------------------------------

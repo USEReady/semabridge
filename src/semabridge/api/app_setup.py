@@ -364,6 +364,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             try:
                 import semabridge.repository.orm.cache_models  # noqa: F401
                 import semabridge.repository.orm.models  # noqa: F401
+                import semabridge.notifications.models  # noqa: F401
                 from semabridge.repository.orm.session_factory import get_engine
 
                 orm_engine = get_engine()

@@ -16,6 +16,7 @@ from semabridge.api.ui import router as ui_router
 from semabridge.api.websocket_alerts import alert_router
 from semabridge.api.routers.diagnostics_router import router as diagnostics_router
 from semabridge.api.routers.mapping_router import router as mapping_router
+from semabridge.notifications.api.notification_routes import router as notification_router
 
 try:
     from semabridge.api.auth_router import router as auth_router
@@ -48,6 +49,7 @@ for router in [
     connection_router,
     diagnostics_router,
     mapping_router,
+    notification_router,
 ]:
     app.include_router(router)
 
