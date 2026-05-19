@@ -56,6 +56,7 @@ from semabridge.api.services.project_runs_impl import (
     auto_map_compat,
     capture_manual_snapshots_compat,
     compare_project_snapshots_compat,
+    compare_project_model_snapshot_compat,
     create_folder_compat,
     delete_folder_compat,
     delete_mappings_compat,

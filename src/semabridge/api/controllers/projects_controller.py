@@ -21,6 +21,7 @@ from semabridge.api.services.projects_service import (
 from semabridge.api.services.project_runs_service import (
     capture_manual_snapshots_compat,
     compare_project_snapshots_compat,
+    compare_project_model_snapshot_compat,
     list_project_snapshots_compat,
     list_snapshot_groups_compat,
     restore_project_version_compat,
@@ -46,6 +47,7 @@ async def delete_snapshots(project_id: str, snapshot_ids: List[str]):
 router.get('/api/projects/{project_id}/snapshot-groups')(list_snapshot_groups_compat)
 router.post('/api/projects/{project_id}/snapshots/capture')(capture_manual_snapshots_compat)
 router.get('/api/projects/{project_id}/snapshots/compare')(compare_project_snapshots_compat)
+router.get('/api/projects/{project_id}/snapshots/compare/model')(compare_project_model_snapshot_compat)
 router.post('/api/projects/{project_id}/restore-version')(restore_project_version_compat)
 router.get('/api/projects/{project_id}/runs')(get_project_runs_compat)
 

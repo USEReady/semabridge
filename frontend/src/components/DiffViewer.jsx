@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Search, Split, Layers, ArrowRight, Minus, Plus } from 'lucide-react';
+import { Split, Layers } from 'lucide-react';
 
 export default function DiffViewer({ leftContent = '', rightContent = '', leftTitle = 'Previous', rightTitle = 'Current' }) {
     const [viewMode, setViewMode] = useState('split'); // 'split' or 'unified'
@@ -20,6 +20,12 @@ export default function DiffViewer({ leftContent = '', rightContent = '', leftTi
         }
         return result;
     }, [leftLines, rightLines]);
+
+    const counts = useMemo(() => ({
+        added: diffResult.filter(r => r.type === 'added').length,
+        deleted: diffResult.filter(r => r.type === 'deleted').length,
+        modified: diffResult.filter(r => r.type === 'modified').length,
+    }), [diffResult]);
 
     return (
         <div className="flex flex-col h-full bg-[#0b1120] text-slate-300 font-mono text-[13px] border border-white/5 rounded-lg overflow-hidden">
@@ -43,8 +49,9 @@ export default function DiffViewer({ leftContent = '', rightContent = '', leftTi
                     </div>
                 </div>
                 <div className="flex items-center gap-3 text-[11px]">
-                    <span className="text-emerald-500 font-bold">+{diffResult.filter(r => r.type === 'added').length}</span>
-                    <span className="text-red-500 font-bold">-{diffResult.filter(r => r.type === 'deleted').length}</span>
+                    <span className="text-emerald-500 font-bold">+{counts.added}</span>
+                    <span className="text-red-500 font-bold">-{counts.deleted}</span>
+                    <span className="text-amber-400 font-bold">~{counts.modified}</span>
                 </div>
             </div>
 
@@ -56,10 +63,10 @@ export default function DiffViewer({ leftContent = '', rightContent = '', leftTi
                         <div className="flex-1 border-r border-white/5">
                             <div className="px-3 py-1 bg-white/2 border-b border-white/5 text-[10px] font-bold text-slate-500 sticky top-0 z-10">{leftTitle}</div>
                             {diffResult.map((res, i) => (
-                                <div key={i} className={`flex px-2 ${res.type === 'deleted' ? 'bg-red-500/10' : (res.type === 'modified' ? 'bg-indigo-500/5' : '')}`}>
+                                <div key={i} className={`flex px-2 ${res.type === 'deleted' || res.type === 'modified' ? 'bg-red-500/10' : ''}`}>
                                     <span className="w-8 shrink-0 text-slate-600 text-right select-none pr-2 border-r border-white/5">{res.line}</span>
-                                    <pre className={`pl-2 whitespace-pre ${res.type === 'deleted' ? 'text-red-400' : ''}`}>
-                                        {res.type === 'deleted' && '- '}{res.left}
+                                    <pre className={`pl-2 whitespace-pre ${res.type === 'deleted' || res.type === 'modified' ? 'text-red-400' : ''}`}>
+                                        {(res.type === 'deleted' || res.type === 'modified') && '- '}{res.left}
                                     </pre>
                                 </div>
                             ))}
@@ -68,10 +75,10 @@ export default function DiffViewer({ leftContent = '', rightContent = '', leftTi
                         <div className="flex-1">
                             <div className="px-3 py-1 bg-white/2 border-b border-white/5 text-[10px] font-bold text-slate-500 sticky top-0 z-10">{rightTitle}</div>
                             {diffResult.map((res, i) => (
-                                <div key={i} className={`flex px-2 ${res.type === 'added' ? 'bg-emerald-500/10' : (res.type === 'modified' ? 'bg-indigo-500/5' : '')}`}>
+                                <div key={i} className={`flex px-2 ${res.type === 'added' || res.type === 'modified' ? 'bg-emerald-500/10' : ''}`}>
                                     <span className="w-8 shrink-0 text-slate-600 text-right select-none pr-2 border-r border-white/5">{res.line}</span>
-                                    <pre className={`pl-2 whitespace-pre ${res.type === 'added' ? 'text-emerald-400' : ''}`}>
-                                        {res.type === 'added' && '+ '}{res.right}
+                                    <pre className={`pl-2 whitespace-pre ${res.type === 'added' || res.type === 'modified' ? 'text-emerald-400' : ''}`}>
+                                        {(res.type === 'added' || res.type === 'modified') && '+ '}{res.right}
                                     </pre>
                                 </div>
                             ))}
@@ -93,6 +100,18 @@ export default function DiffViewer({ leftContent = '', rightContent = '', leftTi
                                         <span className="w-8 shrink-0 text-slate-600 text-right select-none pr-2 border-r border-white/5">{res.line}</span>
                                         <pre className="pl-2 text-emerald-400">+ {res.right}</pre>
                                     </div>
+                                )}
+                                {res.type === 'modified' && (
+                                    <>
+                                        <div className="flex px-2 bg-red-500/10">
+                                            <span className="w-8 shrink-0 text-slate-600 text-right select-none pr-2 border-r border-white/5">{res.line}</span>
+                                            <pre className="pl-2 text-red-400">- {res.left}</pre>
+                                        </div>
+                                        <div className="flex px-2 bg-emerald-500/10">
+                                            <span className="w-8 shrink-0 text-slate-600 text-right select-none pr-2 border-r border-white/5">{res.line}</span>
+                                            <pre className="pl-2 text-emerald-400">+ {res.right}</pre>
+                                        </div>
+                                    </>
                                 )}
                                 {res.type === 'equal' && (
                                     <div className="flex px-2">

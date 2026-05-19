@@ -39,6 +39,7 @@ import { api, formatDate } from '../utils/api';
 import { useUIStore } from '../store/uiStore';
 import { useLogs } from '../context/LogsContext';
 import PageHeader from '../components/common/PageHeader';
+import DiffViewer from '../components/DiffViewer';
 import RepositoryBrowser from '../components/RepositoryBrowser';
 import { Archive } from 'lucide-react';
 
@@ -93,6 +94,16 @@ export const ActionButton = ({ onClick, children, variant = "default", disabled 
 function DiffView({ diffData, baseRun, targetRun, onBack, onSelectModelHistory }) {
     const [expandedModels, setExpandedModels] = useState([]);
     const [viewMode, setViewMode] = useState('split');
+    const [panelView, setPanelView] = useState('content');
+    const [baseSnapshotContent, setBaseSnapshotContent] = useState('');
+    const [targetSnapshotContent, setTargetSnapshotContent] = useState('');
+    const [contentDiffLoading, setContentDiffLoading] = useState(false);
+    const [contentDiffError, setContentDiffError] = useState('');
+
+    useEffect(() => {
+        // Prevent stale expanded rows when comparison context changes.
+        setExpandedModels([]);
+    }, [baseRun?.run_id, targetRun?.run_id, diffData]);
 
     const toggleExpand = (modelName) => {
         setExpandedModels(prev => 
@@ -110,9 +121,110 @@ function DiffView({ diffData, baseRun, targetRun, onBack, onSelectModelHistory }
         const matchesStatus = filterStatus === 'ALL' || m.status === filterStatus;
         return matchesSearch && matchesStatus;
     });
+
+    const projectId = baseRun?.project_id || targetRun?.project_id || '';
+    const baseSnapshotId = baseRun?.after_tgt_snapshots?.[0] || baseRun?.after_target_snapshot_ids?.[0] || baseRun?.before_tgt_snapshots?.[0] || baseRun?.before_target_snapshot_ids?.[0] || '';
+    const targetSnapshotId = targetRun?.after_tgt_snapshots?.[0] || targetRun?.after_target_snapshot_ids?.[0] || targetRun?.before_tgt_snapshots?.[0] || targetRun?.before_target_snapshot_ids?.[0] || '';
+
+    useEffect(() => {
+        let isMounted = true;
+
+        async function loadSnapshotContent() {
+            if (!projectId || !baseSnapshotId || !targetSnapshotId) {
+                setBaseSnapshotContent('');
+                setTargetSnapshotContent('');
+                setContentDiffError('');
+                return;
+            }
+
+            setContentDiffLoading(true);
+            setContentDiffError('');
+            try {
+                const [basePayload, targetPayload] = await Promise.all([
+                    api.getSnapshotContent(projectId, baseSnapshotId),
+                    api.getSnapshotContent(projectId, targetSnapshotId),
+                ]);
+
+                if (!isMounted) return;
+                const toDiffText = (value) => {
+                    if (value == null) return '';
+                    if (typeof value === 'string') return value;
+                    try {
+                        return JSON.stringify(value, null, 2);
+                    } catch {
+                        return String(value);
+                    }
+                };
+
+                setBaseSnapshotContent(toDiffText(basePayload?.content));
+                setTargetSnapshotContent(toDiffText(targetPayload?.content));
+            } catch (err) {
+                if (!isMounted) return;
+                setBaseSnapshotContent('');
+                setTargetSnapshotContent('');
+                setContentDiffError(err?.message || 'Failed to load snapshot content diff.');
+            } finally {
+                if (isMounted) setContentDiffLoading(false);
+            }
+        }
+
+        loadSnapshotContent();
+        return () => {
+            isMounted = false;
+        };
+    }, [projectId, baseSnapshotId, targetSnapshotId]);
     
     return (
         <div className="flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="flex justify-end">
+                <div className="flex bg-[var(--bg-main)]/50 border border-[var(--border-light)] rounded-xl p-1">
+                    <button
+                        onClick={() => setPanelView('content')}
+                        className={`px-3 py-1.5 text-[11px] font-bold rounded-lg transition-all ${panelView === 'content' ? 'bg-blue-500/20 text-blue-400' : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'}`}
+                    >
+                        Content Diff
+                    </button>
+                    <button
+                        onClick={() => setPanelView('structural')}
+                        className={`px-3 py-1.5 text-[11px] font-bold rounded-lg transition-all ${panelView === 'structural' ? 'bg-blue-500/20 text-blue-400' : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'}`}
+                    >
+                        Structural Evolution
+                    </button>
+                </div>
+            </div>
+
+            {panelView === 'content' && (
+            <GlassCard className="overflow-hidden">
+                <div className="px-6 py-4 border-b border-[var(--border-light)] flex items-center justify-between gap-3 bg-[var(--bg-surface)]/50">
+                    <div>
+                        <h3 className="text-sm font-black text-[var(--text-primary)] uppercase tracking-widest">Snapshot Content Diff</h3>
+                        <p className="text-[10px] text-[var(--text-tertiary)] font-bold uppercase mt-0.5">Raw snapshot state comparison</p>
+                    </div>
+                    <div className="text-[10px] text-[var(--text-tertiary)] font-bold uppercase">Split / Unified available in viewer toolbar</div>
+                </div>
+                <div className="p-4 bg-[var(--bg-main)]/20">
+                    {contentDiffLoading ? (
+                        <div className="text-xs text-[var(--text-tertiary)]">Loading snapshot content...</div>
+                    ) : contentDiffError ? (
+                        <div className="text-xs text-rose-400">{contentDiffError}</div>
+                    ) : (!baseSnapshotContent && !targetSnapshotContent) ? (
+                        <div className="text-xs text-[var(--text-tertiary)]">No snapshot content available for selected runs.</div>
+                    ) : (
+                        <div className="overflow-auto rounded-xl border border-[var(--border-main)]">
+                            <DiffViewer
+                                leftContent={baseSnapshotContent}
+                                rightContent={targetSnapshotContent}
+                                leftTitle={`Base ${String(baseSnapshotId || '').slice(0, 8)}`}
+                                rightTitle={`Target ${String(targetSnapshotId || '').slice(0, 8)}`}
+                            />
+                        </div>
+                    )}
+                </div>
+            </GlassCard>
+            )}
+
+            {panelView === 'structural' && (
+            <>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {[
                     { key: 'snapshot_a', run: baseRun, label: 'BASE VERSION', accent: 'var(--accent-blue)', color: 'blue' },
@@ -228,12 +340,13 @@ function DiffView({ diffData, baseRun, targetRun, onBack, onSelectModelHistory }
                                         </div>
                                     </td>
                                 </tr>
-                            ) : filteredModels.map((m, idx) => {
+                            ) : filteredModels.map((m) => {
                                 const isExpanded = expandedModels.includes(m.name);
                                 const hasColumns = m.columns && m.columns.length > 0;
+                                const hasMeasures = m.measures && m.measures.length > 0;
                                 
                                 return (
-                                <Fragment key={idx}>
+                                <Fragment key={m.name}>
                                     <tr 
                                         onClick={() => {
                                             toggleExpand(m.name);
@@ -274,7 +387,7 @@ function DiffView({ diffData, baseRun, targetRun, onBack, onSelectModelHistory }
                                                 >
                                                     <History size={14} />
                                                 </button>
-                                                {(m.status === 'MODIFIED' || hasColumns) && (
+                                                {(m.status === 'MODIFIED' || hasColumns || hasMeasures) && (
                                                     <ChevronRight size={14} className={`text-[var(--text-tertiary)] transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                                                 )}
                                             </div>
@@ -287,12 +400,12 @@ function DiffView({ diffData, baseRun, targetRun, onBack, onSelectModelHistory }
                                                     <h5 className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-widest mb-4">
                                                         Schema Evolution ({viewMode === 'split' ? 'Split View' : viewMode === 'unified' ? 'Unified View' : 'Semantic View'})
                                                     </h5>
-                                                    {!hasColumns ? (
+                                                    {!hasColumns && !hasMeasures ? (
                                                         <p className="text-xs text-[var(--text-secondary)] italic">Schema differences are not available in this payload.</p>
-                                                    ) : viewMode === 'unified' ? (
+                                                    ) : hasColumns && viewMode === 'unified' ? (
                                                         <div className="space-y-1">
-                                                            {m.columns.map((col, cIdx) => (
-                                                                <div key={`uni-${cIdx}`} className={`flex items-center justify-between p-2 rounded text-xs font-mono transition-colors ${col.status === 'ADDED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : col.status === 'REMOVED' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : col.status === 'MODIFIED' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'text-[var(--text-secondary)] border border-transparent hover:bg-[var(--bg-main)]/50'}`}>
+                                                            {m.columns.map((col) => (
+                                                                <div key={`uni-${m.name}-${col.name}-${col.status}`} className={`flex items-center justify-between p-2 rounded text-xs font-mono transition-colors ${col.status === 'ADDED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : col.status === 'REMOVED' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : col.status === 'MODIFIED' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'text-[var(--text-secondary)] border border-transparent hover:bg-[var(--bg-main)]/50'}`}>
                                                                     <div className="flex items-center gap-2">
                                                                         {col.status === 'ADDED' && <span className="text-emerald-500 font-bold">+</span>}
                                                                         {col.status === 'REMOVED' && <span className="text-rose-500 font-bold">-</span>}
@@ -313,14 +426,14 @@ function DiffView({ diffData, baseRun, targetRun, onBack, onSelectModelHistory }
                                                                 </div>
                                                             ))}
                                                         </div>
-                                                    ) : (
+                                                    ) : hasColumns ? (
                                                         <div className="grid grid-cols-2 gap-8">
                                                             {/* LEFT: Previous State */}
                                                             <div>
                                                                 <h6 className="text-[10px] font-bold text-[var(--text-secondary)] uppercase mb-3 border-b border-[var(--border-main)] pb-2">Previous Snapshot</h6>
                                                                 <div className="space-y-1">
-                                                                    {m.columns.filter(c => c.status !== 'ADDED' && (viewMode === 'semantic' ? c.status !== 'UNCHANGED' : true)).map((col, cIdx) => (
-                                                                        <div key={`old-${cIdx}`} className={`flex items-center justify-between p-2 rounded text-xs font-mono transition-colors ${col.status === 'REMOVED' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : col.status === 'MODIFIED' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'text-[var(--text-secondary)] border border-transparent hover:bg-[var(--bg-main)]/50'}`}>
+                                                                    {m.columns.filter(c => c.status !== 'ADDED' && (viewMode === 'semantic' ? c.status !== 'UNCHANGED' : true)).map((col) => (
+                                                                        <div key={`old-${m.name}-${col.name}-${col.status}`} className={`flex items-center justify-between p-2 rounded text-xs font-mono transition-colors ${col.status === 'REMOVED' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : col.status === 'MODIFIED' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'text-[var(--text-secondary)] border border-transparent hover:bg-[var(--bg-main)]/50'}`}>
                                                                             <div className="flex items-center gap-2">
                                                                                 {col.status === 'REMOVED' && <span className="text-rose-500 font-bold">-</span>}
                                                                                 {col.status === 'MODIFIED' && <span className="text-amber-500 font-bold">~</span>}
@@ -339,8 +452,8 @@ function DiffView({ diffData, baseRun, targetRun, onBack, onSelectModelHistory }
                                                             <div>
                                                                 <h6 className="text-[10px] font-bold text-[var(--text-secondary)] uppercase mb-3 border-b border-[var(--border-main)] pb-2">Target Snapshot</h6>
                                                                 <div className="space-y-1">
-                                                                    {m.columns.filter(c => c.status !== 'REMOVED' && (viewMode === 'semantic' ? c.status !== 'UNCHANGED' : true)).map((col, cIdx) => (
-                                                                        <div key={`new-${cIdx}`} className={`flex items-center justify-between p-2 rounded text-xs font-mono transition-colors ${col.status === 'ADDED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : col.status === 'MODIFIED' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'text-[var(--text-secondary)] border border-transparent hover:bg-[var(--bg-main)]/50'}`}>
+                                                                    {m.columns.filter(c => c.status !== 'REMOVED' && (viewMode === 'semantic' ? c.status !== 'UNCHANGED' : true)).map((col) => (
+                                                                        <div key={`new-${m.name}-${col.name}-${col.status}`} className={`flex items-center justify-between p-2 rounded text-xs font-mono transition-colors ${col.status === 'ADDED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : col.status === 'MODIFIED' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'text-[var(--text-secondary)] border border-transparent hover:bg-[var(--bg-main)]/50'}`}>
                                                                             <div className="flex items-center gap-2">
                                                                                 {col.status === 'ADDED' && <span className="text-emerald-500 font-bold">+</span>}
                                                                                 {col.status === 'MODIFIED' && <span className="text-amber-500 font-bold">~</span>}
@@ -355,6 +468,37 @@ function DiffView({ diffData, baseRun, targetRun, onBack, onSelectModelHistory }
                                                                 </div>
                                                             </div>
                                                         </div>
+                                                    ) : null}
+
+                                                    {hasMeasures && (
+                                                        <div className="mt-4">
+                                                            <h6 className="text-[10px] font-bold text-[var(--text-secondary)] uppercase mb-3 border-b border-[var(--border-main)] pb-2">Measures</h6>
+                                                            <div className="space-y-1">
+                                                                {m.measures.map((measure) => (
+                                                                    <div
+                                                                        key={`measure-${m.name}-${measure.name}-${measure.status}`}
+                                                                        className={`flex items-center justify-between p-2 rounded text-xs font-mono transition-colors ${
+                                                                            measure.status === 'ADDED'
+                                                                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                                                                : measure.status === 'REMOVED'
+                                                                                    ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                                                                                    : measure.status === 'MODIFIED'
+                                                                                        ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                                                                        : 'text-[var(--text-secondary)] border border-transparent hover:bg-[var(--bg-main)]/50'
+                                                                        }`}
+                                                                    >
+                                                                        <div className="flex items-center gap-2">
+                                                                            {measure.status === 'ADDED' && <span className="text-emerald-500 font-bold">+</span>}
+                                                                            {measure.status === 'REMOVED' && <span className="text-rose-500 font-bold">-</span>}
+                                                                            {measure.status === 'MODIFIED' && <span className="text-amber-500 font-bold">~</span>}
+                                                                            {measure.status === 'UNCHANGED' && <span className="text-slate-500 font-bold">=</span>}
+                                                                            <span>{measure.name}</span>
+                                                                        </div>
+                                                                        <span className="opacity-80">{measure.status}</span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
                                                     )}
                                                 </div>
                                             </td>
@@ -367,6 +511,8 @@ function DiffView({ diffData, baseRun, targetRun, onBack, onSelectModelHistory }
                     </table>
                 </div>
             </GlassCard>
+            </>
+            )}
         </div>
     );
 }

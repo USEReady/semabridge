@@ -2,6 +2,7 @@ import json
 import time as _time
 import uuid
 import re
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import yaml
@@ -40,6 +41,107 @@ AUTO_MAP_SNOWFLAKE_RESERVED = {
     "KEY", "REFERENCES", "DATABASE", "SCHEMA", "WAREHOUSE", "ACCOUNT",
 }
 _SNOWFLAKE_SANITIZER = IdentifierSanitizer(force_uppercase=True, suppress_reserved=True)
+
+
+def _compat_parse_snapshot_timestamp(raw: Any) -> datetime:
+    text = str(raw or "").strip()
+    if text:
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except Exception:
+            pass
+    return datetime.utcnow()
+
+
+def _compat_snapshot_id_for_orm(project_id: str, compat_snapshot_id: str) -> str:
+    """Map compat snapshot IDs into ORM-safe IDs (<=36 chars)."""
+    sid = str(compat_snapshot_id or "").strip()
+    if sid and len(sid) <= 36:
+        return sid
+    # Deterministic UUID so repeated backfills resolve to the same row.
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"semabridge:{project_id}:{sid}"))
+
+
+def _compat_backfill_snapshots_to_orm(project_id: str) -> int:
+    """Persist compat snapshots into ORM snapshots table when missing."""
+    _compat_ensure_loaded()
+    compat_rows = [
+        r for r in _compat_project_snapshots.get(project_id, [])
+        if isinstance(r, dict) and str(r.get("snapshot_id") or "").strip()
+    ]
+    if not compat_rows:
+        return 0
+
+    try:
+        from sqlalchemy import select
+        from semabridge.repository.orm.models import SnapshotRow
+        try:
+            db_manager._ensure_schema_initialized_once(db_manager._engine)
+        except Exception:
+            pass
+
+        project_name = (
+            (_compat_projects.get(project_id) or {}).get("name")
+            if isinstance(_compat_projects.get(project_id), dict)
+            else project_id
+        ) or project_id
+        db_manager.ensure_project(str(project_id), str(project_name), "")
+
+        session = db_manager._session()
+        try:
+            existing_ids = {
+                sid for (sid,) in session.execute(
+                    select(SnapshotRow.snapshot_id).where(SnapshotRow.project_id == str(project_id))
+                ).all()
+            }
+            inserted = 0
+            for row in compat_rows:
+                compat_sid = str(row.get("snapshot_id") or "").strip()
+                sid = _compat_snapshot_id_for_orm(str(project_id), compat_sid)
+                if not compat_sid or sid in existing_ids:
+                    continue
+                state = row.get("sml_blob") or row.get("state") or {}
+                if isinstance(state, dict):
+                    try:
+                        state = json.dumps(state)
+                    except Exception:
+                        state = "{}"
+                elif not isinstance(state, str):
+                    state = "{}"
+
+                session.add(
+                    SnapshotRow(
+                        snapshot_id=sid,
+                        project_id=str(project_id),
+                        timestamp=_compat_parse_snapshot_timestamp(
+                            row.get("timestamp") or row.get("created_at")
+                        ),
+                        version_tag=(
+                            str(row.get("tag") or row.get("version_tag") or "")
+                            or (f"compat:{compat_sid}" if compat_sid and compat_sid != sid else None)
+                        ),
+                        sml_blob=state,
+                        status=str(row.get("status") or "success"),
+                        duration_ms=row.get("duration_ms"),
+                        error_message=row.get("error_message"),
+                        initiated_by=str(row.get("initiated_by") or "compat"),
+                        run_id=str(row.get("run_id") or "") or None,
+                        connector_id=str(row.get("connector_identifier") or row.get("connector") or "") or None,
+                        trigger=str(row.get("snapshot_origin") or "").lower() or None,
+                        sync_mode=_compat_normalize_sync_mode(row.get("sync_mode")) or "copy",
+                    )
+                )
+                inserted += 1
+            if inserted:
+                session.commit()
+            else:
+                session.rollback()
+            return inserted
+        finally:
+            session.close()
+    except Exception as exc:
+        logger.warning("Compat->ORM snapshot backfill failed for project %s: %s", project_id, exc)
+        return 0
 
 
 def _compat_parse_project_cfg_dict(project_cfg: str) -> Dict[str, Any]:
@@ -141,12 +243,35 @@ def _compat_connector_descriptors(project_cfg: str) -> Dict[str, Any]:
 
 
 def _compat_latest_sml_state(project_id: str, preferred_snapshot_id: str = "") -> Dict[str, Any]:
+    def _decode_snapshot_state(raw: Any) -> Dict[str, Any]:
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str):
+            text = raw.strip()
+            if not text:
+                return {}
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+            try:
+                parsed_yaml = yaml.safe_load(text)
+                if isinstance(parsed_yaml, dict):
+                    return parsed_yaml
+            except Exception:
+                pass
+        return {}
+
     sid = str(preferred_snapshot_id or "").strip()
     if sid:
         try:
             snap = db_manager.get_snapshot(sid)
-            if snap and isinstance(getattr(snap, "sml_blob", None), dict):
-                return snap.sml_blob
+            if snap:
+                decoded = _decode_snapshot_state(getattr(snap, "sml_blob", None))
+                if decoded:
+                    return decoded
         except Exception:
             pass
 
@@ -159,8 +284,10 @@ def _compat_latest_sml_state(project_id: str, preferred_snapshot_id: str = "") -
             continue
         try:
             snap = db_manager.get_snapshot(sid)
-            if snap and isinstance(getattr(snap, "sml_blob", None), dict):
-                return snap.sml_blob
+            if snap:
+                decoded = _decode_snapshot_state(getattr(snap, "sml_blob", None))
+                if decoded:
+                    return decoded
         except Exception:
             continue
     return {}
@@ -392,8 +519,11 @@ def _compat_diff_states(left: Any, right: Any, *, max_changes: int = 200) -> Dic
 
 
 def _diff_columns(left_cols: List[Dict[str, Any]], right_cols: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    left_map = {str(c.get("name")): c for c in left_cols if isinstance(c, dict) and c.get("name")}
-    right_map = {str(c.get("name")): c for c in right_cols if isinstance(c, dict) and c.get("name")}
+    def _col_name(col: Dict[str, Any]) -> str:
+        return str(col.get("name") or col.get("unique_name") or "").strip()
+
+    left_map = {_col_name(c): c for c in left_cols if isinstance(c, dict) and _col_name(c)}
+    right_map = {_col_name(c): c for c in right_cols if isinstance(c, dict) and _col_name(c)}
     all_names = sorted(set(left_map.keys()) | set(right_map.keys()))
     results = []
 
@@ -466,6 +596,55 @@ def _diff_models(left_state: Dict[str, Any], right_state: Dict[str, Any]) -> Lis
             return cols
         return []
 
+    def _extract_metrics(state: Dict[str, Any], model_name: str, model_obj: Dict[str, Any]) -> List[Dict[str, Any]]:
+        direct = model_obj.get("metrics") or model_obj.get("measures")
+        if isinstance(direct, list):
+            return [m for m in direct if isinstance(m, dict)]
+
+        root_metrics = state.get("metrics") or state.get("measures") or []
+        if not isinstance(root_metrics, list):
+            return []
+
+        scoped: List[Dict[str, Any]] = []
+        for metric in root_metrics:
+            if not isinstance(metric, dict):
+                continue
+            metric_dataset = str(metric.get("dataset") or metric.get("table") or "").strip()
+            if metric_dataset and metric_dataset == str(model_name):
+                scoped.append(metric)
+        return scoped
+
+    def _diff_metrics(left_metrics: List[Dict[str, Any]], right_metrics: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        def _metric_name(metric: Dict[str, Any]) -> str:
+            return str(metric.get("unique_name") or metric.get("name") or metric.get("label") or "").strip()
+
+        left_map = {_metric_name(m): m for m in left_metrics if _metric_name(m)}
+        right_map = {_metric_name(m): m for m in right_metrics if _metric_name(m)}
+        all_names = sorted(set(left_map.keys()) | set(right_map.keys()))
+        results: List[Dict[str, Any]] = []
+
+        for name in all_names:
+            left_metric = left_map.get(name)
+            right_metric = right_map.get(name)
+
+            if not left_metric and right_metric:
+                results.append({"name": name, "status": "ADDED"})
+                continue
+            if left_metric and not right_metric:
+                results.append({"name": name, "status": "REMOVED"})
+                continue
+
+            # both exist
+            if left_metric is None or right_metric is None:
+                continue
+            try:
+                changed = json.dumps(left_metric, sort_keys=True) != json.dumps(right_metric, sort_keys=True)
+            except Exception:
+                changed = left_metric != right_metric
+            results.append({"name": name, "status": "MODIFIED" if changed else "UNCHANGED"})
+
+        return results
+
     left_models = _extract_models(left_state)
     right_models = _extract_models(right_state)
     all_names = sorted(set(left_models.keys()) | set(right_models.keys()))
@@ -478,6 +657,9 @@ def _diff_models(left_state: Dict[str, Any], right_state: Dict[str, Any]) -> Lis
         left_cols = _extract_columns(left_state, name, left_model)
         right_cols = _extract_columns(right_state, name, right_model)
         col_diffs = _diff_columns(left_cols, right_cols)
+        left_metrics = _extract_metrics(left_state, name, left_model)
+        right_metrics = _extract_metrics(right_state, name, right_model)
+        metric_diffs = _diff_metrics(left_metrics, right_metrics)
 
         if not left_models.get(name):
             status = "ADDED"
@@ -487,13 +669,18 @@ def _diff_models(left_state: Dict[str, Any], right_state: Dict[str, Any]) -> Lis
             details = {"message": "Model removed in target snapshot"}
         else:
             try:
-                if json.dumps(left_model, sort_keys=True) == json.dumps(right_model, sort_keys=True) and json.dumps(left_cols, sort_keys=True) == json.dumps(right_cols, sort_keys=True):
+                if (
+                    json.dumps(left_model, sort_keys=True) == json.dumps(right_model, sort_keys=True)
+                    and json.dumps(left_cols, sort_keys=True) == json.dumps(right_cols, sort_keys=True)
+                    and json.dumps(left_metrics, sort_keys=True) == json.dumps(right_metrics, sort_keys=True)
+                ):
                     status = "UNCHANGED"
                     details = {}
                 else:
                     status = "MODIFIED"
                     num_col_changes = sum(1 for c in col_diffs if c.get("status") != "UNCHANGED")
-                    details = {"message": f"Structural or metadata changes detected ({num_col_changes} column changes)"}
+                    num_metric_changes = sum(1 for m in metric_diffs if m.get("status") != "UNCHANGED")
+                    details = {"message": f"Structural or metadata changes detected ({num_col_changes} column changes, {num_metric_changes} measure changes)"}
             except Exception:
                 status = "MODIFIED"
                 details = {"message": "Changes detected (failed to hash)"}
@@ -502,7 +689,8 @@ def _diff_models(left_state: Dict[str, Any], right_state: Dict[str, Any]) -> Lis
             "name": name, 
             "status": status, 
             "details": details,
-            "columns": col_diffs
+            "columns": col_diffs,
+            "measures": metric_diffs
         })
 
     return results
@@ -570,6 +758,71 @@ async def list_project_snapshots_compat(
     limit: int = Query(default=200, ge=1, le=500),
 ):
     _compat_ensure_loaded()
+    _compat_backfill_snapshots_to_orm(str(project_id))
+    # Source of truth: ORM snapshots table.
+    try:
+        from sqlalchemy import select
+        from semabridge.repository.orm.models import SnapshotRow
+
+        session = db_manager._session()
+        try:
+            stmt = (
+                select(SnapshotRow)
+                .where(SnapshotRow.project_id == str(project_id))
+                .order_by(SnapshotRow.timestamp.desc())
+            )
+            orm_rows = session.execute(stmt).scalars().all()
+        finally:
+            session.close()
+
+        if orm_rows:
+            orm_payload: List[Dict[str, Any]] = []
+            for row in orm_rows:
+                out = {
+                    "snapshot_id": row.snapshot_id,
+                    "project_id": row.project_id,
+                    "run_id": row.run_id,
+                    "timestamp": str(row.timestamp) if row.timestamp else None,
+                    "created_at": str(row.timestamp) if row.timestamp else None,
+                    "status": row.status,
+                    "duration_ms": row.duration_ms,
+                    "error_message": row.error_message,
+                    "initiated_by": row.initiated_by,
+                    "intermediate_format": "sml",
+                    "sync_mode": getattr(row, "sync_mode", "copy"),
+                    "snapshot_origin": row.trigger or "AUTO",
+                    "connector_identifier": row.connector_id,
+                    "version_tag": row.version_tag,
+                }
+                if include_state:
+                    state = getattr(row, "sml_blob", None) or {}
+                    if isinstance(state, str):
+                        try:
+                            state = json.loads(state)
+                        except Exception:
+                            state = {}
+                    out["state"] = state if isinstance(state, dict) else {}
+                orm_payload.append(out)
+
+            # Only apply filters that ORM rows can faithfully satisfy.
+            filtered = orm_payload
+            if origin:
+                filtered = [
+                    r for r in filtered
+                    if str(r.get("snapshot_origin") or "").upper() == str(origin).upper()
+                ]
+            if run_id:
+                filtered = [r for r in filtered if str(r.get("run_id") or "") == str(run_id)]
+            if role or stage or group_id:
+                # Role/stage/group are compatibility-store concepts, not ORM columns.
+                # Preserve behavior by returning no rows for incompatible filters.
+                filtered = []
+
+            return {"project_id": project_id, "count": len(filtered[:limit]), "snapshots": filtered[:limit]}
+    except Exception:
+        pass
+
+    # Fallback legacy source (compat store).
     rows: List[Dict[str, Any]] = []
     for row in _compat_project_snapshots.get(project_id, []):
         if not isinstance(row, dict):
@@ -665,6 +918,7 @@ async def compare_project_snapshots_compat(
     if not isinstance(left_state, dict): left_state = {}
     if not isinstance(right_state, dict): right_state = {}
     models_diff = _diff_models(left_state, right_state)
+    state_diff = _compat_diff_states(left_state, right_state, max_changes=max_changes)
 
     payload: Dict[str, Any] = {
         "metadata_diff": {
@@ -686,11 +940,39 @@ async def compare_project_snapshots_compat(
             },
         },
         "models": models_diff,
+        "state_diff": state_diff,
     }
     if include_states:
         payload["from_state"] = left_state
         payload["to_state"] = right_state
     return payload
+
+
+async def compare_project_model_snapshot_compat(
+    project_id: str,
+    from_snapshot_id: str,
+    to_snapshot_id: str,
+    model_name: str = Query(..., description="Name of the model to compare"),
+):
+    """
+    Slice 1: Mock endpoint for lazy loading column-level diffs in the frontend.
+    Eventually, this will query the ORM directly (Slice 3).
+    """
+    _compat_ensure_loaded()
+    import asyncio
+    await asyncio.sleep(0.8)
+
+    return {
+        "model_name": model_name,
+        "status": "MODIFIED",
+        "columns": [
+            {"name": "id", "status": "UNCHANGED", "type": "uuid"},
+            {"name": "created_at", "status": "ADDED", "type": "timestamp"},
+            {"name": "legacy_field", "status": "REMOVED", "type": "varchar"},
+            {"name": "amount", "status": "MODIFIED", "type": "decimal", "previousType": "float"},
+        ],
+        "lazy_loaded": True
+    }
 
 
 async def get_project_runs_compat(project_id: str):
@@ -2264,6 +2546,31 @@ async def get_project_stats_compat(project_id: str) -> Dict[str, Any]:
 async def get_snapshot_content_compat(project_id: str, snapshot_id: str) -> Dict[str, Any]:
     """Retrieve raw content/state for a specific snapshot."""
     _compat_ensure_loaded()
+    _compat_backfill_snapshots_to_orm(str(project_id))
+    try:
+        snap = db_manager.get_snapshot(snapshot_id)
+        if not snap:
+            snap = db_manager.get_snapshot(_compat_snapshot_id_for_orm(str(project_id), str(snapshot_id)))
+        if snap and str(getattr(snap, "project_id", "")) == str(project_id):
+            state = getattr(snap, "sml_blob", {}) or {}
+            if isinstance(state, str):
+                try:
+                    state = json.loads(state)
+                except Exception:
+                    try:
+                        state = yaml.safe_load(state)
+                    except Exception:
+                        state = {}
+            return {
+                "snapshot_id": snapshot_id,
+                "project_id": project_id,
+                "captured_at": getattr(snap, "timestamp", None),
+                "role": None,
+                "content": state if isinstance(state, dict) else {},
+            }
+    except Exception:
+        pass
+
     snaps = _compat_project_snapshots.get(project_id, [])
     snap = next((s for s in snaps if s.get("snapshot_id") == snapshot_id), None)
     if not snap:
@@ -2298,6 +2605,45 @@ async def manual_deploy_compat(project_id: str, snapshot_id: str, background_tas
 async def get_snapshot_report_compat(project_id: str, snapshot_id: str) -> Dict[str, Any]:
     """Generate a structured conversion/mapping report for a snapshot."""
     _compat_ensure_loaded()
+    _compat_backfill_snapshots_to_orm(str(project_id))
+    orm_row = None
+    try:
+        snap = db_manager.get_snapshot(snapshot_id)
+        if not snap:
+            snap = db_manager.get_snapshot(_compat_snapshot_id_for_orm(str(project_id), str(snapshot_id)))
+        if snap and str(getattr(snap, "project_id", "")) == str(project_id):
+            orm_row = snap
+    except Exception:
+        orm_row = None
+
+    if orm_row is not None:
+        state = getattr(orm_row, "sml_blob", {}) or {}
+        if not isinstance(state, dict):
+            state = {}
+        datasets = state.get("datasets") or state.get("models") or []
+        total_models = len(datasets)
+        total_columns = sum(len(d.get("columns", [])) for d in datasets if isinstance(d, dict))
+        return {
+            "snapshot_id": snapshot_id,
+            "role": None,
+            "timestamp": getattr(orm_row, "timestamp", None),
+            "summary": {
+                "total_models": total_models,
+                "total_columns": total_columns,
+                "format": "SML",
+                "origin": getattr(orm_row, "trigger", None) or "AUTO",
+            },
+            "models": [
+                {
+                    "name": d.get("unique_name") or d.get("name"),
+                    "columns": len(d.get("columns") or []),
+                    "metrics": len(d.get("metrics") or []),
+                }
+                for d in datasets if isinstance(d, dict)
+            ],
+            "warnings": [],
+        }
+
     snaps = _compat_project_snapshots.get(project_id, [])
     snap = next((s for s in snaps if s.get("snapshot_id") == snapshot_id), None)
     if not snap:
