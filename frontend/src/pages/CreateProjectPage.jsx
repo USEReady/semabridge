@@ -499,6 +499,18 @@ function getConnectorPresentation(type) {
   return { label: normalized || 'Connector', icon: <Database size={14} />, accent: '#94a3b8' };
 }
 
+function getAccountLabel(account) {
+  const primary = account?.tag || account?.name || account?.identity_email || account?.account || account?.id;
+  const secondary = account?.identity_email || account?.account || account?.locator || account?.id;
+  if (!primary) return 'Saved account';
+  if (!secondary || String(primary) === String(secondary)) return String(primary);
+  return `${primary} (${secondary})`;
+}
+
+function getAccountId(account) {
+  return String(account?.id || account?.identity_id || account?.account_id || '');
+}
+
 export default function CreateProjectPage({ editMode = false, initialData = null, onSaveConfig = null }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -521,7 +533,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     selectedLocalFolderId, selectedPbixFilePath,
     expandedWs, selectedModels: selectedModelsRaw, selectedModelNameByKey,
     selectedDatabricksTables: selectedDatabricksTablesRaw, databricksQuery,
-    autoRelationships, generateDescriptions,
+    autoRelationships, generateDescriptions, write_strategy: writeStrategy = 'copy',
     currentStepIndex: step,
   } = useProjectWizardStore(state => state.wizard);
   const {
@@ -971,10 +983,10 @@ export default function CreateProjectPage({ editMode = false, initialData = null
             return;
           }
 
-          const hasSelection = list.some(acc => String(acc?.id || '') === String(selectedConnectionId || ''));
+          const hasSelection = list.some(acc => getAccountId(acc) === String(selectedConnectionId || ''));
           const nextConnectionId = hasSelection
             ? selectedConnectionId
-            : String(list[0]?.id || '');
+            : getAccountId(list[0]);
 
           if (nextConnectionId) {
             setSelectedConnectionId(nextConnectionId);
@@ -995,8 +1007,14 @@ export default function CreateProjectPage({ editMode = false, initialData = null
           const res = await api.getAccounts('SNOWFLAKE');
           const list = Array.isArray(res) ? res : (res?.accounts || []);
           setSnowflakeAccounts(list);
-          if (list.length > 0 && !snowflakeAccountId) {
-            setSnowflakeAccountId(String(list[0]?.id || ''));
+          if (list.length === 0) {
+            setSnowflakeAccountId('');
+            return;
+          }
+
+          const hasSelection = list.some(acc => getAccountId(acc) === String(snowflakeAccountId || ''));
+          if (!hasSelection) {
+            setSnowflakeAccountId(getAccountId(list[0]));
           }
         } catch (e) {
           console.warn('[SemaBridge] Failed to fetch Snowflake Accounts', e);
@@ -1013,8 +1031,14 @@ export default function CreateProjectPage({ editMode = false, initialData = null
           const res = await api.getAccounts('DATABRICKS');
           const list = Array.isArray(res) ? res : (res?.accounts || []);
           setDatabricksAccounts(list);
-          if (list.length > 0 && !databricksAccountId) {
-            setDatabricksAccountId(String(list[0]?.id || ''));
+          if (list.length === 0) {
+            setDatabricksAccountId('');
+            return;
+          }
+
+          const hasSelection = list.some(acc => getAccountId(acc) === String(databricksAccountId || ''));
+          if (!hasSelection) {
+            setDatabricksAccountId(getAccountId(list[0]));
           }
         } catch (e) {
           console.warn('[SemaBridge] Failed to fetch Databricks Accounts', e);
@@ -1022,7 +1046,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       };
       fetchDatabricksAccounts();
     }
-  }, [step, sourceConnector, targetConnectors, selectedConnectionId, fetchFabricWorkspaces]);
+  }, [step, sourceConnector, targetConnectors, selectedConnectionId, snowflakeAccountId, databricksAccountId, fetchFabricWorkspaces]);
 
   // Account switch is the source of truth for workspace discovery.
   useEffect(() => {
@@ -1096,13 +1120,14 @@ export default function CreateProjectPage({ editMode = false, initialData = null
 
   // Defensive: auto-select first available workspace if missing after loading
   useEffect(() => {
-    if (step === 3 && sourceConnector === 'fabric' && !fabricWorkspaceId && !wsLoading) {
+    const needsFabricWorkspaceConfig = sourceConnector === 'fabric' || targetConnectors.has('fabric');
+    if ((step === 2 || step === 3) && needsFabricWorkspaceConfig && !fabricWorkspaceId && !wsLoading && !isRefreshingWorkspaces) {
       const liveList = liveFabricWorkspaces;
       if (liveList.length > 0) {
         setFabricWorkspaceId(liveList[0].id);
       }
     }
-  }, [step, sourceConnector, fabricWorkspaceId, wsLoading, availableWorkspaces, allWorkspacesFromApi]);
+  }, [step, sourceConnector, targetConnectors, fabricWorkspaceId, wsLoading, isRefreshingWorkspaces, availableWorkspaces, allWorkspacesFromApi]);
 
   /* ─── Load selected Fabric workspace models on step 3 ─── */
   useEffect(() => {
@@ -2036,28 +2061,16 @@ export default function CreateProjectPage({ editMode = false, initialData = null
             {editMode && (
               <div style={SECTION_CARD}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Sync Strategy</div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  {['copy', 'upsert'].map((opt) => {
-                    const active = (useProjectWizardStore.getState().wizard.write_strategy || 'copy') === opt;
-                    return (
-                      <button
-                        key={opt}
-                        type="button"
-                        onClick={() => setWizardState({ write_strategy: opt })}
-                        style={{
-                          padding: '8px 14px', borderRadius: 8, border: 'none', cursor: 'pointer',
-                          background: active ? (opt === 'upsert' ? 'var(--accent-orange)' : 'var(--accent-blue)') : 'transparent',
-                          color: active ? '#fff' : 'var(--text-secondary)',
-                          fontWeight: 700,
-                        }}
-                      >
-                        {opt === 'copy' ? 'Copy (replace target)' : 'Upsert (preserve target)'}
-                      </button>
-                    );
-                  })}
-                </div>
+                <select
+                  value={writeStrategy}
+                  onChange={event => setWizardState({ write_strategy: event.target.value })}
+                  style={{ ...INPUT, maxWidth: 360 }}
+                >
+                  <option value="copy">Full refresh - replace target definitions</option>
+                  <option value="upsert">Merge update - preserve target-only definitions</option>
+                </select>
                 <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 8 }}>
-                  Choose how the sync applies changes to the target: <strong>Copy</strong> fully replaces the target; <strong>Upsert</strong> preserves target-only models and overwrites conflicts.
+                  Choose how the sync applies changes to the target. Full refresh rebuilds the target; merge update keeps target-only models and updates matching definitions.
                 </div>
               </div>
             )}
@@ -2136,9 +2149,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               snowflakeSchema={snowflakeSchema} setSnowflakeSchema={setSnowflakeSchema}
               targetDatabase={targetDatabase} setTargetDatabase={setTargetDatabase}
               targetSchema={targetSchema} setTargetSchema={setTargetSchema}
-              targetAccount={targetAccount} setTargetAccount={setTargetAccount}
+              setTargetAccount={setTargetAccount}
               targetWarehouse={targetWarehouse} setTargetWarehouse={setTargetWarehouse}
-              domainHint={domainHint} setDomainHint={setDomainHint}
               pbixFile={pbixFile}
               setPbixFile={setPbixFile}
               pbixUploadPath={pbixUploadPath}
@@ -2632,12 +2644,9 @@ function StepConnectorConfig({
   setTargetDatabase,
   targetSchema,
   setTargetSchema,
-  targetAccount,
   setTargetAccount,
   targetWarehouse,
   setTargetWarehouse,
-  domainHint,
-  setDomainHint,
   pbixFile,
   setPbixFile,
   pbixUploadPath,
@@ -2658,6 +2667,28 @@ function StepConnectorConfig({
 }) {
   const [pbixDragOver, setPbixDragOver] = useState(false);
   const [pbixUploadError, setPbixUploadError] = useState('');
+  const [snowflakeWarehouses, setSnowflakeWarehouses] = useState([]);
+  const [snowflakeDatabases, setSnowflakeDatabases] = useState([]);
+  const [snowflakeSchemas, setSnowflakeSchemas] = useState([]);
+  const [snowflakeDiscoveryLoading, setSnowflakeDiscoveryLoading] = useState(false);
+  const [snowflakeSchemaLoading, setSnowflakeSchemaLoading] = useState(false);
+  const [snowflakeDiscoveryError, setSnowflakeDiscoveryError] = useState('');
+
+  const handleSnowflakeAccountSelect = (value, role = 'target') => {
+    setSnowflakeAccountId(value);
+    if (role === 'target') setTargetAccount('');
+  };
+
+  const normalizeDiscoveryItems = useCallback((items) => (
+    (Array.isArray(items) ? items : [])
+      .map((item) => {
+        const id = String(item?.id || item?.name || item || '').trim();
+        const name = String(item?.name || item?.id || item || '').trim();
+        return id ? { id, name } : null;
+      })
+      .filter(Boolean)
+  ), []);
+
   const uploadPbixFile = async (file) => {
     if (!file) return;
     if (!String(file.name || '').toLowerCase().endsWith('.pbix')) {
@@ -2691,9 +2722,139 @@ function StepConnectorConfig({
   };
   const selectedTargets = [...targetConnectors];
   const sourceLabel = CONNECTOR_TYPES.find(c => c.value === sourceConnector)?.label || sourceConnector;
-  const activeLocalFolders = (localFolders || []).filter(folder => folder?.is_active !== false);
+  const activeLocalFolders = useMemo(
+    () => (localFolders || []).filter(folder => folder?.is_active !== false),
+    [localFolders],
+  );
 
-  
+  useEffect(() => {
+    if (sourceConnector !== 'pbix' || pbixSourceMode !== 'TAG') return;
+    if (localFoldersLoading || activeLocalFolders.length === 0) return;
+
+    const hasSelection = activeLocalFolders.some(folder => String(folder.id) === String(selectedLocalFolderId || ''));
+    if (!hasSelection) {
+      setSelectedLocalFolderId(String(activeLocalFolders[0]?.id || ''));
+    }
+  }, [
+    activeLocalFolders,
+    localFoldersLoading,
+    pbixSourceMode,
+    selectedLocalFolderId,
+    setSelectedLocalFolderId,
+    sourceConnector,
+  ]);
+
+  useEffect(() => {
+    const needsSnowflake = sourceConnector === 'snowflake' || targetConnectors.has('snowflake');
+    if (!needsSnowflake || !snowflakeAccountId) {
+      setSnowflakeWarehouses([]);
+      setSnowflakeDatabases([]);
+      setSnowflakeSchemas([]);
+      setSnowflakeDiscoveryError('');
+      return;
+    }
+
+    let active = true;
+    setSnowflakeDiscoveryLoading(true);
+    setSnowflakeDiscoveryError('');
+
+    Promise.all([
+      api.discoverSnowflakeWarehouses(snowflakeAccountId),
+      api.discoverSnowflakeDatabases(snowflakeAccountId),
+    ])
+      .then(([warehouseData, databaseData]) => {
+        if (!active) return;
+        const warehouses = normalizeDiscoveryItems(warehouseData);
+        const databases = normalizeDiscoveryItems(databaseData);
+        setSnowflakeWarehouses(warehouses);
+        setSnowflakeDatabases(databases);
+
+        const hasWarehouse = warehouses.some(item => item.id === targetWarehouse);
+        if (!hasWarehouse) {
+          setTargetWarehouse(warehouses[0]?.id || '');
+        }
+
+        const hasSourceDatabase = databases.some(item => item.id === snowflakeDatabase);
+        if (sourceConnector === 'snowflake' && !hasSourceDatabase) {
+          setSnowflakeDatabase(databases[0]?.id || '');
+        }
+
+        const hasTargetDatabase = databases.some(item => item.id === targetDatabase);
+        if (targetConnectors.has('snowflake') && !hasTargetDatabase) {
+          setTargetDatabase(databases[0]?.id || '');
+        }
+      })
+      .catch((err) => {
+        if (!active) return;
+        setSnowflakeWarehouses([]);
+        setSnowflakeDatabases([]);
+        setSnowflakeSchemas([]);
+        setSnowflakeDiscoveryError(err?.message || 'Could not load Snowflake account metadata.');
+      })
+      .finally(() => {
+        if (active) setSnowflakeDiscoveryLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    normalizeDiscoveryItems,
+    snowflakeAccountId,
+    sourceConnector,
+    targetConnectors,
+    setSnowflakeDatabase,
+    setTargetDatabase,
+    setTargetWarehouse,
+  ]);
+
+  const activeSnowflakeDatabase = sourceConnector === 'snowflake' ? snowflakeDatabase : targetDatabase;
+  useEffect(() => {
+    const needsSnowflake = sourceConnector === 'snowflake' || targetConnectors.has('snowflake');
+    if (!needsSnowflake || !snowflakeAccountId || !activeSnowflakeDatabase) {
+      setSnowflakeSchemas([]);
+      return;
+    }
+
+    let active = true;
+    setSnowflakeSchemaLoading(true);
+    api.discoverSnowflakeSchemas(activeSnowflakeDatabase, snowflakeAccountId)
+      .then((schemaData) => {
+        if (!active) return;
+        const schemas = normalizeDiscoveryItems(schemaData);
+        setSnowflakeSchemas(schemas);
+
+        if (sourceConnector === 'snowflake') {
+          const hasSchema = schemas.some(item => item.id === snowflakeSchema);
+          if (!hasSchema) setSnowflakeSchema(schemas[0]?.id || '');
+        }
+
+        if (targetConnectors.has('snowflake')) {
+          const hasSchema = schemas.some(item => item.id === targetSchema);
+          if (!hasSchema) setTargetSchema(schemas[0]?.id || '');
+        }
+      })
+      .catch((err) => {
+        if (!active) return;
+        setSnowflakeSchemas([]);
+        setSnowflakeDiscoveryError(err?.message || 'Could not load Snowflake schemas.');
+      })
+      .finally(() => {
+        if (active) setSnowflakeSchemaLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    activeSnowflakeDatabase,
+    normalizeDiscoveryItems,
+    snowflakeAccountId,
+    sourceConnector,
+    targetConnectors,
+    setSnowflakeSchema,
+    setTargetSchema,
+  ]);
 
   const LABEL = {
     display: 'block', fontSize: 11, fontWeight: 700,
@@ -2724,47 +2885,72 @@ function StepConnectorConfig({
         {sourceConnector === 'snowflake' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
-              <label style={LABEL}>Source Account (override)</label>
-              <input
-                type="text" value={snowflakeAccountId} onChange={e => setSnowflakeAccountId(e.target.value)}
-                placeholder="Use saved Snowflake account"
+              <label style={LABEL}>Source Snowflake Account</label>
+              <select
+                value={snowflakeAccountId}
+                onChange={e => handleSnowflakeAccountSelect(e.target.value, 'source')}
                 style={INPUT}
-                onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-                onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-              />
+              >
+                {snowflakeAccounts.length === 0 && <option value="">No saved Snowflake accounts</option>}
+                {snowflakeAccounts.map(acc => (
+                  <option key={getAccountId(acc)} value={getAccountId(acc)}>
+                    {getAccountLabel(acc)}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
-              <label style={LABEL}>Source Warehouse (override)</label>
-              <input
-                type="text" value={targetWarehouse} onChange={e => setTargetWarehouse(e.target.value)}
-                placeholder="Use saved Snowflake warehouse"
+              <label style={LABEL}>Source Warehouse</label>
+              <select
+                value={targetWarehouse}
+                onChange={e => setTargetWarehouse(e.target.value)}
                 style={INPUT}
-                onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-                onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-              />
+                disabled={snowflakeDiscoveryLoading || snowflakeWarehouses.length === 0}
+              >
+                {snowflakeDiscoveryLoading && <option value="">Loading warehouses...</option>}
+                {!snowflakeDiscoveryLoading && snowflakeWarehouses.length === 0 && <option value="">No warehouses found</option>}
+                {snowflakeWarehouses.map(item => (
+                  <option key={item.id} value={item.id}>{item.name}</option>
+                ))}
+              </select>
             </div>
             <div style={{ gridColumn: 'span 2', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
                 <label style={LABEL}>Source Database</label>
-                <input
-                  type="text" value={snowflakeDatabase} onChange={e => setSnowflakeDatabase(e.target.value)}
-                  placeholder="e.g. SNOWFLAKE_SAMPLE_DATA"
+                <select
+                  value={snowflakeDatabase}
+                  onChange={e => setSnowflakeDatabase(e.target.value)}
                   style={INPUT}
-                  onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-                  onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-                />
+                  disabled={snowflakeDiscoveryLoading || snowflakeDatabases.length === 0}
+                >
+                  {snowflakeDiscoveryLoading && <option value="">Loading databases...</option>}
+                  {!snowflakeDiscoveryLoading && snowflakeDatabases.length === 0 && <option value="">No databases found</option>}
+                  {snowflakeDatabases.map(item => (
+                    <option key={item.id} value={item.id}>{item.name}</option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label style={LABEL}>Source Schema</label>
-                <input
-                  type="text" value={snowflakeSchema} onChange={e => setSnowflakeSchema(e.target.value)}
-                  placeholder="e.g. PUBLIC"
+                <select
+                  value={snowflakeSchema}
+                  onChange={e => setSnowflakeSchema(e.target.value)}
                   style={INPUT}
-                  onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-                  onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-                />
+                  disabled={snowflakeSchemaLoading || snowflakeSchemas.length === 0}
+                >
+                  {snowflakeSchemaLoading && <option value="">Loading schemas...</option>}
+                  {!snowflakeSchemaLoading && snowflakeSchemas.length === 0 && <option value="">No schemas found</option>}
+                  {snowflakeSchemas.map(item => (
+                    <option key={item.id} value={item.id}>{item.name}</option>
+                  ))}
+                </select>
               </div>
             </div>
+            {snowflakeDiscoveryError && (
+              <div style={{ gridColumn: 'span 2', color: 'var(--color-error)', fontSize: 11 }}>
+                {snowflakeDiscoveryError}
+              </div>
+            )}
           </div>
         )}
 
@@ -2785,7 +2971,7 @@ function StepConnectorConfig({
                 <option value="" disabled>Select Fabric connection</option>
                 {fabricAccounts.length === 0 && <option value="" disabled>No accounts available</option>}
                 {fabricAccounts.length > 0 && fabricAccounts.map(acc => (
-                  <option key={acc.id} value={acc.id}>
+                  <option key={getAccountId(acc)} value={getAccountId(acc)}>
                     {(acc.tag || acc.identity_email || acc.id)} ({acc.identity_email || 'N/A'})
                   </option>
                 ))}
@@ -3000,45 +3186,70 @@ function StepConnectorConfig({
                   {target === 'snowflake' && (
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                       <div>
-                        <label style={LABEL}>Snowflake Account (override)</label>
-                        <input
-                          type="text" value={targetAccount} onChange={e => setTargetAccount(e.target.value)}
-                          placeholder="Use saved Snowflake account"
+                        <label style={LABEL}>Snowflake Account</label>
+                        <select
+                          value={snowflakeAccountId}
+                          onChange={e => handleSnowflakeAccountSelect(e.target.value, 'target')}
                           style={INPUT}
-                          onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-                          onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-                        />
+                        >
+                          {snowflakeAccounts.length === 0 && <option value="">No saved Snowflake accounts</option>}
+                          {snowflakeAccounts.map(acc => (
+                            <option key={getAccountId(acc)} value={getAccountId(acc)}>
+                              {getAccountLabel(acc)}
+                            </option>
+                          ))}
+                        </select>
                       </div>
                       <div>
-                        <label style={LABEL}>Snowflake Warehouse (override)</label>
-                        <input
-                          type="text" value={targetWarehouse} onChange={e => setTargetWarehouse(e.target.value)}
-                          placeholder="Use saved Snowflake warehouse"
+                        <label style={LABEL}>Snowflake Warehouse</label>
+                        <select
+                          value={targetWarehouse}
+                          onChange={e => setTargetWarehouse(e.target.value)}
                           style={INPUT}
-                          onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-                          onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-                        />
+                          disabled={snowflakeDiscoveryLoading || snowflakeWarehouses.length === 0}
+                        >
+                          {snowflakeDiscoveryLoading && <option value="">Loading warehouses...</option>}
+                          {!snowflakeDiscoveryLoading && snowflakeWarehouses.length === 0 && <option value="">No warehouses found</option>}
+                          {snowflakeWarehouses.map(item => (
+                            <option key={item.id} value={item.id}>{item.name}</option>
+                          ))}
+                        </select>
                       </div>
                       <div>
-                        <label style={LABEL}>Snowflake Database (optional)</label>
-                        <input
-                          type="text" value={targetDatabase} onChange={e => setTargetDatabase(e.target.value)}
-                          placeholder="Use global Snowflake database"
+                        <label style={LABEL}>Snowflake Database</label>
+                        <select
+                          value={targetDatabase}
+                          onChange={e => setTargetDatabase(e.target.value)}
                           style={INPUT}
-                          onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-                          onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-                        />
+                          disabled={snowflakeDiscoveryLoading || snowflakeDatabases.length === 0}
+                        >
+                          {snowflakeDiscoveryLoading && <option value="">Loading databases...</option>}
+                          {!snowflakeDiscoveryLoading && snowflakeDatabases.length === 0 && <option value="">No databases found</option>}
+                          {snowflakeDatabases.map(item => (
+                            <option key={item.id} value={item.id}>{item.name}</option>
+                          ))}
+                        </select>
                       </div>
                       <div>
-                        <label style={LABEL}>Snowflake Schema (optional)</label>
-                        <input
-                          type="text" value={targetSchema} onChange={e => setTargetSchema(e.target.value)}
-                          placeholder="Use global Snowflake schema"
+                        <label style={LABEL}>Snowflake Schema</label>
+                        <select
+                          value={targetSchema}
+                          onChange={e => setTargetSchema(e.target.value)}
                           style={INPUT}
-                          onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-                          onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-                        />
+                          disabled={snowflakeSchemaLoading || snowflakeSchemas.length === 0}
+                        >
+                          {snowflakeSchemaLoading && <option value="">Loading schemas...</option>}
+                          {!snowflakeSchemaLoading && snowflakeSchemas.length === 0 && <option value="">No schemas found</option>}
+                          {snowflakeSchemas.map(item => (
+                            <option key={item.id} value={item.id}>{item.name}</option>
+                          ))}
+                        </select>
                       </div>
+                      {snowflakeDiscoveryError && (
+                        <div style={{ gridColumn: 'span 2', color: 'var(--color-error)', fontSize: 11 }}>
+                          {snowflakeDiscoveryError}
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -3052,12 +3263,13 @@ function StepConnectorConfig({
                             const nextAccountId = e.target.value;
                             setFabricAccountId(nextAccountId);
                             setFabricWorkspaceId('');
+                            fetchFabricWorkspaces(nextAccountId);
                           }}
                           style={INPUT}
                         >
                           {fabricAccounts.length === 0 && <option value="" disabled>No accounts available</option>}
                           {fabricAccounts.length > 0 && fabricAccounts.map(acc => (
-                            <option key={acc.id} value={acc.id}>
+                            <option key={getAccountId(acc)} value={getAccountId(acc)}>
                               {(acc.tag || acc.identity_email || acc.id)} ({acc.identity_email || 'N/A'})
                             </option>
                           ))}
@@ -3073,13 +3285,13 @@ function StepConnectorConfig({
                           <div style={{ flex: 1 }} />
                           <button
                             onClick={() => fetchFabricWorkspaces(fabricAccountId)}
-                            disabled={isRefreshingWorkspaces}
+                            disabled={isRefreshingWorkspaces || !fabricAccountId}
                             style={{
                               display: 'flex', alignItems: 'center', gap: 4,
-                              background: 'none', border: 'none', cursor: isRefreshingWorkspaces ? 'not-allowed' : 'pointer',
+                              background: 'none', border: 'none', cursor: (isRefreshingWorkspaces || !fabricAccountId) ? 'not-allowed' : 'pointer',
                               fontSize: 11, color: 'var(--text-tertiary)', padding: '2px 6px',
                               borderRadius: 4, transition: 'all 0.2s ease',
-                              opacity: isRefreshingWorkspaces ? 0.6 : 1
+                              opacity: (isRefreshingWorkspaces || !fabricAccountId) ? 0.6 : 1
                             }}
                             title="Refresh workspaces"
                           >
@@ -3121,7 +3333,7 @@ function StepConnectorConfig({
                             style={INPUT}
                           >
                             {databricksAccounts.map(acc => (
-                              <option key={acc.id} value={acc.id}>
+                              <option key={getAccountId(acc)} value={getAccountId(acc)}>
                                 {(acc.tag || acc.identity_email || acc.id)} ({acc.identity_email || 'N/A'})
                               </option>
                             ))}
@@ -3151,20 +3363,6 @@ function StepConnectorConfig({
         </div>
       </div>
 
-      <div style={SECTION_CARD}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>Optional Metadata</div>
-        <label style={LABEL}>Domain Hint (optional)</label>
-        <input
-          type="text" value={domainHint} onChange={e => setDomainHint(e.target.value)}
-          placeholder="e.g. finance, sales, hr — helps AI generate better names"
-          style={INPUT}
-          onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-          onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-        />
-        <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
-          A domain hint improves generated labels and descriptions. It does not change connector behavior.
-        </p>
-      </div>
     </div>
   );
 }
