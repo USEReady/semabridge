@@ -42,7 +42,12 @@ export default function ImportProjectModal({ open, onClose, onImported }) {
     setLoading(true);
     try {
       const data = await api.importProjects(files);
-      setResults(data.results ?? []);
+      // The backend returns { imported: [...], errors: [...] }
+      const formattedResults = [
+        ...(data.imported || []).map(r => ({ ...r, status: 'valid' })),
+        ...(data.errors || []).map(r => ({ ...r, status: 'error', errors: [{ msg: r.error }] }))
+      ];
+      setResults(formattedResults);
     } catch (err) {
       setResults([{ filename: 'Request failed', status: 'error', errors: [{ msg: err.message }] }]);
     } finally {

@@ -98,6 +98,7 @@ export default function ProjectsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [menuOpen, setMenuOpen] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(new Set());
   const [detailProject, setDetailProject] = useState(null);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -376,7 +377,22 @@ export default function ProjectsPage() {
 
   const handleImported = useCallback(() => { refreshData(); }, [refreshData]);
 
-  const handleRunNow = useCallback(async (projectOrId) => {
+  const handleToggleSelect = useCallback((e, id) => {
+    e.stopPropagation();
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+
+  const handleRunNow = useCallback(async (projectOrId, options = {}) => {
+    const { navigateOnRun = true } = options;
     const projectId = typeof projectOrId === 'object' ? (projectOrId?.id || projectOrId?.project_id) : projectOrId;
     if (!projectId) return;
 
@@ -402,7 +418,9 @@ export default function ProjectsPage() {
       }
       const status = String(result?.status || '').toLowerCase();
       if (result?.run_id || result?.id || status === 'running') {
-        openRunsPage();
+        if (navigateOnRun) {
+          openRunsPage();
+        }
         return result;
       }
       // Fallback: force progress bar to 100% and status to 'success' if POST returns 200
@@ -421,7 +439,7 @@ export default function ProjectsPage() {
         return next;
       });
     }
-  }, [setProjects]);
+  }, [projects, setProjects]);
 
   /* ── Render ── */
   return (
@@ -913,6 +931,88 @@ export default function ProjectsPage() {
         </div>
 
         {/* Cards grid */}
+        {selectedIds.size > 0 && (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            background: 'var(--bg-card)', border: '1px solid var(--border-main)',
+            borderRadius: 8, padding: '8px 16px', marginBottom: 16,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.05)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                {selectedIds.size} selected
+              </span>
+              <button
+                onClick={clearSelection}
+                style={{ fontSize: 13, background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
+              >
+                Clear
+              </button>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={async () => {
+                  try {
+                    let started = false;
+                    for (let id of selectedIds) {
+                      const p = projects.find(x => x.id === id);
+                      if (p) {
+                        await handleRunNow(p, { navigateOnRun: false });
+                        started = true;
+                      }
+                    }
+                    clearSelection();
+                    if (started) {
+                      openRunsPage();
+                    }
+                  } catch (err) {
+                    alert(`Run selected failed: ${err.message || 'Unknown error'}`);
+                  }
+                }}
+                className="btn-primary"
+                style={{ height: 32, fontSize: 13, padding: '0 12px', background: 'var(--color-success)', borderColor: 'var(--color-success)', color: '#fff' }}
+              >
+                Run Selected
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    const arr = Array.from(selectedIds);
+                    await api.exportProjectsBulk(arr);
+                    clearSelection();
+                  } catch (err) {
+                    alert(`Export selected failed: ${err.message || 'Unknown error'}`);
+                  }
+                }}
+                className="btn"
+                style={{ height: 32, fontSize: 13, padding: '0 12px' }}
+              >
+                Export Selected
+              </button>
+              <button
+                onClick={async () => {
+                  if (!confirm(`Delete ${selectedIds.size} projects?`)) return;
+                  try {
+                    const ids = Array.from(selectedIds);
+                    for (let id of ids) {
+                      await api.deleteProject(id);
+                    }
+                    setProjects(p => p.filter(x => !ids.includes(x.id)));
+                    clearSelection();
+                  } catch (err) {
+                    alert(`Delete selected failed: ${err.message || 'Unknown error'}`);
+                    await refreshData();
+                  }
+                }}
+                className="btn"
+                style={{ height: 32, fontSize: 13, padding: '0 12px', color: 'var(--color-danger)' }}
+              >
+                Delete Selected
+              </button>
+            </div>
+          </div>
+        )}
+
         <div
           id="projects-grid-scroll"
           onScroll={(e) => setProjectListScrollTop(e.currentTarget.scrollTop)}
@@ -942,6 +1042,8 @@ export default function ProjectsPage() {
                   project={project}
                   menuOpen={menuOpen}
                   onMenuToggle={setMenuOpen}
+                  isSelected={selectedIds.has(project.id)}
+                  onToggleSelect={handleToggleSelect}
                   onViewDetail={() => { setActiveProjectId(project.id); setDetailProject(project); }}
                   onConfigure={() => { setActiveProjectId(project.id); navigate(`/projects/${project.id}/edit`); }}
                   onRunNow={() => handleRunNow(project)}
@@ -1139,6 +1241,7 @@ function ProjectCard({
   project, menuOpen, onMenuToggle,
   onViewDetail, onConfigure, onRunNow, isRunning = false, onDuplicate, onExport, onDelete,
   onDragStart, onDragEnd,
+  isSelected, onToggleSelect,
 }) {
   const navigate = useNavigate();
   const isOpen = menuOpen === project.id;
@@ -1194,6 +1297,17 @@ function ProjectCard({
       {/* Top row */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+          <div
+            onClick={(e) => { e.stopPropagation(); onToggleSelect(e, project.id); }}
+            style={{
+              width: 16, height: 16, borderRadius: 3, border: `1px solid ${isSelected ? 'var(--color-accent-blue, #0d74ce)' : 'var(--border-main)'}`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              backgroundColor: isSelected ? 'var(--color-accent-blue, #0d74ce)' : 'transparent',
+              cursor: 'pointer', flexShrink: 0
+            }}
+          >
+            {isSelected && <Check size={12} color="#fff" strokeWidth={3} />}
+          </div>
           <div style={{
             width: 40, height: 40, borderRadius: 10,
             background: 'var(--color-accent-faint)',
@@ -1222,7 +1336,7 @@ function ProjectCard({
         {/* 3-dot menu */}
         <div style={{ position: 'relative' }}>
           <button
-            onClick={() => onMenuToggle(isOpen ? null : project.id)}
+            onClick={(e) => { e.stopPropagation(); onMenuToggle(isOpen ? null : project.id); }}
             style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 4 }}
           >
             <MoreVertical size={14} />

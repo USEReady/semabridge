@@ -133,7 +133,6 @@ async def import_projects(files: List[UploadFile] = File(...)):
                 'target': parsed.get('target') if isinstance(parsed.get('target'), dict) else {},
             }
             created = await create_project_compat(project_payload)
-            await save_project_config_compat(project_id, {'config_yaml': text})
             imported.append({
                 'filename': filename,
                 'project_id': created.get('project_id') or project_id,

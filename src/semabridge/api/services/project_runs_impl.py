@@ -2172,6 +2172,35 @@ async def get_model_history_compat(project_id: str, model_name: str) -> List[Dic
     return history
 
 
+async def clear_job_runs_compat():
+    """Clear all job runs across all projects."""
+    _compat_ensure_loaded()
+    
+    try:
+        from semabridge.repository.orm.models import Run
+        from sqlalchemy import delete
+        from semabridge.repository.orm.session_factory import db_manager
+        
+        session = db_manager._session()
+        try:
+            from sqlalchemy import select
+            runs = session.execute(select(Run)).scalars().all()
+            for r in runs:
+                session.delete(r)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error("Failed to clear runs from ORM: %s", e)
+        finally:
+            session.close()
+    except Exception as exc:
+        logger.error("Failed to connect to ORM to clear runs: %s", exc)
+
+    _compat_project_runs.clear()
+    _compat_save_store()
+    return {"status": "success", "message": "All runs cleared."}
+
+
 async def get_project_stats_compat(project_id: str) -> Dict[str, Any]:
     _compat_ensure_loaded()
     runs = _compat_project_runs.get(project_id, [])
