@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
 import usePageCache from '../hooks/usePageCache';
 import {
     History,
@@ -39,6 +39,7 @@ import { api, formatDate } from '../utils/api';
 import { useUIStore } from '../store/uiStore';
 import { useLogs } from '../context/LogsContext';
 import PageHeader from '../components/common/PageHeader';
+import DiffViewer from '../components/DiffViewer';
 import RepositoryBrowser from '../components/RepositoryBrowser';
 import { Archive } from 'lucide-react';
 
@@ -90,7 +91,26 @@ export const ActionButton = ({ onClick, children, variant = "default", disabled 
 
 // --- DIFF VIEW COMPONENT ---
 
-function DiffView({ diffData, baseRun, targetRun, onBack }) {
+function DiffView({ diffData, baseRun, targetRun, onBack, onSelectModelHistory }) {
+    const [expandedModels, setExpandedModels] = useState([]);
+    const [viewMode, setViewMode] = useState('split');
+    const [panelView, setPanelView] = useState('content');
+    const [baseSnapshotContent, setBaseSnapshotContent] = useState('');
+    const [targetSnapshotContent, setTargetSnapshotContent] = useState('');
+    const [contentDiffLoading, setContentDiffLoading] = useState(false);
+    const [contentDiffError, setContentDiffError] = useState('');
+
+    useEffect(() => {
+        // Prevent stale expanded rows when comparison context changes.
+        setExpandedModels([]);
+    }, [baseRun?.run_id, targetRun?.run_id, diffData]);
+
+    const toggleExpand = (modelName) => {
+        setExpandedModels(prev => 
+            prev.includes(modelName) ? prev.filter(m => m !== modelName) : [...prev, modelName]
+        );
+    };
+
     if (!diffData) return null;
     const { metadata_diff, models } = diffData;
     const [filterStatus, setFilterStatus] = useState('ALL');
@@ -101,9 +121,110 @@ function DiffView({ diffData, baseRun, targetRun, onBack }) {
         const matchesStatus = filterStatus === 'ALL' || m.status === filterStatus;
         return matchesSearch && matchesStatus;
     });
+
+    const projectId = baseRun?.project_id || targetRun?.project_id || '';
+    const baseSnapshotId = baseRun?.after_tgt_snapshots?.[0] || baseRun?.after_target_snapshot_ids?.[0] || baseRun?.before_tgt_snapshots?.[0] || baseRun?.before_target_snapshot_ids?.[0] || '';
+    const targetSnapshotId = targetRun?.after_tgt_snapshots?.[0] || targetRun?.after_target_snapshot_ids?.[0] || targetRun?.before_tgt_snapshots?.[0] || targetRun?.before_target_snapshot_ids?.[0] || '';
+
+    useEffect(() => {
+        let isMounted = true;
+
+        async function loadSnapshotContent() {
+            if (!projectId || !baseSnapshotId || !targetSnapshotId) {
+                setBaseSnapshotContent('');
+                setTargetSnapshotContent('');
+                setContentDiffError('');
+                return;
+            }
+
+            setContentDiffLoading(true);
+            setContentDiffError('');
+            try {
+                const [basePayload, targetPayload] = await Promise.all([
+                    api.getSnapshotContent(projectId, baseSnapshotId),
+                    api.getSnapshotContent(projectId, targetSnapshotId),
+                ]);
+
+                if (!isMounted) return;
+                const toDiffText = (value) => {
+                    if (value == null) return '';
+                    if (typeof value === 'string') return value;
+                    try {
+                        return JSON.stringify(value, null, 2);
+                    } catch {
+                        return String(value);
+                    }
+                };
+
+                setBaseSnapshotContent(toDiffText(basePayload?.content));
+                setTargetSnapshotContent(toDiffText(targetPayload?.content));
+            } catch (err) {
+                if (!isMounted) return;
+                setBaseSnapshotContent('');
+                setTargetSnapshotContent('');
+                setContentDiffError(err?.message || 'Failed to load snapshot content diff.');
+            } finally {
+                if (isMounted) setContentDiffLoading(false);
+            }
+        }
+
+        loadSnapshotContent();
+        return () => {
+            isMounted = false;
+        };
+    }, [projectId, baseSnapshotId, targetSnapshotId]);
     
     return (
         <div className="flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="flex justify-end">
+                <div className="flex bg-[var(--bg-main)]/50 border border-[var(--border-light)] rounded-xl p-1">
+                    <button
+                        onClick={() => setPanelView('content')}
+                        className={`px-3 py-1.5 text-[11px] font-bold rounded-lg transition-all ${panelView === 'content' ? 'bg-blue-500/20 text-blue-400' : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'}`}
+                    >
+                        Content Diff
+                    </button>
+                    <button
+                        onClick={() => setPanelView('structural')}
+                        className={`px-3 py-1.5 text-[11px] font-bold rounded-lg transition-all ${panelView === 'structural' ? 'bg-blue-500/20 text-blue-400' : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'}`}
+                    >
+                        Structural Evolution
+                    </button>
+                </div>
+            </div>
+
+            {panelView === 'content' && (
+            <GlassCard className="overflow-hidden">
+                <div className="px-6 py-4 border-b border-[var(--border-light)] flex items-center justify-between gap-3 bg-[var(--bg-surface)]/50">
+                    <div>
+                        <h3 className="text-sm font-black text-[var(--text-primary)] uppercase tracking-widest">Snapshot Content Diff</h3>
+                        <p className="text-[10px] text-[var(--text-tertiary)] font-bold uppercase mt-0.5">Raw snapshot state comparison</p>
+                    </div>
+                    <div className="text-[10px] text-[var(--text-tertiary)] font-bold uppercase">Split / Unified available in viewer toolbar</div>
+                </div>
+                <div className="p-4 bg-[var(--bg-main)]/20">
+                    {contentDiffLoading ? (
+                        <div className="text-xs text-[var(--text-tertiary)]">Loading snapshot content...</div>
+                    ) : contentDiffError ? (
+                        <div className="text-xs text-rose-400">{contentDiffError}</div>
+                    ) : (!baseSnapshotContent && !targetSnapshotContent) ? (
+                        <div className="text-xs text-[var(--text-tertiary)]">No snapshot content available for selected runs.</div>
+                    ) : (
+                        <div className="overflow-auto rounded-xl border border-[var(--border-main)]">
+                            <DiffViewer
+                                leftContent={baseSnapshotContent}
+                                rightContent={targetSnapshotContent}
+                                leftTitle={`Base ${String(baseSnapshotId || '').slice(0, 8)}`}
+                                rightTitle={`Target ${String(targetSnapshotId || '').slice(0, 8)}`}
+                            />
+                        </div>
+                    )}
+                </div>
+            </GlassCard>
+            )}
+
+            {panelView === 'structural' && (
+            <>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {[
                     { key: 'snapshot_a', run: baseRun, label: 'BASE VERSION', accent: 'var(--accent-blue)', color: 'blue' },
@@ -153,6 +274,29 @@ function DiffView({ diffData, baseRun, targetRun, onBack }) {
                         </div>
                     </div>
                     <div className="flex items-center gap-3 w-full md:w-auto">
+                        <div className="flex bg-[var(--bg-main)]/50 border border-[var(--border-light)] rounded-xl p-1">
+                            <button
+                                onClick={() => setViewMode('unified')}
+                                className={`p-1.5 rounded-lg transition-all flex items-center justify-center ${viewMode === 'unified' ? 'bg-blue-500/20 text-blue-500' : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface)]'}`}
+                                title="Unified View"
+                            >
+                                <ListTree size={14} />
+                            </button>
+                            <button
+                                onClick={() => setViewMode('split')}
+                                className={`p-1.5 rounded-lg transition-all flex items-center justify-center ${viewMode === 'split' ? 'bg-blue-500/20 text-blue-500' : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface)]'}`}
+                                title="Split View"
+                            >
+                                <LayoutGrid size={14} />
+                            </button>
+                            <button
+                                onClick={() => setViewMode('semantic')}
+                                className={`p-1.5 rounded-lg transition-all flex items-center justify-center ${viewMode === 'semantic' ? 'bg-blue-500/20 text-blue-500' : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface)]'}`}
+                                title="Semantic View"
+                            >
+                                <Filter size={14} />
+                            </button>
+                        </div>
                         <div className="relative flex-1 md:w-64">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]" size={14} />
                             <input 
@@ -196,40 +340,179 @@ function DiffView({ diffData, baseRun, targetRun, onBack }) {
                                         </div>
                                     </td>
                                 </tr>
-                            ) : filteredModels.map((m, idx) => (
-                                <tr 
-                                    key={idx} 
-                                    onClick={() => setSelectedModelHistory(m.name)}
-                                    className="hover:bg-blue-500/5 transition-colors group cursor-pointer"
-                                >
-                                    <td className="px-8 py-5">
-                                        <div className="flex items-center gap-3">
-                                            <div className={`w-2 h-2 rounded-full ${
-                                                m.status === 'ADDED' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 
-                                                m.status === 'REMOVED' ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]' : 
-                                                m.status === 'MODIFIED' ? 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]' : 'bg-slate-400 opacity-60'
-                                            }`} />
-                                            <span className="font-bold text-[var(--text-primary)] text-sm tracking-tight">{m.name}</span>
-                                        </div>
-                                    </td>
-                                    <td className="px-8 py-5">
-                                        <div className="flex">
-                                            <Badge variant={
-                                                m.status === 'ADDED' ? 'success' : 
-                                                m.status === 'REMOVED' ? 'error' : 
-                                                m.status === 'MODIFIED' ? 'warning' : 'default'
-                                            }>{m.status}</Badge>
-                                        </div>
-                                    </td>
-                                    <td className="px-8 py-5 text-[12px] text-[var(--text-secondary)] font-medium leading-relaxed italic opacity-80">
-                                        {m.details?.message || 'Logical consistency maintained across this mutation.'}
-                                    </td>
-                                </tr>
-                            ))}
+                            ) : filteredModels.map((m) => {
+                                const isExpanded = expandedModels.includes(m.name);
+                                const hasColumns = m.columns && m.columns.length > 0;
+                                const hasMeasures = m.measures && m.measures.length > 0;
+                                
+                                return (
+                                <Fragment key={m.name}>
+                                    <tr 
+                                        onClick={() => {
+                                            toggleExpand(m.name);
+                                        }}
+                                        className="hover:bg-blue-500/5 transition-colors group cursor-pointer"
+                                    >
+                                        <td className="px-8 py-5">
+                                            <div className="flex items-center gap-3">
+                                                <div className={`w-2 h-2 rounded-full ${
+                                                    m.status === 'ADDED' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 
+                                                    m.status === 'REMOVED' ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]' : 
+                                                    m.status === 'MODIFIED' ? 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]' : 'bg-slate-400 opacity-60'
+                                                }`} />
+                                                <span className="font-bold text-[var(--text-primary)] text-sm tracking-tight">{m.name}</span>
+                                            </div>
+                                        </td>
+                                        <td className="px-8 py-5">
+                                            <div className="flex">
+                                                <Badge variant={
+                                                    m.status === 'ADDED' ? 'success' : 
+                                                    m.status === 'REMOVED' ? 'error' : 
+                                                    m.status === 'MODIFIED' ? 'warning' : 'default'
+                                                }>{m.status}</Badge>
+                                            </div>
+                                        </td>
+                                        <td className="px-8 py-5 flex items-center justify-between">
+                                            <span className="text-[12px] text-[var(--text-secondary)] font-medium leading-relaxed italic opacity-80">
+                                                {m.details?.message || 'Logical consistency maintained across this mutation.'}
+                                            </span>
+                                            <div className="flex items-center gap-2">
+                                                <button 
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        onSelectModelHistory && onSelectModelHistory(m.name);
+                                                    }}
+                                                    className="p-1.5 opacity-0 group-hover:opacity-100 hover:bg-blue-500/10 rounded-lg text-blue-500 transition-all"
+                                                    title="View History"
+                                                >
+                                                    <History size={14} />
+                                                </button>
+                                                {(m.status === 'MODIFIED' || hasColumns || hasMeasures) && (
+                                                    <ChevronRight size={14} className={`text-[var(--text-tertiary)] transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                                                )}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {isExpanded && (
+                                        <tr className="bg-[var(--bg-main)]/20">
+                                            <td colSpan="3" className="p-0 border-b-0">
+                                                <div className="px-14 py-6 bg-gradient-to-r from-blue-500/5 to-transparent border-l-2 border-blue-500/30 ml-4 mb-4 mt-2 rounded-r-xl">
+                                                    <h5 className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-widest mb-4">
+                                                        Schema Evolution ({viewMode === 'split' ? 'Split View' : viewMode === 'unified' ? 'Unified View' : 'Semantic View'})
+                                                    </h5>
+                                                    {!hasColumns && !hasMeasures ? (
+                                                        <p className="text-xs text-[var(--text-secondary)] italic">Schema differences are not available in this payload.</p>
+                                                    ) : hasColumns && viewMode === 'unified' ? (
+                                                        <div className="space-y-1">
+                                                            {m.columns.map((col) => (
+                                                                <div key={`uni-${m.name}-${col.name}-${col.status}`} className={`flex items-center justify-between p-2 rounded text-xs font-mono transition-colors ${col.status === 'ADDED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : col.status === 'REMOVED' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : col.status === 'MODIFIED' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'text-[var(--text-secondary)] border border-transparent hover:bg-[var(--bg-main)]/50'}`}>
+                                                                    <div className="flex items-center gap-2">
+                                                                        {col.status === 'ADDED' && <span className="text-emerald-500 font-bold">+</span>}
+                                                                        {col.status === 'REMOVED' && <span className="text-rose-500 font-bold">-</span>}
+                                                                        {col.status === 'MODIFIED' && <span className="text-amber-500 font-bold">~</span>}
+                                                                        <span className={col.status === 'REMOVED' ? 'line-through opacity-70' : ''}>{col.name}</span>
+                                                                    </div>
+                                                                    <div className="flex items-center gap-2 opacity-80">
+                                                                        {col.status === 'MODIFIED' && col.previousType && col.previousType !== col.type ? (
+                                                                            <>
+                                                                                <span className="line-through opacity-60">{col.previousType}</span>
+                                                                                <ArrowRight size={10} className="mx-1" />
+                                                                                <span>{col.type}</span>
+                                                                            </>
+                                                                        ) : (
+                                                                            <span>{col.type}</span>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    ) : hasColumns ? (
+                                                        <div className="grid grid-cols-2 gap-8">
+                                                            {/* LEFT: Previous State */}
+                                                            <div>
+                                                                <h6 className="text-[10px] font-bold text-[var(--text-secondary)] uppercase mb-3 border-b border-[var(--border-main)] pb-2">Previous Snapshot</h6>
+                                                                <div className="space-y-1">
+                                                                    {m.columns.filter(c => c.status !== 'ADDED' && (viewMode === 'semantic' ? c.status !== 'UNCHANGED' : true)).map((col) => (
+                                                                        <div key={`old-${m.name}-${col.name}-${col.status}`} className={`flex items-center justify-between p-2 rounded text-xs font-mono transition-colors ${col.status === 'REMOVED' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : col.status === 'MODIFIED' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'text-[var(--text-secondary)] border border-transparent hover:bg-[var(--bg-main)]/50'}`}>
+                                                                            <div className="flex items-center gap-2">
+                                                                                {col.status === 'REMOVED' && <span className="text-rose-500 font-bold">-</span>}
+                                                                                {col.status === 'MODIFIED' && <span className="text-amber-500 font-bold">~</span>}
+                                                                                <span className={col.status === 'REMOVED' ? 'line-through opacity-70' : ''}>{col.name}</span>
+                                                                            </div>
+                                                                            <span className="opacity-80">{col.previousType || col.type}</span>
+                                                                        </div>
+                                                                    ))}
+                                                                    {m.columns.filter(c => c.status !== 'ADDED' && (viewMode === 'semantic' ? c.status !== 'UNCHANGED' : true)).length === 0 && (
+                                                                        <p className="text-xs text-[var(--text-tertiary)] italic p-2">No {viewMode === 'semantic' ? 'changed ' : ''}columns in previous state.</p>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+
+                                                            {/* RIGHT: New State */}
+                                                            <div>
+                                                                <h6 className="text-[10px] font-bold text-[var(--text-secondary)] uppercase mb-3 border-b border-[var(--border-main)] pb-2">Target Snapshot</h6>
+                                                                <div className="space-y-1">
+                                                                    {m.columns.filter(c => c.status !== 'REMOVED' && (viewMode === 'semantic' ? c.status !== 'UNCHANGED' : true)).map((col) => (
+                                                                        <div key={`new-${m.name}-${col.name}-${col.status}`} className={`flex items-center justify-between p-2 rounded text-xs font-mono transition-colors ${col.status === 'ADDED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : col.status === 'MODIFIED' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'text-[var(--text-secondary)] border border-transparent hover:bg-[var(--bg-main)]/50'}`}>
+                                                                            <div className="flex items-center gap-2">
+                                                                                {col.status === 'ADDED' && <span className="text-emerald-500 font-bold">+</span>}
+                                                                                {col.status === 'MODIFIED' && <span className="text-amber-500 font-bold">~</span>}
+                                                                                <span>{col.name}</span>
+                                                                            </div>
+                                                                            <span className="opacity-80">{col.type}</span>
+                                                                        </div>
+                                                                    ))}
+                                                                    {m.columns.filter(c => c.status !== 'REMOVED' && (viewMode === 'semantic' ? c.status !== 'UNCHANGED' : true)).length === 0 && (
+                                                                        <p className="text-xs text-[var(--text-tertiary)] italic p-2">No {viewMode === 'semantic' ? 'changed ' : ''}columns in target state.</p>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    ) : null}
+
+                                                    {hasMeasures && (
+                                                        <div className="mt-4">
+                                                            <h6 className="text-[10px] font-bold text-[var(--text-secondary)] uppercase mb-3 border-b border-[var(--border-main)] pb-2">Measures</h6>
+                                                            <div className="space-y-1">
+                                                                {m.measures.map((measure) => (
+                                                                    <div
+                                                                        key={`measure-${m.name}-${measure.name}-${measure.status}`}
+                                                                        className={`flex items-center justify-between p-2 rounded text-xs font-mono transition-colors ${
+                                                                            measure.status === 'ADDED'
+                                                                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                                                                : measure.status === 'REMOVED'
+                                                                                    ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                                                                                    : measure.status === 'MODIFIED'
+                                                                                        ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                                                                        : 'text-[var(--text-secondary)] border border-transparent hover:bg-[var(--bg-main)]/50'
+                                                                        }`}
+                                                                    >
+                                                                        <div className="flex items-center gap-2">
+                                                                            {measure.status === 'ADDED' && <span className="text-emerald-500 font-bold">+</span>}
+                                                                            {measure.status === 'REMOVED' && <span className="text-rose-500 font-bold">-</span>}
+                                                                            {measure.status === 'MODIFIED' && <span className="text-amber-500 font-bold">~</span>}
+                                                                            {measure.status === 'UNCHANGED' && <span className="text-slate-500 font-bold">=</span>}
+                                                                            <span>{measure.name}</span>
+                                                                        </div>
+                                                                        <span className="opacity-80">{measure.status}</span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    )}
+                                </Fragment>
+                                );
+                            })}
                         </tbody>
                     </table>
                 </div>
             </GlassCard>
+            </>
+            )}
         </div>
     );
 }
@@ -1265,6 +1548,7 @@ export default function VersionControlPage() {
                             baseRun={versions.find(v => v.run_id === diffSelection[0])}
                             targetRun={versions.find(v => v.run_id === diffSelection[1])}
                             onBack={() => setViewMode('history')} 
+                            onSelectModelHistory={setSelectedModelHistory}
                         />
                     )}
 

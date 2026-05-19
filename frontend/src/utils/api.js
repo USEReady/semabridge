@@ -1346,7 +1346,7 @@ export const api = {
         const res = await authFetch(`${API_BASE_URL}/projects/export-bulk`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ project_ids: projectIds }),
+            body: JSON.stringify(projectIds),
         });
         if (!res.ok) {
             const txt = await res.text();
@@ -1511,7 +1511,23 @@ export const api = {
         return setCachedApiValue(cacheKey, data);
     },
 
-    // -- Global Config - connector sections --
+    async clearJobRuns() {
+        const res = await authFetch(`${API_BASE_URL}/jobs/runs`, {
+            method: 'DELETE',
+        });
+        const data = await handleResponse(res);
+        
+        // Clear related caches
+        for (const key of apiCache.keys()) {
+            if (key.startsWith('jobs:runs')) {
+                apiCache.delete(key);
+            }
+        }
+        
+        return data;
+    },
+
+    // -- Job Configuration -- connector sections --
 
     async getGlobalConnectorConfig() {
         const res = await authFetch(`${API_BASE_URL}/config/global/connectors`);

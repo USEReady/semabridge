@@ -385,6 +385,15 @@ class DatabaseManager:
         self.get_engine(url_override)  # ensures _session_factory is up-to-date
         return self._session_factory  # type: ignore[return-value]
 
+    def _session(self, url_override: Optional[str] = None) -> "Session":
+        """Return a new ``Session`` for legacy callers.
+
+        Some compatibility services still manage commit/rollback/close
+        themselves and historically called ``_session()`` directly. Keep that
+        contract while routing through the rotation-aware session factory.
+        """
+        return self.get_session_factory(url_override)()
+
     @contextmanager
     def get_session(self, url_override: Optional[str] = None) -> Generator["Session", None, None]:
         """Yield a scoped ``Session`` with automatic commit / rollback.
