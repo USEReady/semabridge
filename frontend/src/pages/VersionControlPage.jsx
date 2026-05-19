@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
 import usePageCache from '../hooks/usePageCache';
 import {
     History,
@@ -91,6 +91,15 @@ export const ActionButton = ({ onClick, children, variant = "default", disabled 
 // --- DIFF VIEW COMPONENT ---
 
 function DiffView({ diffData, baseRun, targetRun, onBack }) {
+    const [expandedModels, setExpandedModels] = useState([]);
+    const [viewMode, setViewMode] = useState('split');
+
+    const toggleExpand = (modelName) => {
+        setExpandedModels(prev => 
+            prev.includes(modelName) ? prev.filter(m => m !== modelName) : [...prev, modelName]
+        );
+    };
+
     if (!diffData) return null;
     const { metadata_diff, models } = diffData;
     const [filterStatus, setFilterStatus] = useState('ALL');
@@ -153,6 +162,29 @@ function DiffView({ diffData, baseRun, targetRun, onBack }) {
                         </div>
                     </div>
                     <div className="flex items-center gap-3 w-full md:w-auto">
+                        <div className="flex bg-[var(--bg-main)]/50 border border-[var(--border-light)] rounded-xl p-1">
+                            <button
+                                onClick={() => setViewMode('unified')}
+                                className={`p-1.5 rounded-lg transition-all flex items-center justify-center ${viewMode === 'unified' ? 'bg-blue-500/20 text-blue-500' : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface)]'}`}
+                                title="Unified View"
+                            >
+                                <ListTree size={14} />
+                            </button>
+                            <button
+                                onClick={() => setViewMode('split')}
+                                className={`p-1.5 rounded-lg transition-all flex items-center justify-center ${viewMode === 'split' ? 'bg-blue-500/20 text-blue-500' : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface)]'}`}
+                                title="Split View"
+                            >
+                                <LayoutGrid size={14} />
+                            </button>
+                            <button
+                                onClick={() => setViewMode('semantic')}
+                                className={`p-1.5 rounded-lg transition-all flex items-center justify-center ${viewMode === 'semantic' ? 'bg-blue-500/20 text-blue-500' : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface)]'}`}
+                                title="Semantic View"
+                            >
+                                <Filter size={14} />
+                            </button>
+                        </div>
                         <div className="relative flex-1 md:w-64">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]" size={14} />
                             <input 
@@ -196,36 +228,145 @@ function DiffView({ diffData, baseRun, targetRun, onBack }) {
                                         </div>
                                     </td>
                                 </tr>
-                            ) : filteredModels.map((m, idx) => (
-                                <tr 
-                                    key={idx} 
-                                    onClick={() => setSelectedModelHistory(m.name)}
-                                    className="hover:bg-blue-500/5 transition-colors group cursor-pointer"
-                                >
-                                    <td className="px-8 py-5">
-                                        <div className="flex items-center gap-3">
-                                            <div className={`w-2 h-2 rounded-full ${
-                                                m.status === 'ADDED' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 
-                                                m.status === 'REMOVED' ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]' : 
-                                                m.status === 'MODIFIED' ? 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]' : 'bg-slate-400 opacity-60'
-                                            }`} />
-                                            <span className="font-bold text-[var(--text-primary)] text-sm tracking-tight">{m.name}</span>
-                                        </div>
-                                    </td>
-                                    <td className="px-8 py-5">
-                                        <div className="flex">
-                                            <Badge variant={
-                                                m.status === 'ADDED' ? 'success' : 
-                                                m.status === 'REMOVED' ? 'error' : 
-                                                m.status === 'MODIFIED' ? 'warning' : 'default'
-                                            }>{m.status}</Badge>
-                                        </div>
-                                    </td>
-                                    <td className="px-8 py-5 text-[12px] text-[var(--text-secondary)] font-medium leading-relaxed italic opacity-80">
-                                        {m.details?.message || 'Logical consistency maintained across this mutation.'}
-                                    </td>
-                                </tr>
-                            ))}
+                            ) : filteredModels.map((m, idx) => {
+                                const isExpanded = expandedModels.includes(m.name);
+                                const hasColumns = m.columns && m.columns.length > 0;
+                                
+                                return (
+                                <Fragment key={idx}>
+                                    <tr 
+                                        onClick={() => {
+                                            if (m.status === 'MODIFIED' || hasColumns) {
+                                                toggleExpand(m.name);
+                                            } else {
+                                                setSelectedModelHistory(m.name);
+                                            }
+                                        }}
+                                        className="hover:bg-blue-500/5 transition-colors group cursor-pointer"
+                                    >
+                                        <td className="px-8 py-5">
+                                            <div className="flex items-center gap-3">
+                                                <div className={`w-2 h-2 rounded-full ${
+                                                    m.status === 'ADDED' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 
+                                                    m.status === 'REMOVED' ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]' : 
+                                                    m.status === 'MODIFIED' ? 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]' : 'bg-slate-400 opacity-60'
+                                                }`} />
+                                                <span className="font-bold text-[var(--text-primary)] text-sm tracking-tight">{m.name}</span>
+                                            </div>
+                                        </td>
+                                        <td className="px-8 py-5">
+                                            <div className="flex">
+                                                <Badge variant={
+                                                    m.status === 'ADDED' ? 'success' : 
+                                                    m.status === 'REMOVED' ? 'error' : 
+                                                    m.status === 'MODIFIED' ? 'warning' : 'default'
+                                                }>{m.status}</Badge>
+                                            </div>
+                                        </td>
+                                        <td className="px-8 py-5 flex items-center justify-between">
+                                            <span className="text-[12px] text-[var(--text-secondary)] font-medium leading-relaxed italic opacity-80">
+                                                {m.details?.message || 'Logical consistency maintained across this mutation.'}
+                                            </span>
+                                            <div className="flex items-center gap-2">
+                                                <button 
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setSelectedModelHistory(m.name);
+                                                    }}
+                                                    className="p-1.5 opacity-0 group-hover:opacity-100 hover:bg-blue-500/10 rounded-lg text-blue-500 transition-all"
+                                                    title="View History"
+                                                >
+                                                    <History size={14} />
+                                                </button>
+                                                {(m.status === 'MODIFIED' || hasColumns) && (
+                                                    <ChevronRight size={14} className={`text-[var(--text-tertiary)] transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                                                )}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {isExpanded && (
+                                        <tr className="bg-[var(--bg-main)]/20">
+                                            <td colSpan="3" className="p-0 border-b-0">
+                                                <div className="px-14 py-6 bg-gradient-to-r from-blue-500/5 to-transparent border-l-2 border-blue-500/30 ml-4 mb-4 mt-2 rounded-r-xl">
+                                                    <h5 className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-widest mb-4">
+                                                        Schema Evolution ({viewMode === 'split' ? 'Split View' : viewMode === 'unified' ? 'Unified View' : 'Semantic View'})
+                                                    </h5>
+                                                    {!hasColumns ? (
+                                                        <p className="text-xs text-[var(--text-secondary)] italic">Schema differences are not available in this payload.</p>
+                                                    ) : viewMode === 'unified' ? (
+                                                        <div className="space-y-1">
+                                                            {m.columns.map((col, cIdx) => (
+                                                                <div key={`uni-${cIdx}`} className={`flex items-center justify-between p-2 rounded text-xs font-mono transition-colors ${col.status === 'ADDED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : col.status === 'REMOVED' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : col.status === 'MODIFIED' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'text-[var(--text-secondary)] border border-transparent hover:bg-[var(--bg-main)]/50'}`}>
+                                                                    <div className="flex items-center gap-2">
+                                                                        {col.status === 'ADDED' && <span className="text-emerald-500 font-bold">+</span>}
+                                                                        {col.status === 'REMOVED' && <span className="text-rose-500 font-bold">-</span>}
+                                                                        {col.status === 'MODIFIED' && <span className="text-amber-500 font-bold">~</span>}
+                                                                        <span className={col.status === 'REMOVED' ? 'line-through opacity-70' : ''}>{col.name}</span>
+                                                                    </div>
+                                                                    <div className="flex items-center gap-2 opacity-80">
+                                                                        {col.status === 'MODIFIED' && col.previousType && col.previousType !== col.type ? (
+                                                                            <>
+                                                                                <span className="line-through opacity-60">{col.previousType}</span>
+                                                                                <ArrowRight size={10} className="mx-1" />
+                                                                                <span>{col.type}</span>
+                                                                            </>
+                                                                        ) : (
+                                                                            <span>{col.type}</span>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    ) : (
+                                                        <div className="grid grid-cols-2 gap-8">
+                                                            {/* LEFT: Previous State */}
+                                                            <div>
+                                                                <h6 className="text-[10px] font-bold text-[var(--text-secondary)] uppercase mb-3 border-b border-[var(--border-main)] pb-2">Previous Snapshot</h6>
+                                                                <div className="space-y-1">
+                                                                    {m.columns.filter(c => c.status !== 'ADDED' && (viewMode === 'semantic' ? c.status !== 'UNCHANGED' : true)).map((col, cIdx) => (
+                                                                        <div key={`old-${cIdx}`} className={`flex items-center justify-between p-2 rounded text-xs font-mono transition-colors ${col.status === 'REMOVED' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : col.status === 'MODIFIED' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'text-[var(--text-secondary)] border border-transparent hover:bg-[var(--bg-main)]/50'}`}>
+                                                                            <div className="flex items-center gap-2">
+                                                                                {col.status === 'REMOVED' && <span className="text-rose-500 font-bold">-</span>}
+                                                                                {col.status === 'MODIFIED' && <span className="text-amber-500 font-bold">~</span>}
+                                                                                <span className={col.status === 'REMOVED' ? 'line-through opacity-70' : ''}>{col.name}</span>
+                                                                            </div>
+                                                                            <span className="opacity-80">{col.previousType || col.type}</span>
+                                                                        </div>
+                                                                    ))}
+                                                                    {m.columns.filter(c => c.status !== 'ADDED' && (viewMode === 'semantic' ? c.status !== 'UNCHANGED' : true)).length === 0 && (
+                                                                        <p className="text-xs text-[var(--text-tertiary)] italic p-2">No {viewMode === 'semantic' ? 'changed ' : ''}columns in previous state.</p>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+
+                                                            {/* RIGHT: New State */}
+                                                            <div>
+                                                                <h6 className="text-[10px] font-bold text-[var(--text-secondary)] uppercase mb-3 border-b border-[var(--border-main)] pb-2">Target Snapshot</h6>
+                                                                <div className="space-y-1">
+                                                                    {m.columns.filter(c => c.status !== 'REMOVED' && (viewMode === 'semantic' ? c.status !== 'UNCHANGED' : true)).map((col, cIdx) => (
+                                                                        <div key={`new-${cIdx}`} className={`flex items-center justify-between p-2 rounded text-xs font-mono transition-colors ${col.status === 'ADDED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : col.status === 'MODIFIED' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'text-[var(--text-secondary)] border border-transparent hover:bg-[var(--bg-main)]/50'}`}>
+                                                                            <div className="flex items-center gap-2">
+                                                                                {col.status === 'ADDED' && <span className="text-emerald-500 font-bold">+</span>}
+                                                                                {col.status === 'MODIFIED' && <span className="text-amber-500 font-bold">~</span>}
+                                                                                <span>{col.name}</span>
+                                                                            </div>
+                                                                            <span className="opacity-80">{col.type}</span>
+                                                                        </div>
+                                                                    ))}
+                                                                    {m.columns.filter(c => c.status !== 'REMOVED' && (viewMode === 'semantic' ? c.status !== 'UNCHANGED' : true)).length === 0 && (
+                                                                        <p className="text-xs text-[var(--text-tertiary)] italic p-2">No {viewMode === 'semantic' ? 'changed ' : ''}columns in target state.</p>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    )}
+                                </Fragment>
+                                );
+                            })}
                         </tbody>
                     </table>
                 </div>
