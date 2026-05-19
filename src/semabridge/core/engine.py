@@ -646,14 +646,19 @@ class SemaBridgeEngine:
         in the default sync path (isolated for future use).
         """
         from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
+        from semabridge.utils.synonyms import load_synonym_overrides
         
         logger.debug(f"Converting {model_id} to OSI")
         
+        # Load synonym overrides upfront
+        overrides_cache = load_synonym_overrides(model_id)
+
         # TMSL -> OSI pipeline (no SML conversion)
         tmsl_converter = TMSLToOSIConverter()
         osi_model = tmsl_converter.to_osi({
             "tmsl": metadata,
             "dataset_id": model_id,
+            "overrides_cache": overrides_cache,
         })
         print("\n===== TABLES USED BY MODEL =====")
         if hasattr(osi_model, "datasets"):

@@ -1164,6 +1164,7 @@ def _compat_collect_manual_mapping_overrides(project_id: str) -> List[Dict[str, 
             "target_name": target_name,
             "entity_kind": str(mapping.get("entity_kind") or "").strip().lower(),
             "source_name": str(mapping.get("source_name") or "").strip(),
+            "synonyms": list(mapping.get("synonyms") or []),
         })
     return overrides
 
@@ -1731,6 +1732,7 @@ def _compat_serialize_auto_map_entity_mappings(
             "measure_source_tables": list(row.get("measure_source_tables") or []),
             "source_expression": str(row.get("source_expression") or ""),
             "status": str(row.get("status") or "auto").strip().lower() or "auto",
+            "synonyms": list(row.get("synonyms") or []),
         })
 
     seen: Dict[str, Dict[str, Any]] = {}
@@ -1948,6 +1950,26 @@ async def update_mapping_compat(mapping_id: str, payload: dict):
 
     existing.update(incoming)
     existing["id"] = mapping_id
+
+    if "synonyms" in incoming:
+        project_id = str(existing.get("project_id") or incoming.get("project_id") or "").strip()
+        model_name = str(existing.get("model_name") or "model").strip()
+        table_name = str(existing.get("parent_source_path") or "").strip()
+        column_name = str(existing.get("source_name") or "").strip()
+        synonyms = list(incoming.get("synonyms") or [])
+        if project_id and column_name:
+            try:
+                from semabridge.utils.synonyms import save_synonym_override
+                save_synonym_override(
+                    project_id=project_id,
+                    model_name=model_name,
+                    table_name=table_name,
+                    column_name=column_name,
+                    synonyms=synonyms
+                )
+            except Exception as exc:
+                logger.error("Failed to save database synonym override: %s", exc)
+
     if "target_name" in incoming:
         project_id = str(existing.get("project_id") or incoming.get("project_id") or "").strip()
         existing["target_name"] = _compat_sanitize_target_name_for_project(

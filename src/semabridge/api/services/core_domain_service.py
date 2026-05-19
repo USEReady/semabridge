@@ -24,6 +24,9 @@ from semabridge.api.services.core_discovery_impl import (
     discover_multi_workspace,
     discover_repository,
     discover_snowflake,
+    discover_snowflake_databases,
+    discover_snowflake_schemas,
+    discover_snowflake_warehouses,
 )
 from semabridge.api.services.core_semantic_impl import (
     discover_semantic,

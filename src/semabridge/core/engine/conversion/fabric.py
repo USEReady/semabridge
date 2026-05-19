@@ -61,9 +61,14 @@ def _convert_fabric_to_sml(
     from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
     from semabridge.converter.osi_to_sml import OSIToSMLConverter
 
+    from semabridge.utils.synonyms import load_synonym_overrides
+
     sf = context.source_format
     ws_id = workspace_id or sf.workspace_id
     ds_id = dataset_id or sf.dataset_id
+
+    # Load synonym overrides upfront
+    overrides_cache = load_synonym_overrides(context.project_id)
 
     # Phase 1: TMSL → OSI
     source_data = {
@@ -71,6 +76,7 @@ def _convert_fabric_to_sml(
         "workspace_id": ws_id,
         "dataset_id": ds_id,
         "display_name": sf.dataset_name or None,
+        "overrides_cache": overrides_cache,
     }
     osi_model = TMSLToOSIConverter().to_osi(source_data)
     context.osi_model = osi_model  # Store on context for step-7 persistence

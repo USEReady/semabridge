@@ -397,16 +397,74 @@ export default function FieldMappingEditor({
 
           {/* synonyms */}
           <div>
-            <label htmlFor="fme-synonyms" style={LABEL}>
-              Synonyms (comma separated)
-            </label>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <label htmlFor="fme-synonyms" style={LABEL}>
+                Synonyms (comma separated)
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  const semanticMap = {
+                    id: ["Identifier", "Key"], cust: ["Customer", "Client"], customer: ["Client", "Purchaser"],
+                    acct: ["Account"], amt: ["Amount", "Value"], qty: ["Quantity", "Volume"],
+                    quantity: ["Volume", "Count"], num: ["Number"], desc: ["Description", "Detail"],
+                    dt: ["Date"], yr: ["Year"], mth: ["Month"], qtr: ["Quarter"], wk: ["Week"],
+                    sales: ["Revenue", "Income"], revenue: ["Sales", "Turnover"], count: ["Total Number", "Tally"],
+                    total: ["Sum", "Aggregate"], units: ["Volume", "Quantity"], sentiment: ["Feedback", "Opinion", "Rating"],
+                    cost: ["Expense", "Expenditure"], price: ["Rate", "Value"], profit: ["Margin", "Gain"],
+                    region: ["Area", "Territory"], cat: ["Category"], category: ["Type", "Class", "Grouping"],
+                    prod: ["Product"], product: ["Item", "Good", "Merchandise"], ytd: ["Year To Date"],
+                    mtd: ["Month To Date"], qtd: ["Quarter To Date"], mfg: ["Manufacturing", "Manufacturer"],
+                    manufacturer: ["Producer", "Maker"], vendor: ["Supplier", "Provider"],
+                  };
+                  let titleForm = (row?.source_field || '').replace(/[^a-zA-Z0-9_\s]/g, ' ').replace(/_/g, ' ').trim();
+                  titleForm = titleForm.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z])([A-Z][a-z])/g, '$1 $2');
+                  
+                  let words = titleForm.split(/\s+/);
+                  let syns = [];
+                  words.forEach(word => {
+                    let wLower = word.toLowerCase();
+                    if (semanticMap[wLower]) {
+                      semanticMap[wLower].forEach(alias => {
+                        let expanded = titleForm.replace(new RegExp(`\\b${word}\\b`, 'gi'), alias);
+                        if (expanded.toLowerCase() !== (row?.source_field || '').toLowerCase() && !syns.includes(expanded)) {
+                          syns.push(expanded);
+                        }
+                      });
+                    }
+                  });
+                  
+                  if (syns.length > 0) {
+                    let currentSyns = synonyms ? synonyms.split(',').map(s => s.trim()).filter(Boolean) : [];
+                    let merged = [...new Set([...currentSyns, ...syns])].slice(0, 5);
+                    setSynonyms(merged.join(', '));
+                  }
+                }}
+                disabled={isSaving}
+                style={{
+                  background: 'rgba(56, 189, 248, 0.1)',
+                  color: '#38bdf8',
+                  border: '1px solid rgba(56, 189, 248, 0.2)',
+                  borderRadius: 4,
+                  fontSize: 10,
+                  fontWeight: 600,
+                  padding: '2px 8px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4
+                }}
+              >
+                ✨ Auto Generate
+              </button>
+            </div>
             <input
               id="fme-synonyms"
               type="text"
               value={synonyms}
               onChange={(e) => setSynonyms(e.target.value)}
               disabled={isSaving}
-              style={INPUT}
+              style={{ ...INPUT, marginTop: 4 }}
               placeholder="e.g. Sales, Total Revenue, turnover"
             />
             <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>

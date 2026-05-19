@@ -10,7 +10,7 @@
  *   relationships : Array<{ source, target, joinType, condition, confidence }>
  */
 import { useState, useMemo, useCallback } from 'react';
-import { Edit2, GitMerge, Zap, CheckCircle } from 'lucide-react';
+import { Edit2, GitMerge, Zap, CheckCircle, AlertTriangle, Sparkles } from 'lucide-react';
 import StatusBadge from './common/StatusBadge';
 import SmartSearchBar from './common/SmartSearchBar';
 import { matchesSmartQuery } from './common/smartSearchQuery.js';
@@ -90,7 +90,7 @@ function TableHeader() {
   return (
     <div style={{
       display: 'grid',
-      gridTemplateColumns: '1.5fr 1.5fr 120px 100px',
+      gridTemplateColumns: '1.3fr 1.3fr 1.2fr 100px 90px',
       gap: '1rem',
       padding: '10px 14px',
       background: 'var(--bg-surface-raised)',
@@ -103,14 +103,55 @@ function TableHeader() {
     }}>
       <div>Source Field</div>
       <div>Target Field</div>
+      <div>Synonyms</div>
       <div style={{ textAlign: 'center' }}>Status</div>
       <div style={{ textAlign: 'right' }}>Action</div>
     </div>
   );
 }
 
+// ─── SynonymBadge Component with Hover Effects ───────────────────────────────
+function SynonymBadge({ syn, isCollision, onClick }) {
+  const [hovered, setHovered] = useState(false);
+  
+  // Custom colors depending on whether it's a collision resolution or general quick-alias
+  const activeBg = isCollision 
+    ? (hovered ? 'rgba(251, 191, 36, 0.18)' : 'rgba(251, 191, 36, 0.08)')
+    : (hovered ? 'rgba(99, 102, 241, 0.18)' : 'rgba(99, 102, 241, 0.06)');
+    
+  const activeColor = isCollision ? '#fbbf24' : '#a5b4fc';
+  const activeBorder = isCollision
+    ? (hovered ? '1px solid #fbbf24' : '1px solid rgba(251, 191, 36, 0.35)')
+    : (hovered ? '1px solid #818cf8' : '1px solid rgba(99, 102, 241, 0.3)');
+
+  return (
+    <span
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        fontSize: 9,
+        fontWeight: 700,
+        padding: '2px 7px',
+        borderRadius: 4,
+        background: activeBg,
+        color: activeColor,
+        border: activeBorder,
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+        transform: hovered ? 'translateY(-1px)' : 'none',
+        transition: 'all 0.15s ease-in-out',
+        userSelect: 'none',
+      }}
+      title={isCollision ? `Click to resolve collision and set target name to "${syn}"` : `Click to instantly set target name to "${syn}"`}
+    >
+      {syn}
+    </span>
+  );
+}
+
 // ─── Single mapping row ───────────────────────────────────────────────────────
-function MappingRow({ row, onEdit }) {
+function MappingRow({ row, onEdit, onFieldEdit }) {
   const badgeCfg = STATUS_BADGE_MAP[String(row.status || '').toLowerCase()]
     ?? { status: 'draft', label: row.status };
   const isCollision = String(row.status || '').toLowerCase() === 'collision';
@@ -120,7 +161,7 @@ function MappingRow({ row, onEdit }) {
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: '1.5fr 1.5fr 120px 100px',
+        gridTemplateColumns: '1.3fr 1.3fr 1.2fr 100px 90px',
         gap: '1rem',
         padding: '10px 14px',
         borderBottom: '1px solid var(--border-main)',
@@ -129,57 +170,40 @@ function MappingRow({ row, onEdit }) {
       }}
     >
       {/* Source Field */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-        <div style={{
-          fontSize: 12,
-          fontWeight: 600,
-          color: 'var(--text-primary)',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          flexShrink: 0,
-        }}>
-          {row.source_field}
-        </div>
-        <div style={{ display: 'flex', gap: 4, alignItems: 'center', minWidth: 0 }}>
-          {isMeasure ? <MeasureBadge /> : <TypeBadge type={row.source_type} />}
-          {!isMeasure && row.source_table_name && (
-            <span style={{
-              fontSize: 10,
-              fontWeight: 600,
-              padding: '2px 6px',
-              borderRadius: 4,
-              background: 'rgba(56, 189, 248, 0.12)',
-              color: '#7dd3fc',
-              border: '1px solid rgba(56, 189, 248, 0.35)',
-              whiteSpace: 'nowrap',
-              maxWidth: 120,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}>
-              {row.source_table_name}
-            </span>
-          )}
-        </div>
-        {/* Synonym Badges */}
-        {Array.isArray(row.synonyms) && row.synonyms.length > 0 && (
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
-            {row.synonyms.map((syn, idx) => (
-              <span key={idx} style={{
-                fontSize: 9,
-                fontWeight: 600,
-                padding: '1px 5px',
-                borderRadius: 3,
-                background: 'rgba(255, 255, 255, 0.05)',
-                color: 'var(--text-tertiary)',
-                border: '1px solid var(--border-main)',
-                whiteSpace: 'nowrap',
-              }}>
-                {syn}
-              </span>
-            ))}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, width: '100%' }}>
+          <div style={{
+            fontSize: 12,
+            fontWeight: 600,
+            color: 'var(--text-primary)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            flexShrink: 0,
+          }}>
+            {row.source_field}
           </div>
-        )}
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center', minWidth: 0 }}>
+            {isMeasure ? <MeasureBadge /> : <TypeBadge type={row.source_type} />}
+            {!isMeasure && row.source_table_name && (
+              <span style={{
+                fontSize: 10,
+                fontWeight: 600,
+                padding: '2px 6px',
+                borderRadius: 4,
+                background: 'rgba(56, 189, 248, 0.12)',
+                color: '#7dd3fc',
+                border: '1px solid rgba(56, 189, 248, 0.35)',
+                whiteSpace: 'nowrap',
+                maxWidth: 120,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}>
+                {row.source_table_name}
+              </span>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Target Field */}
@@ -205,6 +229,38 @@ function MappingRow({ row, onEdit }) {
           <div style={{ fontSize: 10, color: 'var(--color-error)', fontWeight: 600, marginLeft: 8 }}>
             (Suggestion: {row.suggested_target_name})
           </div>
+        )}
+      </div>
+
+      {/* Synonyms */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', minWidth: 0 }}>
+        {Array.isArray(row.synonyms) && row.synonyms.length > 0 ? (
+          <>
+            {isCollision && (
+              <span style={{ fontSize: 9, color: '#fbbf24', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', display: 'inline-flex', alignItems: 'center', gap: 3, flexBasis: '100%' }}>
+                <AlertTriangle size={10} /> Quick-apply to resolve:
+              </span>
+            )}
+            {row.synonyms.map((syn, idx) => (
+              <SynonymBadge
+                key={idx}
+                syn={syn}
+                isCollision={isCollision}
+                onClick={() => {
+                  if (onFieldEdit) {
+                    onFieldEdit(row.id, {
+                      target_name: syn,
+                      target_data_type: row.target_type,
+                      synonyms: row.synonyms,
+                      status: 'manual'
+                    });
+                  }
+                }}
+              />
+            ))}
+          </>
+        ) : (
+          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.1)', fontStyle: 'italic', paddingLeft: 4 }}>—</span>
         )}
       </div>
 
@@ -369,6 +425,8 @@ export default function DryRunMappingTable({
   onBulkResolved,     // (resolvedMap: Record<rowId, suggestedTarget>) => void
   summary,
   relationships = [],
+  onFieldEdit,
+  onBulkFieldEdit,
 }) {
   const [activeFilter, setActiveFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -442,6 +500,85 @@ export default function DryRunMappingTable({
     }
   }, [mappings, onBulkResolved]);
 
+  // ── Auto-generate all synonyms handler ──────────────────────────────────────
+  const handleAutoGenerateAllSynonyms = useCallback(async () => {
+    const semanticMap = {
+      id: ["Identifier", "Key"], cust: ["Customer", "Client"], customer: ["Client", "Purchaser"],
+      acct: ["Account"], amt: ["Amount", "Value"], qty: ["Quantity", "Volume"],
+      quantity: ["Volume", "Count"], num: ["Number"], desc: ["Description", "Detail"],
+      dt: ["Date"], yr: ["Year"], mth: ["Month"], qtr: ["Quarter"], wk: ["Week"],
+      sales: ["Revenue", "Income"], revenue: ["Sales", "Turnover"], count: ["Total Number", "Tally"],
+      total: ["Sum", "Aggregate"], units: ["Volume", "Quantity"], sentiment: ["Feedback", "Opinion", "Rating"],
+      cost: ["Expense", "Expenditure"], price: ["Rate", "Value"], profit: ["Margin", "Gain"],
+      region: ["Area", "Territory"], cat: ["Category"], category: ["Type", "Class", "Grouping"],
+      prod: ["Product"], product: ["Item", "Good", "Merchandise"], ytd: ["Year To Date"],
+      mtd: ["Month To Date"], qtd: ["Quarter To Date"], mfg: ["Manufacturing", "Manufacturer"],
+      manufacturer: ["Producer", "Maker"], vendor: ["Supplier", "Provider"],
+    };
+
+    setBulkResolving(true);
+    setBulkToast(null);
+
+    const updatedRows = [];
+    mappings.forEach(row => {
+      // Only generate if no synonyms exist yet
+      if (!row.synonyms || row.synonyms.length === 0) {
+        let titleForm = (row.source_field || '').replace(/[^a-zA-Z0-9_\s]/g, ' ').replace(/_/g, ' ').trim();
+        titleForm = titleForm.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z])([A-Z][a-z])/g, '$1 $2');
+        
+        let words = titleForm.split(/\s+/);
+        let syns = [];
+        words.forEach(word => {
+          let wLower = word.toLowerCase();
+          if (semanticMap[wLower]) {
+            semanticMap[wLower].forEach(alias => {
+              let expanded = titleForm.replace(new RegExp(`\\b${word}\\b`, 'gi'), alias);
+              if (expanded.toLowerCase() !== (row.source_field || '').toLowerCase() && !syns.includes(expanded)) {
+                syns.push(expanded);
+              }
+            });
+          }
+        });
+        
+        if (syns.length > 0) {
+          updatedRows.push({
+            id: row.id,
+            target_name: row.target_field || row.source_field,
+            target_data_type: row.target_type,
+            synonyms: syns,
+            status: 'manual'
+          });
+        }
+      }
+    });
+
+    if (updatedRows.length === 0) {
+      setBulkToast({ type: 'success', msg: "All eligible columns and measures already have synonyms!" });
+      setBulkResolving(false);
+      setTimeout(() => setBulkToast(null), 3000);
+      return;
+    }
+
+    try {
+      const updatesMap = {};
+      updatedRows.forEach(u => {
+        updatesMap[u.id] = {
+          target_name: u.target_name,
+          target_data_type: u.target_data_type,
+          synonyms: u.synonyms,
+          status: 'manual'
+        };
+      });
+      onBulkFieldEdit?.(updatesMap);
+      setBulkToast({ type: 'success', msg: `Successfully auto-generated rich semantic synonyms for ${updatedRows.length} fields!` });
+    } catch (err) {
+      setBulkToast({ type: 'error', msg: `Generation failed: ${err.message}` });
+    } finally {
+      setBulkResolving(false);
+      setTimeout(() => setBulkToast(null), 4000);
+    }
+  }, [mappings, onBulkFieldEdit]);
+
   // ── Filtered rows ───────────────────────────────────────────────────────────
   const filterRow = (row) => {
     if (activeFilter !== 'all' && String(row?.status || '').toLowerCase() !== activeFilter) return false;
@@ -455,6 +592,7 @@ export default function DryRunMappingTable({
         row.status,
         row.measure_expression,
         ...(row.measure_source_tables || []),
+        ...(row.synonyms || []),
       ].filter(Boolean).join(' ');
       if (!matchesSmartQuery(haystack, search, useRegex)) return false;
     }
@@ -536,6 +674,44 @@ export default function DryRunMappingTable({
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* ── ✨ Auto-Generate Synonyms Button ───────────────────────── */}
+          <button
+            id="bulk-synonyms-btn"
+            type="button"
+            disabled={bulkResolving}
+            onClick={handleAutoGenerateAllSynonyms}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 14px',
+              borderRadius: 7,
+              border: '1px solid rgba(56, 189, 248, 0.55)',
+              background: bulkResolving
+                ? 'rgba(56, 189, 248, 0.06)'
+                : 'rgba(56, 189, 248, 0.12)',
+              color: '#38bdf8',
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: bulkResolving ? 'not-allowed' : 'pointer',
+              whiteSpace: 'nowrap',
+              transition: 'background 0.15s, opacity 0.15s',
+              opacity: bulkResolving ? 0.7 : 1,
+            }}
+          >
+            {bulkResolving
+              ? <>
+                  <span style={{
+                    width: 11, height: 11, border: '2px solid #38bdf8',
+                    borderTopColor: 'transparent', borderRadius: '50%',
+                    display: 'inline-block',
+                    animation: 'spin 0.7s linear infinite',
+                  }} />
+                  Generating…
+                </>
+              : <><Sparkles size={12} /> Auto-Generate All Synonyms</>}
+          </button>
+
           {/* ── Resolve All button — only shown when collisions exist ─────── */}
           {counts.collision > 0 && (
             <button
@@ -655,7 +831,7 @@ export default function DryRunMappingTable({
                 </div>
               ) : (
                 filteredColumns.map(row => (
-                  <MappingRow key={row.id} row={row} onEdit={onEdit} />
+                  <MappingRow key={row.id} row={row} onEdit={onEdit} onFieldEdit={onFieldEdit} />
                 ))
               )}
             </div>
@@ -687,7 +863,7 @@ export default function DryRunMappingTable({
                 </div>
               ) : (
                 filteredMeasures.map(row => (
-                  <MappingRow key={row.id} row={row} onEdit={onEdit} />
+                  <MappingRow key={row.id} row={row} onEdit={onEdit} onFieldEdit={onFieldEdit} />
                 ))
               )}
             </div>

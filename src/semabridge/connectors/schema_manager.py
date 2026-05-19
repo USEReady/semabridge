@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 import time
@@ -1149,11 +1149,46 @@ class SnowflakeSchemaManager:
             )
         return columns
 
+    def _is_snowflake_view(self, cursor, safe_table_name: str) -> bool:
+        """Check if the table is actually a VIEW in Snowflake."""
+        try:
+            self._execute_sql(
+                cursor,
+                f"SHOW VIEWS LIKE '{safe_table_name}' IN SCHEMA {self._schema_fqn()}",
+                context=f"CHECK IF {safe_table_name} IS VIEW",
+            )
+            if cursor.fetchall():
+                return True
+        except Exception as e:
+            logger.warning("Failed to check if %s is a view (trying uppercase): %s", safe_table_name, e)
+        
+        try:
+            self._execute_sql(
+                cursor,
+                f"SHOW VIEWS LIKE '{safe_table_name.upper()}' IN SCHEMA {self._schema_fqn()}",
+                context=f"CHECK IF {safe_table_name} IS VIEW (UPPER)",
+            )
+            if cursor.fetchall():
+                return True
+        except Exception as e:
+            logger.warning("Failed to check if %s is a view in upper case: %s", safe_table_name, e)
+            
+        return False
+
     def _apply_inferred_types_ctas_sml(self, cursor, sml: SMLModel) -> None:
         """Apply inferred datatypes to physical SML source tables via CTAS + SWAP."""
         for dataset in sml.datasets:
             source_table = dataset.source_table or dataset.unique_name
             safe_table_name = self._safe_table_name(source_table)
+
+            if self._is_snowflake_view(cursor, safe_table_name):
+                logger.info(
+                    "Skipping CTAS type inference for dataset '%s': target '%s' is a VIEW (views cannot be swapped)",
+                    dataset.unique_name,
+                    safe_table_name,
+                )
+                continue
+
             full_table = f'{self.config.schema_name}."{safe_table_name}"'
             fixed_table_name = self._build_fixed_table_name(safe_table_name)
             fixed_table = f'{self.config.schema_name}."{fixed_table_name}"'
@@ -1213,6 +1248,15 @@ class SnowflakeSchemaManager:
         for dataset in osi.datasets:
             source_table = dataset.source_table or dataset.unique_name
             safe_table_name = self._safe_table_name(source_table)
+
+            if self._is_snowflake_view(cursor, safe_table_name):
+                logger.info(
+                    "Skipping CTAS type inference for dataset '%s': target '%s' is a VIEW (views cannot be swapped)",
+                    dataset.unique_name,
+                    safe_table_name,
+                )
+                continue
+
             full_table = f'{self.config.schema_name}."{safe_table_name}"'
             fixed_table_name = self._build_fixed_table_name(safe_table_name)
             fixed_table = f'{self.config.schema_name}."{fixed_table_name}"'

@@ -260,6 +260,7 @@ async def dry_run_mapping(
                 "validation_message": m.get("validation_message", ""),
                 "measure_source_tables": list(m.get("measure_source_tables") or []),
                 "source_expression": m.get("source_expression", ""),
+                "synonyms": list(m.get("synonyms") or []),
             })
 
         # Apply collision handling on top of what the serializer already did
@@ -412,6 +413,25 @@ async def deploy_mappings(
         if target_name:
             merged["status"] = "manual"
             merged["is_user_edited"] = True
+
+        synonyms = list(mapping.get("synonyms") or [])
+        if synonyms:
+            m_name = str(merged.get("model_name") or "model").strip()
+            t_name = str(merged.get("parent_source_path") or "").strip()
+            c_name = str(merged.get("source_name") or "").strip()
+            if actual_project_id and c_name:
+                try:
+                    from semabridge.utils.synonyms import save_synonym_override
+                    save_synonym_override(
+                        project_id=actual_project_id,
+                        model_name=m_name,
+                        table_name=t_name,
+                        column_name=c_name,
+                        synonyms=synonyms
+                    )
+                except Exception as exc:
+                    print(f"[Deploy Mappings] Failed to save DB synonym: {exc}")
+
         project_shared._compat_mappings[mapping_id] = merged
     project_shared._compat_save_store()
 

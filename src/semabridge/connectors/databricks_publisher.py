@@ -2393,6 +2393,12 @@ class DatabricksPublisher:
                 continue
             lines.append(f"  - name: {yaml_quote(binding.projected_name)}")
             lines.append(f"    expr: {yaml_quote(f'`{binding.projected_name}`')}")
+            col = dataset.get_column(binding.semantic_name)
+            syns = getattr(col, "synonyms", []) if col else []
+            if syns:
+                lines.append("    synonyms:")
+                for syn in syns:
+                    lines.append(f"      - {yaml_quote(syn)}")
             used_dimension_names.add(binding.projected_name.upper())
             dimensions_added += 1
         
@@ -2408,6 +2414,12 @@ class DatabricksPublisher:
                 )
                 lines.append(f"  - name: {yaml_quote(projected_name)}")
                 lines.append(f"    expr: {yaml_quote(f'`{projected_name}`')}")
+                col = dataset.get_column(col_name)
+                syns = getattr(col, "synonyms", []) if col else []
+                if syns:
+                    lines.append("    synonyms:")
+                    for syn in syns:
+                        lines.append(f"      - {yaml_quote(syn)}")
                 used_dimension_names.add(projected_name.upper())
                 dimensions_added += 1
         
@@ -2461,6 +2473,14 @@ class DatabricksPublisher:
             safe_expr = self._ensure_aggregate_measure_expr(dbx_expr)
             lines.append(f"  - name: {yaml_quote(prefixed_measure_name)}")
             lines.append(f"    expr: {yaml_quote(safe_expr)}")
+            
+            # Find the corresponding metric synonyms
+            metric = next((m for m in sml_model.metrics if m.unique_name == rm.name), None)
+            syns = getattr(metric, "synonyms", []) if metric else []
+            if syns:
+                lines.append("    synonyms:")
+                for syn in syns:
+                    lines.append(f"      - {yaml_quote(syn)}")
             measures_added += 1
              
         if measures_added == 0:

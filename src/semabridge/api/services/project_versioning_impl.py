@@ -1,4 +1,7 @@
-from semabridge.api.services.project_shared import *
+from typing import Any, Dict, List
+from fastapi import HTTPException
+import semabridge.api.services.project_shared as project_shared
+
 
 async def list_model_versions(
     model_id: str = "",
@@ -10,7 +13,11 @@ async def list_model_versions(
     for ALL models found in DuckDB.
     """
     try:
-        all_versions = version_control_service.list_versions(
+        if project_shared.version_control_service is None:
+            project_shared.logger.error("version_control_service is not initialized")
+            raise HTTPException(status_code=500, detail="Version control service is not initialized")
+
+        all_versions = project_shared.version_control_service.list_versions(
             model_id=model_id,
             workspace_id=workspace_id,
             limit=limit,
@@ -52,24 +59,27 @@ async def list_model_versions(
                     }
                 )
         except Exception as orm_exc:
-            logger.debug(f"ORM model version history unavailable: {orm_exc}")
+            project_shared.logger.debug(f"ORM model version history unavailable: {orm_exc}")
 
         # Sort by timestamp descending, cap at limit
         all_versions.sort(key=lambda v: v.get("timestamp", ""), reverse=True)
         return all_versions[:limit]
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"list_model_versions failed: {e}", exc_info=True)
-        from fastapi import HTTPException as _HTTPException
-        raise _HTTPException(status_code=500, detail=f"Failed to load version history: {e}")
+        project_shared.logger.error(f"list_model_versions failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to load version history: {e}")
 
 
 async def compare_model_versions(v1: str = "", v2: str = ""):
     """Compare two model versions and return tabular diff."""
     try:
-        diffs = version_control_service.compare_versions(v1, v2)
+        if project_shared.version_control_service is None:
+            raise HTTPException(status_code=500, detail="Version control service is not initialized")
+        diffs = project_shared.version_control_service.compare_versions(v1, v2)
         return {"changes": diffs}
     except Exception as e:
-        logger.warning(f"compare_model_versions failed: {e}")
+        project_shared.logger.warning(f"compare_model_versions failed: {e}")
         return {"changes": []}
 
 
@@ -81,18 +91,20 @@ async def delete_model_versions(
     if not model_id:
         raise HTTPException(status_code=400, detail="model_id is required")
     try:
-        deleted = version_control_service.delete_versions(
+        if project_shared.version_control_service is None:
+            raise HTTPException(status_code=500, detail="Version control service is not initialized")
+        deleted = project_shared.version_control_service.delete_versions(
             model_id=model_id,
             workspace_id=workspace_id,
         )
         # Invalidate discovery cache entries for this model so stale data isn't served
-        keys_to_clear = [k for k in _discovery_cache if model_id in k]
+        keys_to_clear = [k for k in project_shared._discovery_cache if model_id in k]
         for k in keys_to_clear:
-            _discovery_cache.pop(k, None)
-        logger.info(f"Deleted {deleted} version(s) for model={model_id} via API")
+            project_shared._discovery_cache.pop(k, None)
+        project_shared.logger.info(f"Deleted {deleted} version(s) for model={model_id} via API")
         return {"deleted": deleted, "model_id": model_id}
     except Exception as e:
-        logger.warning(f"delete_model_versions failed: {e}")
+        project_shared.logger.warning(f"delete_model_versions failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -101,14 +113,16 @@ async def get_version_snapshot(version_id: str = ""):
     if not version_id:
         raise HTTPException(status_code=400, detail="version_id is required")
     try:
-        snapshot = version_control_service.get_snapshot(version_id)
+        if project_shared.version_control_service is None:
+            raise HTTPException(status_code=500, detail="Version control service is not initialized")
+        snapshot = project_shared.version_control_service.get_snapshot(version_id)
         if snapshot is None:
             raise HTTPException(status_code=404, detail=f"Version '{version_id}' not found")
         return {"version_id": version_id, "snapshot": snapshot}
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning(f"get_version_snapshot failed: {e}")
+        project_shared.logger.warning(f"get_version_snapshot failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -126,14 +140,16 @@ async def rollback_model_version(payload: Dict[str, Any]):
     if not version_id:
         raise HTTPException(status_code=400, detail="version_id is required")
     try:
-        return version_control_service.rollback_version(
+        if project_shared.version_control_service is None:
+            raise HTTPException(status_code=500, detail="Version control service is not initialized")
+        return project_shared.version_control_service.rollback_version(
             version_id=version_id,
             model_id=model_id,
             workspace_id=workspace_id,
             author="ui",
         )
     except Exception as e:
-        logger.exception(f"rollback_model_version failed: {e}")
+        project_shared.logger.exception(f"rollback_model_version failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -144,10 +160,12 @@ async def rollback_model_version(payload: Dict[str, Any]):
 async def compare_versions(version_from: str = "", version_to: str = ""):
     """Compare two version snapshots and return a list of changes."""
     try:
-        changes = db_manager.compare_versions(version_from, version_to)
+        if project_shared.version_control_service is None:
+            raise HTTPException(status_code=500, detail="Version control service is not initialized")
+        changes = project_shared.version_control_service.compare_versions(version_from, version_to)
         return {"changes": changes}
     except Exception as e:
-        logger.warning(f"Compare failed: {e}")
+        project_shared.logger.warning(f"Compare failed: {e}")
         return {"changes": []}
 
 
@@ -157,8 +175,17 @@ async def rollback_version(payload: Dict[str, Any]):
     if not version_id:
         raise HTTPException(status_code=400, detail="version_id is required")
     try:
-        result = db_manager.rollback_to_version(version_id)
+        if project_shared.version_control_service is None:
+            raise HTTPException(status_code=500, detail="Version control service is not initialized")
+        model_id = payload.get("model_id", "default")
+        workspace_id = payload.get("workspace_id", "default")
+        result = project_shared.version_control_service.rollback_version(
+            version_id=version_id,
+            model_id=model_id,
+            workspace_id=workspace_id,
+            author="ui",
+        )
         return {"status": "success", "result": result}
     except Exception as e:
-        logger.exception(f"Rollback failed: {e}")
+        project_shared.logger.exception(f"Rollback failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

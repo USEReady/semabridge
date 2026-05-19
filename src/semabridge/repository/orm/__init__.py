@@ -31,6 +31,7 @@ from semabridge.repository.orm.models import (
     # Credential & audit layer
     Credential,
     CommandLog,
+    SynonymOverride,
 )
 
 __all__ = [
@@ -57,4 +58,5 @@ __all__ = [
     # Credential & audit layer
     "Credential",
     "CommandLog",
+    "SynonymOverride",
 ]

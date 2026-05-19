@@ -1039,3 +1039,10 @@ def test_databricks_draft_fallback_is_not_cast_null():
     from semabridge.connectors import databricks_publisher
 
     assert databricks_publisher.DRAFT_MEASURE_SQL == "0"
+
+
+def test_snowflake_metric_expression_normalizes_bare_empty_strings():
+    cases = ["''", '""', '"\'\'"', '\'""\'', '""::VARCHAR', "''::VARCHAR"]
+    for case in cases:
+        normalized = MetricsClauseBuilder._normalize_snowflake_metric_expression(case)
+        assert normalized == "''::VARCHAR"

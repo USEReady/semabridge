@@ -38,6 +38,7 @@ export function StepMappingOptions({
   isDeploying,
   deployError,
   onFieldEdit,
+  onBulkFieldEdit,
   onDeployMappings,
   targetConnectors,
   onBulkResolved,
@@ -499,6 +500,8 @@ export function StepMappingOptions({
               if (row) setEditingRow(row);
             }}
             onBulkResolved={onBulkResolved}
+            onFieldEdit={onFieldEdit}
+            onBulkFieldEdit={onBulkFieldEdit}
           />
         </div>
       )}

@@ -712,14 +712,17 @@ class SyncOrchestrator:
         """Extract PBIX file and convert to OSI model."""
         from semabridge.connectors.local_pbix_connector import LocalPBIXConnector
         from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
+        from semabridge.utils.synonyms import load_synonym_overrides
 
         connector = LocalPBIXConnector({"pbix_path": item.source_path})
         raw_tmsl = connector.extract()
         converter = TMSLToOSIConverter()
+        overrides_cache = load_synonym_overrides(item.model_name)
         tmsl_data = {
             "tmsl": raw_tmsl,
             "workspace_id": "local",
             "dataset_id": item.model_name,
+            "overrides_cache": overrides_cache,
         }
 
         osi_model = converter.to_osi(tmsl_data)
@@ -741,6 +744,7 @@ class SyncOrchestrator:
         from semabridge.connectors.fabric_extractor import FabricExtractor
         from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
         from semabridge.core.settings import get_settings
+        from semabridge.utils.synonyms import load_synonym_overrides
 
         settings = get_settings()
         extractor = FabricExtractor(settings.fabric)
@@ -749,11 +753,13 @@ class SyncOrchestrator:
         tmsl_data = extractor.get_model_definition(dataset_id)
 
         converter = TMSLToOSIConverter()
+        overrides_cache = load_synonym_overrides(item.model_name)
         osi_model = converter.to_osi(
             {
                 "tmsl": tmsl_data,
                 "workspace_id": settings.fabric.workspace_id,
                 "dataset_id": item.model_name,
+                "overrides_cache": overrides_cache,
             }
         )
 

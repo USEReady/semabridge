@@ -193,6 +193,11 @@ class MetricsClauseBuilder:
     def _normalize_snowflake_metric_expression(cls, expr: str) -> str:
         """Repair SQL shapes that Snowflake semantic-view metrics reject."""
         normalized = str(expr or "").strip()
+        
+        # Cast bare empty string literals to VARCHAR to prevent Snowflake parsing errors
+        if normalized in ("''", '""', '"\'\'"', '\'""\'', '""::VARCHAR', "''::VARCHAR"):
+            return "''::VARCHAR"
+            
         normalized = re.sub(
             r"(?is)SUM\(\s*(CASE\b.*?\bEND)\s*::\s*FLOAT\s*\)",
             lambda m: f"SUM(CAST(({m.group(1).strip()}) AS FLOAT))",

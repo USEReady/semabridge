@@ -269,6 +269,8 @@ def build_entity_mappings(
     session_key: Optional[str] = None,
     target_connector: Optional[str] = None,
 ) -> Dict[str, Any]:
+    from semabridge.utils.synonyms import load_synonym_overrides, merge_synonyms, generate_auto_synonyms
+
     existing = existing_mappings or {}
     normalized_target_connector = _normalize_connector_name(target_connector)
     entities = extract_model_entities(model)
@@ -276,6 +278,9 @@ def build_entity_mappings(
     claimed_names: Dict[str, Dict[str, str]] = {}
     generated: List[Dict[str, Any]] = []
     collisions: List[Dict[str, Any]] = []
+
+    # Load manual overrides from database
+    db_overrides = load_synonym_overrides(project_id)
 
     for entity in entities:
         source_path = str(entity.get("source_path") or "").strip()
@@ -324,11 +329,26 @@ def build_entity_mappings(
             target_connector=normalized_target_connector,
         )
 
+        # Merge synonyms with DB overrides, user-defined, and auto-generated
+        model_name = entity.get("model_name") or "model"
+        table_name = entity.get("parent_source_path") or ""
+        column_name = source_name
+
+        db_syns = db_overrides.get((model_name, table_name, column_name)) or existing_mapping.get("synonyms")
+        user_syns = entity.get("synonyms") or []
+        auto_syns = entity.get("auto_synonyms") or generate_auto_synonyms(source_name)
+
+        synonyms_list = merge_synonyms(
+            ui_overrides=db_syns,
+            user_defined=user_syns,
+            auto_generated=auto_syns
+        )
+
         generated.append({
             "id": mapping_id,
             "project_id": project_id,
             "session_key": session,
-            "model_name": entity.get("model_name") or "model",
+            "model_name": model_name,
             "entity_kind": entity.get("entity_kind"),
             "mapping_scope": scope,
             "source_name": source_name,
@@ -352,6 +372,7 @@ def build_entity_mappings(
             "validation_code": validation["validation_code"],
             "validation_message": validation["validation_message"],
             "suggested_target_name": validation["suggested_target_name"],
+            "synonyms": synonyms_list,
         })
 
     return {

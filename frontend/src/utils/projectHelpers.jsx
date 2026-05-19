@@ -277,6 +277,7 @@ export function normalizeRows(data) {
         validation_message: String(row?.validation_message || ''),
         suggested_target_name: String(row?.suggested_target_name || ''),
         collision_detected: Boolean(row?.collision_detected),
+        synonyms: Array.isArray(row?.synonyms) ? row.synonyms : [],
         isDirty: false,
       };
     });
@@ -314,6 +315,7 @@ export function normalizeRows(data) {
         validation_message: String(column?.validation_message || ''),
         suggested_target_name: String(column?.suggested_target_name || ''),
         collision_detected: Boolean(column?.collision_detected),
+        synonyms: Array.isArray(column?.synonyms) ? column.synonyms : [],
         parent_table: tableSource,
         isDirty: false,
       });

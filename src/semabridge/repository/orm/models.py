@@ -40,7 +40,7 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, false, func, text, true
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, false, func, text, true, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from semabridge.repository.orm.base import Base
@@ -829,3 +829,32 @@ class CommandLog(Base):
             f"<CommandLog(log_id={self.log_id!r}, command={self.command!r}, "
             f"status={self.status!r})>"
         )
+
+
+class SynonymOverride(Base):
+    """User-defined synonym overrides keyed by project, model, table, and column."""
+
+    __tablename__ = "synonym_overrides"
+    __table_args__ = (
+        UniqueConstraint("project_id", "model_name", "table_name", "column_name", name="uq_synonym_overrides_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    table_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    column_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    synonyms: Mapped[List[str]] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        _UTC_DT, server_default=func.now(), nullable=False,
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        _UTC_DT, server_default=func.now(), onupdate=func.now(), nullable=True,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<SynonymOverride(id={self.id!r}, project_id={self.project_id!r}, "
+            f"model_name={self.model_name!r}, table_name={self.table_name!r}, column_name={self.column_name!r})>"
+        )
+

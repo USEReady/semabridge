@@ -5,4 +5,7 @@ from semabridge.api.services.core_domain_service import (
     discover_repository,
     discover_semantic,
     discover_snowflake,
+    discover_snowflake_databases,
+    discover_snowflake_schemas,
+    discover_snowflake_warehouses,
 )

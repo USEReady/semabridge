@@ -374,6 +374,7 @@ function normalizeRows(data) {
         validation_message: String(row?.validation_message || ''),
         suggested_target_name: String(row?.suggested_target_name || ''),
         collision_detected: Boolean(row?.collision_detected),
+        synonyms: Array.isArray(row?.synonyms) ? row.synonyms : [],
         isDirty: false,
       };
     });
@@ -412,6 +413,7 @@ function normalizeRows(data) {
         suggested_target_name: String(column?.suggested_target_name || ''),
         collision_detected: Boolean(column?.collision_detected),
         parent_table: tableSource,
+        synonyms: Array.isArray(column?.synonyms) ? column.synonyms : [],
         isDirty: false,
       });
     });
@@ -1186,7 +1188,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       setWorkspaces([{ id: rootId, name: 'Snowflake' }]);
       setExpandedWs(prev => ({ ...prev, [rootId]: true }));
       setWsLoading(true);
-      api.discoverSnowflakeModels()
+      api.discoverSnowflakeModels(snowflakeAccountId)
         .then(data => {
           const normalized = (data ?? []).map((m, idx) => {
             const fallbackName = m?.name || m?.displayName || m?.id || `model_${idx + 1}`;
@@ -1807,6 +1809,24 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     }
   }, [targetConnectors, detectedMappings, createdProject]);
 
+  const handleBulkFieldEdit = useCallback((updatesMap) => {
+    if (!updatesMap || typeof updatesMap !== 'object') return;
+    setDetectedMappings((prev) =>
+      prev.map((row) => {
+        const update = updatesMap[row.id];
+        if (!update) return row;
+        return {
+          ...row,
+          target_field: update.target_name,
+          target_type: update.target_data_type,
+          synonyms: update.synonyms,
+          status: update.status || 'manual',
+          isDirty: true,
+        };
+      })
+    );
+  }, []);
+
   const handleBulkResolved = useCallback((resolvedMap) => {
     if (!resolvedMap || typeof resolvedMap !== 'object') return;
 
@@ -1845,6 +1865,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       source_name: row.source_field,
       target_name: row.target_field,
       target_data_type: row.target_type,
+      synonyms: row.synonyms || [],
       status: row.status,
       entity_kind: row.entity_kind,
     }));
@@ -2266,6 +2287,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
                 isDeploying={isDeploying}
                 deployError={deployError}
                 onFieldEdit={handleFieldEdit}
+                onBulkFieldEdit={handleBulkFieldEdit}
                 onDeployMappings={handleDeploy}
                 targetConnectors={targetConnectors}
                 onBulkResolved={handleBulkResolved}
@@ -5098,6 +5120,7 @@ function StepMappingOptions({
   isDeploying,
   deployError,
   onFieldEdit,
+  onBulkFieldEdit,
   onDeployMappings,
   targetConnectors,
   onBulkResolved,
@@ -5559,6 +5582,8 @@ function StepMappingOptions({
               if (row) setEditingRow(row);
             }}
             onBulkResolved={onBulkResolved}
+            onFieldEdit={onFieldEdit}
+            onBulkFieldEdit={onBulkFieldEdit}
           />
         </div>
       )}

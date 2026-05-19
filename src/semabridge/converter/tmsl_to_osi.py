@@ -97,6 +97,10 @@ class TMSLToOSIConverter(BaseConverter):
                 )
                 resolved_unique_name = dataset_id
 
+            # Store overrides cache and model name for synonym resolution
+            self._overrides_cache = source_data.get("overrides_cache") or {}
+            self._model_name = resolved_unique_name
+
             # Use display name as unique_name to ensure Snowflake views use display names, not GUIDs.
             # GUID (dataset_id) is still preserved in metadata for traceability.
             osi_model = OSIModel(
@@ -375,7 +379,15 @@ class TMSLToOSIConverter(BaseConverter):
             user_synonyms = []
         
         auto_synonyms = generate_auto_synonyms(col_name)
-        synonyms = merge_synonyms(user_synonyms, auto_synonyms)
+        ui_overrides = getattr(self, "_overrides_cache", {}).get(
+            (getattr(self, "_model_name", ""), table_name, col_name), []
+        )
+        synonyms = merge_synonyms(
+            ui_overrides=ui_overrides,
+            user_defined=user_synonyms,
+            auto_generated=auto_synonyms,
+            max_auto=3
+        )
         
         if user_synonyms:
             logger.debug("Column '%s': loaded %d user-defined synonyms from TMSL", col_name, len(user_synonyms))
@@ -528,7 +540,15 @@ class TMSLToOSIConverter(BaseConverter):
             user_synonyms = []
             
         auto_synonyms = generate_auto_synonyms(display_name)
-        synonyms = merge_synonyms(user_synonyms, auto_synonyms)
+        ui_overrides = getattr(self, "_overrides_cache", {}).get(
+            (getattr(self, "_model_name", ""), dataset_name, name), []
+        )
+        synonyms = merge_synonyms(
+            ui_overrides=ui_overrides,
+            user_defined=user_synonyms,
+            auto_generated=auto_synonyms,
+            max_auto=3
+        )
         
         if user_synonyms:
             logger.debug("Metric '%s': loaded %d user-defined synonyms from TMSL", name, len(user_synonyms))
