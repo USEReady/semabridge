@@ -156,7 +156,7 @@ class SemanticDDLSanitizer:
         normalized_ddl = "\n".join(lines)
         normalized_ddl = self._apply_competitive_marketing_hardening(normalized_ddl)
         normalized_ddl = re.sub(r",\s*,+", ",", normalized_ddl)
-        
+
         # Determine all table aliases used in the DDL to avoid collisions
         table_aliases = set()
         if tables_block:
@@ -169,12 +169,12 @@ class SemanticDDLSanitizer:
 
         # Final pass: remove any dangling comma immediately before a clause close.
         normalized_ddl = re.sub(r",\s*\n(\s*\)\s*;?)", r"\n\1", normalized_ddl)
-        
+
         # Final pass: Ensure identifiers matching table aliases are quoted in DIMENSIONS/METRICS
         if table_aliases:
             normalized_ddl = self.sanitize_identifiers(normalized_ddl, table_aliases)
             normalized_ddl = re.sub(r",\s*,+", ",", normalized_ddl)
-            
+
         return normalized_ddl
 
     @staticmethod
@@ -232,7 +232,9 @@ class SemanticDDLSanitizer:
         for pattern, repl in replacements:
             out = re.sub(pattern, repl, out)
 
-        if "SENTIMENT.\"SCORE\" AS SENTIMENT.\"SCORE\"" not in out and "DIMENSIONS (" in out:
+        sentiment_table_present = bool(re.search(r'(?im)^\s*SENTIMENT\s+AS\s+', out))
+
+        if sentiment_table_present and "SENTIMENT.\"SCORE\" AS SENTIMENT.\"SCORE\"" not in out and "DIMENSIONS (" in out:
             out = re.sub(r'(?is)(DIMENSIONS\s*\(\s*)(.*?)(\s*\)\s*METRICS\s*\()', r'\1\2,\n  SENTIMENT."SCORE" AS SENTIMENT."SCORE"\n\3', out, count=1)
 
         sentiment_metrics = [
@@ -241,7 +243,7 @@ class SemanticDDLSanitizer:
             '  SENTIMENT."INDICATOR05" AS CASE WHEN (AVG(CASE WHEN MANUFACTURER.MFGISVANARSDEL=\'No\' THEN SENTIMENT.SCORE END::FLOAT) - AVG(CASE WHEN MANUFACTURER.MFGISVANARSDEL=\'Yes\' THEN SENTIMENT.SCORE END::FLOAT)) < 15 THEN 1 WHEN (AVG(CASE WHEN MANUFACTURER.MFGISVANARSDEL=\'No\' THEN SENTIMENT.SCORE END::FLOAT) - AVG(CASE WHEN MANUFACTURER.MFGISVANARSDEL=\'Yes\' THEN SENTIMENT.SCORE END::FLOAT)) > 25 THEN 3 ELSE 2 END',
             '  SENTIMENT."INDICATOR05A" AS CASE WHEN (AVG(CASE WHEN MANUFACTURER.MFGISVANARSDEL=\'No\' THEN SENTIMENT.SCORE END::FLOAT) - AVG(CASE WHEN MANUFACTURER.MFGISVANARSDEL=\'Yes\' THEN SENTIMENT.SCORE END::FLOAT)) < 15 THEN \'Low Sentiment Gap\' WHEN (AVG(CASE WHEN MANUFACTURER.MFGISVANARSDEL=\'No\' THEN SENTIMENT.SCORE END::FLOAT) - AVG(CASE WHEN MANUFACTURER.MFGISVANARSDEL=\'Yes\' THEN SENTIMENT.SCORE END::FLOAT)) > 25 THEN \'High Sentiment Gap\' ELSE \'Medium Sentiment Gap\' END::VARCHAR',
         ]
-        if "METRICS (" in out and 'SENTIMENT."INDICATOR04"' not in out:
+        if sentiment_table_present and "METRICS (" in out and 'SENTIMENT."INDICATOR04"' not in out:
             out = re.sub(r'(?is)(METRICS\s*\(\s*)(.*?)(\s*\)\s*;?)$', lambda m: f"{m.group(1)}{m.group(2).rstrip()}{',' if m.group(2).strip() else ''}\n" + ",\n".join(sentiment_metrics) + f"\n{m.group(3)}", out, count=1)
 
         out = re.sub(r"\n{3,}", "\n\n", out)
