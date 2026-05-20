@@ -52,13 +52,20 @@ class TablesClauseBuilder:
         declared_pk_by_alias: dict[str, list[str]] = {}
 
         relationship_pk_map = {}
+        relationship_fk_map = {}
         for rel in relationships:
-            if rel.is_active and rel.to_dataset and rel.to_columns:
+            if rel.is_active and rel.to_dataset and getattr(rel, "to_columns", None):
                 if rel.to_dataset not in relationship_pk_map:
                     relationship_pk_map[rel.to_dataset] = []
                 for col in rel.to_columns:
                     if col not in relationship_pk_map[rel.to_dataset]:
                         relationship_pk_map[rel.to_dataset].append(col)
+            if rel.is_active and rel.from_dataset and getattr(rel, "from_columns", None):
+                if rel.from_dataset not in relationship_fk_map:
+                    relationship_fk_map[rel.from_dataset] = []
+                for col in rel.from_columns:
+                    if col not in relationship_fk_map[rel.from_dataset]:
+                        relationship_fk_map[rel.from_dataset].append(col)
 
         dataset_col_lookup: dict[str, set[str]] = {}
         dataset_by_name: dict[str, Any] = {d.unique_name: d for d in datasets}
@@ -73,7 +80,7 @@ class TablesClauseBuilder:
             
             source_key = self.identifier_sanitizer.sanitize_table_name(source_table).upper()
             live_cols = self.live_schema_metadata.get(source_key, set())
-            dataset_col_lookup[dataset.unique_name] = set(live_cols) if live_cols else modeled_cols
+            dataset_col_lookup[dataset.unique_name] = set(live_cols).union(modeled_cols) if live_cols else modeled_cols
 
         for dataset in datasets:
             source_table = dataset.source_table or dataset.unique_name
@@ -90,6 +97,13 @@ class TablesClauseBuilder:
                     if not known_phys or resolved in known_phys:
                         if resolved not in relationship_pk_cols:
                             relationship_pk_cols.append(resolved)
+            relationship_fk_cols: list[str] = []
+            if dataset.unique_name in relationship_fk_map:
+                for rel_col in relationship_fk_map[dataset.unique_name]:
+                    resolved = self.identifier_sanitizer.sanitize_column(rel_col) if is_osi else self.schema_manager._resolve_physical_column_name(dataset, rel_col)
+                    if not known_phys or resolved in known_phys:
+                        if resolved not in relationship_fk_cols:
+                            relationship_fk_cols.append(resolved)
 
             is_measure_only = (
                 metric_counts_by_dataset.get(dataset.unique_name, 0) > 0
@@ -100,7 +114,9 @@ class TablesClauseBuilder:
             if is_measure_only:
                 pk_cols = []
             elif relationship_pk_cols:
-                pk_cols = [f'"{relationship_pk_cols[0]}"']
+                pk_cols = [f'"{col}"' for col in relationship_pk_cols]
+            elif len(relationship_fk_cols) > 1:
+                pk_cols = [f'"{col}"' for col in relationship_fk_cols]
             else:
                 key_cols = [c for c in dataset.columns if c.is_key]
                 if key_cols:
@@ -119,7 +135,8 @@ class TablesClauseBuilder:
 
             if verified_pk:
                 declared_pk_by_alias[alias] = [c.strip('"') for c in verified_pk]
-                relationship_target_alias[(dataset.unique_name, verified_pk[0].strip('"').upper())] = alias
+                for col in declared_pk_by_alias[alias]:
+                    relationship_target_alias[(dataset.unique_name, col.upper())] = alias
 
             pk_clause = f"PRIMARY KEY ({', '.join(verified_pk)})" if verified_pk else ""
             tables_lines.append(f'  {alias} AS {full_table} {pk_clause}')

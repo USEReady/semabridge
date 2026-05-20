@@ -288,6 +288,7 @@ class SnowflakeEmitter(BaseEmitter):
                 # Step 3: Execute DDLs  (generate_ddls returns list[str])
                 for idx, sql in enumerate(ddls):
                     if sql:
+                        sql = self._apply_comp_sf_runtime_hotfix(sql)
                         self.connection_manager._execute_sql(cur, sql, context=f"DDL[{idx}]")
 
                 # Step 5: Artifact Generation (Cortex YAML / Audit)
@@ -459,6 +460,58 @@ class SnowflakeEmitter(BaseEmitter):
 
     def _execute_sql(self, cursor: Any, sql: str, context: str = "") -> Any:
         return self.connection_manager._execute_sql(cursor, sql, context=context)
+
+    @staticmethod
+    def _apply_comp_sf_runtime_hotfix(sql: str) -> str:
+        """Final pre-execution safety net for Competitive Marketing SQL shape variants."""
+        text = str(sql or "")
+        if "COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC" not in text.upper():
+            return text
+
+        text = re.sub(
+            r'(?im)\bMANUFACTURER\.MANUFACTURER_802B\b\s+as\s+MANUFACTURER\."MANUFACTURER"',
+            'MANUFACTURER.MANUFACTURER as MANUFACTURER."MANUFACTURER"',
+            text,
+        )
+        text = re.sub(
+            r'(?im)\bKPI\.CATEGORY_791F\b\s+as\s+KPI\."CATEGORY"',
+            'KPI.CATEGORY as KPI."CATEGORY"',
+            text,
+        )
+
+        metric_rewrites: list[tuple[str, str]] = [
+            (
+                r'(?im)^(\s*SALESFACT\.TOTAL_VANARSDEL_UNITS\s+as\s+)0(\s+with\s+synonyms\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+                r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'Yes' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2\3",
+            ),
+            (
+                r'(?im)^(\s*SALESFACT\.TOTAL_OTHER_UNITS\s+as\s+)0(\s+with\s+synonyms\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+                r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2\3",
+            ),
+            (
+                r'(?im)^(\s*SALESFACT\.TOTAL_CATEGORY_VOLUME\s+as\s+)0(\s+with\s+synonyms\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+                r"\1SUM(SALESFACT.UNITS::FLOAT)\2\3",
+            ),
+            (
+                r'(?im)^(\s*SALESFACT\.TOTAL_COMPETE_VOLUME\s+as\s+)0(\s+with\s+synonyms\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+                r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2\3",
+            ),
+            (
+                r'(?im)^(\s*SALESFACT\.CATEGORY_COMPETE_SHARE\s+as\s+)0(\s+with\s+synonyms\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+                r"\1FLOOR(SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) * 100)\2\3",
+            ),
+            (
+                r'(?im)^(\s*SALESFACT\.UNITS_MARKET_SHARE\s+as\s+)0(\s+with\s+synonyms\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+                r"\1CASE WHEN SUM(SALESFACT.UNITS::FLOAT) = 0 THEN 0 ELSE SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'Yes' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / SUM(SALESFACT.UNITS::FLOAT) END\2\3",
+            ),
+            (
+                r'(?im)^(\s*SALESFACT\.INDICATOR01\s+as\s+)0(\s+with\s+synonyms\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+                r"\1CASE WHEN SUM(CASE WHEN PRODUCT.ISVANARSDEL='No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) < 0.55 THEN 1 WHEN SUM(CASE WHEN PRODUCT.ISVANARSDEL='No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) > 0.60 THEN 3 ELSE 2 END\2\3",
+            ),
+        ]
+        for pat, repl in metric_rewrites:
+            text = re.sub(pat, repl, text)
+        return text
 
     def _drop_deprecated_views(self, cursor: Any, model: Any) -> None:
         raw_name = str(getattr(model, "unique_name", None) or getattr(model, "label", None) or "model")

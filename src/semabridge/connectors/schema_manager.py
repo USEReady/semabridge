@@ -100,7 +100,7 @@ class SnowflakeSchemaManager:
         return f"{self._quote_ident(db_name)}.{self._quote_ident(schema_name)}"
 
     def _sanitize_col_name(self, name: str) -> str:
-        sanitized = self._id.sanitize_column(name)
+        sanitized = self._id.sanitize_physical_column(name)
         if sanitized and sanitized[0].isdigit():
             sanitized = f"_{sanitized}"
         return sanitized

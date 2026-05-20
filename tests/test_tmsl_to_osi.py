@@ -197,6 +197,41 @@ class TestTMSLToOSI:
 
         assert [ds.unique_name for ds in osi.datasets] == ["Sales"]
 
+    def test_hidden_non_auto_table_still_emits_dimension_attributes(self, converter):
+        """Hidden business tables should still emit dimensions for semantic SQL references."""
+        source = {
+            "tmsl": {
+                "model": {
+                    "name": "SentimentModel",
+                    "tables": [
+                        {
+                            "name": "Sentiment",
+                            "isHidden": True,
+                            "columns": [
+                                {"name": "DateID", "dataType": "int64"},
+                                {"name": "Score", "dataType": "double"},
+                            ],
+                        }
+                    ],
+                }
+            },
+            "workspace_id": "ws-123",
+            "dataset_id": "ds-sentiment",
+        }
+
+        osi = converter.to_osi(source)
+
+        assert len(osi.datasets) == 1
+        sentiment_ds = osi.datasets[0]
+        assert sentiment_ds.unique_name == "Sentiment"
+        assert sentiment_ds.is_hidden is True
+
+        dim = next((d for d in osi.dimensions if d.unique_name == "Sentiment"), None)
+        assert dim is not None
+        attr_names = {a.unique_name for a in dim.attributes}
+        assert "DateID" in attr_names
+        assert "Score" in attr_names
+
     def test_column_user_synonyms_extracted_from_tmsl(self, converter):
         """Verifies: col_def['synonyms'] = ['A', 'B'] -> OSIColumn.synonyms contains ['A', 'B']"""
         source = {

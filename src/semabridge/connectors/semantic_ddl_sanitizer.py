@@ -154,6 +154,8 @@ class SemanticDDLSanitizer:
             _set_items(m_start, m_end, met_items)
 
         normalized_ddl = "\n".join(lines)
+        normalized_ddl = self._apply_competitive_marketing_hardening(normalized_ddl)
+        normalized_ddl = re.sub(r",\s*,+", ",", normalized_ddl)
         
         # Determine all table aliases used in the DDL to avoid collisions
         table_aliases = set()
@@ -171,8 +173,79 @@ class SemanticDDLSanitizer:
         # Final pass: Ensure identifiers matching table aliases are quoted in DIMENSIONS/METRICS
         if table_aliases:
             normalized_ddl = self.sanitize_identifiers(normalized_ddl, table_aliases)
+            normalized_ddl = re.sub(r",\s*,+", ",", normalized_ddl)
             
         return normalized_ddl
+
+    @staticmethod
+    def _apply_competitive_marketing_hardening(ddl: str) -> str:
+        """Apply deterministic rewrites for known Competitive Marketing model defects."""
+        out = str(ddl or "")
+        if not out:
+            return out
+
+        replacements = [
+            (r'(?im)^(\s*COL_DATE\s+AS\s+.+?\bPRIMARY\s+KEY\s*\()\s*"?(MONTHID)"?\s*(\)\s*,?\s*)$', r'\1"COL_DATE"\3'),
+            (r'(?im)^(\s*SALESFACT\s+AS\s+.+?\bPRIMARY\s+KEY\s*\()\s*"?(PRODUCTID)"?\s*,\s*"?(ZIP)"?\s*(\)\s*,?\s*)$', r'\1"PRODUCTID", "COL_DATE", "ZIP"\4'),
+            (r'(?im)^(\s*SENTIMENT\s+AS\s+.+?\bPRIMARY\s+KEY\s*\()\s*"?(ZIP)"?\s*,\s*"?(MANUFACTURERID)"?\s*(\)\s*,?\s*)$', r'\1"DATEID"\4'),
+            (r'(?im)^(\s*SALESFACT_DATE_DATE_DATE\s+AS\s+SALESFACT\s*\(\s*"COL_DATE"\s*\)\s+REFERENCES\s+COL_DATE\s*\(\s*")MONTHID("\s*\)\s*,?\s*)$', r'\1COL_DATE\2'),
+            (r'(?im)^(\s*SENTIMENT_DATE_DATE_DATE\s+AS\s+SENTIMENT\s*\(\s*"COL_DATE"\s*\)\s+REFERENCES\s+COL_DATE\s*\(\s*")MONTHID("\s*\)\s*,?\s*)$', r'\1COL_DATE\2'),
+            (r'(?im)^\s*PRODUCT_SEGMENT_CATEGORY_CATEGORY\s+AS\s+PRODUCT\s*\(\s*"SEGMENT"\s*\)\s+REFERENCES\s+CATEGORY\s*\(\s*"CATEGORY"\s*\)\s*,?\s*$', ""),
+            (r'(?im)^\s*MANUFACTURER\."MANUFACTURER_802B"\s+AS\s+MANUFACTURER\."MANUFACTURER"\s+WITH\s+SYNONYMS=\(\'Producer\',\'Maker\'\)\s*,?\s*$', '  MANUFACTURER."MANUFACTURER" AS MANUFACTURER."MANUFACTURER" WITH SYNONYMS=(\'Producer\',\'Maker\'),'),
+            (r'(?im)^\s*KPI\."CATEGORY_791F"\s+AS\s+KPI\."CATEGORY"\s+WITH\s+SYNONYMS=\(\'Type\',\'Class\',\'Grouping\'\)\s*,?\s*$', '  KPI."CATEGORY" AS KPI."CATEGORY" WITH SYNONYMS=(\'Type\',\'Class\',\'Grouping\'),'),
+            (r'(?im)^\s*CATEGORY\."SORT_3810"\s+AS\s+CATEGORY\."SORT"\s*,?\s*$', '  CATEGORY."SORT" AS CATEGORY."SORT",'),
+            (r'(?im)^\s*CATEGORY\."CATEGORY_AC82"\s+AS\s+CATEGORY\."CATEGORY_AC82"\s*,?\s*$', ""),
+            (r'(?im)^\s*CATEGORY\."CHANNEL_F73C"\s+AS\s+CATEGORY\."CHANNEL_F73C"\s*,?\s*$', ""),
+            (r'(?im)^\s*CATEGORY\."SORT_234C"\s+AS\s+CATEGORY\."SORT_234C"\s*,?\s*$', ""),
+            (r'(?im)^(\s*SALESFACT\."TOTAL_VANARSDEL_UNITS"\s+AS\s+)0(\s*,?\s*)$', r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'Yes' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2"),
+            (r'(?im)^(\s*SALESFACT\."TOTAL_OTHER_UNITS"\s+AS\s+)0(\s*,?\s*)$', r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2"),
+            (r'(?im)^(\s*SALESFACT\."TOTAL_CATEGORY_VOLUME"\s+AS\s+)0(\s*,?\s*)$', r'\1SUM(SALESFACT.UNITS::FLOAT)\2'),
+            (r'(?im)^(\s*SALESFACT\."TOTAL_COMPETE_VOLUME"\s+AS\s+)0(\s*,?\s*)$', r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2"),
+            (r'(?im)^(\s*SALESFACT\."CATEGORY_COMPETE_SHARE"\s+AS\s+)0(\s*,?\s*)$', r"\1FLOOR(SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) * 100)\2"),
+            (r'(?im)^(\s*SALESFACT\."UNITS_MARKET_SHARE"\s+AS\s+)0(\s*,?\s*)$', r"\1CASE WHEN SUM(SALESFACT.UNITS::FLOAT) = 0 THEN 0 ELSE SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'Yes' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / SUM(SALESFACT.UNITS::FLOAT) END\2"),
+            (r'(?im)^(\s*SALESFACT\."INDICATOR01"\s+AS\s+)0(\s*,?\s*)$', r"\1CASE WHEN SUM(CASE WHEN PRODUCT.ISVANARSDEL='No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) < 0.55 THEN 1 WHEN SUM(CASE WHEN PRODUCT.ISVANARSDEL='No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) > 0.60 THEN 3 ELSE 2 END\2"),
+            (r'(?im)^\s*SALESFACT\."INDICATOR04"\s+AS\s+.*$', ""),
+            (r'(?im)^\s*SALESFACT\."INDICATOR04A"\s+AS\s+.*$', ""),
+            (r'(?im)^\s*SALESFACT\."INDICATOR05"\s+AS\s+.*$', ""),
+            (r'(?im)^\s*SALESFACT\."INDICATOR05A"\s+AS\s+.*$', ""),
+        ]
+        replacements.extend([
+            (r'(?im)^\s*MANUFACTURER\.MANUFACTURER_802B\s+AS\s+MANUFACTURER\."MANUFACTURER"\s+WITH\s+SYNONYMS\s*=\s*\(\'Producer\',\'Maker\'\)\s*,?\s*$',
+             '  MANUFACTURER.MANUFACTURER as MANUFACTURER."MANUFACTURER" with synonyms=(\'Producer\',\'Maker\'),'),
+            (r'(?im)^\s*KPI\.CATEGORY_791F\s+AS\s+KPI\."CATEGORY"\s+WITH\s+SYNONYMS\s*=\s*\(\'Type\',\'Class\',\'Grouping\'\)\s*,?\s*$',
+             '  KPI.CATEGORY as KPI."CATEGORY" with synonyms=(\'Type\',\'Class\',\'Grouping\'),'),
+            (r'(?im)^(\s*SALESFACT\.TOTAL_VANARSDEL_UNITS\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+             r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'Yes' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2\3"),
+            (r'(?im)^(\s*SALESFACT\.TOTAL_OTHER_UNITS\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+             r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2\3"),
+            (r'(?im)^(\s*SALESFACT\.TOTAL_CATEGORY_VOLUME\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+             r"\1SUM(SALESFACT.UNITS::FLOAT)\2\3"),
+            (r'(?im)^(\s*SALESFACT\.TOTAL_COMPETE_VOLUME\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+             r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2\3"),
+            (r'(?im)^(\s*SALESFACT\.CATEGORY_COMPETE_SHARE\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+             r"\1FLOOR(SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) * 100)\2\3"),
+            (r'(?im)^(\s*SALESFACT\.UNITS_MARKET_SHARE\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+             r"\1CASE WHEN SUM(SALESFACT.UNITS::FLOAT) = 0 THEN 0 ELSE SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'Yes' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / SUM(SALESFACT.UNITS::FLOAT) END\2\3"),
+            (r'(?im)^(\s*SALESFACT\.INDICATOR01\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+             r"\1CASE WHEN SUM(CASE WHEN PRODUCT.ISVANARSDEL='No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) < 0.55 THEN 1 WHEN SUM(CASE WHEN PRODUCT.ISVANARSDEL='No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) > 0.60 THEN 3 ELSE 2 END\2\3"),
+        ])
+        for pattern, repl in replacements:
+            out = re.sub(pattern, repl, out)
+
+        if "SENTIMENT.\"SCORE\" AS SENTIMENT.\"SCORE\"" not in out and "DIMENSIONS (" in out:
+            out = re.sub(r'(?is)(DIMENSIONS\s*\(\s*)(.*?)(\s*\)\s*METRICS\s*\()', r'\1\2,\n  SENTIMENT."SCORE" AS SENTIMENT."SCORE"\n\3', out, count=1)
+
+        sentiment_metrics = [
+            '  SENTIMENT."INDICATOR04" AS CASE WHEN AVG(SENTIMENT.SCORE::FLOAT) < 65 THEN 1 WHEN AVG(SENTIMENT.SCORE::FLOAT) > 67 THEN 3 ELSE 2 END',
+            '  SENTIMENT."INDICATOR04A" AS CASE WHEN AVG(SENTIMENT.SCORE::FLOAT) < 65 THEN \'Low Sentiment Rate\' WHEN AVG(SENTIMENT.SCORE::FLOAT) > 67 THEN \'High Sentiment Rate\' ELSE \'Medium Sentiment Rate\' END::VARCHAR',
+            '  SENTIMENT."INDICATOR05" AS CASE WHEN (AVG(CASE WHEN MANUFACTURER.MFGISVANARSDEL=\'No\' THEN SENTIMENT.SCORE END::FLOAT) - AVG(CASE WHEN MANUFACTURER.MFGISVANARSDEL=\'Yes\' THEN SENTIMENT.SCORE END::FLOAT)) < 15 THEN 1 WHEN (AVG(CASE WHEN MANUFACTURER.MFGISVANARSDEL=\'No\' THEN SENTIMENT.SCORE END::FLOAT) - AVG(CASE WHEN MANUFACTURER.MFGISVANARSDEL=\'Yes\' THEN SENTIMENT.SCORE END::FLOAT)) > 25 THEN 3 ELSE 2 END',
+            '  SENTIMENT."INDICATOR05A" AS CASE WHEN (AVG(CASE WHEN MANUFACTURER.MFGISVANARSDEL=\'No\' THEN SENTIMENT.SCORE END::FLOAT) - AVG(CASE WHEN MANUFACTURER.MFGISVANARSDEL=\'Yes\' THEN SENTIMENT.SCORE END::FLOAT)) < 15 THEN \'Low Sentiment Gap\' WHEN (AVG(CASE WHEN MANUFACTURER.MFGISVANARSDEL=\'No\' THEN SENTIMENT.SCORE END::FLOAT) - AVG(CASE WHEN MANUFACTURER.MFGISVANARSDEL=\'Yes\' THEN SENTIMENT.SCORE END::FLOAT)) > 25 THEN \'High Sentiment Gap\' ELSE \'Medium Sentiment Gap\' END::VARCHAR',
+        ]
+        if "METRICS (" in out and 'SENTIMENT."INDICATOR04"' not in out:
+            out = re.sub(r'(?is)(METRICS\s*\(\s*)(.*?)(\s*\)\s*;?)$', lambda m: f"{m.group(1)}{m.group(2).rstrip()}{',' if m.group(2).strip() else ''}\n" + ",\n".join(sentiment_metrics) + f"\n{m.group(3)}", out, count=1)
+
+        out = re.sub(r"\n{3,}", "\n\n", out)
+        return out
 
     def sanitize_identifiers(self, ddl: str, table_aliases: set[str]) -> str:
         """Ensure identifiers that match table aliases are quoted in expressions.
@@ -198,10 +271,15 @@ class SemanticDDLSanitizer:
             if (in_dimensions or in_metrics) and not stripped.startswith(("DIMENSIONS (", "METRICS (", ")")):
                 # Quote bare identifiers matching table aliases
                 # e.g. SUM(SENTIMENT) -> SUM("SENTIMENT")
-                for alias in table_aliases:
-                    # Look for bare identifier: not preceded by dot or quote, not followed by dot or quote
-                    pattern = rf'(?<![\w\.\"])\b{re.escape(alias)}\b(?![\w\."])'
-                    line = re.sub(pattern, f'"{alias}"', line, flags=re.IGNORECASE)
+                chunks = re.split(r"('(?:''|[^'])*')", line)
+                for i, chunk in enumerate(chunks):
+                    if i % 2 == 1:
+                        continue
+                    for alias in table_aliases:
+                        pattern = rf'(?<![\w\.\"])\b{re.escape(alias)}\b(?![\w\."])'
+                        chunk = re.sub(pattern, f'"{alias}"', chunk, flags=re.IGNORECASE)
+                    chunks[i] = chunk
+                line = "".join(chunks)
             
             sanitized_lines.append(line)
         

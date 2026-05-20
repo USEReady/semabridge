@@ -1684,8 +1684,7 @@ class DatabricksPublisher:
         used_column_names: set[str] = set()
 
         for col in dataset.columns:
-            if col.is_hidden and col.unique_name not in relationship_cols and not col.is_key:
-                continue
+            # Include all columns (hidden or not) to ensure complete dimension tables
             safe_name = self._make_unique_projected_name(
                 col.unique_name,
                 used_column_names,
@@ -1736,8 +1735,7 @@ class DatabricksPublisher:
         used_aliases: set[str] = set()
 
         for col in dataset.columns:
-            if col.is_hidden and col.unique_name not in relationship_cols and not col.is_key:
-                continue
+            # Include all columns (hidden or not) in alias view
             alias_name = str(col.unique_name or "").strip()
             if not alias_name:
                 continue
@@ -1790,9 +1788,8 @@ class DatabricksPublisher:
             )
             if not source_column:
                 continue
-            include_as_dimension = not (
-                col.is_hidden and col.unique_name not in relationship_cols and not col.is_key
-            )
+            # Include all columns as dimensions (hidden status preserved)
+            include_as_dimension = True
             bindings.append(
                 MetricViewColumnBinding(
                     semantic_name=col.unique_name,

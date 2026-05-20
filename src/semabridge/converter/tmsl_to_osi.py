@@ -251,15 +251,10 @@ class TMSLToOSIConverter(BaseConverter):
 
     def _create_dimension_from_dataset(self, dataset: OSIDataset) -> Optional[OSIDimension]:
         """Create an implicit dimension from a dataset."""
-        if dataset.is_hidden:
-            return None
-            
         attributes = []
         for col in dataset.columns:
-            # Skip hidden columns or potential measures (metrics usually come separately, but columns might be hidden)
-            if col.is_hidden:
-                continue
-                
+            # Include all columns (including hidden) as dimension attributes
+            # Hidden status is preserved in the attribute for downstream filtering
             attr = OSIAttribute(
                 unique_name=col.unique_name,
                 label=col.label,

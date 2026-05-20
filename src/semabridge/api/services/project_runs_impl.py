@@ -264,6 +264,32 @@ def _compat_latest_sml_state(project_id: str, preferred_snapshot_id: str = "") -
                 pass
         return {}
 
+    def _decode_snapshot_row(row: Any) -> Dict[str, Any]:
+        if not isinstance(row, dict):
+            return {}
+        return _decode_snapshot_state(
+            row.get("sml_blob")
+            or row.get("state")
+            or row.get("artifact")
+            or row.get("snapshot_blob")
+            or {}
+        )
+
+    def _iter_project_snapshot_rows() -> List[Dict[str, Any]]:
+        rows = _compat_project_snapshots.get(project_id, [])
+        return [row for row in rows if isinstance(row, dict)]
+
+    def _find_compat_snapshot(snapshot_id: str) -> Dict[str, Any]:
+        sid = str(snapshot_id or "").strip()
+        if not sid:
+            return {}
+        for row in _iter_project_snapshot_rows():
+            if str(row.get("snapshot_id") or "").strip() == sid:
+                decoded = _decode_snapshot_row(row)
+                if decoded:
+                    return decoded
+        return {}
+
     sid = str(preferred_snapshot_id or "").strip()
     if sid:
         try:
@@ -274,6 +300,9 @@ def _compat_latest_sml_state(project_id: str, preferred_snapshot_id: str = "") -
                     return decoded
         except Exception:
             pass
+        decoded = _find_compat_snapshot(sid)
+        if decoded:
+            return decoded
 
     for run in _compat_project_runs.get(project_id, []):
         if not isinstance(run, dict):
@@ -290,6 +319,15 @@ def _compat_latest_sml_state(project_id: str, preferred_snapshot_id: str = "") -
                     return decoded
         except Exception:
             continue
+
+        decoded = _find_compat_snapshot(sid)
+        if decoded:
+            return decoded
+
+    for row in _iter_project_snapshot_rows():
+        decoded = _decode_snapshot_row(row)
+        if decoded:
+            return decoded
     return {}
 
 

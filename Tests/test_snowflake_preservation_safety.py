@@ -72,6 +72,27 @@ def test_generate_ctas_sql_emits_single_statement() -> None:
     assert sql.count(";") == 0
 
 
+def test_resolve_physical_column_name_preserves_reserved_words() -> None:
+    config = build_config()
+    behavior = ConnectorBehavior()
+    connection_manager = MagicMock()
+    schema_manager = SnowflakeSchemaManager(config, behavior, IdentifierSanitizer(), connection_manager)
+
+    dataset = SMLDataset(
+        unique_name="Date",
+        source_table="Date",
+        columns=[
+            SMLColumn(unique_name="Date", data_type=DataType.DATE),
+            SMLColumn(unique_name="Month", data_type=DataType.STRING),
+            SMLColumn(unique_name="MonthIndex", data_type=DataType.INTEGER),
+        ],
+    )
+
+    assert schema_manager._resolve_physical_column_name(dataset, "Date") == "DATE"
+    assert schema_manager._resolve_physical_column_name(dataset, "Month") == "MONTH"
+    assert schema_manager._resolve_physical_column_name(dataset, "MonthIndex") == "MONTHINDEX"
+
+
 def test_filter_ddls_for_existing_tables_uses_exact_table_name_match() -> None:
     config = build_config()
     emitter = SnowflakeEmitter(config, ConnectorBehavior())

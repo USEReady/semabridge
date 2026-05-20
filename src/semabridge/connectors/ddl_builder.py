@@ -235,7 +235,10 @@ class SemanticViewBuilder:
 
         # DIMENSIONS
         measure_cols = self._collect_measure_columns(sml, ds_lookup)
-        dims_lines = self.dimensions_builder.build_for_sml(sml, registry.dataset_aliases, ds_by_name, ds_lookup, measure_cols)
+        relationship_cols = self._collect_relationship_columns(sml)
+        dims_lines = self.dimensions_builder.build_for_sml(
+            sml, registry.dataset_aliases, ds_by_name, ds_lookup, measure_cols, relationship_cols
+        )
         dimensions_block_idx = None
         if dims_lines:
             dimensions_block_idx = len(definitions)
@@ -300,7 +303,10 @@ class SemanticViewBuilder:
 
         # DIMENSIONS
         measure_cols = self._collect_measure_columns(osi, ds_lookup)
-        dims_lines = self.dimensions_builder.build_for_osi(osi, registry.dataset_aliases, ds_by_name, ds_lookup, measure_cols)
+        relationship_cols = self._collect_relationship_columns(osi)
+        dims_lines = self.dimensions_builder.build_for_osi(
+            osi, registry.dataset_aliases, ds_by_name, ds_lookup, measure_cols, relationship_cols
+        )
         dimensions_block_idx = None
         if dims_lines:
             dimensions_block_idx = len(definitions)
@@ -356,6 +362,23 @@ class SemanticViewBuilder:
                     if col_norm in {c.upper() for c in cols}:
                         measure_columns.add((ds_name.strip().casefold(), col_norm))
         return measure_columns
+
+    def _collect_relationship_columns(self, model: Any) -> Set[Tuple[str, str]]:
+        relationship_columns: Set[Tuple[str, str]] = set()
+        for rel in getattr(model, "relationships", []) or []:
+            if not getattr(rel, "is_active", True):
+                continue
+            from_ds = getattr(rel, "from_dataset", None)
+            to_ds = getattr(rel, "to_dataset", None)
+            for col in getattr(rel, "from_columns", []) or []:
+                relationship_columns.add(
+                    (str(from_ds or "").strip().casefold(), self.identifier_sanitizer.sanitize_column(str(col or "")))
+                )
+            for col in getattr(rel, "to_columns", []) or []:
+                relationship_columns.add(
+                    (str(to_ds or "").strip().casefold(), self.identifier_sanitizer.sanitize_column(str(col or "")))
+                )
+        return relationship_columns
 
     def _deduplicate_cross_clause(self, metrics_lines: List[str], dims_lines: List[str], dims_block: str) -> Tuple[List[str], str]:
         metric_keys = {extract_expr_key(line) for line in metrics_lines if extract_expr_key(line)}

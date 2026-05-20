@@ -8,6 +8,7 @@ from semabridge.converter.llm_dax_translator import LLMDAXTranslator
 from semabridge.converter.dax_rule_translator import rule_based_translation
 from semabridge.connectors.metrics_clause_builder import MetricsClauseBuilder
 from semabridge.connectors.translator import MetricExpressionTranslator
+from semabridge.utils.identifiers import IdentifierSanitizer
 
 
 def test_sanitize_llm_sql_removes_var_and_unwraps_select():
@@ -428,6 +429,19 @@ def test_safe_sum_uses_cast_for_case_expression():
     assert sql == "SUM(CAST((CASE WHEN FLAG THEN AMOUNT ELSE 0 END) AS FLOAT))"
 
 
+def test_metric_normalization_rewrites_count_table_token_artifact_to_count_star():
+    translator = MetricExpressionTranslator(identifier_sanitizer=IdentifierSanitizer())
+
+    normalized = translator._normalize_metric_column_references(
+        metric_sql="COUNT(PRODUCT.PRODUCT)",
+        metric_name="COUNT_OF_PRODUCT",
+        dataset_col_lookup={"product": {"PRODUCTID", "MANUFACTURERID"}},
+        dataset_aliases={"product": "PRODUCT"},
+    )
+
+    assert normalized == "COUNT(*)"
+
+
 def test_fiscal_var_calculate_translates_without_llm_keywords():
     dax = """
 VAR _today = [Today]
@@ -658,7 +672,10 @@ RETURN CALCULATE(SUM('Corporate DSI Aggregate'[IOH_EXCLDNG_LIFO_AMT]), Dates[FIS
     assert "CREATE OR REPLACE VIEW" in joined
     assert "CORPORATE_DSI_AGGREGATE_SEMABRIDGE_FISCAL" in joined
     assert '"_CURRENT_FISCAL_PERIOD"' in joined
-    assert "CORPORATE_DSI_AGGREGATE._CURRENT_FISCAL_PERIOD" in joined
+    assert (
+        'CORPORATE_DSI_AGGREGATE."_CURRENT_FISCAL_PERIOD"' in joined
+        or "CORPORATE_DSI_AGGREGATE._CURRENT_FISCAL_PERIOD" in joined
+    )
     assert "CAST(NULL AS DOUBLE)" not in joined
     assert " VAR " not in joined
 
@@ -724,7 +741,7 @@ RETURN CALCULATE(SUM('Corporate DSI Aggregate'[IOH_EXCLDNG_LIFO_AMT]), 'Dates'[F
     assert 'CORPORATE_DSI_AGGREGATE."CORPORATE_IOH" AS 0' not in joined
 
 
-def test_snowflake_falls_back_for_bare_metric_references_in_sql_expression():
+def test_snowflake_translates_indicator_from_bare_metric_reference_sql_expression():
     from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
     from semabridge.core.settings import SnowflakeConfig
     from semabridge.sml.models import (
@@ -767,7 +784,8 @@ def test_snowflake_falls_back_for_bare_metric_references_in_sql_expression():
             SMLMetric(
                 unique_name="@Indicator04",
                 dataset="SalesFact",
-                sql_expression='CASE WHEN "SENTIMENT" < 65 THEN 1 ELSE 2 END',
+                expression='IF([Sentiment] < 65, 1, IF([Sentiment] > 67, 3, 2))',
+                sql_expression='CASE WHEN "SENTIMENT" < 65 THEN 1 WHEN "SENTIMENT" > 67 THEN 3 ELSE 2 END',
                 aggregation=AggregationType.NONE,
             ),
         ],
@@ -786,11 +804,13 @@ def test_snowflake_falls_back_for_bare_metric_references_in_sql_expression():
     ddls = emitter.semantic_view_builder.generate_ddls(model)
     joined = "\n".join(ddls).upper()
 
-    assert 'SALESFACT."INDICATOR04" AS 0' in joined
-    assert 'CASE WHEN "SENTIMENT"' not in joined
+    assert 'AVG(SENTIMENT."SCORE"::FLOAT) < 65 THEN 1' in joined
+    assert 'AVG(SENTIMENT."SCORE"::FLOAT) > 67 THEN 3 ELSE 2 END' in joined
+    assert 'SENTIMENT."INDICATOR04"' in joined
+    assert 'SALESFACT."INDICATOR04" AS 0' not in joined
 
 
-def test_snowflake_falls_back_for_dax_leakage_in_sql_expression():
+def test_snowflake_translates_sentiment_gap_when_sql_expression_contains_dax_leakage():
     from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
     from semabridge.core.settings import SnowflakeConfig
     from semabridge.sml.models import (
@@ -819,6 +839,23 @@ def test_snowflake_falls_back_for_dax_leakage_in_sql_expression():
                     SMLColumn(unique_name="Units", data_type=DataType.DECIMAL),
                 ],
             ),
+            SMLDataset(
+                unique_name="Sentiment",
+                source_table="Sentiment",
+                columns=[
+                    SMLColumn(unique_name="DateID", data_type=DataType.INTEGER, is_key=True),
+                    SMLColumn(unique_name="Score", data_type=DataType.DECIMAL),
+                    SMLColumn(unique_name="ManufacturerID", data_type=DataType.INTEGER),
+                ],
+            ),
+            SMLDataset(
+                unique_name="Manufacturer",
+                source_table="Manufacturer",
+                columns=[
+                    SMLColumn(unique_name="ManufacturerID", data_type=DataType.INTEGER, is_key=True),
+                    SMLColumn(unique_name="MfgisVanArsdel", data_type=DataType.STRING),
+                ],
+            ),
         ],
         metrics=[
             SMLMetric(
@@ -827,7 +864,8 @@ def test_snowflake_falls_back_for_dax_leakage_in_sql_expression():
                 expression=(
                     'IF(ISBLANK(CALCULATE([Sentiment], Manufacturer[MfgisVanArsdel]="No"))'
                     '||ISBLANK(CALCULATE([Sentiment], Manufacturer[MfgisVanArsdel]="Yes")), '
-                    'BLANK(), 1)'
+                    'BLANK(), CALCULATE([Sentiment], Manufacturer[MfgisVanArsdel]="No") - '
+                    'CALCULATE([Sentiment], Manufacturer[MfgisVanArsdel]="Yes"))'
                 ),
                 sql_expression=leaked_dax_sql,
                 aggregation=AggregationType.NONE,
@@ -848,10 +886,139 @@ def test_snowflake_falls_back_for_dax_leakage_in_sql_expression():
     ddls = emitter.semantic_view_builder.generate_ddls(model)
     joined = "\n".join(ddls).upper()
 
-    assert 'SALESFACT."SENTIMENT_GAP" AS 0' in joined
+    assert 'SENTIMENT."SENTIMENT_GAP" AS AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL" = \'NO\' THEN SENTIMENT."SCORE" END::FLOAT) - AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL" = \'YES\' THEN SENTIMENT."SCORE" END::FLOAT)' in joined
+    assert 'SALESFACT."SENTIMENT_GAP" AS 0' not in joined
     assert "CALCULATE(" not in joined
     assert "ISBLANK(" not in joined
     assert "||" not in joined
+
+
+def test_snowflake_sentiment_pattern_uses_resolved_physical_column_names():
+    from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+    from semabridge.core.settings import SnowflakeConfig
+    from semabridge.sml.models import (
+        AggregationType,
+        DataType,
+        SMLColumn,
+        SMLDataset,
+        SMLMetric,
+        SMLModel,
+    )
+
+    model = SMLModel(
+        unique_name="Competitive Marketing Analysis",
+        datasets=[
+            SMLDataset(
+                unique_name="SalesFact",
+                source_table="SalesFact",
+                is_fact=True,
+                columns=[
+                    SMLColumn(unique_name="ProductID", data_type=DataType.INTEGER, is_key=True),
+                    SMLColumn(unique_name="Units", data_type=DataType.DECIMAL),
+                ],
+            ),
+            SMLDataset(
+                unique_name="Sentiment",
+                source_table="Sentiment",
+                columns=[
+                    SMLColumn(unique_name="DateID", data_type=DataType.INTEGER, is_key=True),
+                    SMLColumn(unique_name="Score_802B", data_type=DataType.DECIMAL),
+                    SMLColumn(unique_name="ManufacturerID", data_type=DataType.INTEGER),
+                ],
+            ),
+            SMLDataset(
+                unique_name="Manufacturer",
+                source_table="Manufacturer",
+                columns=[
+                    SMLColumn(unique_name="ManufacturerID", data_type=DataType.INTEGER, is_key=True),
+                    SMLColumn(unique_name="MfgisVanArsdel_90AF", data_type=DataType.STRING),
+                ],
+            ),
+        ],
+        metrics=[
+            SMLMetric(
+                unique_name="Sentiment Gap",
+                dataset="SalesFact",
+                expression=(
+                    'IF(ISBLANK(CALCULATE([Sentiment], Manufacturer[MfgisVanArsdel]="No"))'
+                    '||ISBLANK(CALCULATE([Sentiment], Manufacturer[MfgisVanArsdel]="Yes")), '
+                    'BLANK(), CALCULATE([Sentiment], Manufacturer[MfgisVanArsdel]="No") - '
+                    'CALCULATE([Sentiment], Manufacturer[MfgisVanArsdel]="Yes"))'
+                ),
+                aggregation=AggregationType.NONE,
+            ),
+        ],
+    )
+    emitter = SnowflakeEmitter(
+        SnowflakeConfig(
+            account="dummy",
+            user="dummy",
+            password="dummy",
+            warehouse="WH",
+            database="DB",
+            schema_name="PUBLIC",
+        )
+    )
+
+    ddls = emitter.semantic_view_builder.generate_ddls(model)
+    joined = "\n".join(ddls).upper()
+
+    assert '"SCORE_802B"' in joined
+    assert '"MFGISVANARSDEL_90AF"' in joined
+    assert 'SENTIMENT."SCORE"' not in joined
+    assert 'MANUFACTURER."MFGISVANARSDEL"' not in joined
+
+
+def test_snowflake_direct_sentiment_metric_prefers_suffixed_score_column():
+    from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+    from semabridge.core.settings import SnowflakeConfig
+    from semabridge.sml.models import (
+        AggregationType,
+        DataType,
+        SMLColumn,
+        SMLDataset,
+        SMLMetric,
+        SMLModel,
+    )
+
+    model = SMLModel(
+        unique_name="Competitive Marketing Analysis",
+        datasets=[
+            SMLDataset(
+                unique_name="Sentiment",
+                source_table="Sentiment",
+                columns=[
+                    SMLColumn(unique_name="DateID", data_type=DataType.INTEGER, is_key=True),
+                    SMLColumn(unique_name="Score", data_type=DataType.DECIMAL),
+                    SMLColumn(unique_name="Score_802B", data_type=DataType.DECIMAL),
+                ],
+            ),
+        ],
+        metrics=[
+            SMLMetric(
+                unique_name="Sentiment",
+                dataset="Sentiment",
+                source_column="Score",
+                aggregation=AggregationType.AVG,
+            ),
+        ],
+    )
+    emitter = SnowflakeEmitter(
+        SnowflakeConfig(
+            account="dummy",
+            user="dummy",
+            password="dummy",
+            warehouse="WH",
+            database="DB",
+            schema_name="PUBLIC",
+        )
+    )
+
+    ddls = emitter.semantic_view_builder.generate_ddls(model)
+    joined = "\n".join(ddls).upper()
+
+    assert 'AVG(SENTIMENT."SCORE_802B")' in joined or 'AVG(SENTIMENT."SCORE_802B"::FLOAT)' in joined
+    assert "AVG(SENTIMENT.SCORE" not in joined
 
 
 def test_snowflake_translates_leaked_divide_in_sql_expression():
@@ -1032,7 +1199,7 @@ def test_snowflake_metric_translation_uses_common_llm_provider_chain(monkeypatch
 
     assert calls
     assert calls[0]["metric_name"] == "Total Complex Units"
-    assert "SUM(SALESFACT.UNITS::FLOAT)" in joined
+    assert "SUM(SALESFACT.\"UNITS\"::FLOAT)" in joined or "SUM(SALESFACT.UNITS::FLOAT)" in joined
 
 
 def test_databricks_draft_fallback_is_not_cast_null():

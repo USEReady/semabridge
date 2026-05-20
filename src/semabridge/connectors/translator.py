@@ -559,6 +559,10 @@ class MetricExpressionTranslator:
                 normalized_sql = normalized_sql.replace(old_ref, new_ref)
                 logger.debug(f"Normalized metric '{metric_name}': {old_ref} → {new_ref}")
 
+        normalized_sql = self._normalize_count_table_token_artifacts(
+            normalized_sql,
+            dataset_aliases,
+        )
         normalized_sql = self._quote_bare_metric_references(normalized_sql, metric_names)
         normalized_sql = self._rewrite_metric_aggregate_wrappers(normalized_sql, metric_names)
         normalized_sql = self._repair_bare_aggregate_identifiers(normalized_sql, metric_name, dataset_col_lookup, dataset_aliases, metric_names, preferred_table_alias=preferred_table_alias)
@@ -569,6 +573,33 @@ class MetricExpressionTranslator:
         normalized_sql = self._normalize_rolling_monthindex_max_predicates(normalized_sql)
 
         return normalized_sql
+
+    def _normalize_count_table_token_artifacts(
+        self,
+        metric_sql: str,
+        dataset_aliases: Dict[str, str],
+    ) -> str:
+        """Rewrite COUNT(alias.alias) table-count artifacts to COUNT(*)."""
+        if not metric_sql:
+            return metric_sql
+
+        alias_to_dataset = {alias.upper(): ds for ds, alias in dataset_aliases.items()}
+
+        pattern = re.compile(
+            r'(?is)\bCOUNT\s*\(\s*(?:"(?P<alias_q>[A-Z_][A-Z0-9_]*)"|(?P<alias_u>[A-Z_][A-Z0-9_]*))\s*\.\s*(?:"(?P<col_q>[A-Z_][A-Z0-9_]*)"|(?P<col_u>[A-Z_][A-Z0-9_]*))\s*\)'
+        )
+
+        def _replace(match: re.Match) -> str:
+            alias = (match.group("alias_q") or match.group("alias_u") or "").upper()
+            col = (match.group("col_q") or match.group("col_u") or "").upper()
+            dataset = alias_to_dataset.get(alias, "")
+            dataset_token = self._id.sanitize_column(dataset or "") if dataset else ""
+
+            if col == alias or (dataset_token and col == dataset_token):
+                return "COUNT(*)"
+            return match.group(0)
+
+        return pattern.sub(_replace, metric_sql)
 
     def _repair_bare_aggregate_identifiers(
         self,
@@ -676,6 +707,14 @@ class MetricExpressionTranslator:
     
     def _resolve_column_name_for_dataset(self, known_columns: set[str], candidate: str) -> Optional[str]:
         if not known_columns: return None
+        # Prefer hashed/suffixed physical variants when they exist.
+        # In some deployments both SCORE and SCORE_<hash> can appear in model
+        # metadata, while only SCORE_<hash> is truly physical in Snowflake.
+        prefix_matches = sorted(
+            [col for col in known_columns if col.startswith(f"{candidate}_")]
+        )
+        if prefix_matches:
+            return prefix_matches[0]
         if candidate in known_columns: return candidate
         compact = candidate.replace("_", "")
         for col in known_columns:

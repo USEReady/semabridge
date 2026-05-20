@@ -273,6 +273,48 @@ class IdentifierSanitizer:
         logger.debug(f"sanitize_column: '{original}' → '{result}'")
         return result
 
+    def sanitize_physical_column(self, name: str) -> str:
+        """Normalize a physical source column without reserved-word prefixing.
+
+        This is for actual table references, where reserved words should be
+        preserved and handled by quoting rather than rewritten to ``COL_*``.
+        """
+        if not name:
+            return "COLUMN_UNKNOWN"
+
+        original = name
+
+        bracket_match = re.search(r"\[(.+?)\]", name)
+        if bracket_match:
+            name = bracket_match.group(1)
+
+        if '.' in name and not name.startswith('"'):
+            parts = name.split('.')
+            if len(parts) == 2:
+                left, right = parts
+                if re.fullmatch(r'[A-Za-z_]\w*', left) and re.fullmatch(r'[A-Za-z_]\w*', right):
+                    name = right
+
+        clean = re.sub(r"[^A-Za-z0-9_$]", "_", name)
+        clean = re.sub(r"_+", "_", clean).strip("_")
+
+        if not clean:
+            return "COLUMN_UNKNOWN"
+
+        if clean[0].isdigit():
+            clean = f"_{clean}"
+
+        result = clean.upper() if self.force_uppercase else clean
+
+        if not re.match(r"^[A-Z_][A-Z0-9_$]*$", result):
+            logger.warning(
+                f"Physical identifier sanitization: '{original}' → '{result}' "
+                f"contains unexpected characters after normalization"
+            )
+
+        logger.debug(f"sanitize_physical_column: '{original}' → '{result}'")
+        return result
+
     def sanitize_alias(self, name: str) -> str:
         """
         Sanitize an alias name with reserved word suppression.

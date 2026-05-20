@@ -340,3 +340,43 @@ def test_latest_identifier_diagnostics_ignores_stale_older_runs(monkeypatch):
 
     diagnostics = pri._compat_latest_identifier_diagnostics("project-1")
     assert diagnostics == []
+
+
+def test_latest_sml_state_falls_back_to_compat_snapshot_cache(monkeypatch):
+    monkeypatch.setattr(pri, "_compat_projects", {"project-1": {"name": "demo"}})
+    monkeypatch.setattr(
+        pri,
+        "_compat_project_snapshots",
+        {
+            "project-1": [
+                {
+                    "snapshot_id": "snap-1",
+                    "state": {
+                        "unique_name": "demo",
+                        "datasets": [
+                            {
+                                "unique_name": "Product",
+                                "columns": [
+                                    {"unique_name": "Manufacturer", "data_type": "string"},
+                                    {"unique_name": "Category", "data_type": "string"},
+                                ],
+                            }
+                        ],
+                        "metrics": [],
+                    },
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(pri.db_manager, "get_snapshot", lambda *_args, **_kwargs: None)
+
+    state = pri._compat_latest_sml_state("project-1", "snap-1")
+    assert state.get("unique_name") == "demo"
+    assert [dataset.get("unique_name") for dataset in state.get("datasets", [])] == ["Product"]
+
+    built = pri._compat_build_project_entity_mappings("project-1", save_store=False, target_connector="snowflake")
+    names = {(row.get("source_name"), row.get("parent_source_path")) for row in built.get("mappings", [])}
+
+    assert ("Product", None) in names
+    assert ("Manufacturer", "datasets.Product") in names
+    assert ("Category", "datasets.Product") in names
