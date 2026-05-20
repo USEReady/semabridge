@@ -50,6 +50,11 @@ else:
 from semabridge.utils.logger import get_logger
 logger = get_logger(__name__)
 
+
+def _sample_alias(index: int) -> str:
+    """Return a short deterministic alias for sampled SELECT projections."""
+    return f"SAMPLE_COL_{index + 1}"
+
 class SnowflakeSchemaManager:
     def __init__(
         self,
@@ -972,7 +977,9 @@ class SnowflakeSchemaManager:
             escaped = str(ident).replace('"', '""')
             return f'"{escaped}"'
 
-        col_refs = ", ".join([f"{_q(src)} AS {_q(req)}" for req, src in resolved_pairs])
+        col_refs = ", ".join(
+            [f"{_q(src)} AS {_q(_sample_alias(idx))}" for idx, (_req, src) in enumerate(resolved_pairs)]
+        )
         sample_sql = (
             f'SELECT {col_refs} FROM {self.config.schema_name}."{safe_table_name}" '
             f'LIMIT {sample_limit}'
@@ -1006,7 +1013,9 @@ class SnowflakeSchemaManager:
                         safe_table_name,
                     )
                     return [], fallback_logs
-                col_refs = ", ".join([f"{_q(src)} AS {_q(req)}" for req, src in resolved_pairs])
+                col_refs = ", ".join(
+                    [f"{_q(src)} AS {_q(_sample_alias(idx))}" for idx, (_req, src) in enumerate(resolved_pairs)]
+                )
                 sample_sql = (
                     f'SELECT {col_refs} FROM {self.config.schema_name}."{safe_table_name}" '
                     f'LIMIT {sample_limit}'

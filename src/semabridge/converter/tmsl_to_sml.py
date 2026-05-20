@@ -18,7 +18,7 @@ from semabridge.utils.synonyms import merge_synonyms, generate_auto_synonyms
 
 from semabridge.sml.models import (
     SMLModel, SMLDataset, SMLColumn, SMLMetric, SMLRelationship, SMLDimension, SMLAttribute,
-    DataType, AggregationType, Cardinality, SourcePlatform
+    DataType, AggregationType, Cardinality, CrossFilterDirection, SourcePlatform
 )
 from semabridge.converter.dax_translator import DAXTranslator
 from semabridge.core.behavior import ConnectorBehavior
@@ -108,6 +108,25 @@ class TMDLTransformer:
             model_obj = tmsl_json.get("model", {})
             name = model_obj.get("name", "FabricModel")
             self._dump_measure_audit(model_obj, dataset_id, phase="tmsl_to_sml_pre")
+
+            relationship_table_refs = set()
+            for rel in model_obj.get("relationships", []) or []:
+                if not isinstance(rel, dict):
+                    continue
+                for key in (
+                    "fromTable",
+                    "from_table",
+                    "sourceTable",
+                    "toTable",
+                    "to_table",
+                    "targetTable",
+                ):
+                    value = rel.get(key)
+                    if value not in (None, ""):
+                        normalized = str(value).strip().strip("[]'")
+                        if "." in normalized:
+                            normalized = normalized.split(".")[-1].strip()
+                        relationship_table_refs.add(normalized.casefold())
             
             # Initialize SML Model
             sml = SMLModel(
@@ -141,8 +160,15 @@ class TMDLTransformer:
                     logger.info("Skipping calculation group table: %s", table_name or "<unnamed>")
                     continue
                 if self._is_auto_hidden_table_name(table_name):
-                    logger.info("Skipping hidden auto-date table: %s", table_name or "<unnamed>")
-                    continue
+                    has_measures = bool(self._iter_table_measures(table))
+                    is_referenced = str(table_name or "").casefold() in relationship_table_refs
+                    if not has_measures and not is_referenced:
+                        logger.info("Skipping hidden auto-date table: %s", table_name or "<unnamed>")
+                        continue
+                    logger.info(
+                        "Preserving hidden auto-date table '%s' because it contains measures or relationship endpoints",
+                        table_name or "<unnamed>",
+                    )
                 if "#ERROR" in json.dumps(table, ensure_ascii=False, default=str).upper():
                     logger.warning(
                         "Table '%s' contains #ERROR metadata; retaining it as a logical table",

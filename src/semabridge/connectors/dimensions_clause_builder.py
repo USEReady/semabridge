@@ -28,12 +28,14 @@ class DimensionsClauseBuilder:
         dataset_aliases: Dict[str, str],
         dataset_by_name: Dict[str, Any],
         dataset_col_lookup: Dict[str, Set[str]],
-        measure_columns: Set[Tuple[str, str]]
+        measure_columns: Set[Tuple[str, str]],
+        relationship_columns: Optional[Set[Tuple[str, str]]] = None,
     ) -> List[str]:
         """Build DIMENSIONS clause for SML model."""
         return self._build_dimensions(
             sml.dimensions, sml.datasets, dataset_aliases, dataset_by_name, 
-            dataset_col_lookup, measure_columns, sml.unique_name or sml.label, is_osi=False
+            dataset_col_lookup, measure_columns, relationship_columns,
+            sml.unique_name or sml.label, is_osi=False
         )
 
     def build_for_osi(
@@ -42,12 +44,14 @@ class DimensionsClauseBuilder:
         dataset_aliases: Dict[str, str],
         dataset_by_name: Dict[str, Any],
         dataset_col_lookup: Dict[str, Set[str]],
-        measure_columns: Set[Tuple[str, str]]
+        measure_columns: Set[Tuple[str, str]],
+        relationship_columns: Optional[Set[Tuple[str, str]]] = None,
     ) -> List[str]:
         """Build DIMENSIONS clause for OSI model."""
         return self._build_dimensions(
             osi.dimensions, osi.datasets, dataset_aliases, dataset_by_name, 
-            dataset_col_lookup, measure_columns, osi.unique_name or osi.label, is_osi=True
+            dataset_col_lookup, measure_columns, relationship_columns,
+            osi.unique_name or osi.label, is_osi=True
         )
 
     def _build_dimensions(
@@ -58,12 +62,14 @@ class DimensionsClauseBuilder:
         dataset_by_name: Dict[str, Any],
         dataset_col_lookup: Dict[str, Set[str]],
         measure_columns: Set[Tuple[str, str]],
+        relationship_columns: Optional[Set[Tuple[str, str]]],
         model_name: str,
         is_osi: bool
     ) -> List[str]:
         dims_lines = []
         added_dimensions = set()
         used_dimension_aliases: Set[str] = set()
+        relationship_columns = relationship_columns or set()
 
         # 1. Add explicitly defined dimensions
         for dim in dimensions:
@@ -89,6 +95,9 @@ class DimensionsClauseBuilder:
                 dim_key = (alias, semantic_name, phys_col)
                 
                 if self._is_measure_column(attr, phys_col, measure_columns, is_osi):
+                    continue
+
+                if self._is_relationship_column(attr.dataset, phys_col, relationship_columns):
                     continue
                 
                 if dim_key not in added_dimensions:
@@ -157,6 +166,9 @@ class DimensionsClauseBuilder:
                 if self._measure_key(dataset.unique_name, col.unique_name) in measure_columns:
                     if not sync_all:
                         continue
+
+                if self._is_relationship_column(dataset.unique_name, phys_col, relationship_columns):
+                    continue
                 
                 emitted_name = self._resolve_unique_dimension_alias(
                     semantic_name, used_dimension_aliases, semantic_source_name
@@ -193,6 +205,17 @@ class DimensionsClauseBuilder:
             str(dataset_name or "").strip().casefold(),
             self.identifier_sanitizer.sanitize_column(column_name or ""),
         )
+
+    def _is_relationship_column(
+        self,
+        dataset_name: Optional[str],
+        column_name: Optional[str],
+        relationship_columns: Set[Tuple[str, str]],
+    ) -> bool:
+        return (
+            str(dataset_name or "").strip().casefold(),
+            self.identifier_sanitizer.sanitize_column(column_name or ""),
+        ) in relationship_columns
 
     def _resolve_unique_dimension_alias(
         self,

@@ -200,13 +200,22 @@ class RelationshipsClauseBuilder:
                 
                 declared_pk_cols = declared_pk_by_alias.get(to_alias, [])
                 to_phys_upper = {c.upper() for c in to_phys}
+
+                if not declared_pk_cols:
+                    logger.warning(
+                        "Skipping relationship '%s' -> '%s': referenced entity '%s' has no declared primary/unique key in the emitted TABLES clause.",
+                        rel.from_dataset,
+                        rel.to_dataset,
+                        to_alias,
+                    )
+                    continue
                 
                 if to_phys and to_col.upper() not in to_phys_upper:
-                    fallback_to = declared_pk_cols[0] if declared_pk_cols else sorted(to_phys)[0]
+                    fallback_to = declared_pk_cols[0]
                     logger.warning(
                         f"Remapping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
                         f"referenced column '{to_col}' is not physical in '{rel.to_dataset}'. "
-                        f"Using '{fallback_to}'."
+                        f"Using declared key '{fallback_to}'."
                     )
                     to_col = fallback_to
                     mapped_to_alias = relationship_target_alias.get((rel.to_dataset, to_col.upper()))

@@ -33,6 +33,12 @@ def get_source_column_types(emitter, cursor, safe_table_name: str) -> dict[str, 
     return col_types
 
 
+def _sample_alias(index: int) -> str:
+    # Keep aliases short and deterministic so Snowflake never sees the full
+    # logical name in a SELECT projection alias during type sampling.
+    return f"SAMPLE_COL_{index + 1}"
+
+
 def infer_type_from_values(values: list[Any]) -> str:
     """Infer normalized type from sampled Python/Snowflake values."""
     if not values:
@@ -336,7 +342,9 @@ def infer_columns_from_table_samples(
         escaped = str(ident).replace('"', '""')
         return f'"{escaped}"'
 
-    col_refs = ", ".join([f"{_q(src)} AS {_q(req)}" for req, src in resolved_pairs])
+    col_refs = ", ".join(
+        [f"{_q(src)} AS {_q(_sample_alias(idx))}" for idx, (_req, src) in enumerate(resolved_pairs)]
+    )
     sample_sql = (
         f'SELECT {col_refs} FROM {emitter.config.schema_name}."{safe_table_name}" '
         f'LIMIT {sample_limit}'

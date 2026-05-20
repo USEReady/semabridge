@@ -87,6 +87,32 @@ class SemanticViewBuilder:
         ddls: list[str] = []
         overrides: dict[str, str] = {}
         dates_table = f'"{self.config.database}"."{self.config.schema_name}"."DATES"'
+        dates_columns = self.live_schema_metadata.get("DATES") or set()
+        current_fiscal_date_col = "CAL_DT"
+        if dates_columns:
+            preferred_columns = (
+                "CAL_DT",
+                "CALENDAR_DT",
+                "DATE",
+                "DATE_KEY",
+                "CALENDAR_DATE",
+            )
+            for candidate in preferred_columns:
+                if candidate in dates_columns:
+                    current_fiscal_date_col = candidate
+                    break
+            else:
+                date_like = sorted(
+                    col for col in dates_columns
+                    if col.endswith("_DT") or col.endswith("_DATE") or "DATE" in col
+                )
+                if date_like:
+                    current_fiscal_date_col = date_like[0]
+                else:
+                    logger.warning(
+                        "Skipping fiscal-period support view generation because DATES table metadata has no date-like column to compare against CURRENT_DATE()."
+                    )
+                    return [], {}
 
         for dataset in getattr(sml, "datasets", []) or []:
             modeled_cols = {
@@ -105,7 +131,7 @@ class SemanticViewBuilder:
                 "CREATE OR REPLACE VIEW "
                 f"{support_ref} AS SELECT base.*, "
                 f"(SELECT MAX(\"FISCAL_YR_PERIOD\") FROM {dates_table} "
-                "WHERE \"CAL_DT\" = CURRENT_DATE()) AS \"_CURRENT_FISCAL_PERIOD\" "
+                f"WHERE \"{current_fiscal_date_col}\" = CURRENT_DATE()) AS \"_CURRENT_FISCAL_PERIOD\" "
                 f"FROM {source_ref} base"
             )
             overrides[dataset.unique_name] = support_view

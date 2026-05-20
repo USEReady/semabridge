@@ -290,6 +290,64 @@ RETURN CALCULATE(SUM('Corporate DSI Aggregate'[IOH_EXCLDNG_LIFO_AMT]), Dates[FIS
     assert " VAR " not in joined
 
 
+def test_snowflake_semantic_ddl_prefers_live_dates_metadata_when_available():
+    from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+    from semabridge.core.settings import SnowflakeConfig
+    from semabridge.sml.models import (
+        AggregationType,
+        DataType,
+        SMLColumn,
+        SMLDataset,
+        SMLMetric,
+        SMLModel,
+    )
+
+    fiscal_dax = """
+Var _today = [Today]
+Var fiscalMonth = CALCULATE(MAX(Dates[FISCAL_YR_PERIOD]), Dates[CAL_DT] = _today)
+RETURN CALCULATE(SUM('Corporate DSI Aggregate'[IOH_EXCLDNG_LIFO_AMT]), Dates[FISCAL_YR_PERIOD] < fiscalMonth)
+"""
+    model = SMLModel(
+        unique_name="Inventory Semantic Model",
+        datasets=[
+            SMLDataset(unique_name="Project Measures", source_table="Project Measures"),
+            SMLDataset(
+                unique_name="Corporate DSI Aggregate",
+                source_table="Corporate DSI Aggregate",
+                is_fact=True,
+                columns=[
+                    SMLColumn(unique_name="FISCAL_YR_PERIOD", data_type=DataType.STRING),
+                    SMLColumn(unique_name="IOH_EXCLDNG_LIFO_AMT", data_type=DataType.DECIMAL),
+                ],
+            ),
+        ],
+        metrics=[
+            SMLMetric(
+                unique_name="Corporate IOH",
+                dataset="Project Measures",
+                expression=fiscal_dax,
+                aggregation=AggregationType.NONE,
+            )
+        ],
+    )
+    emitter = SnowflakeEmitter(
+        SnowflakeConfig(
+            account="dummy",
+            user="dummy",
+            password="dummy",
+            warehouse="WH",
+            database="DB",
+            schema_name="PUBLIC",
+        )
+    )
+    emitter.semantic_view_builder.live_schema_metadata["DATES"] = {"FISCAL_YR_PERIOD", "CALENDAR_DT"}
+
+    ddls = emitter.semantic_view_builder.generate_ddls(model)
+    joined = "\n".join(ddls).upper()
+
+    assert 'WHERE "CALENDAR_DT" = CURRENT_DATE()' in joined
+
+
 def test_snowflake_ignores_bad_stored_sql_expression_and_translates_dax():
     from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
     from semabridge.core.settings import SnowflakeConfig

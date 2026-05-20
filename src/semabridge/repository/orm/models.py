@@ -323,6 +323,11 @@ class Project(Base):
     source_connection: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     last_updated: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
     connection_tag: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # TOM parity tracking (consecutive passes and authoritative flag)
+    tom_consecutive_parity_passes: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text('0'))
+    tom_authoritative: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
+    tom_last_parity_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
+    tom_last_parity_report: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relationships
     account: Mapped[Optional["Account"]] = relationship(back_populates="projects")
@@ -377,6 +382,9 @@ class SnapshotRow(Base):
     changes: Mapped[List["Change"]] = relationship(
         back_populates="snapshot", cascade="all, delete-orphan"
     )
+    relationships: Mapped[List["RelationshipRow"]] = relationship(
+        back_populates="snapshot", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:
         return (
@@ -411,6 +419,40 @@ class Change(Base):
         return (
             f"<Change(change_id={self.change_id!r}, "
             f"diff_type={self.diff_type!r}, object_name={self.object_name!r})>"
+        )
+
+
+class RelationshipRow(Base):
+    """Normalized relationship rows tied to a `SnapshotRow`.
+
+    Stores parsed relationship endpoints and semantics in a queryable table
+    so downstream syncs and graph traversals can operate efficiently.
+    """
+
+    __tablename__ = "relationships"
+    __table_args__ = (
+        Index("ix_relationships_snapshot", "snapshot_id"),
+        Index("ix_relationships_from_to", "from_table", "to_table"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    snapshot_id: Mapped[str] = mapped_column(ForeignKey("snapshots.snapshot_id"), nullable=False)
+    from_table: Mapped[str] = mapped_column(String(255), nullable=False)
+    from_column: Mapped[str] = mapped_column(String(255), nullable=False)
+    to_table: Mapped[str] = mapped_column(String(255), nullable=False)
+    to_column: Mapped[str] = mapped_column(String(255), nullable=False)
+    cardinality: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    cross_filter_behavior: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=true())
+    created_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, server_default=func.now(), nullable=False)
+
+    # Relationships
+    snapshot: Mapped["SnapshotRow"] = relationship(back_populates="relationships")
+
+    def __repr__(self) -> str:
+        return (
+            f"<RelationshipRow(id={self.id!r}, snapshot_id={self.snapshot_id!r}, "
+            f"from={self.from_table}.{self.from_column}, to={self.to_table}.{self.to_column})>"
         )
 
 

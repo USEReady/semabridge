@@ -355,6 +355,48 @@ class TestRelationshipParsing:
         
         assert sml.relationships[0].is_active is False
 
+    def test_hidden_auto_date_table_preserves_measures_and_relationships(self, transformer):
+        """Hidden auto-date tables should still feed measures and relationships into SML."""
+        tmsl = {
+            "model": {
+                "name": "Test",
+                "tables": [
+                    {
+                        "name": "Sales",
+                        "columns": [
+                            {"name": "DateID", "dataType": "int64"},
+                            {"name": "Revenue", "dataType": "double"},
+                        ],
+                        "measures": [
+                            {"name": "Total Sales", "expression": "SUM([Revenue])"},
+                        ],
+                    },
+                    {
+                        "name": "LocalDateTable_123abc",
+                        "isHidden": True,
+                        "columns": [{"name": "Date", "dataType": "date"}],
+                        "measures": [
+                            {"name": "Date Count", "expression": "COUNTROWS()"},
+                        ],
+                    },
+                ],
+                "relationships": [
+                    {
+                        "fromTable": "Sales",
+                        "fromColumn": "DateID",
+                        "toTable": "LocalDateTable_123abc",
+                        "toColumn": "Date",
+                    }
+                ],
+            }
+        }
+
+        sml = transformer.transform(tmsl, "ws-1", "ds-1")
+
+        assert sml.get_metric("Date Count") is not None
+        assert len(sml.relationships) == 1
+        assert sml.relationships[0].to_dataset == "LocalDateTable_123abc"
+
 
 class TestTransformationErrors:
     """Tests for error handling."""

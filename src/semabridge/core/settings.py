@@ -127,6 +127,20 @@ class FabricConfig(BaseSettings):
         description="Power BI REST API base URL"
     )
 
+    # TOM integration settings
+    tom_mode: str = Field(
+        default="prefer",
+        description="TOM mode: 'strict' (fail if TOM unavailable), 'prefer' (use TOM when available), or 'optional' (use fallback by default)",
+    )
+    tom_sidecar_url: Optional[str] = Field(
+        default=None,
+        description="Optional HTTP sidecar URL for TOM parsing (e.g., http://localhost:5000). If set, sidecar will be used before pythonnet.",
+    )
+    tom_parity_required_passes: int = Field(
+        default=3,
+        description="Number of consecutive parity passes required to mark TOM authoritative for a project",
+    )
+
     @property
     def all_workspace_ids(self) -> List[str]:
         """Get all known workspace IDs (primary + configured list)."""

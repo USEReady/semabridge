@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple, Set, Optional
 
+from semabridge.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 class TablesClauseBuilder:
     def __init__(
@@ -94,6 +98,7 @@ class TablesClauseBuilder:
             full_table = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
 
             alias = self._get_unique_alias(dataset.unique_name, registry)
+            is_bridge_table = dataset.unique_name in bridge_datasets
 
             known_phys = dataset_col_lookup.get(dataset.unique_name, set())
             relationship_pk_cols: list[str] = []
@@ -112,7 +117,7 @@ class TablesClauseBuilder:
 
             if is_measure_only:
                 pk_cols = []
-            elif dataset.unique_name in bridge_datasets:
+            elif is_bridge_table:
                 # Bridge table: columns are not unique (they appear as both FK and PK
                 # endpoints), so no PRIMARY KEY should be declared.
                 pk_cols = []
@@ -139,6 +144,11 @@ class TablesClauseBuilder:
             # stores column names in a different case (e.g. "CUSTOMER").
             # Falling back to sorted(known_phys)[0] was the root cause of the bug
             # where CITY (alphabetically first) replaced CUSTOMER as the PK.
+            if is_bridge_table:
+                verified_pk = []
+                pk_clause = ""
+                tables_lines.append(f'  {alias} AS {full_table} {pk_clause}')
+                continue
             known_phys_upper = {c.upper() for c in known_phys}
             verified_pk = [p for p in pk_cols if not known_phys or p.strip('"').upper() in known_phys_upper]
             if not verified_pk and known_phys:

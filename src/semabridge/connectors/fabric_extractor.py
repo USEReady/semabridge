@@ -666,10 +666,77 @@ class FabricExtractor:
             if isinstance(parsed.get("model"), dict):
                 return parsed
 
+        # Optional TOM integration: if an environment supports the
+        # Tabular Object Model (TOM) via pythonnet/.NET, let it try to
+        # produce a canonical model representation. If unavailable or
+        # it fails, fall back to the resilient text-based parser below.
+        try:
+            from semabridge.adapters.tom_integration import parse_tmdl_with_tom
+            from semabridge.repository.model_repository import ModelRepository
+
+            tmdl_model = parse_tmdl_with_tom(parts, sidecar_url=self.config.tom_sidecar_url)
+            if tmdl_model is not None:
+                # Optionally run shadow-mode parity validator (non-fatal)
+                try:
+                    import os
+                    if os.getenv("SEMABRIDGE_SHADOW_MODE", "false").lower() == "true":
+                        from semabridge.adapters.shadow_validator import compare_tom_and_fallback
+                        try:
+                            parity = compare_tom_and_fallback(parts, cfg=self.config)
+                            # Save a small debug artifact for operator inspection
+                            try:
+                                dbg_path = Path("output/debug") / "shadow_mode" / (str(time.time()).replace('.', '_') + "_parity.json")
+                                dbg_path.parent.mkdir(parents=True, exist_ok=True)
+                                with open(dbg_path, "w", encoding="utf-8") as _f:
+                                    json.dump(parity, _f, indent=2)
+                            except Exception:
+                                pass
+                            logger.info("Shadow-mode parity: %s", parity.get('parity'))
+                        except Exception as e:
+                            logger.warning("Shadow-mode validator failed: %s", e)
+                        # Persist parity report to repository and update consecutive pass counts
+                        try:
+                            repo = ModelRepository()
+                            # resolved_id might not be known here; best-effort: try to update by dataset_id if present
+                            dataset_hint = None
+                            if isinstance(tmdl_model, dict):
+                                dataset_hint = tmdl_model.get('model', {}).get('name')
+                            if dataset_hint:
+                                repo.update_tom_parity(dataset_hint, parity, tom_used=True, required_passes=self.config.tom_parity_required_passes)
+                        except Exception as e:
+                            logger.debug("Failed to persist parity report to repository: %s", e)
+                except Exception:
+                    # Keep this hook non-fatal if environment checks/imports fail
+                    pass
+                return tmdl_model
+        except Exception:
+            # Defensive: don't let optional integration raise during parsing.
+            logger.debug("TOM integration raised an exception; falling back to text parser")
+
         # TMDL package fallback: build a model-like JSON payload from
         # definition/*.tmdl parts so downstream converters can continue.
         tmdl_model = self._parse_tmdl_package_parts(parts)
         if tmdl_model is not None:
+            # Optionally run shadow-mode parity validator (non-fatal)
+            try:
+                import os
+                if os.getenv("SEMABRIDGE_SHADOW_MODE", "false").lower() == "true":
+                    from semabridge.adapters.shadow_validator import compare_tom_and_fallback
+
+                    try:
+                        parity = compare_tom_and_fallback(parts, cfg=self.config)
+                        try:
+                            dbg_path = Path("output/debug") / "shadow_mode" / (str(time.time()).replace('.', '_') + "_parity.json")
+                            dbg_path.parent.mkdir(parents=True, exist_ok=True)
+                            with open(dbg_path, "w", encoding="utf-8") as _f:
+                                json.dump(parity, _f, indent=2)
+                        except Exception:
+                            pass
+                        logger.info("Shadow-mode parity: %s", parity.get('parity'))
+                    except Exception as e:
+                        logger.warning("Shadow-mode validator failed: %s", e)
+            except Exception:
+                pass
             return tmdl_model
 
         raise FabricExtractionError(
@@ -679,9 +746,36 @@ class FabricExtractor:
 
     @staticmethod
     def _strip_tmdl_identifier(raw: str) -> str:
-        text = (raw or "").strip().rstrip(":")
+        return FabricExtractor._normalize_tmdl_identifier(raw)
+
+    @staticmethod
+    def _normalize_tmdl_identifier(raw: str) -> str:
+        """Normalize a TMDL identifier to a canonical simple name.
+
+        - Strips surrounding quotes or double-quotes
+        - Removes surrounding whitespace and trailing colons
+        - If fully-qualified (db.schema.table), returns the last segment (table)
+        - Collapses multiple internal whitespace to single spaces
+        """
+        if not raw:
+            return ""
+        text = str(raw).strip().rstrip(":")
+
+        # Remove surrounding quotes if present
         if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
             text = text[1:-1]
+
+        # If bracket-qualified like [Table] or [Schema].[Table], remove brackets
+        text = text.replace("[", "").replace("]", "")
+
+        # If fully-qualified (a.b.c), take last segment as the table name
+        if "." in text:
+            parts = [p for p in text.split(".") if p]
+            if parts:
+                text = parts[-1]
+
+        # Collapse repeated whitespace and normalize underscores/spaces
+        text = " ".join(text.split())
         return text.strip()
 
     @staticmethod
@@ -698,23 +792,30 @@ class FabricExtractor:
         text = (raw or "").strip()
         if not text:
             return None
-
-        # ── Form 1: dot notation  TableName.'Column'  or  TableName.ColumnName ──
-        dot_match = re.match(
-            r"""^\s*['\"]?([^'\".\[]+)['\"]?\.\s*['\"]?([^'\".\]]+)['\"]?\s*$""",
-            text,
-        )
-        if dot_match:
-            table_name = FabricExtractor._strip_tmdl_identifier(dot_match.group(1))
-            column_name = FabricExtractor._strip_tmdl_identifier(dot_match.group(2))
+        # If bracket-style: 'Table Name'[Column Name] or Schema.'Table Name'[Column]
+        bracket_match = re.match(r"^\s*([^\[]+)\[([^\]]+)\]\s*$", text)
+        if bracket_match:
+            raw_table = bracket_match.group(1).strip()
+            raw_col = bracket_match.group(2).strip()
+            table_name = FabricExtractor._normalize_tmdl_identifier(raw_table)
+            column_name = FabricExtractor._normalize_tmdl_identifier(raw_col)
             if table_name and column_name:
                 return table_name, column_name
 
-        # ── Form 2: bracket notation  'Table Name'[Column Name] ─────────────────
-        bracket_match = re.match(r"^\s*['\"]?([^'\"]+)['\"]?\[([^\]]+)\]\s*$", text)
-        if bracket_match:
-            table_name = FabricExtractor._strip_tmdl_identifier(bracket_match.group(1))
-            column_name = FabricExtractor._strip_tmdl_identifier(bracket_match.group(2))
+        # Dot notation: take last '.' split as table/column. Handles schema.table.'Column Name'
+        if "." in text:
+            # Split on last dot to allow dots in qualifiers
+            left, right = text.rsplit(".", 1)
+            table_name = FabricExtractor._normalize_tmdl_identifier(left)
+            column_name = FabricExtractor._normalize_tmdl_identifier(right)
+            if table_name and column_name:
+                return table_name, column_name
+
+        # Fallback: attempt to find quoted pair via regex
+        simple_match = re.match(r"^\s*['\"]?([^'\"]+)['\"]?\s*[,\.]?\s*['\"]?([^'\"]+)['\"]?\s*$", text)
+        if simple_match:
+            table_name = FabricExtractor._normalize_tmdl_identifier(simple_match.group(1))
+            column_name = FabricExtractor._normalize_tmdl_identifier(simple_match.group(2))
             if table_name and column_name:
                 return table_name, column_name
 

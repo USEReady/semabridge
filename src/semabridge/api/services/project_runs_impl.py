@@ -719,6 +719,71 @@ async def compare_project_snapshots_compat(
     return payload
 
 
+async def compare_project_model_snapshot_compat(
+    project_id: str,
+    from_snapshot_id: str,
+    to_snapshot_id: str,
+    model_name: str,
+    include_states: bool = Query(default=False),
+):
+    """Compare a single model between two project snapshots (compat wrapper)."""
+    _compat_ensure_loaded()
+    if project_id not in _compat_projects:
+        raise HTTPException(status_code=404, detail="Project not found")
+    rows = [row for row in _compat_project_snapshots.get(project_id, []) if isinstance(row, dict)]
+    from_row = next((r for r in rows if str(r.get("snapshot_id") or "") == str(from_snapshot_id)), None)
+    to_row = next((r for r in rows if str(r.get("snapshot_id") or "") == str(to_snapshot_id)), None)
+    if not from_row:
+        raise HTTPException(status_code=404, detail="from_snapshot_id not found")
+    if not to_row:
+        raise HTTPException(status_code=404, detail="to_snapshot_id not found")
+
+    left_state = from_row.get("state")
+    if isinstance(left_state, str):
+        try:
+            left_state = json.loads(left_state)
+        except Exception:
+            left_state = {}
+    right_state = to_row.get("state")
+    if isinstance(right_state, str):
+        try:
+            right_state = json.loads(right_state)
+        except Exception:
+            right_state = {}
+
+    if not isinstance(left_state, dict):
+        left_state = {}
+    if not isinstance(right_state, dict):
+        right_state = {}
+
+    models_diff = _diff_models(left_state, right_state)
+
+    # Try exact match first, then fallback to suffix/contains comparisons.
+    match = next((m for m in models_diff if str(m.get("name") or "") == str(model_name)), None)
+    if not match:
+        lname = str(model_name or "").lower()
+        match = next((m for m in models_diff if lname and (str(m.get("name") or "").lower().endswith(lname) or lname in str(m.get("name") or "").lower())), None)
+
+    if not match:
+        raise HTTPException(status_code=404, detail=f"Model '{model_name}' not found in snapshot comparison")
+
+    payload = {
+        "project_id": project_id,
+        "from_snapshot_id": from_snapshot_id,
+        "to_snapshot_id": to_snapshot_id,
+        "model": match,
+        "metadata": {
+            "snapshot_a": {"id": from_snapshot_id, "format": from_row.get("intermediate_format"), "taken_at": from_row.get("created_at")},
+            "snapshot_b": {"id": to_snapshot_id, "format": to_row.get("intermediate_format"), "taken_at": to_row.get("created_at")},
+        },
+    }
+    if include_states:
+        payload["from_state"] = left_state
+        payload["to_state"] = right_state
+
+    return payload
+
+
 async def get_project_runs_compat(project_id: str):
     """
     Retrieve run history for a project.
@@ -1401,6 +1466,37 @@ async def list_job_runs_compat():
 
     all_runs.sort(key=lambda x: x.get("started_at") or "", reverse=True)
     return all_runs
+
+
+async def clear_job_runs_compat():
+    _compat_ensure_loaded()
+    cleared_memory_runs = sum(len(runs) for runs in _compat_project_runs.values())
+    deleted_db_runs = 0
+
+    try:
+        from sqlalchemy import delete
+        from semabridge.repository.orm.models import Run, SourceArtifact, SyncConflictRow
+        from semabridge.repository.orm.session_factory import db_manager
+
+        session = db_manager._session()
+        try:
+            session.execute(delete(SourceArtifact))
+            session.execute(delete(SyncConflictRow).where(SyncConflictRow.run_id.isnot(None)))
+            deleted_db_runs = session.execute(delete(Run)).rowcount or 0
+            session.commit()
+        finally:
+            session.close()
+    except Exception as exc:
+        logger.debug("clear_job_runs_compat ORM cleanup skipped: %s", exc)
+
+    _compat_project_runs.clear()
+    _compat_save_store()
+    return {
+        "status": "deleted",
+        "deleted_count": deleted_db_runs or cleared_memory_runs,
+        "cleared_memory_runs": cleared_memory_runs,
+        "deleted_db_runs": deleted_db_runs,
+    }
 
 
 async def get_jobs_config_compat():

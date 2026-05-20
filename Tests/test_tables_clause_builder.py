@@ -162,3 +162,57 @@ def test_fact_table_uses_composite_pk_from_outgoing_relationship_keys():
     ddl = "\n".join(tables_lines)
     assert 'SALESFACT AS "DB"."SCH"."SALESFACT" PRIMARY KEY ("PRODUCTID", "COL_DATE", "ZIP")' in ddl
     assert declared_pk["SALESFACT"] == ["PRODUCTID", "COL_DATE", "ZIP"]
+
+
+def test_bridge_table_branch_does_not_raise_and_suppresses_pk():
+    builder = TablesClauseBuilder(
+        identifier_sanitizer=_Sanitizer(),
+        schema_manager=_SchemaManager(),
+        config=SimpleNamespace(database="DB", schema_name="SCH"),
+        behavior=SimpleNamespace(snowflake=SimpleNamespace(pk_resolution_mode="lenient")),
+        live_schema_metadata={"BRIDGE": {"LEFT_ID", "RIGHT_ID"}},
+    )
+    left = SimpleNamespace(
+        unique_name="LEFT",
+        source_table="LEFT",
+        columns=[SimpleNamespace(unique_name="LEFT_ID", is_key=True)],
+    )
+    right = SimpleNamespace(
+        unique_name="RIGHT",
+        source_table="RIGHT",
+        columns=[SimpleNamespace(unique_name="RIGHT_ID", is_key=True)],
+    )
+    bridge = SimpleNamespace(
+        unique_name="BRIDGE",
+        source_table="BRIDGE",
+        columns=[
+            SimpleNamespace(unique_name="LEFT_ID", is_key=False),
+            SimpleNamespace(unique_name="RIGHT_ID", is_key=False),
+        ],
+    )
+    rel1 = SimpleNamespace(
+        is_active=True,
+        from_dataset="LEFT",
+        from_columns=["LEFT_ID"],
+        to_dataset="BRIDGE",
+        to_columns=["LEFT_ID"],
+    )
+    rel2 = SimpleNamespace(
+        is_active=True,
+        from_dataset="BRIDGE",
+        from_columns=["RIGHT_ID"],
+        to_dataset="RIGHT",
+        to_columns=["RIGHT_ID"],
+    )
+
+    tables_lines, declared_pk, _, _, _ = builder.build_for_sml(
+        sml=SimpleNamespace(datasets=[left, bridge, right], relationships=[rel1, rel2]),
+        registry=_Registry(),
+        metric_counts_by_dataset={},
+        related_datasets={"LEFT", "BRIDGE", "RIGHT"},
+    )
+
+    ddl = "\n".join(tables_lines)
+    assert 'BRIDGE AS "DB"."SCH"."BRIDGE"' in ddl
+    assert 'BRIDGE AS "DB"."SCH"."BRIDGE" PRIMARY KEY' not in ddl
+    assert "BRIDGE" not in declared_pk or declared_pk["BRIDGE"] == []

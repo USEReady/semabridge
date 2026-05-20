@@ -36,6 +36,7 @@ from semabridge.repository.orm.models import (
     Project,
     Run,
     SnapshotRow,
+    RelationshipRow,
     SourceArtifact,
     SyncConflictRow,
 )
@@ -231,6 +232,37 @@ class ModelRepository:
                         run_columns = {col["name"] for col in inspector.get_columns("runs")}
                         if "sync_mode" not in run_columns:
                             conn.exec_driver_sql("ALTER TABLE runs ADD COLUMN sync_mode VARCHAR(20) NOT NULL DEFAULT 'copy'")
+                    if "projects" in inspector.get_table_names():
+                        project_columns = {col["name"] for col in inspector.get_columns("projects")}
+                        # Add TOM parity tracking columns if missing
+                        if "tom_consecutive_parity_passes" not in project_columns:
+                            try:
+                                conn.exec_driver_sql(
+                                    "ALTER TABLE projects ADD COLUMN tom_consecutive_parity_passes INTEGER DEFAULT 0"
+                                )
+                            except Exception:
+                                pass
+                        if "tom_authoritative" not in project_columns:
+                            try:
+                                conn.exec_driver_sql(
+                                    "ALTER TABLE projects ADD COLUMN tom_authoritative BOOLEAN DEFAULT false"
+                                )
+                            except Exception:
+                                pass
+                        if "tom_last_parity_at" not in project_columns:
+                            try:
+                                conn.exec_driver_sql(
+                                    "ALTER TABLE projects ADD COLUMN tom_last_parity_at TIMESTAMP WITH TIME ZONE NULL"
+                                )
+                            except Exception:
+                                pass
+                        if "tom_last_parity_report" not in project_columns:
+                            try:
+                                conn.exec_driver_sql(
+                                    "ALTER TABLE projects ADD COLUMN tom_last_parity_report TEXT NULL"
+                                )
+                            except Exception:
+                                pass
                 cls._schema_initialized_urls.add(url_key)
             except NotImplementedError as e:
                 if "Snowflake" in str(e) or "index" in str(e).lower():
@@ -320,6 +352,26 @@ class ModelRepository:
     ) -> None:
         """Ensure the project row exists (upsert)."""
         now = datetime.utcnow()
+        # Defensive validation: truncate fields that exceed column lengths
+        def _truncate_field(value: Optional[str], field_name: str, maxlen: int) -> Optional[str]:
+            if value is None:
+                return None
+            if len(value) > maxlen:
+                logger.warning(
+                    "Truncating field %s to %d chars (was %d)",
+                    field_name,
+                    maxlen,
+                    len(value),
+                )
+                return value[:maxlen]
+            return value
+
+        # Project.name/workspace_id/connection_tag commonly use VARCHAR(255)
+        name = _truncate_field(name, "project.name", 255) or ""
+        workspace_id = _truncate_field(workspace_id, "project.workspace_id", 255) or None
+        connection_tag = _truncate_field(connection_tag, "project.connection_tag", 255) or None
+        # Adapter column is defined as String(50)
+        adapter = _truncate_field(adapter, "project.adapter", 50) or adapter
         with self._session() as session:
             existing = session.get(Project, project_id)
             if existing:
@@ -550,6 +602,70 @@ class ModelRepository:
                 )
             )
 
+            # Persist normalized relationship rows for easy querying and history.
+            # Support both canonical SML shape (top-level "relationships") and
+            # legacy embedded model shape (e.g., {"model": {"relationships": [...]}}).
+            rels = []
+            if isinstance(sml_json, dict):
+                if "relationships" in sml_json and isinstance(sml_json.get("relationships"), list):
+                    rels = sml_json.get("relationships") or []
+                elif isinstance(sml_json.get("model"), dict) and isinstance(sml_json["model"].get("relationships"), list):
+                    rels = sml_json["model"].get("relationships") or []
+
+            for r in (rels or []):
+                try:
+                    from_table = (
+                        r.get("from_dataset")
+                        or r.get("fromTable")
+                        or r.get("fromDataset")
+                        or ""
+                    )
+                    to_table = (
+                        r.get("to_dataset")
+                        or r.get("toTable")
+                        or r.get("toDataset")
+                        or ""
+                    )
+
+                    # Columns may be lists or single values
+                    def _first_col(key_candidates: list[str]) -> str:
+                        for k in key_candidates:
+                            v = r.get(k)
+                            if isinstance(v, list) and v:
+                                return str(v[0])
+                            if isinstance(v, str) and v.strip():
+                                return v.strip()
+                        return ""
+
+                    from_col = _first_col(["from_columns", "fromColumns", "fromColumn"])
+                    to_col = _first_col(["to_columns", "toColumns", "toColumn"])
+
+                    if not (from_table and from_col and to_table and to_col):
+                        # Skip incomplete relationship entries
+                        continue
+
+                    session.add(
+                        RelationshipRow(
+                            id=str(uuid.uuid4()),
+                            snapshot_id=snapshot_id,
+                            from_table=str(from_table),
+                            from_column=str(from_col),
+                            to_table=str(to_table),
+                            to_column=str(to_col),
+                            cardinality=str(r.get("cardinality")) if r.get("cardinality") is not None else None,
+                            cross_filter_behavior=(
+                                r.get("cross_filter")
+                                or r.get("crossFilter")
+                                or r.get("crossFilteringBehavior")
+                                or None
+                            ),
+                            is_active=bool(r.get("is_active") if r.get("is_active") is not None else r.get("isActive", True)),
+                        )
+                    )
+                except Exception:
+                    # Defensive: do not fail the entire commit due to one bad rel.
+                    logger.warning("Failed to persist relationship row: %s", r)
+
             for change in changes:
                 session.add(
                     Change(
@@ -670,6 +786,46 @@ class ModelRepository:
         except ValueError:
             return False
         return new_idx == old_idx + 1
+
+    def update_tom_parity(self, project_id: str, parity_report: dict, tom_used: bool = True, required_passes: int = 3) -> None:
+        """Update TOM parity counters and persist the last parity report for a project.
+
+        - Increments `tom_consecutive_parity_passes` when parity == True
+        - Resets counter to 0 when parity == False
+        - Sets `tom_authoritative` to True when passes >= required_passes
+        - Stores last parity timestamp and JSON report
+        """
+        import json as _json
+        with self._session() as session:
+            proj = session.get(Project, project_id)
+            if not proj:
+                # Best-effort create project row if missing
+                try:
+                    session.add(Project(project_id=project_id, name=project_id, workspace_id=None))
+                    session.commit()
+                    proj = session.get(Project, project_id)
+                except Exception:
+                    session.rollback()
+                    return
+
+            parity_ok = bool(parity_report.get('parity')) if isinstance(parity_report, dict) else False
+            if parity_ok:
+                proj.tom_consecutive_parity_passes = (proj.tom_consecutive_parity_passes or 0) + 1
+            else:
+                proj.tom_consecutive_parity_passes = 0
+
+            if proj.tom_consecutive_parity_passes >= required_passes:
+                proj.tom_authoritative = True
+
+            from datetime import datetime
+            proj.tom_last_parity_at = datetime.utcnow()
+            try:
+                proj.tom_last_parity_report = _json.dumps(parity_report)
+            except Exception:
+                proj.tom_last_parity_report = str(parity_report)
+
+            session.add(proj)
+            session.commit()
 
     def _changes_for_snapshot(self, project_id: str, snapshot_id: str) -> List[ModelChange]:
         """Load precomputed changes for a snapshot from the existing changes table."""
