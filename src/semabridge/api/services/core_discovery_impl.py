@@ -112,6 +112,7 @@ def discover_snowflake(identity_id: Optional[str] = Query(None)):
     import time
     from pydantic import ValidationError
     from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
+    from semabridge.connectors.snowflake_extractor import ExtractionError
     from sqlalchemy import select
     from semabridge.repository.orm.models import Account
     from semabridge.repository.orm.session_factory import db_manager
@@ -150,7 +151,16 @@ def discover_snowflake(identity_id: Optional[str] = Query(None)):
                     from semabridge.core.settings import reload_settings
                     scoped_settings = reload_settings()
                     extractor = SnowflakeExtractor(scoped_settings.snowflake)
-                    views = extractor.discover_semantic_views()
+                    try:
+                        views = extractor.discover_semantic_views()
+                    except ExtractionError as exc:
+                        raise HTTPException(
+                            status_code=503,
+                            detail=(
+                                "Snowflake semantic view discovery is unavailable right now. "
+                                f"{exc}"
+                            ),
+                        ) from exc
         else:
             settings = get_settings()
             try:
@@ -164,7 +174,16 @@ def discover_snowflake(identity_id: Optional[str] = Query(None)):
                     ),
                 )
             extractor = SnowflakeExtractor(snowflake_config)
-            views = extractor.discover_semantic_views()
+            try:
+                views = extractor.discover_semantic_views()
+            except ExtractionError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Snowflake semantic view discovery is unavailable right now. "
+                        f"{exc}"
+                    ),
+                ) from exc
 
         # Build final view format
         snowflake_cfg_to_use = scoped_settings.snowflake if identity_id and 'scoped_settings' in locals() else snowflake_config
@@ -195,6 +214,271 @@ def discover_snowflake(identity_id: Optional[str] = Query(None)):
         raise HTTPException(status_code=500, detail=f"Snowflake semantic view discovery failed: {ae}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Snowflake semantic view discovery failed: {e}")
+
+def _get_snowflake_extractor(identity_id: Optional[str] = None):
+    from pydantic import ValidationError
+    from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
+    from semabridge.repository.orm.models import Account
+    from semabridge.repository.orm.session_factory import db_manager
+    from semabridge.auth.account_credential_resolver import scoped_account_env
+    from fastapi import HTTPException
+    from sqlalchemy import select
+
+    if identity_id:
+        with db_manager.get_session() as session:
+            account = session.execute(
+                select(Account).where(
+                    Account.connector_type == "SNOWFLAKE",
+                    Account.id == identity_id,
+                )
+            ).scalars().first()
+
+            if not account:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"No Snowflake account found for identity_id '{identity_id}'. "
+                        "Link this account in Settings -> Connections or POST to /api/accounts with connector_type 'SNOWFLAKE'."
+                    ),
+                )
+                
+            with scoped_account_env(account, session):
+                from semabridge.core.settings import reload_settings
+                scoped_settings = reload_settings()
+                return SnowflakeExtractor(scoped_settings.snowflake)
+    else:
+        settings = get_settings()
+        try:
+            snowflake_config = settings.snowflake
+        except ValidationError:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Snowflake is not configured. "
+                    "Set SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, and SNOWFLAKE_PASSWORD in .env or environment variables."
+                ),
+            )
+        return SnowflakeExtractor(snowflake_config)
+
+def discover_snowflake_warehouses(identity_id: Optional[str] = Query(None)):
+    try:
+        extractor = _get_snowflake_extractor(identity_id)
+        return extractor.get_warehouses()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Snowflake warehouse discovery failed: {e}")
+
+def discover_snowflake_databases(identity_id: Optional[str] = Query(None)):
+    try:
+        extractor = _get_snowflake_extractor(identity_id)
+        return extractor.get_databases()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Snowflake database discovery failed: {e}")
+
+def discover_snowflake_schemas(database: str, identity_id: Optional[str] = Query(None)):
+    try:
+        extractor = _get_snowflake_extractor(identity_id)
+        return extractor.get_schemas(database)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Snowflake schema discovery failed: {e}")
+
+
+
+def _run_snowflake_discovery(identity_id: Optional[str], action):
+    """Run a Snowflake metadata query against the configured or linked account."""
+    from pydantic import ValidationError
+    from semabridge.connectors.snowflake_extractor import ExtractionError
+    from semabridge.auth.account_credential_resolver import scoped_account_env
+    from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
+    from semabridge.repository.orm.models import Account
+    from semabridge.repository.orm.session_factory import db_manager
+    from sqlalchemy import select
+
+    def _fallback_items(config, *, kind: str, database: Optional[str] = None):
+        warehouse = str(getattr(config, "warehouse", "") or "").strip()
+        db_name = str(getattr(config, "database", "") or "").strip()
+        schema_name = str(getattr(config, "schema_name", "") or "").strip()
+
+        if kind == "warehouses" and warehouse:
+            return [{"id": warehouse, "name": warehouse}]
+        if kind == "databases" and db_name:
+            return [{"id": db_name, "name": db_name}]
+        if kind == "schemas" and schema_name:
+            # When the account cannot be queried, fall back to the configured
+            # default schema for the selected database so the UI still reflects
+            # the linked account's actual connection settings.
+            if database and db_name and database.strip().upper() != db_name.strip().upper():
+                return []
+            return [{"id": schema_name, "name": schema_name}]
+        return []
+
+    def _map_connection_error(exc: Exception) -> HTTPException:
+        message = str(exc)
+        lowered = message.lower()
+        if "free trial has ended" in lowered or "virtual warehouses have been suspended" in lowered:
+            return HTTPException(
+                status_code=503,
+                detail=(
+                    "Snowflake discovery is unavailable because the linked account's "
+                    "virtual warehouses are suspended. Reactivate the warehouse or add "
+                    "billing information in Snowflake, then try again."
+                ),
+            )
+        if any(token in lowered for token in ("auth", "authentication", "password", "invalid username/password")):
+            return HTTPException(
+                status_code=401,
+                detail=f"Snowflake authentication failed: {message}",
+            )
+        return HTTPException(
+            status_code=503,
+            detail=f"Snowflake discovery is unavailable: {message}",
+        )
+
+    if identity_id:
+        with db_manager.get_session() as session:
+            account = session.execute(
+                select(Account).where(
+                    Account.connector_type == "SNOWFLAKE",
+                    Account.id == identity_id,
+                )
+            ).scalars().first()
+
+            if not account:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"No Snowflake account found for identity_id '{identity_id}'. "
+                        "Link this account in Settings -> Connections or POST to /api/accounts with connector_type 'SNOWFLAKE'."
+                    ),
+                )
+
+            with scoped_account_env(account, session):
+                from semabridge.core.settings import reload_settings
+
+                scoped_settings = reload_settings()
+                extractor = SnowflakeExtractor(scoped_settings.snowflake)
+                try:
+                    with extractor.connection() as conn:
+                        return action(conn, scoped_settings.snowflake)
+                except ExtractionError as exc:
+                    logger.warning("Snowflake discovery failed for identity %s: %s", identity_id, exc)
+                    lowered = str(exc).lower()
+                    if "free trial has ended" in lowered or "virtual warehouses have been suspended" in lowered:
+                        return _fallback_items(scoped_settings.snowflake, kind=getattr(action, "_discovery_kind", ""), database=getattr(action, "_discovery_database", None))
+                    raise _map_connection_error(exc) from exc
+
+    try:
+        settings = get_settings()
+        try:
+            snowflake_config = settings.snowflake
+        except ValidationError:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Snowflake is not configured. "
+                    "Set SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, and SNOWFLAKE_PASSWORD in .env or environment variables."
+                ),
+            )
+
+        extractor = SnowflakeExtractor(snowflake_config)
+        try:
+            with extractor.connection() as conn:
+                return action(conn, snowflake_config)
+        except ExtractionError as exc:
+            logger.warning("Snowflake discovery failed: %s", exc)
+            lowered = str(exc).lower()
+            if "free trial has ended" in lowered or "virtual warehouses have been suspended" in lowered:
+                return _fallback_items(snowflake_config, kind=getattr(action, "_discovery_kind", ""), database=getattr(action, "_discovery_database", None))
+            raise _map_connection_error(exc) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Snowflake discovery helper failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Snowflake discovery failed: {exc}")
+
+
+def _rows_to_discovery_items(rows, *, id_index: int = 1, name_index: int = 1):
+    items = []
+    for row in rows:
+        row_id = ""
+        row_name = ""
+        try:
+            row_id = str(row[id_index]).strip() if len(row) > id_index and row[id_index] is not None else ""
+        except Exception:
+            row_id = ""
+        try:
+            row_name = str(row[name_index]).strip() if len(row) > name_index and row[name_index] is not None else ""
+        except Exception:
+            row_name = ""
+
+        value = row_id or row_name
+        label = row_name or row_id
+        if not value and not label:
+            continue
+        items.append({"id": value, "name": label})
+    return items
+
+
+def discover_snowflake_warehouses(identity_id: Optional[str] = Query(None)):
+    def _action(conn, _config):
+        cur = conn.cursor()
+        try:
+            cur.execute("SHOW WAREHOUSES")
+            return _rows_to_discovery_items(cur.fetchall())
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+
+    _action._discovery_kind = "warehouses"
+
+    return _run_snowflake_discovery(identity_id, _action)
+
+
+def discover_snowflake_databases(identity_id: Optional[str] = Query(None)):
+    def _action(conn, _config):
+        cur = conn.cursor()
+        try:
+            cur.execute("SHOW DATABASES")
+            return _rows_to_discovery_items(cur.fetchall())
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+
+    _action._discovery_kind = "databases"
+
+    return _run_snowflake_discovery(identity_id, _action)
+
+
+def discover_snowflake_schemas(database: str, identity_id: Optional[str] = Query(None)):
+    db_name = str(database or "").strip()
+    if not db_name:
+        raise HTTPException(status_code=400, detail="database path parameter is required")
+    quoted_db_name = db_name.replace('"', '""')
+
+    def _action(conn, _config):
+        cur = conn.cursor()
+        try:
+            cur.execute(f'SHOW SCHEMAS IN DATABASE "{quoted_db_name}"')
+            return _rows_to_discovery_items(cur.fetchall())
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+
+    _action._discovery_kind = "schemas"
+    _action._discovery_database = db_name
+
+    return _run_snowflake_discovery(identity_id, _action)
 
 
 def discover_repository():

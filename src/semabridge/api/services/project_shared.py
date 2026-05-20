@@ -227,6 +227,7 @@ _compat_run_snapshots: Dict[str, List[Dict[str, Any]]] = {}
 _compat_folders: Dict[str, Dict[str, Any]] = {}
 _compat_mappings: Dict[str, Dict[str, Any]] = {}
 _compat_project_schedules: Dict[str, Dict[str, Any]] = {}
+_compat_deleted_project_ids: set[str] = set()
 _compat_job_config: Dict[str, Any] = {
     "schedule_type": "Manual Trigger Only",
     "cron": "0 0 * * *",
@@ -255,18 +256,38 @@ def _compat_store_path() -> Path:
     return p
 
 
+def _compat_repo_root() -> Path:
+    return _Path(__file__).resolve().parents[4]
+
+
+def _compat_config_roots() -> List[Path]:
+    roots: List[Path] = []
+    for base in (Path.cwd(), _compat_repo_root()):
+        for name in ("config", "Config"):
+            root = base / name
+            if root not in roots:
+                roots.append(root)
+    return roots
+
+
 def _compat_config_root() -> Path:
     """
     Resolve repository config root while staying compatible with both
     `config/` and `Config/` casing used across environments.
     """
-    lower = Path("config")
-    upper = Path("Config")
-    if lower.exists():
-        return lower
-    if upper.exists():
-        return upper
-    return upper
+    for root in _compat_config_roots():
+        if root.exists():
+            return root
+    return _compat_repo_root() / "Config"
+
+
+def _compat_projects_dirs() -> List[Path]:
+    dirs: List[Path] = []
+    for root in _compat_config_roots():
+        projects_dir = root / "projects"
+        if projects_dir not in dirs:
+            dirs.append(projects_dir)
+    return dirs
 
 
 def _compat_projects_dir() -> Path:
@@ -416,45 +437,47 @@ def _compat_load_modular_project(project_id: str) -> Optional[Dict[str, Any]]:
 
 
 def _compat_bootstrap_projects_from_modular_configs() -> None:
-    projects_dir = _compat_projects_dir()
-    if not projects_dir.exists():
-        return
-
-    for path in sorted(projects_dir.glob("*.y*ml")):
-        project_id = path.stem.strip()
-        if not project_id:
-            continue
-        bundle = _compat_load_modular_project(project_id)
-        if not bundle:
+    seen: set[str] = set()
+    for projects_dir in _compat_projects_dirs():
+        if not projects_dir.exists():
             continue
 
-        assembled = bundle["assembled"]
-        source_cfg = assembled.get("source") if isinstance(assembled.get("source"), dict) else {}
-        target_cfg = assembled.get("target") if isinstance(assembled.get("target"), dict) else {}
-        metadata = assembled.get("project_metadata") if isinstance(assembled.get("project_metadata"), dict) else {}
+        for path in sorted(projects_dir.glob("*.y*ml")):
+            project_id = path.stem.strip()
+            if not project_id or project_id in seen or project_id in _compat_deleted_project_ids:
+                continue
+            bundle = _compat_load_modular_project(project_id)
+            if not bundle:
+                continue
 
-        existing = _compat_projects.get(project_id) if isinstance(_compat_projects.get(project_id), dict) else {}
-        project = {
-            "id": project_id,
-            "project_id": project_id,
-            "name": _compat_clean_project_name(metadata.get("name") or assembled.get("project_name"), f"Project {project_id[-6:]}"),
-            "description": str(metadata.get("description") or existing.get("description") or ""),
-            "source": source_cfg.get("type") or existing.get("source") or "fabric",
-            "adapter": source_cfg.get("type") or existing.get("adapter") or "fabric",
-            "workspace_id": str(source_cfg.get("workspace_id") or existing.get("workspace_id") or ""),
-            "target_type": target_cfg.get("type") or existing.get("target_type") or "snowflake",
-            "folder_id": existing.get("folder_id"),
-            "status": existing.get("status") or "draft",
-            "mapping_profile": assembled.get("mapping_profile") or "",
-            "config_source": "modular",
-            "created_at": existing.get("created_at") or _compat_now_iso(),
-            "updated_at": _compat_now_iso(),
-        }
-        _compat_projects[project_id] = project
-        _compat_project_configs[project_id] = str(bundle.get("config_yaml") or "").strip()
-        _compat_project_runs.setdefault(project_id, [])
-        _compat_project_snapshots.setdefault(project_id, [])
-        _compat_snapshot_groups.setdefault(project_id, [])
+            assembled = bundle["assembled"]
+            source_cfg = assembled.get("source") if isinstance(assembled.get("source"), dict) else {}
+            target_cfg = assembled.get("target") if isinstance(assembled.get("target"), dict) else {}
+            metadata = assembled.get("project_metadata") if isinstance(assembled.get("project_metadata"), dict) else {}
+
+            existing = _compat_projects.get(project_id) if isinstance(_compat_projects.get(project_id), dict) else {}
+            project = {
+                "id": project_id,
+                "project_id": project_id,
+                "name": _compat_clean_project_name(metadata.get("name") or assembled.get("project_name"), f"Project {project_id[-6:]}"),
+                "description": str(metadata.get("description") or existing.get("description") or ""),
+                "source": source_cfg.get("type") or existing.get("source") or "fabric",
+                "adapter": source_cfg.get("type") or existing.get("adapter") or "fabric",
+                "workspace_id": str(source_cfg.get("workspace_id") or existing.get("workspace_id") or ""),
+                "target_type": target_cfg.get("type") or existing.get("target_type") or "snowflake",
+                "folder_id": existing.get("folder_id"),
+                "status": existing.get("status") or "draft",
+                "mapping_profile": assembled.get("mapping_profile") or "",
+                "config_source": "modular",
+                "created_at": existing.get("created_at") or _compat_now_iso(),
+                "updated_at": _compat_now_iso(),
+            }
+            _compat_projects[project_id] = project
+            _compat_project_configs[project_id] = str(bundle.get("config_yaml") or "").strip()
+            _compat_project_runs.setdefault(project_id, [])
+            _compat_project_snapshots.setdefault(project_id, [])
+            _compat_snapshot_groups.setdefault(project_id, [])
+            seen.add(project_id)
 
 
 def _compat_save_store() -> None:
@@ -468,6 +491,7 @@ def _compat_save_store() -> None:
         "folders": _compat_folders,
         "mappings": _compat_mappings,
         "project_schedules": _compat_project_schedules,
+        "deleted_project_ids": sorted(_compat_deleted_project_ids),
         "job_config": _compat_job_config,
     }
     try:
@@ -511,8 +535,26 @@ def _compat_load_store() -> None:
             _compat_mappings.update(data.get("mappings") or {})
         if isinstance(data.get("project_schedules"), dict):
             _compat_project_schedules.update(data.get("project_schedules") or {})
+        if isinstance(data.get("deleted_project_ids"), list):
+            _compat_deleted_project_ids.update(
+                str(project_id).strip()
+                for project_id in data.get("deleted_project_ids") or []
+                if str(project_id).strip()
+            )
         if isinstance(data.get("job_config"), dict):
             _compat_job_config.update(data.get("job_config") or {})
+
+        for project_id in list(_compat_deleted_project_ids):
+            _compat_projects.pop(project_id, None)
+            _compat_project_configs.pop(project_id, None)
+            _compat_project_runs.pop(project_id, None)
+            _compat_project_snapshots.pop(project_id, None)
+            _compat_snapshot_groups.pop(project_id, None)
+            _compat_run_snapshots.pop(project_id, None)
+            _compat_project_schedules.pop(project_id, None)
+            for mapping_id, mapping in list(_compat_mappings.items()):
+                if isinstance(mapping, dict) and str(mapping.get("project_id") or "").strip() == project_id:
+                    _compat_mappings.pop(mapping_id, None)
     except Exception as exc:
         logger.warning("Failed to load compat store: %s", exc)
     finally:
@@ -538,7 +580,7 @@ def _compat_bootstrap_projects_from_orm() -> None:
 
         for row in rows:
             pid = str(row.project_id or "").strip()
-            if not pid:
+            if not pid or pid in _compat_deleted_project_ids:
                 continue
             project = {
                 "id": pid,
@@ -580,6 +622,8 @@ def _compat_bootstrap_project_from_repo_yaml() -> None:
     pname = _compat_clean_project_name(parsed.get("project_name"), "SemaBridge Project")
     pid_hash = hashlib.sha1(pname.encode("utf-8")).hexdigest()[:12]
     project_id = f"proj-{pid_hash}"
+    if project_id in _compat_deleted_project_ids:
+        return
 
     source_cfg = parsed.get("source") if isinstance(parsed.get("source"), dict) else {}
     target_cfg = parsed.get("target") if isinstance(parsed.get("target"), dict) else {}
@@ -619,17 +663,24 @@ def _compat_repo_yaml_path() -> Path:
 
 def _compat_project_yaml_path(project_id: str) -> Path:
     file_name = f"{project_id}.yaml"
-    lower = Path("config") / "projects" / file_name
-    upper = Path("Config") / "projects" / file_name
-    if lower.exists():
-        return lower
-    if upper.exists():
-        return upper
+    for p in _compat_project_yaml_paths(project_id):
+        if p.exists():
+            return p
     return _compat_projects_dir() / file_name
 
 
+def _compat_project_yaml_paths(project_id: str) -> List[Path]:
+    paths: List[Path] = []
+    for projects_dir in _compat_projects_dirs():
+        for suffix in ("yaml", "yml"):
+            path = projects_dir / f"{project_id}.{suffix}"
+            if path not in paths:
+                paths.append(path)
+    return paths
+
+
 def _compat_load_project_yaml_text(project_id: str) -> str:
-    for p in [Path("config") / "projects" / f"{project_id}.yaml", Path("Config") / "projects" / f"{project_id}.yaml", _compat_project_yaml_path(project_id)]:
+    for p in _compat_project_yaml_paths(project_id):
         try:
             if p.exists():
                 text = p.read_text(encoding="utf-8")
@@ -641,14 +692,7 @@ def _compat_load_project_yaml_text(project_id: str) -> str:
 
 
 def _compat_save_project_yaml_text(project_id: str, yaml_text: str) -> Path:
-    existing_lower = Path("config") / "projects" / f"{project_id}.yaml"
-    existing_upper = Path("Config") / "projects" / f"{project_id}.yaml"
-    if existing_lower.exists():
-        p = existing_lower
-    elif existing_upper.exists():
-        p = existing_upper
-    else:
-        p = _compat_project_yaml_path(project_id)
+    p = _compat_project_yaml_path(project_id)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(yaml_text, encoding="utf-8")
     return p

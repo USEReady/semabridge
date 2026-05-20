@@ -634,7 +634,11 @@ class ModelRepository:
         if old_snap.project_id != project_id or new_snap.project_id != project_id:
             return []
 
-        changes = _compute_diff(old_snap.sml_blob, new_snap.sml_blob)
+        changes: List[ModelChange] = []
+        if self._is_direct_successor(project_id, old_snapshot_id, new_snapshot_id):
+            changes = self._changes_for_snapshot(project_id, new_snapshot_id)
+        if not changes:
+            changes = _compute_diff(old_snap.sml_blob, new_snap.sml_blob)
         return [
             {
                 "object": f"{c.object_type}.{c.object_name}",
@@ -647,6 +651,68 @@ class ModelRepository:
             }
             for c in changes
         ]
+
+    def _is_direct_successor(self, project_id: str, old_snapshot_id: str, new_snapshot_id: str) -> bool:
+        """Return True when new_snapshot_id is immediately after old_snapshot_id in project history."""
+        with self._session() as session:
+            rows = (
+                session.execute(
+                    select(SnapshotRow.snapshot_id)
+                    .where(SnapshotRow.project_id == project_id)
+                    .order_by(SnapshotRow.timestamp.asc(), SnapshotRow.snapshot_id.asc())
+                )
+                .all()
+            )
+        ordered = [r[0] for r in rows]
+        try:
+            old_idx = ordered.index(old_snapshot_id)
+            new_idx = ordered.index(new_snapshot_id)
+        except ValueError:
+            return False
+        return new_idx == old_idx + 1
+
+    def _changes_for_snapshot(self, project_id: str, snapshot_id: str) -> List[ModelChange]:
+        """Load precomputed changes for a snapshot from the existing changes table."""
+        with self._session() as session:
+            rows = (
+                session.execute(
+                    select(Change)
+                    .join(SnapshotRow, Change.snapshot_id == SnapshotRow.snapshot_id)
+                    .where(
+                        and_(
+                            SnapshotRow.project_id == project_id,
+                            Change.snapshot_id == snapshot_id,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        parsed: List[ModelChange] = []
+        for row in rows:
+            old_value = None
+            new_value = None
+            if row.old_value:
+                try:
+                    old_value = json.loads(row.old_value)
+                except Exception:
+                    old_value = row.old_value
+            if row.new_value:
+                try:
+                    new_value = json.loads(row.new_value)
+                except Exception:
+                    new_value = row.new_value
+            parsed.append(
+                ModelChange(
+                    object_type=row.object_type or "",
+                    object_name=row.object_name or "",
+                    diff_type=row.diff_type or "",
+                    old_value=old_value,
+                    new_value=new_value,
+                )
+            )
+        return parsed
 
     def compare_versions_markdown(
         self, project_id: str, old_snapshot_id: str, new_snapshot_id: str

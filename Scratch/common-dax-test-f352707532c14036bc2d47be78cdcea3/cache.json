@@ -1,0 +1,10 @@
+{
+  "cached-key": {
+    "sql": "CAST(NULL AS DOUBLE)",
+    "is_valid": true,
+    "provider": "",
+    "model": "",
+    "fallback_used": true,
+    "timestamp": "2999-01-01T00:00:00"
+  }
+}

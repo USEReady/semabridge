@@ -84,16 +84,20 @@ def _apply_mapping_overrides_from_config(
     target_type = str(target_cfg.get("type") or "").strip().lower()
     snowflake_sanitizer = IdentifierSanitizer(force_uppercase=True, suppress_reserved=True)
 
-    overrides: Dict[str, str] = {}
+    overrides: Dict[str, Dict[str, Any]] = {}
     for row in raw_overrides:
         if not isinstance(row, dict):
             continue
         source_path = str(row.get("source_path") or "").strip()
         target_name = str(row.get("target_name") or "").strip()
+        row_syns = list(row.get("synonyms") or [])
         if target_type == "snowflake" and target_name:
             target_name = snowflake_sanitizer.sanitize_alias(target_name)
-        if source_path and target_name:
-            overrides[source_path] = target_name
+        if source_path:
+            overrides[source_path] = {
+                "target_name": target_name,
+                "synonyms": row_syns
+            }
 
     if not overrides:
         return
@@ -105,7 +109,10 @@ def _apply_mapping_overrides_from_config(
     for dataset in sml_model.datasets:
         dataset_by_name[str(dataset.unique_name)] = dataset
 
-    for source_path, target_name in overrides.items():
+    for source_path, override_data in overrides.items():
+        target_name = override_data.get("target_name")
+        synonyms = override_data.get("synonyms") or []
+
         if source_path.startswith("metrics."):
             metric_name = source_path[len("metrics."):].strip()
             metric_lookup = metric_name.lower()
@@ -118,10 +125,12 @@ def _apply_mapping_overrides_from_config(
                 normalized_unique_match = _normalize_identifier_for_match(metric_unique_name) == metric_lookup_normalized
                 normalized_label_match = _normalize_identifier_for_match(metric_label) == metric_lookup_normalized
                 if unique_match or label_match or normalized_unique_match or normalized_label_match:
-                    if str(metric.unique_name) != target_name:
+                    if target_name and str(metric.unique_name) != target_name:
                         metric.unique_name = target_name
                         metric.label = target_name
                         renamed_metrics += 1
+                    if synonyms:
+                        metric.synonyms = list(synonyms)
                     break
             continue
 
@@ -134,12 +143,20 @@ def _apply_mapping_overrides_from_config(
             if not dataset:
                 continue
             for column in dataset.columns:
-                if str(column.unique_name) == column_name:
-                    # Keep physical identity stable for extraction/CTAS/sample-query
-                    # paths; only override semantic display/alias label.
-                    if str(column.label) != target_name:
+                col_lookup = column_name.lower()
+                col_lookup_normalized = _normalize_identifier_for_match(column_name)
+
+                unique_match = str(column.unique_name).lower() == col_lookup
+                label_match = str(getattr(column, "label", "")).lower() == col_lookup
+                normalized_unique_match = _normalize_identifier_for_match(column.unique_name) == col_lookup_normalized
+                normalized_label_match = _normalize_identifier_for_match(getattr(column, "label", "")) == col_lookup_normalized
+
+                if unique_match or label_match or normalized_unique_match or normalized_label_match:
+                    if target_name and str(column.label) != target_name:
                         column.label = target_name
                         renamed_columns += 1
+                    if synonyms:
+                        column.synonyms = list(synonyms)
                     break
 
     if renamed_columns or renamed_metrics:

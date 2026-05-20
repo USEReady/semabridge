@@ -400,8 +400,8 @@ class MeasureSynchronizer:
         results: dict = {}
         grain = grain_dimensions or ["'Date'[Year]"]
 
-        # Filter to syncable measures
-        syncable = [m for m in sml.metrics if m.sync_enabled and not m.is_hidden]
+        # Filter to syncable measures (include hidden metrics if sync_enabled)
+        syncable = [m for m in sml.metrics if m.sync_enabled]
         logger.info(f"Syncing {len(syncable)} measures (of {len(sml.metrics)} total)")
 
         if not syncable:
@@ -577,8 +577,8 @@ class MeasureSynchronizer:
         results: dict = {}
         grain = grain_dimensions or ["'Date'[Year]"]
 
-        # Filter to syncable metrics
-        syncable = [m for m in osi.metrics if m.sync_enabled and not m.is_hidden]
+        # Filter to syncable metrics (include hidden metrics if sync_enabled)
+        syncable = [m for m in osi.metrics if m.sync_enabled]
         logger.info(f"[OSI] Syncing {len(syncable)} measures (of {len(osi.metrics)} total)")
 
         if not syncable:

@@ -235,6 +235,29 @@ class SnowflakeExtractor:
 
         return results
 
+    def get_warehouses(self) -> list[dict[str, Any]]:
+        """Get available warehouses."""
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SHOW WAREHOUSES")
+                return [{"id": row[0], "name": row[0]} for row in cur.fetchall()]
+
+    def get_databases(self) -> list[dict[str, Any]]:
+        """Get available databases."""
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SHOW DATABASES")
+                return [{"id": row[1], "name": row[1]} for row in cur.fetchall()]
+
+    def get_schemas(self, database: str) -> list[dict[str, Any]]:
+        """Get available schemas in a database."""
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                # Use identifier binding or quote appropriately
+                db_safe = database.replace('"', '""')
+                cur.execute(f'SHOW SCHEMAS IN DATABASE "{db_safe}"')
+                return [{"id": row[1], "name": row[1]} for row in cur.fetchall()]
+
     def extract_semantic_view_ddl(self, view_name: str) -> str:
         """
         Retrieve the DDL of a Snowflake semantic view.

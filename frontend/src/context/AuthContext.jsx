@@ -7,6 +7,57 @@ const TOKEN_KEY = 'semabridge-token';
 
 const AuthContext = createContext(undefined);
 
+function formatAuthError(body, fallbackMessage) {
+  const detail = body?.detail;
+
+  if (typeof detail === 'string' && detail.trim()) {
+    return detail.trim();
+  }
+
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((item) => {
+        if (typeof item === 'string') return item.trim();
+        if (!item || typeof item !== 'object') return String(item || '').trim();
+
+        const location = Array.isArray(item.loc) ? item.loc.join('.') : '';
+        const message = typeof item.msg === 'string'
+          ? item.msg.trim()
+          : typeof item.message === 'string'
+            ? item.message.trim()
+            : '';
+        if (!message) return '';
+        return location ? `${location}: ${message}` : message;
+      })
+      .filter(Boolean);
+
+    if (parts.length > 0) {
+      return parts.join('; ');
+    }
+  }
+
+  if (detail && typeof detail === 'object') {
+    if (typeof detail.message === 'string' && detail.message.trim()) {
+      return detail.message.trim();
+    }
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      // Ignore stringify failures and fall through to the fallback.
+    }
+  }
+
+  if (typeof body?.message === 'string' && body.message.trim()) {
+    return body.message.trim();
+  }
+
+  if (typeof body?.error === 'string' && body.error.trim()) {
+    return body.error.trim();
+  }
+
+  return fallbackMessage;
+}
+
 /**
  * Provides authentication state & helpers to the entire app.
  *
@@ -245,7 +296,7 @@ export function AuthProvider({ children }) {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      const msg = body.detail || `Registration failed (${res.status})`;
+      const msg = formatAuthError(body, `Registration failed (${res.status})`);
       setError(msg);
       throw new Error(msg);
     }
@@ -262,7 +313,7 @@ export function AuthProvider({ children }) {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      const msg = body.detail || `Login failed (${res.status})`;
+      const msg = formatAuthError(body, `Login failed (${res.status})`);
       setError(msg);
       throw new Error(msg);
     }

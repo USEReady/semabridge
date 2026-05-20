@@ -678,6 +678,9 @@ class DaxSqlRenderer:
         if isinstance(node, FunctionCallNode):
             return self._render_function(node)
         if isinstance(node, IdentifierNode):
+            name_upper = node.name.upper()
+            if name_upper in ("NULL", "TRUE", "FALSE"):
+                return name_upper
             return f'"{sanitize_column(node.name)}"'
         raise self.DaxRenderError(f"Unknown node type: {type(node).__name__}")
 

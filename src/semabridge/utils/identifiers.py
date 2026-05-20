@@ -25,6 +25,46 @@ logger = logging.getLogger(__name__)
 # Reserved Words
 # ───────────────────────────────────────────────────────────────────────────
 
+# ───────────────────────────────────────────────────────────────────────────
+# Cortex Analyst YAML Reserved Words
+# ───────────────────────────────────────────────────────────────────────────
+# Cortex Analyst enforces additional identifier constraints beyond standard
+# Snowflake SQL.  Any logical column / dimension / metric whose name matches
+# one of these words will cause a validation error such as:
+#   "invalid logical column name 'TO' in table X: name must start with an
+#    underscore or a letter and consist only of letters, digits, or underscores"
+# By adding them here they are caught by sanitize_column() and prefixed with
+# COL_ automatically — no manual Power BI renames are needed.
+CORTEX_ANALYST_RESERVED_WORDS: Set[str] = {
+    # Prepositions / conjunctions that Cortex Analyst rejects as bare identifiers
+    "to", "from", "at", "by", "of", "on", "in", "as", "for", "with",
+    # SQL keywords that also appear as dimension/metric names in real models
+    "select", "where", "join", "group", "order", "having", "limit", "offset",
+    "union", "except", "intersect", "into", "insert", "update", "delete",
+    "create", "drop", "alter", "grant", "revoke", "set", "use",
+    # Snowflake semantic-view YAML reserved tokens
+    "table", "column", "metric", "dimension", "relationship",
+    "primary", "foreign", "key", "references", "constraint", "index",
+    "view", "schema", "database", "role", "user", "warehouse", "stage",
+    "sequence", "stream", "task", "pipe", "account", "session",
+    # Boolean / null literals
+    "true", "false", "null",
+    # Common date/time keywords used as column names
+    "date", "time", "year", "month", "day", "hour", "minute", "second",
+    "timestamp", "interval", "period",
+    # Aggregate function names often used as column names
+    "count", "sum", "avg", "min", "max", "total",
+    # Miscellaneous SQL tokens that cause Cortex Analyst parse errors
+    "and", "or", "not", "all", "any", "some", "exists",
+    "case", "when", "then", "else", "end", "between", "like", "ilike",
+    "over", "partition", "range", "rows", "row",
+    "distinct", "unique", "default", "check",
+    "value", "values",
+    # Data type names sometimes used as column headers
+    "integer", "varchar", "boolean", "float", "number", "string",
+    "current",
+}
+
 SNOWFLAKE_RESERVED_WORDS: Set[str] = {
     # SQL Keywords
     "table", "column", "date", "group", "order", "join", "view", "select", "from", "where",
@@ -48,7 +88,7 @@ SNOWFLAKE_RESERVED_WORDS: Set[str] = {
     "all", "any", "some", "exists", "case", "when", "then", "else", "end",
     "distinct", "unique", "primary", "foreign", "key", "references",
     "constraint", "index", "default", "check", "like", "ilike",
-}
+} | CORTEX_ANALYST_RESERVED_WORDS  # Cortex Analyst restrictions are a strict superset
 
 SQL_FUNCTION_NAMES: Set[str] = {
     # Aggregate functions
@@ -106,12 +146,30 @@ class IdentifierSanitizer:
             force_uppercase: If True, uppercase all identifiers
             always_quote: If True, always quote identifiers in SQL
             suppress_reserved: If True, prefix reserved words with 'COL_' in aliases
-            additional_reserved: Additional reserved words to treat as reserved (beyond SNOWFLAKE_RESERVED)
+            additional_reserved: Additional reserved words to treat as reserved (beyond SNOWFLAKE_RESERVED).
+                These are merged with SNOWFLAKE_RESERVED_WORDS (which already includes
+                CORTEX_ANALYST_RESERVED_WORDS) so every Cortex Analyst-invalid column
+                name is caught and prefixed with COL_ automatically.
         """
         self.force_uppercase = force_uppercase
         self.always_quote = always_quote
         self.suppress_reserved = suppress_reserved
         self._reserved = SNOWFLAKE_RESERVED_WORDS | (additional_reserved or set())
+
+    @staticmethod
+    def is_cortex_analyst_reserved(name: str) -> bool:
+        """Return True if *name* is a Cortex Analyst YAML reserved word.
+
+        Use this for targeted diagnostics / logging when you want to distinguish
+        a Cortex Analyst restriction from a generic Snowflake SQL reserved word.
+
+        Args:
+            name: Identifier to check (case-insensitive).
+
+        Returns:
+            True if the identifier would be rejected by Cortex Analyst.
+        """
+        return name.strip().lower() in CORTEX_ANALYST_RESERVED_WORDS
 
     @staticmethod
     def is_physical_source_column(source_expr: str) -> bool:
@@ -215,6 +273,48 @@ class IdentifierSanitizer:
             )
 
         logger.debug(f"sanitize_column: '{original}' → '{result}'")
+        return result
+
+    def sanitize_physical_column(self, name: str) -> str:
+        """Normalize a physical source column without reserved-word prefixing.
+
+        This is for actual table references, where reserved words should be
+        preserved and handled by quoting rather than rewritten to ``COL_*``.
+        """
+        if not name:
+            return "COLUMN_UNKNOWN"
+
+        original = name
+
+        bracket_match = re.search(r"\[(.+?)\]", name)
+        if bracket_match:
+            name = bracket_match.group(1)
+
+        if '.' in name and not name.startswith('"'):
+            parts = name.split('.')
+            if len(parts) == 2:
+                left, right = parts
+                if re.fullmatch(r'[A-Za-z_]\w*', left) and re.fullmatch(r'[A-Za-z_]\w*', right):
+                    name = right
+
+        clean = re.sub(r"[^A-Za-z0-9_$]", "_", name)
+        clean = re.sub(r"_+", "_", clean).strip("_")
+
+        if not clean:
+            return "COLUMN_UNKNOWN"
+
+        if clean[0].isdigit():
+            clean = f"_{clean}"
+
+        result = clean.upper() if self.force_uppercase else clean
+
+        if not re.match(r"^[A-Z_][A-Z0-9_$]*$", result):
+            logger.warning(
+                f"Physical identifier sanitization: '{original}' → '{result}' "
+                f"contains unexpected characters after normalization"
+            )
+
+        logger.debug(f"sanitize_physical_column: '{original}' → '{result}'")
         return result
 
     def sanitize_alias(self, name: str) -> str:

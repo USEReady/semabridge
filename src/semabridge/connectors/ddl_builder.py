@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import os
 import hashlib
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -170,6 +171,7 @@ class SemanticViewBuilder:
                 if dataset.unique_name in original_columns:
                     dataset.columns = original_columns[dataset.unique_name]
 
+        self._validate_model_health(sml, model_kind="SML")
         return [*all_ddls, semantic_ddl]
 
     def generate_ddls_from_osi(self, osi: OSIModel) -> list[str]:
@@ -200,6 +202,7 @@ class SemanticViewBuilder:
                 if dataset.unique_name in original_sources:
                     dataset.source_table = original_sources[dataset.unique_name]
 
+        self._validate_model_health(osi, model_kind="OSI")
         return [*all_ddls, semantic_ddl]
 
     def _generate_semantic_view(self, sml: SMLModel) -> str:
@@ -234,7 +237,10 @@ class SemanticViewBuilder:
 
         # DIMENSIONS
         measure_cols = self._collect_measure_columns(sml, ds_lookup)
-        dims_lines = self.dimensions_builder.build_for_sml(sml, registry.dataset_aliases, ds_by_name, ds_lookup, measure_cols)
+        relationship_cols = self._collect_relationship_columns(sml)
+        dims_lines = self.dimensions_builder.build_for_sml(
+            sml, registry.dataset_aliases, ds_by_name, ds_lookup, measure_cols, relationship_cols
+        )
         dimensions_block_idx = None
         if dims_lines:
             dimensions_block_idx = len(definitions)
@@ -299,7 +305,10 @@ class SemanticViewBuilder:
 
         # DIMENSIONS
         measure_cols = self._collect_measure_columns(osi, ds_lookup)
-        dims_lines = self.dimensions_builder.build_for_osi(osi, registry.dataset_aliases, ds_by_name, ds_lookup, measure_cols)
+        relationship_cols = self._collect_relationship_columns(osi)
+        dims_lines = self.dimensions_builder.build_for_osi(
+            osi, registry.dataset_aliases, ds_by_name, ds_lookup, measure_cols, relationship_cols
+        )
         dimensions_block_idx = None
         if dims_lines:
             dimensions_block_idx = len(definitions)
@@ -355,6 +364,23 @@ class SemanticViewBuilder:
                     if col_norm in {c.upper() for c in cols}:
                         measure_columns.add((ds_name.strip().casefold(), col_norm))
         return measure_columns
+
+    def _collect_relationship_columns(self, model: Any) -> Set[Tuple[str, str]]:
+        relationship_columns: Set[Tuple[str, str]] = set()
+        for rel in getattr(model, "relationships", []) or []:
+            if not getattr(rel, "is_active", True):
+                continue
+            from_ds = getattr(rel, "from_dataset", None)
+            to_ds = getattr(rel, "to_dataset", None)
+            for col in getattr(rel, "from_columns", []) or []:
+                relationship_columns.add(
+                    (str(from_ds or "").strip().casefold(), self.identifier_sanitizer.sanitize_column(str(col or "")))
+                )
+            for col in getattr(rel, "to_columns", []) or []:
+                relationship_columns.add(
+                    (str(to_ds or "").strip().casefold(), self.identifier_sanitizer.sanitize_column(str(col or "")))
+                )
+        return relationship_columns
 
     def _deduplicate_cross_clause(self, metrics_lines: List[str], dims_lines: List[str], dims_block: str) -> Tuple[List[str], str]:
         metric_keys = {extract_expr_key(line) for line in metrics_lines if extract_expr_key(line)}
@@ -665,6 +691,103 @@ class SemanticViewBuilder:
             logger.error(msg)
             raise ValueError(msg)
         logger.warning(msg)
+
+    # ─── Model Health Validation ────────────────────────────────────────────
+
+    #: Maximum number of datasets before a large-model warning is emitted.
+    #: Cortex Analyst struggles with models above ~20-30 tables.
+    LARGE_MODEL_TABLE_THRESHOLD: int = 20
+
+    def _validate_model_health(self, model: Any, *, model_kind: str = "SML") -> None:
+        """Emit structured warnings for model design issues that cause Cortex Analyst failures.
+
+        Checks performed:
+        1. **Reserved-column rename audit** – lists every column that was
+           auto-renamed (COL_ prefix) due to a Cortex Analyst reserved word
+           so the model owner has a clear rename recommendation.
+        2. **Zero-metric / no-relationship table** – detects datasets that have
+           no metrics *and* no active join relationships.  Cortex Analyst cannot
+           reach those tables and returns ``null`` for related queries (the
+           ACCOUNTS / FACT join-path issue).
+        3. **Large model warning** – warns when the model contains more datasets
+           than :attr:`LARGE_MODEL_TABLE_THRESHOLD`.  Over-large models cause
+           Cortex Analyst to mis-infer joins and return slow or incorrect results.
+        """
+        from semabridge.utils.identifiers import IdentifierSanitizer
+
+        datasets = getattr(model, "datasets", []) or []
+        metrics = getattr(model, "metrics", []) or []
+        relationships = getattr(model, "relationships", []) or []
+        model_label = getattr(model, "unique_name", None) or getattr(model, "label", model_kind)
+
+        # ── 1. Reserved-column rename audit ───────────────────────────────────
+        renamed_cols: list[tuple[str, str, str]] = []  # (dataset, original, sanitized)
+        for ds in datasets:
+            for col in getattr(ds, "columns", []) or []:
+                raw = str(getattr(col, "unique_name", "") or "")
+                if IdentifierSanitizer.is_cortex_analyst_reserved(raw):
+                    sanitized = f"COL_{raw.upper()}"
+                    renamed_cols.append((ds.unique_name, raw, sanitized))
+
+        if renamed_cols:
+            logger.warning(
+                "[MODEL HEALTH] Model '%s': %d column(s) matched Cortex Analyst reserved words "
+                "and were auto-renamed with 'COL_' prefix to prevent validation errors:",
+                model_label,
+                len(renamed_cols),
+            )
+            for ds_name, original, sanitized in renamed_cols:
+                logger.warning(
+                    "  [RESERVED WORD] dataset='%s'  '%s' -> '%s'",
+                    ds_name, original, sanitized,
+                )
+
+        # ── 2. Zero-metric / no-relationship table detection ──────────────────
+        datasets_with_metrics: set[str] = {m.dataset for m in metrics if m.dataset}
+        active_rels = [r for r in relationships if getattr(r, "is_active", True)]
+        datasets_in_rels: set[str] = set()
+        for rel in active_rels:
+            if getattr(rel, "from_dataset", None):
+                datasets_in_rels.add(rel.from_dataset)
+            if getattr(rel, "to_dataset", None):
+                datasets_in_rels.add(rel.to_dataset)
+
+        orphan_tables: list[str] = []
+        for ds in datasets:
+            has_metrics = ds.unique_name in datasets_with_metrics
+            in_relationship = ds.unique_name in datasets_in_rels
+            if not has_metrics and not in_relationship:
+                orphan_tables.append(ds.unique_name)
+
+        if orphan_tables:
+            logger.warning(
+                "[MODEL HEALTH] Model '%s': %d table(s) have 0 metrics AND no active "
+                "join relationships — Cortex Analyst cannot reach these tables and will "
+                "return NULL for related queries. Add relationships or metrics to fix:",
+                model_label,
+                len(orphan_tables),
+            )
+            for tbl in orphan_tables:
+                logger.warning("  [ORPHAN TABLE] '%s'", tbl)
+            logger.warning(
+                "  FIX: Open the Power BI model, define a relationship between these "
+                "tables and the fact/metric table, then republish and re-sync."
+            )
+
+        # ── 3. Large model warning ────────────────────────────────────────────
+        n_datasets = len(datasets)
+        if n_datasets > self.LARGE_MODEL_TABLE_THRESHOLD:
+            logger.warning(
+                "[MODEL HEALTH] Model '%s' has %d tables (threshold: %d). "
+                "Cortex Analyst may infer joins incorrectly on models this large. "
+                "RECOMMENDATION: Split into smaller focused semantic views "
+                "(Finance, HR, Inventory, etc.) for reliable Cortex Analyst results.",
+                model_label,
+                n_datasets,
+                self.LARGE_MODEL_TABLE_THRESHOLD,
+            )
+
+    # ────────────────────────────────────────────────────────────────────────
 
     @staticmethod
     def _select_semantic_view_ddl(ddls: list[str]) -> str:

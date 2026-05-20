@@ -45,6 +45,9 @@ class AccountResponse(BaseModel):
     connector_type: str
     tag: str
     identity_email: Optional[str]
+    warehouse: Optional[str] = None
+    database: Optional[str] = None
+    schema_name: Optional[str] = None
     status: str
     is_default: bool
 
