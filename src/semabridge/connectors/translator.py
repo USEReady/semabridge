@@ -251,6 +251,15 @@ class MetricExpressionTranslator:
                 logger.warning("Metric '%s': rejecting LLM translation containing 'VAR' keyword: %s", metric_name, expr)
                 continue
 
+            # Reject any candidate that still contains DAX syntax fragments.
+            if re.search(r"\b(CALCULATE|DIVIDE|ISBLANK|BLANK)\s*\(|\[[^\]]+\]|\|\|", expr, re.IGNORECASE):
+                logger.warning(
+                    "Metric '%s': rejecting translation containing unsupported DAX leakage: %s",
+                    metric_name,
+                    expr,
+                )
+                continue
+
             expr = self._id.resolve_dot_notation(
                 expr,
                 alias_by_raw,
@@ -616,7 +625,9 @@ class MetricExpressionTranslator:
         alias_to_dataset = {alias: ds for ds, alias in dataset_aliases.items()}
         sanitized_ds_to_dataset = {self._id.sanitize_column(ds): ds for ds in dataset_aliases.keys()}
 
-        agg_pattern = re.compile(r'\b(SUM|AVG|MIN|MAX|COUNT|DISTINCTCOUNT|COUNT_DISTINCT)\s*\(\s*(DISTINCT\s+)?"?([A-Z_][A-Z0-9_$]*)"?(?:\s*::\s*[A-Z0-9_]+)?\s*\)', flags=re.IGNORECASE)
+        # Accept spaced identifiers (e.g. 'Total COGS') inside aggregates so
+        # we can normalize them to qualified column references.
+        agg_pattern = re.compile(r'\b(SUM|AVG|MIN|MAX|COUNT|DISTINCTCOUNT|COUNT_DISTINCT)\s*\(\s*(DISTINCT\s+)?"?([A-Z_][A-Z0-9_ \$]*)"?(?:\s*::\s*[A-Z0-9_]+)?\s*\)', flags=re.IGNORECASE)
 
         def _replace(match: re.Match) -> str:
             agg_fn = match.group(1).upper()

@@ -49,6 +49,113 @@ class TMDLToOSIConverter(BaseConverter):
         "DateTableTemplate_",
     )
 
+    @staticmethod
+    def _normalize_tmdl_model_payload(
+        tmdl_payload: Dict[str, Any],
+        *,
+        fallback_name: str = "FabricModel",
+    ) -> Dict[str, Any]:
+        """Normalize flat TMDL folder trees into a legacy model-shaped payload.
+
+        Fabric exports can arrive either as a nested ``{"model": {...}}``
+        structure or as a folder tree with entries like ``manifest.json``,
+        ``tables/<name>.json`` and ``relationships.json``. The legacy OSI
+        converter expects the former, so flatten the tree into that shape here.
+        """
+        if not isinstance(tmdl_payload, dict):
+            return {}
+
+        model_obj = tmdl_payload.get("model")
+        if isinstance(model_obj, dict) and model_obj:
+            return model_obj
+
+        normalized: Dict[str, Any] = {}
+
+        manifest = tmdl_payload.get("manifest.json")
+        if isinstance(manifest, dict):
+            manifest_name = str(manifest.get("name") or "").strip()
+            if manifest_name:
+                normalized["name"] = manifest_name
+            description = str(manifest.get("description") or "").strip()
+            if description:
+                normalized["description"] = description
+
+        if "name" not in normalized:
+            normalized["name"] = fallback_name
+
+        tables: list[Dict[str, Any]] = []
+        relationships: list[Dict[str, Any]] = []
+
+        for path, payload in tmdl_payload.items():
+            normalized_path = str(path).replace("\\", "/").lower()
+            if normalized_path == "manifest.json":
+                continue
+
+            if normalized_path.endswith("relationships.json"):
+                if isinstance(payload, dict):
+                    raw_relationships = payload.get("relationships")
+                    if isinstance(raw_relationships, list):
+                        relationships.extend(
+                            rel for rel in raw_relationships if isinstance(rel, dict)
+                        )
+                continue
+
+            if normalized_path.endswith("model.json") and isinstance(payload, dict):
+                raw_relationships = payload.get("relationships")
+                if isinstance(raw_relationships, list):
+                    relationships.extend(
+                        rel for rel in raw_relationships if isinstance(rel, dict)
+                    )
+                raw_tables = payload.get("tables")
+                if isinstance(raw_tables, list):
+                    tables.extend(table for table in raw_tables if isinstance(table, dict))
+                if not normalized.get("name"):
+                    model_name = str(payload.get("name") or "").strip()
+                    if model_name:
+                        normalized["name"] = model_name
+                if not normalized.get("description"):
+                    model_desc = str(payload.get("description") or "").strip()
+                    if model_desc:
+                        normalized["description"] = model_desc
+                continue
+
+            if "tables/" not in normalized_path or not normalized_path.endswith(".json"):
+                continue
+
+            if not isinstance(payload, dict):
+                continue
+
+            table_obj = dict(payload)
+            table_name = str(table_obj.get("name") or Path(path).stem).strip()
+            if not table_name:
+                continue
+
+            table_obj["name"] = table_name
+
+            columns = table_obj.get("columns")
+            if isinstance(columns, list):
+                normalized_columns: list[Dict[str, Any]] = []
+                for col in columns:
+                    if not isinstance(col, dict):
+                        continue
+                    col_obj = dict(col)
+                    if "dataType" not in col_obj:
+                        col_obj["dataType"] = col_obj.get("type") or col_obj.get("data_type") or "string"
+                    normalized_columns.append(col_obj)
+                table_obj["columns"] = normalized_columns
+
+            if table_obj.get("measures") is None and isinstance(table_obj.get("metrics"), list):
+                table_obj["measures"] = table_obj["metrics"]
+
+            tables.append(table_obj)
+
+        if tables:
+            normalized["tables"] = tables
+        if relationships:
+            normalized["relationships"] = relationships
+
+        return normalized
+
     def to_osi(self, source_data: Dict[str, Any]) -> OSIModel:
         """
         Convert TMDL dictionary to OSIModel object.
@@ -77,7 +184,10 @@ class TMDLToOSIConverter(BaseConverter):
                     target_format="osi"
                 )
 
-            model_obj = tmsl_json.get("model", {})
+            model_obj = self._normalize_tmdl_model_payload(
+                tmsl_json,
+                fallback_name=str(source_data.get("display_name") or "FabricModel"),
+            )
             # Prioritize display_name passed from source_data, then the model name, then default.
             display_name = source_data.get("display_name") or model_obj.get("name") or "FabricModel"
             self._dump_measure_audit(model_obj, dataset_id, phase="tmdl_to_osi_pre")
@@ -103,7 +213,7 @@ class TMDLToOSIConverter(BaseConverter):
                 unique_name=resolved_unique_name,
                 label=display_name,
                 description=model_obj.get("description", ""),
-                source_platform="fabric",
+                source_platform="tmdl",
                 metadata={"workspace_id": workspace_id, "dataset_id": dataset_id}
             )
 

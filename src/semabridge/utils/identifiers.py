@@ -137,6 +137,7 @@ class IdentifierSanitizer:
         force_uppercase: bool = True,
         always_quote: bool = True,
         suppress_reserved: bool = True,
+        max_identifier_length: int = 255,
         additional_reserved: "Optional[set]" = None,
     ):
         """
@@ -154,7 +155,32 @@ class IdentifierSanitizer:
         self.force_uppercase = force_uppercase
         self.always_quote = always_quote
         self.suppress_reserved = suppress_reserved
+        self.max_identifier_length = max(16, int(max_identifier_length or 255))
         self._reserved = SNOWFLAKE_RESERVED_WORDS | (additional_reserved or set())
+
+    def _truncate_identifier(self, identifier: str, original: str) -> str:
+        """Enforce Snowflake identifier length limits with deterministic suffixing."""
+        if len(identifier) <= self.max_identifier_length:
+            return identifier
+
+        suffix = hashlib.sha256(str(original or identifier).encode("utf-8")).hexdigest()[:8].upper()
+        keep = self.max_identifier_length - len(suffix) - 1
+        base = identifier[: max(1, keep)].rstrip("_")
+        if not base:
+            base = "ID"
+        truncated = f"{base}_{suffix}"
+        if truncated[0].isdigit():
+            truncated = f"_{truncated}"
+        if len(truncated) > self.max_identifier_length:
+            truncated = truncated[: self.max_identifier_length]
+
+        logger.warning(
+            "Identifier exceeded %d chars and was truncated: '%s' -> '%s'",
+            self.max_identifier_length,
+            original,
+            truncated,
+        )
+        return truncated
 
     @staticmethod
     def is_cortex_analyst_reserved(name: str) -> bool:
@@ -265,6 +291,8 @@ class IdentifierSanitizer:
         if self.suppress_reserved and result.lower() in self._reserved:
             result = f"COL_{result}"
 
+        result = self._truncate_identifier(result, original)
+
         # Validate: should only contain [A-Z0-9_$]
         if not re.match(r"^[A-Z_][A-Z0-9_$]*$", result):
             logger.warning(
@@ -307,6 +335,7 @@ class IdentifierSanitizer:
             clean = f"_{clean}"
 
         result = clean.upper() if self.force_uppercase else clean
+        result = self._truncate_identifier(result, original)
 
         if not re.match(r"^[A-Z_][A-Z0-9_$]*$", result):
             logger.warning(
@@ -376,6 +405,7 @@ class IdentifierSanitizer:
             clean = f"_{clean}"
 
         result = clean.upper() if self.force_uppercase else clean
+        result = self._truncate_identifier(result, original)
         logger.debug(f"sanitize_table_name: '{original}' → '{result}'")
         return result
 

@@ -144,7 +144,7 @@ class MetricsClauseBuilder:
             expr = self._generate_metric_expression(
                 metric, metric_name, alias, dataset_by_name, dataset_aliases, 
                 dataset_col_lookup, alias_by_raw, metric_name_set, 
-                all_physical_col_names, emittable_metric_name_set, skipped_metric_names, model_name, is_osi,
+                all_physical_col_names, emittable_metric_name_set, skipped_metric_names, model, is_osi,
                 fact_aliases=fact_aliases
             )
             
@@ -199,6 +199,7 @@ class MetricsClauseBuilder:
         """Repair SQL shapes that Snowflake semantic-view metrics reject."""
         normalized = str(expr or "").strip()
         normalized = normalized.replace("`", "")
+        normalized = re.sub(r"(?is)\bBLANK\s*\(\s*\)", "NULL", normalized)
         normalized = re.sub(
             r"(?is)SUM\(\s*(CASE\b.*?\bEND)\s*::\s*FLOAT\s*\)",
             lambda m: f"SUM(CAST(({m.group(1).strip()}) AS FLOAT))",
@@ -358,10 +359,12 @@ class MetricsClauseBuilder:
         all_physical_col_names: Set[str],
         emittable_metric_name_set: Set[str],
         skipped_metric_names: Set[str],
-        model_name: str,
+        model: Any,
         is_osi: bool,
         fact_aliases: Optional[Set[str]] = None
     ) -> Optional[str]:
+        model_name = model.unique_name or model.label
+
         if (metric.source_column and metric.aggregation and 
             (not getattr(metric, "sql_expression", None) or self._should_use_direct_metric_aggregation(metric))):
             
@@ -466,9 +469,10 @@ class MetricsClauseBuilder:
                             all_physical_col_names=all_physical_col_names,
                             emittable_metric_name_set=emittable_metric_name_set,
                             skipped_metric_names=skipped_metric_names,
+                            model=model,
                         )
                     return None
-            expr = sql_expr
+            expr = self._rewrite_raw_metric_references(sql_expr, model)
             # Normalize and validate
             expr = self.translator._normalize_metric_column_references(
                 expr, metric.unique_name, dataset_col_lookup, dataset_aliases, 
@@ -504,6 +508,7 @@ class MetricsClauseBuilder:
                         all_physical_col_names=all_physical_col_names,
                         emittable_metric_name_set=emittable_metric_name_set,
                         skipped_metric_names=skipped_metric_names,
+                        model=model,
                     )
                 return self._fallback_metric_expression(metric)
             # Final safety check: if sql_expr contains unsupported DAX functions, reject it
@@ -526,6 +531,7 @@ class MetricsClauseBuilder:
                         all_physical_col_names=all_physical_col_names,
                         emittable_metric_name_set=emittable_metric_name_set,
                         skipped_metric_names=skipped_metric_names,
+                        model=model,
                     )
                 logger.error("🛑 Metric '%s': stored sql_expression contains unsupported DAX functions: %s. Using fallback to prevent DDL failure.", metric.unique_name, expr)
                 return self._fallback_metric_expression(metric)
@@ -552,6 +558,7 @@ class MetricsClauseBuilder:
                 all_physical_col_names=all_physical_col_names,
                 emittable_metric_name_set=emittable_metric_name_set,
                 skipped_metric_names=skipped_metric_names,
+                model=model,
             )
             
         return None
@@ -589,12 +596,34 @@ class MetricsClauseBuilder:
         all_physical_col_names: Set[str],
         emittable_metric_name_set: Set[str],
         skipped_metric_names: Set[str],
+        model: Optional[Any] = None,
     ) -> str:
         dax_expr = getattr(metric, "expression", None) or ""
 
+        # Sanitize code fences/backticks and surrounding whitespace so simple
+        # pattern-based translations (e.g. COUNTROWS(...)) match reliably.
+        try:
+            import re as _re
+
+            _d = str(dax_expr or "").strip()
+            # Remove Markdown-style code fences and inline backticks
+            _d = _re.sub(r"^```[\w\-]*\s*", "", _d)
+            _d = _re.sub(r"\s*```$", "", _d)
+            _d = _re.sub(r"^`+|`+$", "", _d)
+            dax_expr = _d.strip()
+            # Persist sanitized expression back onto the metric so helper
+            # translators that read metric.expression get the cleaned value.
+            try:
+                metric.expression = dax_expr
+            except Exception:
+                # metric may be an immutable object; ignore if assignment fails
+                pass
+        except Exception:
+            dax_expr = str(dax_expr or "").strip()
+
         # Try basic DAX translation first (COUNTROWS, COUNTBLANK, etc.)
         translated = self.translator._try_basic_dax_metric_fallback_expression(
-            metric, alias, dataset_col_lookup, model=None, dataset_by_name=dataset_by_name
+            metric, alias, dataset_col_lookup, model=model, dataset_by_name=dataset_by_name
         )
         if translated:
             return translated
@@ -613,6 +642,13 @@ class MetricsClauseBuilder:
             skipped_metric_names=skipped_metric_names
         )
         if translated:
+            translated = self._rewrite_raw_metric_references(translated, model)
+            if self._contains_unsupported_dax_keywords(translated):
+                logger.warning(
+                    "Metric '%s': translated expression still contains unsupported DAX syntax. Using fallback.",
+                    metric_name,
+                )
+                return self._fallback_metric_expression(metric)
             if self._contains_unsupported_dax_keywords(translated):
                 logger.error("🛑 Metric '%s': translated expression contains unsupported DAX functions: %s. Using fallback to prevent DDL failure.", metric_name, translated)
                 return self._fallback_metric_expression(metric)
@@ -646,7 +682,9 @@ class MetricsClauseBuilder:
             return "CURRENT_TIMESTAMP()"
         if any(token in dtype for token in ("STRING", "TEXT", "CHAR")):
             return "'Column not available'"
-        return "NULL"
+        # Default numeric placeholder to prevent semantic-view DDL failures
+        # Use 0 for numeric metrics when no type hint is available.
+        return "0"
 
     def _translate_dax_function_leakage_in_sql_expression(
         self,
@@ -740,6 +778,16 @@ class MetricsClauseBuilder:
             if re.fullmatch(r"-?\d+(?:\.\d+)?", clean):
                 return clean
 
+            # If operand looks like a bare metric/identifier (possibly wrapped in
+            # parentheses and containing spaces), sanitize and qualify it using
+            # the provided alias. This fixes leaked metric names like
+            # "(Var LE1)" or "Total COGS" appearing unquoted in DIVIDE() outputs.
+            bare_ident = re.fullmatch(r"^\(?\s*([A-Za-z][A-Za-z0-9 _\$]+)\s*\)?$", clean)
+            if bare_ident:
+                name = bare_ident.group(1).strip()
+                safe = self.identifier_sanitizer.sanitize_alias(name)
+                return f'{alias}."{safe}"'
+
             return clean
 
         def replace_divide_at(text: str, start: int) -> Tuple[str, int]:
@@ -790,6 +838,37 @@ class MetricsClauseBuilder:
         if translated != expr:
             logger.info("Translated leaked DAX DIVIDE() in stored sql_expression for Snowflake DDL")
         return translated
+
+    def _rewrite_raw_metric_references(self, expr: str, model: Any) -> str:
+        """Rewrite raw metric names (with spaces/symbols) to sanitized metric identifiers.
+
+        Some conversion paths persist expressions like ``(Gross Margin) / (Total Revenue)``
+        instead of Snowflake-safe metric references. This pass rewrites them to
+        ``("GROSS_MARGIN") / ("TOTAL_REVENUE")`` before downstream validation.
+        """
+        normalized = str(expr or "")
+        metrics = list(getattr(model, "metrics", []) or [])
+        if not normalized or not metrics:
+            return normalized
+
+        raw_to_sanitized: list[tuple[str, str]] = []
+        for metric in metrics:
+            raw_name = str(getattr(metric, "unique_name", "") or "").strip()
+            if not raw_name:
+                continue
+            sanitized = self.identifier_sanitizer.sanitize_alias(raw_name)
+            if raw_name == sanitized:
+                continue
+            raw_to_sanitized.append((raw_name, sanitized))
+
+        # Rewrite longest names first so shorter names don't partially consume longer ones.
+        raw_to_sanitized.sort(key=lambda pair: len(pair[0]), reverse=True)
+
+        for raw_name, sanitized in raw_to_sanitized:
+            pattern = rf'(?<![\w"\']){re.escape(raw_name)}(?![\w"\'])'
+            normalized = re.sub(pattern, f'"{sanitized}"', normalized)
+
+        return normalized
 
     @staticmethod
     def _contains_bare_metric_reference(sql: Any, metric_name_set: Set[str]) -> bool:

@@ -116,6 +116,13 @@ SIMPLE_PATTERNS = {
         r'^\s*SUMX\s*\(\s*(?:.+?)\s*,\s*(.+?)\s*\)\s*$',
         'translate_sumx',
     ),
+    'isblank_or_if': (
+        r'^\s*IF\s*\(\s*(?:'
+        r'OR\s*\(\s*ISBLANK\s*\(\s*(.+?)\s*\)\s*,\s*ISBLANK\s*\(\s*(.+?)\s*\)\s*\)'
+        r'|ISBLANK\s*\(\s*(.+?)\s*\)\s*\|\|\s*ISBLANK\s*\(\s*(.+?)\s*\))'
+        r'\s*,\s*(.+?)\s*,\s*(.+?)\s*\)\s*$',
+        'translate_isblank_or_if',
+    ),
     'isblank_if': (
         r'^\s*IF\s*\(\s*ISBLANK\s*\(\s*(.+?)\s*\)\s*,\s*(.+?)\s*,\s*(.+?)\s*\)\s*$',
         'translate_isblank_if',
@@ -545,6 +552,63 @@ def translate_sumx(dax: str, table_alias: str, match: re.Match, dialect: str = "
         return f"SUM({expr})"
     except Exception as e:
         logger.error(f"Error translating sumx: {e}")
+        return None
+
+
+def translate_isblank_or_if(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:
+    """Translate IF(ISBLANK(x) || ISBLANK(y), blank, expr) to a NULL guard."""
+    try:
+        left_expr = match.group(1) or match.group(3)
+        right_expr = match.group(2) or match.group(4)
+        blank_value = match.group(5).strip()
+        else_value = match.group(6).strip()
+
+        if not left_expr or not right_expr:
+            return None
+
+        if blank_value.upper() == "BLANK()":
+            blank_value = "NULL"
+
+        # Attempt to deterministically translate the inner subexpressions
+        # using the rule-based translator. If we cannot translate them
+        # safely, abort this rule so the higher-level engine can try AST
+        # or LLM fallbacks. This prevents raw DAX tokens from being
+        # composed into final SQL.
+        left_sql = rule_based_translation(left_expr.strip(), table_alias, dialect=dialect)
+        right_sql = rule_based_translation(right_expr.strip(), table_alias, dialect=dialect)
+        else_sql = rule_based_translation(else_value, table_alias, dialect=dialect)
+
+        # If any subexpression couldn't be handled by the rule-based
+        # translator, try the full translation engine as a second attempt.
+        # Import inside function to avoid circular imports at module load.
+        if not left_sql or not right_sql or not else_sql:
+            try:
+                from semabridge.converter.dax_engine import get_translation_engine
+                engine = get_translation_engine()
+                if not left_sql:
+                    left_sql, _ = engine.translate(left_expr.strip(), table_alias=table_alias, metric_name="")
+                if not right_sql:
+                    right_sql, _ = engine.translate(right_expr.strip(), table_alias=table_alias, metric_name="")
+                if not else_sql:
+                    else_sql, _ = engine.translate(else_value, table_alias=table_alias, metric_name="")
+            except Exception:
+                logger.debug("translate_isblank_or_if: engine translate attempt failed")
+
+        # If still missing translations, fail safely so higher level can fallback
+        if not left_sql or not right_sql or not else_sql:
+            logger.debug("translate_isblank_or_if: subexpression translation failed, bailing out")
+            return None
+
+        # Defensive check: ensure translated fragments do not contain
+        # residual DAX keywords that could leak into SQL.
+        dax_leakage_re = re.compile(r"\b(CALCULATE|ISBLANK|RETURN|VAR|\|\||\[|\])\b", re.IGNORECASE)
+        if dax_leakage_re.search(left_sql) or dax_leakage_re.search(right_sql) or dax_leakage_re.search(else_sql):
+            logger.debug("translate_isblank_or_if: detected DAX tokens in translated subexpressions, aborting")
+            return None
+
+        return f"CASE WHEN {left_sql} IS NULL OR {right_sql} IS NULL THEN {blank_value} ELSE {else_sql} END"
+    except Exception as e:
+        logger.error(f"Error translating isblank_or_if: {e}")
         return None
 
 def translate_isblank_if(dax: str, table_alias: str, match: re.Match, dialect: str = "snowflake") -> Optional[str]:

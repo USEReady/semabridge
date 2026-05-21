@@ -50,6 +50,45 @@ function getRunSortTimestamp(run) {
   return 0;
 }
 
+export function buildProjectRunSnapshot(runList, currentTime = Date.now()) {
+  const sortedRuns = Array.isArray(runList)
+    ? [...runList].sort((a, b) => getRunSortTimestamp(b) - getRunSortTimestamp(a))
+    : [];
+
+  const projectStatusById = {};
+  const projectProgressById = {};
+
+  for (const run of sortedRuns) {
+    const pid = String(run?.project_id || '');
+    if (!pid) continue;
+    if (!(pid in projectStatusById)) {
+      projectStatusById[pid] = normalizeStatus(run?.status);
+    }
+    if (!(pid in projectProgressById)) {
+      projectProgressById[pid] = deriveProgressFromRun(run);
+    }
+  }
+
+  const completedRun = sortedRuns.find((r) => normalizeStatus(r?.status) === 'success') || null;
+  const activeRun = sortedRuns.find((r) => {
+    if (normalizeStatus(r?.status) !== 'running') return false;
+    const started = r?.started_at ? new Date(r.started_at).getTime() : 0;
+    if (!started) {
+      const fallbackTs = getRunSortTimestamp(r);
+      return fallbackTs > 0 && (currentTime - fallbackTs) < 3600000;
+    }
+    return (currentTime - started) < 3600000;
+  }) || null;
+
+  return {
+    sortedRuns,
+    projectStatusById,
+    projectProgressById,
+    completedRun,
+    activeRun,
+  };
+}
+
 export function SyncStatusProvider({ children }) {
   const [runs, setRuns] = useState([]);
   const [projectStatusById, setProjectStatusById] = useState({});
@@ -111,53 +150,28 @@ export function SyncStatusProvider({ children }) {
         if (disposed) return;
 
         const runList = Array.isArray(data) ? data : [];
-        const sortedRuns = [...runList].sort((a, b) => getRunSortTimestamp(b) - getRunSortTimestamp(a));
+        const {
+          sortedRuns,
+          projectStatusById: nextStatusById,
+          projectProgressById: nextProgressById,
+          completedRun,
+          activeRun,
+        } = buildProjectRunSnapshot(runList, Date.now());
         setRuns(runList);
 
-        const nextStatusById = {};
-        const nextProgressById = {};
-
-        // Keep the latest run per project (sortedRuns is newest-first).
-        for (const run of sortedRuns) {
-          const pid = String(run?.project_id || '');
-          if (!pid) continue;
-          if (!(pid in nextStatusById)) {
-            nextStatusById[pid] = normalizeStatus(run?.status);
-          }
-          if (!(pid in nextProgressById)) {
-            nextProgressById[pid] = deriveProgressFromRun(run);
-          }
-        }
-
-        setProjectStatusById((prev) => {
-          const merged = { ...prev, ...nextStatusById };
-          return shallowEqualObject(prev, merged) ? prev : merged;
-        });
-        setProjectProgressById((prev) => {
-          const merged = { ...prev, ...nextProgressById };
-          return shallowEqualObject(prev, merged) ? prev : merged;
-        });
+        setProjectStatusById((prev) => (
+          shallowEqualObject(prev, nextStatusById) ? prev : nextStatusById
+        ));
+        setProjectProgressById((prev) => (
+          shallowEqualObject(prev, nextProgressById) ? prev : nextProgressById
+        ));
 
         // Fallback: if any run is success/completed, force progress to 100%
-        const completedRun = sortedRuns.find((r) => normalizeStatus(r?.status) === 'success');
         if (completedRun) {
           setCurrentProgress(100);
           setCurrentSyncStatus('success');
         }
 
-        // Only consider a run as active if it started less than 1 hour ago
-        const now = Date.now();
-        const activeRun = sortedRuns.find((r) => {
-          if (normalizeStatus(r?.status) !== 'running') return false;
-          const started = r?.started_at ? new Date(r.started_at).getTime() : 0;
-          // If no started_at, treat as active but only if it looks fresh by alternate timestamps.
-          if (!started) {
-            const fallbackTs = getRunSortTimestamp(r);
-            return fallbackTs > 0 && (Date.now() - fallbackTs) < 3600000;
-          }
-          // 1 hour = 3600000 ms
-          return (now - started) < 3600000;
-        }) || null;
         if (!activeRun) {
           setCurrentSyncStatus((prev) => (prev === 'draft' ? prev : 'draft'));
           if (completionTimeoutRef.current) {
@@ -212,22 +226,6 @@ export function SyncStatusProvider({ children }) {
           setIndeterminate((prev) => (prev ? false : prev));
           setWarning((prev) => (prev ? '' : prev));
         }
-
-        try {
-          if (pid) {
-            const project = await api.getProject(pid, { noCache: true });
-            if (!disposed && project?.id) {
-              setProjectStatusById((prev) => {
-                const normalizedProjectStatus = normalizeStatus(project.status);
-                if (prev[project.id] === normalizedProjectStatus) return prev;
-                return {
-                  ...prev,
-                  [project.id]: normalizedProjectStatus,
-                };
-              });
-            }
-          }
-        } catch {}
 
         const stalledMs = Date.now() - lastRealChangeAtRef.current;
         if (stalledMs > 60000) {

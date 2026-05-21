@@ -31,6 +31,23 @@ def test_sanitize_llm_sql_ignores_parentheses_inside_string_literals():
     assert not sanitized.endswith("))")
 
 
+def test_rule_based_translation_handles_compound_isblank_guard():
+    dax = (
+        'IF(ISBLANK(CALCULATE([Sentiment], Manufacturer[MfgisVanArsdel]="No"))'
+        '||ISBLANK(CALCULATE([Sentiment], Manufacturer[MfgisVanArsdel]="Yes")), '
+        'BLANK(), CALCULATE([Sentiment], Manufacturer[MfgisVanArsdel]="No") - '
+        'CALCULATE([Sentiment], Manufacturer[MfgisVanArsdel]="Yes"))'
+    )
+
+    sql = rule_based_translation(dax, table_alias="salesfact")
+
+    assert sql is not None
+    assert "||" not in sql
+    assert "ISBLANK(" not in sql
+    assert sql.startswith("CASE WHEN")
+    assert "IS NULL OR" in sql.upper()
+
+
 def test_snowflake_metric_expression_normalizes_case_cast_inside_sum():
     expr = (
         "SUM(CASE WHEN CORPORATE_DSI_AGGREGATE.FISCAL_YR_PERIOD < "

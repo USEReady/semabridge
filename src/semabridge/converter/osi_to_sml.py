@@ -1,4 +1,4 @@
-﻿"""
+"""
 OSI to SML Converter.
 
 Converts OSI (Open Semantic Interchange) canonical models into the SML (Semantic Modeling Language)
@@ -98,7 +98,10 @@ class OSIToSMLConverter(BaseConverter):
                 label=osi_model.label,
                 description=osi_model.description or "",
                 source_system=osi_model.source_platform or "unknown",
-                source_platform=SourcePlatform.FABRIC if osi_model.source_platform == "fabric" else SourcePlatform.SNOWFLAKE,
+                source_platform=
+                    SourcePlatform.FABRIC
+                    if str(osi_model.source_platform or "").strip().lower() in {"fabric", "tmdl"}
+                    else SourcePlatform.SNOWFLAKE,
                 version=osi_model.version
             )
 
@@ -287,15 +290,17 @@ class OSIToSMLConverter(BaseConverter):
                         processed_expr = re.sub(pattern, f"({m_sql})", processed_expr, flags=re.IGNORECASE)
 
                 # Tier-2 Arithmetic Optimization:
-                # If we've successfully expanded all bracketed references, we have valid SQL.
-                # We can skip the translation engine and use this directly.
+                # If we've successfully expanded all bracketed references, we have valid SQL,
+                # PROVIDED it doesn't contain DAX-specific keywords.
                 if "[" not in processed_expr and "]" not in processed_expr:
-                    metric.sql_expression = processed_expr
-                    metric.complexity_tier = 2
-                    metric.sync_enabled = True
-                    metric.sync_failure_reason = None
-                    resolved_this_pass += 1
-                    continue
+                    import re
+                    if not re.search(r"(?i)\b(VAR|RETURN|CALCULATE|FILTER|SUMX|AVERAGEX|ALL|ALLEXCEPT|TOTALYTD|TOTALMTD|TOTALQTD|DIVIDE)\b", processed_expr):
+                        metric.sql_expression = processed_expr
+                        metric.complexity_tier = 2
+                        metric.sync_enabled = True
+                        metric.sync_failure_reason = None
+                        resolved_this_pass += 1
+                        continue
 
                 sql, metrics = self.dax_translator.translate(
                     processed_expr,
