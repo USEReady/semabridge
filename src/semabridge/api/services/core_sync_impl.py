@@ -42,6 +42,16 @@ async def sync_models(payload: Dict[str, Any]):
         if account_id and user_id and os.environ.get("AUTH_ENABLED", "").lower() == "true":
             _validate_account_ownership(account_id, int(user_id))
 
+        if user_id and os.environ.get("AUTH_ENABLED", "").lower() == "true":
+            from semabridge.auth.user_credentials import scoped_user_env
+
+            with scoped_user_env(int(user_id), "api_secrets"):
+                return execute_sync_request(
+                    payload,
+                    _normalize_yaml_windows_path_fields,
+                    account_id=account_id,
+                )
+
         return execute_sync_request(payload, _normalize_yaml_windows_path_fields, account_id=account_id)
     except HTTPException:
         raise

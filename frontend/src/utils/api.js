@@ -422,6 +422,33 @@ export const api = {
         return handleResponse(res);
     },
 
+    async getSynonymOverride({ projectId, modelName, tableName, columnName }) {
+        const path = [projectId, modelName, tableName, columnName]
+            .map((part) => encodeURIComponent(String(part || '')))
+            .join('/');
+        const res = await authFetch(`${API_BASE_URL}/synonyms/${path}`);
+        return handleResponse(res);
+    },
+
+    async saveSynonymOverride(payload) {
+        const res = await authFetch(`${API_BASE_URL}/synonyms/`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res);
+    },
+
+    async deleteSynonymOverride({ projectId, modelName, tableName, columnName }) {
+        const path = [projectId, modelName, tableName, columnName]
+            .map((part) => encodeURIComponent(String(part || '')))
+            .join('/');
+        const res = await authFetch(`${API_BASE_URL}/synonyms/${path}`, {
+            method: 'DELETE',
+        });
+        return handleResponse(res);
+    },
+
     // Model CRUD (local repository + DuckDB versioning)
     async getModel(modelId) {
         const res = await authFetch(`${API_BASE_URL}/models/${encodeURIComponent(modelId)}`);
@@ -1111,11 +1138,18 @@ export const api = {
     },
 
     async updateMapping(projectId, mappingId, targetNameOrPayload) {
+        const safeProjectId = String(projectId ?? '').trim();
+        const safeMappingId = String(mappingId ?? '').trim();
+
+        if (!safeProjectId || !safeMappingId || safeProjectId === '[object Object]' || safeMappingId === '[object Object]') {
+            throw new Error('Invalid mapping update request: projectId and mappingId must be scalar values.');
+        }
+
         // Accept either a plain string (legacy) or a full payload object
         const body = typeof targetNameOrPayload === 'object' && targetNameOrPayload !== null
             ? targetNameOrPayload
             : { target_name: targetNameOrPayload };
-        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/mappings/${mappingId}`, {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(safeProjectId)}/mappings/${encodeURIComponent(safeMappingId)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),

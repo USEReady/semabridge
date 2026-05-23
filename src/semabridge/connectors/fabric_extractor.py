@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import time
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 import requests
 from requests.exceptions import RequestException
@@ -72,15 +74,53 @@ class FabricExtractor:
         self._skip_env_token_once = True
 
     def _request_with_auth_retry(self, method: str, url: str, **kwargs) -> requests.Response:
-        """Perform one authenticated request with a single retry on HTTP 401."""
-        response = requests.request(method, url, headers=self._get_headers(), **kwargs)
-        if response.status_code != 401:
-            return response
+        """Perform an authenticated request with 401 refresh and optional transient retries."""
+        transient_retries = int(kwargs.pop("transient_retries", 0) or 0)
+        retry_delay = float(kwargs.pop("retry_delay", 2.0) or 0)
+        retry_statuses = set(kwargs.pop("retry_statuses", (408, 429, 500, 502, 503, 504)))
+        auth_retry_used = False
+        attempt = 0
 
-        logger.warning("Fabric API returned 401 for %s %s; resetting auth cache and retrying once", method, url)
-        self._reset_auth_cache_for_retry()
-        retry_response = requests.request(method, url, headers=self._get_headers(), **kwargs)
-        return retry_response
+        while True:
+            try:
+                response = requests.request(method, url, headers=self._get_headers(), **kwargs)
+            except RequestException as exc:
+                if attempt < transient_retries:
+                    attempt += 1
+                    logger.warning(
+                        "Fabric API transient network error for %s %s (attempt %d/%d): %s",
+                        method,
+                        url,
+                        attempt,
+                        transient_retries + 1,
+                        exc,
+                    )
+                    if retry_delay > 0:
+                        time.sleep(retry_delay)
+                    continue
+                raise
+
+            if response.status_code == 401 and not auth_retry_used:
+                logger.warning("Fabric API returned 401 for %s %s; resetting auth cache and retrying once", method, url)
+                self._reset_auth_cache_for_retry()
+                auth_retry_used = True
+                continue
+
+            if response.status_code in retry_statuses and attempt < transient_retries:
+                attempt += 1
+                logger.warning(
+                    "Fabric API transient HTTP %s for %s %s (attempt %d/%d)",
+                    response.status_code,
+                    method,
+                    url,
+                    attempt,
+                    transient_retries + 1,
+                )
+                if retry_delay > 0:
+                    time.sleep(retry_delay)
+                continue
+
+            return response
 
     def resolve_workspace_id(self, workspace_id_or_name: str) -> str:
         """Resolve workspace display name to GUID. Returns original value if unresolved."""
@@ -157,7 +197,13 @@ class FabricExtractor:
         logger.info("Listing semantic models in workspace %s...", workspace_id)
         for source_name, api_url in candidate_urls:
             try:
-                response = self._request_with_auth_retry("GET", api_url, timeout=15)
+                response = self._request_with_auth_retry(
+                    "GET",
+                    api_url,
+                    timeout=20,
+                    transient_retries=2,
+                    retry_delay=2,
+                )
                 if response.status_code == 404:
                     logger.warning("Fabric model list endpoint '%s' returned 404 for workspace %s", source_name, workspace_id)
                     continue
@@ -189,7 +235,13 @@ class FabricExtractor:
                         body_preview or "<empty>",
                     )
                 else:
-                    logger.warning("Fabric model list endpoint '%s' failed for workspace %s: %s", source_name, workspace_id, e)
+                    logger.warning(
+                        "Fabric model list endpoint '%s' failed for workspace %s: %s%s",
+                        source_name,
+                        workspace_id,
+                        e,
+                        self._network_failure_hint(e),
+                    )
                 continue
 
         if last_error:
@@ -437,7 +489,13 @@ class FabricExtractor:
         result = {}
         try:
             logger.info(f"Initiating extraction for model {dataset_id}...")
-            response = requests.post(api_url, headers=self._get_headers(), timeout=30)
+            response = self._request_with_auth_retry(
+                "POST",
+                api_url,
+                timeout=30,
+                transient_retries=2,
+                retry_delay=3,
+            )
             
             # Handle sync completion (rare but possible)
             if response.status_code == 200:
@@ -476,7 +534,28 @@ class FabricExtractor:
             return result
             
         except RequestException as e:
-            raise FabricExtractionError(f"Failed to initiate model extraction: {e}")
+            raise FabricExtractionError(
+                f"Failed to initiate model extraction: {e}{self._network_failure_hint(e)}"
+            )
+
+    def _network_failure_hint(self, exc: BaseException) -> str:
+        message = str(exc)
+        if not any(token in message for token in ("ConnectTimeout", "timed out", "Connection refused", "ProxyError")):
+            return ""
+
+        proxy_names = [
+            name for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY")
+            if os.environ.get(name) or os.environ.get(name.lower())
+        ]
+        proxy_hint = ""
+        if proxy_names:
+            proxy_hint = f" Proxy environment variables are set ({', '.join(proxy_names)}); verify they are reachable or clear them."
+
+        return (
+            " This is a network connectivity timeout before Fabric returned a response; "
+            "retry the run or verify outbound access to api.fabric.microsoft.com."
+            f"{proxy_hint}"
+        )
     
     def _poll_operation(self, operation_url: str, retry_interval: int) -> dict[str, Any]:
         """Poll the long-running operation until completion."""
@@ -489,7 +568,7 @@ class FabricExtractor:
             time.sleep(retry_interval)
             
             try:
-                response = requests.get(operation_url, headers=self._get_headers(), timeout=30)
+                response = self._get_operation_response(operation_url)
                 response.raise_for_status()
                 
                 data = response.json()
@@ -509,30 +588,28 @@ class FabricExtractor:
                     # Case C: Explicit /result endpoint (Common Fabric pattern)
                     # We assume operation_url is like .../operations/{id}
                     # Result is at .../operations/{id}/result
-                    result_url = f"{operation_url}/result"
-                    logger.info(f"Fetching operation result from {result_url}...")
-                    
                     try:
-                        res_response = requests.get(result_url, headers=self._get_headers(), timeout=30)
-                        res_response.raise_for_status()
-                        res_data = res_response.json()
-                        
-                        if "definition" in res_data:
-                            return self._parse_definition_response(res_data)
-                        
-                        if "definition" in res_data.get("result", {}):
-                             return self._parse_definition_response(res_data["result"])
-
+                        return self._fetch_operation_result(operation_url)
                     except Exception as e:
-                        logger.warning(f"Failed to fetch result from {result_url}: {e}")
+                        if isinstance(e, FabricExtractionError):
+                            raise
+                        logger.warning(f"Failed to fetch operation result for {operation_url}: {e}")
                     
                     # Log full debug info if we still fail
                     logger.debug(f"Response Body: {json.dumps(data, indent=2)}")
-                    raise FabricExtractionError(f"Model definition missing in operation result. Keys: {list(data.keys())}")
+                    status_error = self._format_operation_error(data)
+                    if status_error:
+                        raise FabricExtractionError(
+                            f"Fabric operation completed without a model definition: {status_error}"
+                        )
+                    raise FabricExtractionError(
+                        f"Model definition missing in operation result. Keys: {list(data.keys())}"
+                    )
                 
                 elif status in ("Failed", "Canceled"):
-                    error = data.get("error", {})
-                    raise FabricExtractionError(f"Extraction failed: {error.get('message', 'Unknown error')} ({error.get('code')})")
+                    raise FabricExtractionError(
+                        f"Extraction failed: {self._format_operation_error(data) or 'Unknown Fabric operation error'}"
+                    )
                 
                 # If still Running/NotStarted, continue loop
                 current_retry += 1
@@ -542,6 +619,116 @@ class FabricExtractor:
                 current_retry += 1
         
         raise FabricExtractionError("Operation timed out")
+
+    def _fetch_operation_result(self, operation_url: str) -> dict[str, Any]:
+        last_error: Exception | None = None
+        for candidate_url in self._operation_url_candidates(operation_url):
+            result_url = f"{candidate_url.rstrip('/')}/result"
+            logger.info(f"Fetching operation result from {result_url}...")
+            try:
+                res_response = self._request_with_auth_retry("GET", result_url, timeout=30)
+                res_response.raise_for_status()
+                res_data = res_response.json()
+
+                if "definition" in res_data:
+                    return self._parse_definition_response(res_data)
+
+                if "definition" in res_data.get("result", {}):
+                    return self._parse_definition_response(res_data["result"])
+
+                result_error = self._format_operation_error(res_data)
+                if result_error:
+                    raise FabricExtractionError(
+                        f"Fabric operation result returned an error: {result_error}"
+                    )
+
+                result_status = res_data.get("status")
+                if result_status and result_status != "Succeeded":
+                    raise FabricExtractionError(
+                        "Fabric operation result did not contain a model definition "
+                        f"(status={result_status}, keys={list(res_data.keys())})"
+                    )
+
+                raise FabricExtractionError(
+                    "Model definition missing in operation result response. "
+                    f"Keys: {list(res_data.keys())}"
+                )
+            except FabricExtractionError:
+                raise
+            except Exception as exc:
+                last_error = exc
+                logger.warning(f"Failed to fetch result from {result_url}: {exc}")
+                continue
+
+        if last_error:
+            raise last_error
+        raise FabricExtractionError("Operation result could not be fetched")
+
+    def _get_operation_response(self, operation_url: str) -> requests.Response:
+        """Fetch an operation status, falling back from regional redirect URLs.
+
+        Fabric sometimes returns regional operation URLs such as
+        ``wabi-...analysis.windows.net/v1/operations/{id}``. Those endpoints can
+        intermittently connect-timeout while the canonical Fabric API operation
+        endpoint remains reachable.
+        """
+        last_error: RequestException | None = None
+        for candidate_url in self._operation_url_candidates(operation_url):
+            try:
+                return self._request_with_auth_retry("GET", candidate_url, timeout=30)
+            except RequestException as exc:
+                last_error = exc
+                if candidate_url != operation_url:
+                    logger.warning(
+                        "Operation polling fallback failed for %s: %s",
+                        candidate_url,
+                        exc,
+                    )
+                continue
+
+        if last_error:
+            raise last_error
+        return self._request_with_auth_retry("GET", operation_url, timeout=30)
+
+    def _operation_url_candidates(self, operation_url: str) -> list[str]:
+        candidates = [operation_url]
+        try:
+            parsed = urlparse(operation_url)
+            path = parsed.path or ""
+            marker = "/operations/"
+            if marker not in path:
+                return candidates
+
+            operation_path = path[path.index(marker):].strip("/")
+            api_base = str(self.config.api_base_url or "").rstrip("/")
+            if api_base:
+                fallback = f"{api_base}/{operation_path}"
+                if fallback not in candidates:
+                    candidates.append(fallback)
+        except Exception:
+            return candidates
+        return candidates
+
+    def _format_operation_error(self, payload: Any) -> str:
+        """Return a readable Fabric error string from operation/status payloads."""
+        if not isinstance(payload, dict):
+            return ""
+
+        error = payload.get("error")
+        if isinstance(error, dict):
+            code = str(error.get("code") or "").strip()
+            message = str(error.get("message") or error.get("details") or "").strip()
+            if code and message:
+                return f"{code}: {message}"
+            return message or code
+        if isinstance(error, str) and error.strip():
+            return error.strip()
+
+        result = payload.get("result")
+        if isinstance(result, dict):
+            return self._format_operation_error(result)
+
+        return ""
 
     def _parse_definition_response(self, payload: dict[str, Any]) -> dict[str, Any]:
         """

@@ -23,6 +23,11 @@ from semabridge.core.behavior import ConnectorBehavior
 from semabridge.utils.logger import get_logger
 from semabridge.utils.naming import to_alias
 from semabridge.utils.relationship_naming import generate_relationship_name
+from semabridge.utils.synonyms import (
+    load_synonym_overrides,
+    lookup_synonym_override,
+    merge_synonyms,
+)
 
 logger = get_logger(__name__)
 
@@ -44,6 +49,9 @@ class TMSLTransformer:
     
     def __init__(self):
         self.dax_translator = DAXTranslator()
+        self._synonym_overrides: Dict[tuple[str, str, str], List[str]] = {}
+        self._synonym_model_names: List[str] = []
+        self._current_table_name = ""
 
     def _sanitize_sql_identifier(self, value: str) -> str:
         """Normalize SQL identifiers for generated Databricks SQL fragments."""
@@ -89,7 +97,16 @@ class TMSLTransformer:
 
         return None
     
-    def transform(self, tmsl_json: Dict[str, Any], workspace_id: str, dataset_id: str, row_counts: Dict[str, int] = None, behavior: Optional[ConnectorBehavior] = None) -> SMLModel:
+    def transform(
+        self,
+        tmsl_json: Dict[str, Any],
+        workspace_id: str,
+        dataset_id: str,
+        row_counts: Dict[str, int] = None,
+        behavior: Optional[ConnectorBehavior] = None,
+        project_id: Optional[str] = None,
+        synonym_overrides: Optional[Dict[tuple[str, str, str], List[str]]] = None,
+    ) -> SMLModel:
         """
         Transform TMSL dictionary to SML object.
         
@@ -105,6 +122,16 @@ class TMSLTransformer:
         try:
             model_obj = tmsl_json.get("model", {})
             name = model_obj.get("name", "FabricModel")
+            self._synonym_overrides = (
+                synonym_overrides
+                if isinstance(synonym_overrides, dict)
+                else load_synonym_overrides(project_id or dataset_id)
+            )
+            self._synonym_model_names = [
+                str(value).strip()
+                for value in (name, dataset_id, project_id)
+                if str(value or "").strip()
+            ]
             self._dump_measure_audit(model_obj, dataset_id, phase="tmsl_to_sml_pre")
             
             # Initialize SML Model
@@ -471,6 +498,7 @@ class TMSLTransformer:
         columns = []
         if "columns" in table_def:
             for col in table_def["columns"]:
+                self._current_table_name = name
                 columns.append(self._parse_column(col))
                 
         # For Fabric reverse flow, source table might be vague if it's an import query.
@@ -489,6 +517,32 @@ class TMSLTransformer:
             columns=columns,
             source_table=source_table
         )
+
+    @staticmethod
+    def _auto_synonyms(name: str) -> List[str]:
+        snake_separated = str(name or "").replace("_", " ").strip()
+        camel_separated = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", snake_separated)
+        title_form = camel_separated.title().strip()
+
+        synonyms: List[str] = []
+        if title_form and title_form.lower() != str(name or "").lower():
+            synonyms.append(title_form)
+
+        abbrev_map = {
+            "Cust": "Customer", "Acct": "Account", "Amt": "Amount",
+            "Qty": "Quantity", "Num": "Number", "Id": "ID",
+            "Desc": "Description", "Dt": "Date", "Yr": "Year",
+            "Mth": "Month", "Qtr": "Quarter", "Wk": "Week",
+        }
+        for abbrev, expansion in abbrev_map.items():
+            if abbrev in title_form:
+                synonyms.append(title_form.replace(abbrev, expansion))
+
+        seen: List[str] = []
+        for synonym in synonyms:
+            if synonym not in seen and synonym.lower() != str(name or "").lower():
+                seen.append(synonym)
+        return seen[:3]
 
     @classmethod
     def _is_auto_hidden_table_name(cls, table_name: str) -> bool:
@@ -644,6 +698,16 @@ class TMSLTransformer:
         if mapped_type == DataType.STRING and normalized_type != "string":
             logger.debug(f"Column '{col_name}' has type '{tmsl_type}', falling back to STRING")
             
+        user_synonyms = col_def.get("synonyms") or []
+        if not isinstance(user_synonyms, list):
+            user_synonyms = []
+        if user_synonyms:
+            logger.debug(
+                "Column '%s': loaded %d user-defined synonyms from TMSL",
+                col_name,
+                len(user_synonyms),
+            )
+
         return SMLColumn(
             unique_name=col_name,
             label=col_name,
@@ -653,7 +717,17 @@ class TMSLTransformer:
             is_hidden=col_def.get("isHidden", False),
             is_measure_candidate=is_measure_candidate,
             format_string=format_string,
-            folder=col_def.get("displayFolder")
+            folder=col_def.get("displayFolder"),
+            synonyms=merge_synonyms(
+                ui_overrides=lookup_synonym_override(
+                    self._synonym_overrides,
+                    self._synonym_model_names,
+                    self._current_table_name,
+                    col_name,
+                ),
+                user_defined=user_synonyms,
+                auto_generated=self._auto_synonyms(col_name),
+            ),
         )
 
     def _parse_measure(self, measure_def: Dict[str, Any], table_name: str, overrides: Dict[str, str] = None, metrics_context: List[Any] = None) -> SMLMetric:
@@ -666,14 +740,28 @@ class TMSLTransformer:
         # EDGE CASE 1: Handle empty/null expressions
         if not dax or not dax.strip():
             logger.warning(f"Measure '{measure_def.get('name', 'Unknown')}' in table '{table_name}' has empty expression")
+            empty_display_name = display_name or measure_def["name"]
+            empty_user_synonyms = measure_def.get("synonyms") or []
+            if not isinstance(empty_user_synonyms, list):
+                empty_user_synonyms = []
             return SMLMetric(
                 unique_name=measure_def["name"],
-                label=display_name or measure_def["name"],
+                label=empty_display_name,
                 dataset=table_name,
                 is_hidden=measure_def.get("isHidden", False),
                 sync_enabled=False,
                 sync_failure_reason="Empty DAX expression",
-                complexity_tier=1
+                complexity_tier=1,
+                synonyms=merge_synonyms(
+                    ui_overrides=lookup_synonym_override(
+                        self._synonym_overrides,
+                        self._synonym_model_names,
+                        table_name,
+                        measure_def["name"],
+                    ),
+                    user_defined=empty_user_synonyms,
+                    auto_generated=self._auto_synonyms(empty_display_name),
+                ),
             )
         
         # EDGE CASE 2: Sanitize measure names with special characters
@@ -710,6 +798,16 @@ class TMSLTransformer:
                     complexity["failure_reason"] = reason
                     break
         
+        user_synonyms = measure_def.get("synonyms") or []
+        if not isinstance(user_synonyms, list):
+            user_synonyms = []
+        if user_synonyms:
+            logger.debug(
+                "Measure '%s': loaded %d user-defined synonyms from TMSL",
+                measure_def["name"],
+                len(user_synonyms),
+            )
+
         metric = SMLMetric(
             unique_name=measure_def["name"],
             label=display_name or measure_def["name"],
@@ -729,6 +827,16 @@ class TMSLTransformer:
             sync_failure_reason=complexity["failure_reason"],
             # Default partition to Year for Time Intelligence measures
             partition_dimension="'Date'[Year]" if complexity["requires_time_intel"] else None,
+            synonyms=merge_synonyms(
+                ui_overrides=lookup_synonym_override(
+                    self._synonym_overrides,
+                    self._synonym_model_names,
+                    table_name,
+                    measure_def["name"],
+                ),
+                user_defined=user_synonyms,
+                auto_generated=self._auto_synonyms(display_name or measure_def["name"]),
+            ),
         )
 
         # Apply direct transpiler output before standard translator path.

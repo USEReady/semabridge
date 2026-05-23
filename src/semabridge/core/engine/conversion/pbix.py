@@ -67,6 +67,7 @@ def _convert_pbix_to_sml(self, context: RunContext) -> SMLModel:
         "tmsl": sf.tmsl_definition,
         "workspace_id": ws_id,
         "dataset_id": ds_id,
+        "project_id": context.project_id,
     }
     osi_model = TMSLToOSIConverter().to_osi(source_data)
     context.osi_model = osi_model

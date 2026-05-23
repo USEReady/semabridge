@@ -654,6 +654,7 @@ class SemaBridgeEngine:
         osi_model = tmsl_converter.to_osi({
             "tmsl": metadata,
             "dataset_id": model_id,
+            "project_id": model_id,
         })
         print("\n===== TABLES USED BY MODEL =====")
         if hasattr(osi_model, "datasets"):

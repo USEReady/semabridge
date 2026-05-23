@@ -13,6 +13,7 @@ from semabridge.connectors.ddl_helpers import (
     extract_expr_key,
     extract_expr_key_osi,
 )
+from semabridge.connectors.synonym_clause import synonyms_clause
 
 logger = get_logger(__name__)
 
@@ -143,7 +144,10 @@ class MetricsClauseBuilder:
             
             if expr:
                 metric_entity_alias = self._resolve_metric_emission_alias(alias, expr, dataset_aliases, fact_aliases)
-                metrics_lines.append(f'  {metric_entity_alias}."{metric_name}" AS {expr}')
+                metrics_lines.append(
+                    f'  {metric_entity_alias}."{metric_name}" AS {expr}'
+                    f'{synonyms_clause(list(getattr(metric, "synonyms", []) or []))}'
+                )
 
         # Pruning and Fallbacks...
         metrics_lines = self._prune_unresolved_metric_lines(metrics_lines, metric_name_set)
@@ -518,18 +522,19 @@ class MetricsClauseBuilder:
             for line in current:
                 m = re.search(r'([A-Z_][A-Z0-9_]*)\."([^\"]+)"\s+AS\s+(.+?)\s*$', line.strip().rstrip(','))
                 if not m:
-                    parsed.append((line, None, None, ""))
+                    parsed.append((line, None, None, "", ""))
                     continue
                 alias, name, expr = m.groups()
+                expr, synonym_suffix = self._split_outer_synonyms_clause(expr)
                 defined.add(name)
                 expr_by_name[name] = expr
                 if re.search(r'\bOVER\b', expr, flags=re.IGNORECASE):
                     window_metrics.add(name)
-                parsed.append((line, alias, name, expr))
+                parsed.append((line, alias, name, expr, synonym_suffix))
 
             removed = rewritten = False
             next_lines = []
-            for line, alias, name, expr in parsed:
+            for line, alias, name, expr, synonym_suffix in parsed:
                 if not name:
                     next_lines.append(line)
                     continue
@@ -548,7 +553,7 @@ class MetricsClauseBuilder:
                             expanded_expr = re.sub(rf'"{re.escape(ref_name)}"', f'({ref_expr})', expanded_expr)
                             substituted = True
                     if substituted:
-                        next_lines.append(f'  {alias}."{name}" AS {expanded_expr}')
+                        next_lines.append(f'  {alias}."{name}" AS {expanded_expr}{synonym_suffix}')
                         rewritten = True
                         continue
                     removed = True
@@ -557,3 +562,10 @@ class MetricsClauseBuilder:
             current = next_lines
             if not removed and not rewritten:
                 return current
+
+    def _split_outer_synonyms_clause(self, expr: str) -> Tuple[str, str]:
+        marker = " WITH SYNONYMS = ("
+        idx = str(expr or "").upper().rfind(marker)
+        if idx < 0:
+            return expr, ""
+        return expr[:idx].rstrip(), expr[idx:]
