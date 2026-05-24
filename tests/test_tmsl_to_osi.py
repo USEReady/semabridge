@@ -1,6 +1,6 @@
 import pytest
 from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
-from semabridge.intermediate.models import OSIModel, OSIDataset, OSIMetric, OSIDimension, OSIDataType, OSICardinality
+from semabridge.intermediate.models import OSIModel, OSIDataset, OSIMetric, OSIDimension, OSIDataType, OSICardinality, OSIAggregationType
 from semabridge.core.exceptions import ConversionError
 
 class TestTMSLToOSI:
@@ -138,6 +138,43 @@ class TestTMSLToOSI:
         metric = osi.metrics[0]
         assert metric.unique_name == "Broken Measure"
         assert metric.expression == "[Broken Measure]"
+
+    def test_summarize_by_columns_become_metrics_not_dimensions(self, converter):
+        """Fabric Aggregation columns should emit as metrics and be excluded from dimensions."""
+        source = {
+            "tmsl": {
+                "model": {
+                    "name": "AggregationModel",
+                    "tables": [{
+                        "name": "SalesFact",
+                        "columns": [
+                            {"name": "ProductID", "dataType": "int64", "summarizeBy": "none"},
+                            {"name": "Units", "dataType": "int64", "summarizeBy": "sum"},
+                            {"name": "Revenue", "dataType": "double", "summarizeBy": "sum"},
+                            {"name": "Score", "dataType": "double", "summarizeBy": "average"},
+                        ],
+                    }],
+                }
+            },
+            "workspace_id": "ws-123",
+            "dataset_id": "ds-agg",
+        }
+
+        osi = converter.to_osi(source)
+        ds = next(d for d in osi.datasets if d.unique_name == "SalesFact")
+        units_col = next(c for c in ds.columns if c.unique_name == "Units")
+
+        assert units_col.is_measure_candidate is True
+        assert units_col.default_aggregation == OSIAggregationType.SUM
+
+        metric_by_name = {m.unique_name: m for m in osi.metrics}
+        assert metric_by_name["Units"].source_column == "Units"
+        assert metric_by_name["Units"].aggregation == OSIAggregationType.SUM
+        assert metric_by_name["Revenue"].source_column == "Revenue"
+        assert metric_by_name["Score"].aggregation == OSIAggregationType.AVG
+
+        dim = next(d for d in osi.dimensions if d.unique_name == "SalesFact")
+        assert [attr.unique_name for attr in dim.attributes] == ["ProductID"]
 
     def test_skip_auto_hidden_date_tables(self, converter):
         """Auto-generated Power BI date tables should be skipped in OSI conversion."""

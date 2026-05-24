@@ -142,6 +142,9 @@ class TMSLToOSIConverter(BaseConverter):
                     dataset = self._parse_dataset(table)
                     osi_model.datasets.append(dataset)
 
+                    for metric in self._create_metrics_from_aggregation_columns(dataset):
+                        osi_model.metrics.append(metric)
+
                     # Create corresponding Dimension for each Dataset
                     # In TMSL/Power BI, every table is potentially a dimension
                     dim = self._create_dimension_from_dataset(dataset)
@@ -275,7 +278,7 @@ class TMSLToOSIConverter(BaseConverter):
         attributes = []
         for col in dataset.columns:
             # Skip hidden columns or potential measures (metrics usually come separately, but columns might be hidden)
-            if col.is_hidden:
+            if col.is_hidden or getattr(col, "is_measure_candidate", False):
                 continue
                 
             attr = OSIAttribute(
@@ -298,6 +301,36 @@ class TMSLToOSIConverter(BaseConverter):
             attributes=attributes,
             is_hidden=dataset.is_hidden
         )
+
+    def _create_metrics_from_aggregation_columns(self, dataset: OSIDataset) -> List[OSIMetric]:
+        """Create OSI metrics for Fabric columns with summarizeBy aggregation."""
+        metrics: List[OSIMetric] = []
+        seen: set[str] = set()
+        for col in dataset.columns:
+            if col.is_hidden or not getattr(col, "is_measure_candidate", False):
+                continue
+            aggregation = getattr(col, "default_aggregation", None) or OSIAggregationType.SUM
+            metric_name = col.unique_name
+            metric_key = metric_name.casefold()
+            if metric_key in seen:
+                continue
+            seen.add(metric_key)
+            metrics.append(
+                OSIMetric(
+                    unique_name=metric_name,
+                    label=col.label or metric_name,
+                    dataset=dataset.unique_name,
+                    source_column=col.unique_name,
+                    expression=None,
+                    aggregation=aggregation,
+                    description=col.description,
+                    format_string=col.format_string,
+                    is_hidden=col.is_hidden,
+                    access_modifier="public_access",
+                    synonyms=list(getattr(col, "synonyms", []) or []),
+                )
+            )
+        return metrics
 
     def _parse_dataset(self, table_def: Dict[str, Any]) -> OSIDataset:
         """Parse a TMSL table into OSIDataset."""
@@ -417,6 +450,10 @@ class TMSLToOSIConverter(BaseConverter):
             or mapped_type == OSIDataType.BOOLEAN
         )
 
+        summarize_by = str(col_def.get("summarizeBy") or "").strip().lower()
+        default_aggregation = self._map_summarize_by(summarize_by)
+        is_measure_candidate = default_aggregation is not None
+
         # Fabric may emit calculated column expressions as a list of lines.
         # OSIColumn.source_expression expects a string.
         source_expr = col_def.get("sourceColumn") or col_def.get("expression") or ""
@@ -433,12 +470,34 @@ class TMSLToOSIConverter(BaseConverter):
             data_type=mapped_type,
             description=col_def.get("description"),
             is_hidden=col_def.get("isHidden", False),
+            is_measure_candidate=is_measure_candidate,
+            default_aggregation=default_aggregation,
             format_string=format_string,
             is_key=is_key,
             source_expression=source_expr,
             synonyms=synonyms,
             is_enum=is_enum,
         )
+
+    @staticmethod
+    def _map_summarize_by(summarize_by: str) -> Optional[OSIAggregationType]:
+        """Map Fabric summarizeBy to OSI aggregation; none/blank means dimension."""
+        normalized = str(summarize_by or "").strip().lower()
+        if not normalized or normalized == "none":
+            return None
+        mapping = {
+            "sum": OSIAggregationType.SUM,
+            "average": OSIAggregationType.AVG,
+            "avg": OSIAggregationType.AVG,
+            "count": OSIAggregationType.COUNT,
+            "distinctcount": OSIAggregationType.COUNT_DISTINCT,
+            "countdistinct": OSIAggregationType.COUNT_DISTINCT,
+            "min": OSIAggregationType.MIN,
+            "minimum": OSIAggregationType.MIN,
+            "max": OSIAggregationType.MAX,
+            "maximum": OSIAggregationType.MAX,
+        }
+        return mapping.get(normalized, OSIAggregationType.SUM)
 
     @staticmethod
     def _business_rule_type(
