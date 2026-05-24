@@ -75,4 +75,4 @@ if cache_file.exists():
 else:
     print("No cache file created yet")
 
-print("\n✅ Gemini Translator Test Complete")
+print("\n[OK] Gemini Translator Test Complete")

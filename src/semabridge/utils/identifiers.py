@@ -164,6 +164,12 @@ class IdentifierSanitizer:
 
         original = name  # Track for logging
 
+        # Centralized character sanitization mapping for Snowflake/Databricks
+        name = name.replace('%', 'PCT')
+        name = name.replace('$', 'DOL')
+        name = name.replace('@', 'AT')
+        name = name.replace('#', 'NUM')
+
         # Strip DAX table qualifier (e.g., 'Sales'[Amount] → Amount)
         bracket_match = re.search(r"\[(.+?)\]", name)
         if bracket_match:
@@ -317,9 +323,9 @@ class IdentifierSanitizer:
 
     # ─── Module 2: Centralized dot-notation resolution ──────────────────
 
-    # Master regex for cross-table references: matches WORD."COL" or WORD.WORD
+    # Master regex for cross-table references: matches WORD."COL", "WORD"."COL", WORD.WORD, or "WORD".WORD
     _DOT_REF_RE = re.compile(
-        r'\b([A-Za-z_]\w*)\s*(\.\.?\s*"[^"]+"|\.\.?(?:[A-Za-z_]\w*))'
+        r'(?:"([A-Za-z_]\w*)"|\b([A-Za-z_]\w*))\s*(\.\.?\s*"[^"]+"|\.\.?(?:[A-Za-z_]\w*))'
     )
     # Simpler pattern for defence-in-depth: finds remaining TABLE. prefixes
     _TABLE_PREFIX_RE = re.compile(r'\b([A-Z_]\w*)\.')
@@ -353,12 +359,15 @@ class IdentifierSanitizer:
         _sanitize = sanitize_col_fn or self.sanitize_column
 
         def _rewrite(m: re.Match) -> str:
-            raw_table = m.group(1).upper()
-            dot_rest = m.group(2)  # e.g. ."COL" or .COL
+            raw_table = (m.group(1) or m.group(2)).upper()
+            dot_rest = m.group(3)  # e.g. ."COL" or .COL
             resolved = alias_lookup.get(raw_table)
             if resolved:
                 col_part = dot_rest.lstrip('. ')
-                if not col_part.startswith('"'):
+                if col_part.startswith('"') and col_part.endswith('"'):
+                    inner_col = col_part[1:-1]
+                    col_part = f'"{_sanitize(inner_col)}"'
+                elif not col_part.startswith('"'):
                     col_part = f'"{_sanitize(col_part)}"'
                 return f"{resolved}.{col_part}"
             return m.group(0)  # leave untouched

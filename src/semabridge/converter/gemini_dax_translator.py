@@ -165,6 +165,10 @@ class GeminiDAXTranslator:
                 sql_response = None
             
             # Parse and validate response
+            if not isinstance(sql_response, str) or not sql_response.strip():
+                result.error = "Gemini returned empty response; falling back to deterministic pipeline"
+                logger.warning(result.error)
+                return result
             sql = sql_response.strip()
             sql = self._strip_markdown_code_blocks(sql)
             result.sql = sql
@@ -384,6 +388,8 @@ Return ONLY the JSON object with no other content:"""
         
         try:
             # Strip markdown if present
+            if not isinstance(response_text, str) or not response_text.strip():
+                raise ValueError("Empty batch response from Gemini")
             response_text = self._strip_markdown_code_blocks(response_text)
             
             # Try to parse JSON

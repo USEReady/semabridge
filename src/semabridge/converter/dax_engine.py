@@ -278,6 +278,7 @@ class DaxTranslationEngine:
                     execution_time_ms=elapsed,
                     cached=True,
                 )
+                self.metrics_log.append(metrics)
                 logger.debug(f"✓ Cache hit for: {metric_name or clean_dax[:50]}")
                 return cached["sql"], metrics
         

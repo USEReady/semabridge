@@ -62,6 +62,7 @@ class DimensionsClauseBuilder:
     ) -> List[str]:
         dims_lines = []
         added_dimensions = set()
+        added_physical_dimensions = set()
         used_dimension_aliases: Set[str] = set()
 
         # 1. Add explicitly defined dimensions
@@ -86,11 +87,12 @@ class DimensionsClauseBuilder:
                     
                 semantic_name = self.sanitizer.sanitize_semantic_name(attr.unique_name)
                 dim_key = (alias, semantic_name, phys_col)
+                physical_dim_key = (alias, phys_col)
                 
                 if self._is_measure_column(attr, phys_col, measure_columns, is_osi):
                     continue
                 
-                if dim_key not in added_dimensions:
+                if dim_key not in added_dimensions and physical_dim_key not in added_physical_dimensions:
                     emitted_name = self._resolve_unique_dimension_alias(
                         semantic_name, used_dimension_aliases, attr.unique_name
                     )
@@ -105,6 +107,7 @@ class DimensionsClauseBuilder:
                         f'{synonyms_clause(col_synonyms)}'
                     )
                     added_dimensions.add(dim_key)
+                    added_physical_dimensions.add(physical_dim_key)
                     
         # 2. Add raw attributes
         for dataset in datasets:
@@ -132,7 +135,8 @@ class DimensionsClauseBuilder:
                     continue
 
                 dim_key = (alias, semantic_name, phys_col)
-                if dim_key in added_dimensions:
+                physical_dim_key = (alias, phys_col)
+                if dim_key in added_dimensions or physical_dim_key in added_physical_dimensions:
                     continue
                 
                 sync_all = self.behavior.semantic_model.sync_all_attributes
@@ -152,6 +156,7 @@ class DimensionsClauseBuilder:
                     f'{synonyms_clause(list(getattr(col, "synonyms", []) or []))}'
                 )
                 added_dimensions.add(dim_key)
+                added_physical_dimensions.add(physical_dim_key)
 
         # Fallback
         if not dims_lines and datasets:

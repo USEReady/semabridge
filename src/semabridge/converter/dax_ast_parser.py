@@ -614,7 +614,8 @@ class DaxSqlRenderer:
     def _render_measure_ref(self, node: MeasureRefNode) -> str:
         if node.name in self.measure_sql_map:
             return f"({self.measure_sql_map[node.name]})"
-        raise self.DaxRenderError(f"Unresolved measure reference: [{node.name}]")
+        col = sanitize_column(node.name)
+        return f'{self.table_alias}."{col}"'
 
     def _render_binary(self, node: BinaryOpNode) -> str:
         left = self._render_node(node.left)

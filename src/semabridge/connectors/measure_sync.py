@@ -745,11 +745,13 @@ class MeasureSynchronizer:
         import re
         alias_to_dataset = {v: k for k, v in dataset_aliases.items()}
         patterns = [
-            r'(\w+)\."([^"]+)"',                 # table."ColumnName"
-            r'(\w+)\.([A-Za-z_][A-Za-z0-9_]*)',    # table.ColumnName
+            r'(?:"(\w+)"|(\w+))\."([^"]+)"',                 # table."ColumnName"
+            r'(?:"(\w+)"|(\w+))\.([A-Za-z_][A-Za-z0-9_]*)',    # table.ColumnName
         ]
         for pattern in patterns:
-            for alias, col in re.findall(pattern, metric_sql):
+            for m in re.finditer(pattern, metric_sql):
+                alias = m.group(1) or m.group(2)
+                col = m.group(3)
                 if alias in alias_to_dataset:
                     ds_name = alias_to_dataset[alias]
                     known_cols = dataset_col_lookup.get(ds_name, set())
@@ -776,8 +778,8 @@ class MeasureSynchronizer:
         normalized_sql = metric_sql
 
         def _repl(m):
-            alias = m.group(1)
-            col = m.group(2)
+            alias = m.group(1) or m.group(2)
+            col = m.group(3)
             if alias in alias_to_dataset:
                 ds_name = alias_to_dataset[alias]
                 known_cols = dataset_col_lookup.get(ds_name, set())
@@ -786,8 +788,8 @@ class MeasureSynchronizer:
                     return f'{alias}."{actual_col}"'
             return m.group(0)
 
-        normalized_sql = re.sub(r'(\w+)\."([^"]+)"', _repl, normalized_sql)
-        normalized_sql = re.sub(r'(\w+)\.([A-Za-z_][A-Za-z0-9_]*)', _repl, normalized_sql)
+        normalized_sql = re.sub(r'(?:"(\w+)"|(\w+))\."([^"]+)"', _repl, normalized_sql)
+        normalized_sql = re.sub(r'(?:"(\w+)"|(\w+))\.([A-Za-z_][A-Za-z0-9_]*)', _repl, normalized_sql)
         return normalized_sql
 
     def _try_llm_metric_fallback_expression(

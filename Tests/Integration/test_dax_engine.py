@@ -161,6 +161,8 @@ class TestCaching:
     
     def test_cache_hit(self):
         engine = DaxTranslationEngine(cache_enabled=True)
+        if engine.cache:
+            engine.cache.clear()
         
         # First call (cache miss)
         sql1, metrics1 = engine.translate("SUM([Amount])", "sales")
@@ -173,6 +175,8 @@ class TestCaching:
     
     def test_different_table_alias_no_cache_hit(self):
         engine = DaxTranslationEngine(cache_enabled=True)
+        if engine.cache:
+            engine.cache.clear()
         
         # Different table aliases should not share cache
         sql1, _ = engine.translate("SUM([Amount])", "sales")
@@ -188,6 +192,8 @@ class TestMetricsCollection:
     
     def test_metrics_summary(self):
         engine = DaxTranslationEngine()
+        if engine.cache:
+            engine.cache.clear()
         
         # Translate several expressions
         engine.translate("SUM([Amount])", "sales")

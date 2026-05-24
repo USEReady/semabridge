@@ -12,6 +12,7 @@ Deployment produces three layers:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import re
 import time
@@ -4073,6 +4074,20 @@ class DatabricksPublisher:
         if not dax_expr:
             return None
 
+        table_alias = self._sanitize_identifier(dataset.unique_name) or "source"
+        schema_context = self._build_llm_schema_context(sml_model)
+
+        # 1. Try OpenAI translation first if OPENAI_API_KEY is configured
+        openai_sql = self._try_openai_dax_translation(
+            dax_expression=dax_expr,
+            metric=metric,
+            table_alias=table_alias,
+            schema_context=schema_context,
+        )
+        if openai_sql:
+            return openai_sql
+
+        # 2. Fall back to Gemini
         try:
             from semabridge.converter.gemini_dax_translator import get_gemini_translator
         except Exception as exc:  # pragma: no cover - import guard
@@ -4084,8 +4099,6 @@ class DatabricksPublisher:
             logger.debug("Gemini translator disabled or missing API key")
             return None
 
-        table_alias = self._sanitize_identifier(dataset.unique_name) or "source"
-        schema_context = self._build_llm_schema_context(sml_model)
         result = translator.translate(
             dax=dax_expr,
             table_alias=table_alias,
@@ -4108,6 +4121,117 @@ class DatabricksPublisher:
                 result.sql[:80],
             )
         return None
+
+    def _try_openai_dax_translation(
+        self,
+        dax_expression: str,
+        metric: SMLMetric,
+        table_alias: str,
+        schema_context: dict[str, list[str]],
+    ) -> Optional[str]:
+        """Translate DAX with OpenAI when OPENAI_API_KEY is configured."""
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            return None
+
+        try:
+            from openai import OpenAI
+        except Exception as exc:
+            logger.warning("OpenAI DAX translation requested but openai package is unavailable: %s", exc)
+            return None
+
+        model_name = os.getenv("OPENAI_DAX_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o"))
+
+        schema_lines = []
+        for table, cols in sorted(schema_context.items()):
+            schema_lines.append(f"- {table}: {', '.join(cols[:80])}")
+        schema_text = "\n".join(schema_lines[:40]) or "- <schema unavailable>"
+
+        prompt = (
+            "Dialect: Databricks SQL expression\n"
+            f"Metric name: {metric.unique_name}\n"
+            f"Default table alias: {table_alias}\n"
+            "Rules:\n"
+            "- Return only a single SQL expression, no explanation.\n"
+            "- Use table aliases and columns from the schema context when known.\n"
+            "- Do not use SELECT, FROM, JOIN, CTEs, subqueries, DDL, or DML.\n"
+            "- Do not nest aggregate functions like SUM(MAX(...)).\n"
+            "- For CALCULATE/FILTER equality predicates, use SUM(CASE WHEN ... THEN column ELSE 0 END).\n"
+            "- Quote identifiers only when needed using backticks like `alias`.`column`.\n"
+            "- If a pattern is impossible, return CAST(NULL AS DOUBLE).\n"
+            "Schema context:\n"
+            f"{schema_text}\n"
+            "DAX:\n"
+            f"{dax_expression}"
+        )
+
+        try:
+            client = OpenAI(api_key=api_key, organization=os.getenv("OPENAI_ORGANIZATION") or None)
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You translate Power BI DAX measures to Databricks SQL aggregation expressions. "
+                            "Return only one SQL expression. Do not use markdown."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=float(os.getenv("OPENAI_DAX_TEMPERATURE", "0.1")),
+                max_tokens=int(os.getenv("OPENAI_DAX_MAX_TOKENS", "500")),
+                timeout=float(os.getenv("OPENAI_DAX_TIMEOUT", "30")),
+            )
+            sql = (response.choices[0].message.content or "").strip()
+        except Exception as exc:
+            logger.warning(
+                "OpenAI DAX translation failed for Databricks metric '%s': %s",
+                metric.unique_name,
+                exc,
+            )
+            return None
+
+        # Clean markdown if OpenAI wrapped it
+        if sql.startswith("```"):
+            sql = re.sub(r"^```(?:sql|python|.*?)\n", "", sql, flags=re.IGNORECASE)
+            sql = re.sub(r"\n```$", "", sql, flags=re.IGNORECASE)
+            sql = sql.strip()
+
+        # Simple validation
+        if not sql:
+            return None
+
+        sql_upper = sql.upper()
+        forbidden = (
+            " SELECT ",
+            "(SELECT",
+            " FROM ",
+            " JOIN ",
+            " WITH ",
+            " DROP ",
+            " DELETE ",
+            " TRUNCATE ",
+            " INSERT ",
+            " UPDATE ",
+            " ALTER ",
+            ";",
+        )
+        padded = f" {sql_upper} "
+        if any(token in padded for token in forbidden):
+            logger.warning(
+                "OpenAI DAX translation rejected (forbidden SQL tokens) for Databricks metric '%s': %s",
+                metric.unique_name,
+                sql[:120],
+            )
+            return None
+
+        logger.info(
+            "OpenAI translated DAX for Databricks metric '%s': %s",
+            metric.unique_name,
+            sql[:160],
+        )
+        return sql
 
     # ── Measure SQL Resolution ───────────────────────────────────────────────
 

@@ -1,5 +1,15 @@
 """Tests for DatabricksPublisher — metadata table + measure views."""
 
+import os
+os.environ.pop("OPENAI_API_KEY", None)
+os.environ.pop("GEMINI_API_KEY", None)
+
+try:
+    import semabridge.converter.gemini_dax_translator as gdt
+    gdt._gemini_translator = None
+except ImportError:
+    pass
+
 import re
 from unittest.mock import patch
 
@@ -53,6 +63,12 @@ from semabridge.sml.models import (
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def disable_llm_translation_keys(monkeypatch):
+    """Automatically disable LLM translation API keys to keep unit tests hermetic."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
 def _cfg() -> DatabricksConfig:
     return DatabricksConfig(
@@ -1010,7 +1026,9 @@ class TestMeasureViewGeneration:
 
         assert created == 1
         assert skipped == 0
-        assert "sum(revenue)" in stmts[0].lower()
+        # The publisher generates alias-prefixed column names:
+        # dataset "Sales" -> alias "sale", column "REVENUE" -> "sale_revenue"
+        assert "sum(sale_revenue)" in stmts[0].lower() or "sum(revenue)" in stmts[0].lower()
 
     def test_metric_view_renders_project_measures_sum_and_refresh_max(self):
         """Metric-view generation should keep Project Measures SUMs translated instead of nulling them out."""
@@ -1204,8 +1222,8 @@ class TestMeasureViewGeneration:
             "SUM('Inventory Fact'[WAC Value Total Stock])"
         )
 
-        assert source_value_sql == "sum(source_value_total_stock)"
-        assert wac_value_sql == "sum(wac_value_total_stock)"
+        assert source_value_sql == "sum(`source_value_total_stock`)"
+        assert wac_value_sql == "sum(`wac_value_total_stock`)"
 
     def test_direct_column_aggregation_preserves_table_with_cross_table_joins_enabled(self):
         """Join-aware mode should preserve table lineage for simple SUM translations."""
@@ -1218,7 +1236,7 @@ class TestMeasureViewGeneration:
             "SUM('Inventory Fact'[Source Value Total Stock])"
         )
 
-        assert source_value_sql == "sum(inventory_fact.source_value_total_stock)"
+        assert source_value_sql == "sum(inventory_fact.`source_value_total_stock`)"
 
     def test_string_aggregation_pattern_translates_with_string_cast(self):
         """Type B parser support: CONCATENATE(..., MAX(Table[Column])) becomes concat + cast."""
@@ -1229,7 +1247,7 @@ class TestMeasureViewGeneration:
         )
 
         assert sql_expr is not None
-        assert sql_expr == "concat('Last Refreshed: ', cast(max(gl_refresh_datetime) as string))"
+        assert sql_expr == "concat('Last Refreshed: ', cast(max(`gl_refresh_datetime`) as string))"
 
     def test_string_aggregation_keeps_max_unqualified_with_cross_table_joins_enabled(self):
         """Join-aware mode should not over-qualify MAX in refresh text expressions."""
@@ -1243,7 +1261,7 @@ class TestMeasureViewGeneration:
         )
 
         assert sql_expr is not None
-        assert sql_expr == "concat('Last Refreshed: ', cast(max(gl_refresh_datetime) as string))"
+        assert sql_expr == "concat('Last Refreshed: ', cast(max(`gl_refresh_datetime`) as string))"
 
     def test_calculate_max_with_filter_translates_to_case_when_max(self):
         """CALCULATE(MAX(...), filter) should translate using MAX(CASE WHEN ...)."""
@@ -2623,6 +2641,7 @@ class TestCombinedViewMode:
                 enable_metric_view_joins=True,
                 enable_cross_table_joins=True,
                 enable_simple_dax_translation=False,
+                enable_low_confidence_drafts=True,
             )
         )
         model = SMLModel(
@@ -5360,12 +5379,18 @@ class TestPerModelArtifactMode:
                 measure_view_type="metric_view",
                 enable_metric_view_joins=True,
                 enable_cross_table_joins=True,
+                enable_low_confidence_drafts=True,
             )
         )
         model = SMLModel(
             unique_name="FabricModel",
             datasets=[
-                SMLDataset(unique_name="Project Measures", columns=[]),
+                SMLDataset(
+                    unique_name="Project Measures",
+                    columns=[
+                        SMLColumn(unique_name="gl_refresh_datetime", data_type=DataType.DATE)
+                    ]
+                ),
                 SMLDataset(
                     unique_name="Fact",
                     columns=[

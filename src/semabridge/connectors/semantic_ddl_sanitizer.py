@@ -151,12 +151,143 @@ class SemanticDDLSanitizer:
                 met_items = [
                     f'  {fallback_alias}."PLACEHOLDER_METRIC" AS NULL'
                 ]
+            else:
+                met_items = self._normalize_metric_display_name_refs(met_items)
             _set_items(m_start, m_end, met_items)
 
         normalized_ddl = "\n".join(lines)
         # Final pass: remove any dangling comma immediately before a clause close.
         normalized_ddl = re.sub(r",\s*\n(\s*\)\s*;?)", r"\n\1", normalized_ddl)
         return normalized_ddl
+
+    def _normalize_metric_display_name_refs(self, metric_items: list[str]) -> list[str]:
+        """Rewrite quoted display-name metric references inside METRICS expressions."""
+        metric_names: set[str] = set()
+        metric_owner_by_name: dict[str, str] = {}
+        for item in metric_items:
+            match = re.search(r'^\s*(\w+)\."([^"]+)"\s+AS\s+', item, flags=re.IGNORECASE)
+            if match:
+                owner_alias = match.group(1).upper()
+                metric_name = match.group(2).upper()
+                metric_names.add(metric_name)
+                metric_owner_by_name[metric_name] = owner_alias
+        if not metric_names:
+            return metric_items
+
+        def _replace(match: re.Match) -> str:
+            token = match.group(1)
+            if token.upper() in metric_names:
+                return match.group(0)
+            try:
+                sanitized = self.identifier_sanitizer.sanitize_alias(token)
+            except Exception:
+                sanitized = re.sub(r"[^A-Za-z0-9_$]+", "_", token).strip("_").upper()
+            if sanitized.upper() in metric_names:
+                owner_alias = metric_owner_by_name.get(sanitized.upper())
+                if owner_alias:
+                    return f'{owner_alias}."{sanitized.upper()}"'
+                return f'"{sanitized.upper()}"'
+            return match.group(0)
+
+        def _replace_qualified(match: re.Match) -> str:
+            alias = match.group(1)
+            token = match.group(2)
+            if token.upper() in metric_names:
+                return match.group(0)
+            try:
+                sanitized = self.identifier_sanitizer.sanitize_alias(token).upper()
+            except Exception:
+                sanitized = re.sub(r"[^A-Za-z0-9_$]+", "_", token).strip("_").upper()
+            if sanitized in metric_names:
+                owner_alias = metric_owner_by_name.get(sanitized, alias.upper())
+                return f'{owner_alias}."{sanitized}"'
+            return match.group(0)
+
+        normalized: list[str] = []
+        for item in metric_items:
+            parts = re.split(r'(\s+AS\s+)', item, maxsplit=1, flags=re.IGNORECASE)
+            if len(parts) != 3:
+                normalized.append(item)
+                continue
+            metric_match = re.search(r'^\s*\w+\."([^"]+)"\s*$', parts[0], flags=re.IGNORECASE)
+            current_metric_name = metric_match.group(1).upper() if metric_match else ""
+            expr = re.sub(
+                r'"([A-Za-z_][A-Za-z0-9_$]*)"\."([^"]+)"',
+                _replace_qualified,
+                parts[2],
+            )
+            expr = re.sub(r'(?<!\.)"([^"]+)"', _replace, expr)
+            expr = self._normalize_metric_owner_refs(expr, metric_owner_by_name)
+            if (
+                self._has_derived_metric_reference(expr, current_metric_name, metric_names)
+                or self._has_unresolved_bare_metric_identifier(expr, metric_names)
+            ):
+                synonym_suffix = ""
+                synonym_match = re.search(r'\s+WITH\s+SYNONYMS\s+=\s+\(.+\)\s*$', expr, flags=re.IGNORECASE)
+                if synonym_match:
+                    synonym_suffix = synonym_match.group(0)
+                expr = f"NULL{synonym_suffix}"
+            normalized.append(f"{parts[0]}{parts[1]}{expr}")
+        return normalized
+
+    @staticmethod
+    def _normalize_metric_owner_refs(expr: str, metric_owner_by_name: dict[str, str]) -> str:
+        """Route qualified metric references to the alias that emits that metric."""
+        if not expr or not metric_owner_by_name:
+            return expr
+
+        def _replace(match: re.Match) -> str:
+            alias = match.group(1)
+            metric_name = match.group(2).upper()
+            owner_alias = metric_owner_by_name.get(metric_name)
+            if owner_alias and alias.upper() != owner_alias:
+                return f'{owner_alias}."{metric_name}"'
+            return match.group(0)
+
+        return re.sub(r'\b([A-Za-z_][A-Za-z0-9_$]*)\."([A-Z_][A-Z0-9_$]*)"', _replace, expr)
+
+    @staticmethod
+    def _has_derived_metric_reference(expr: str, current_metric_name: str, metric_names: set[str]) -> bool:
+        """Snowflake semantic metrics reject many metric-on-metric expressions."""
+        if not expr or not metric_names:
+            return False
+        for _, name in re.findall(r'\b([A-Za-z_][A-Za-z0-9_$]*)\."([A-Z_][A-Z0-9_$]*)"', expr):
+            metric_name = name.upper()
+            if metric_name in metric_names and metric_name != current_metric_name:
+                return True
+        for name in re.findall(r'(?<!\.)"([A-Z_][A-Z0-9_$]*)"', expr):
+            metric_name = name.upper()
+            if metric_name in metric_names and metric_name != current_metric_name:
+                return True
+        return False
+
+    @staticmethod
+    def _has_unresolved_bare_metric_identifier(expr: str, metric_names: set[str]) -> bool:
+        """Detect obvious unqualified identifiers that Snowflake will reject."""
+        if not expr:
+            return False
+        scrubbed = re.sub(r"'(?:''|[^'])*'", "''", expr)
+        for quoted in re.findall(r'(?<!\.)"([^"]+)"', scrubbed):
+            if quoted.upper() not in metric_names:
+                return True
+        scrubbed = re.sub(r'\b[A-Za-z_][A-Za-z0-9_$]*\s*\.\s*"[^"]+"', " ", scrubbed)
+        scrubbed = re.sub(r'\b[A-Za-z_][A-Za-z0-9_$]*\s*\.\s*[A-Za-z_][A-Za-z0-9_$]*', " ", scrubbed)
+        scrubbed = re.sub(r'"[A-Z_][A-Z0-9_$]*"', " ", scrubbed)
+        keywords = {
+            "AND", "AS", "ASC", "AVG", "BETWEEN", "BY", "CASE", "CAST", "COALESCE",
+            "CURRENT", "CURRENT_DATE", "DATEADD", "DATEDIFF", "DAY", "DESC",
+            "DISTINCT", "DIVIDE", "DOUBLE", "ELSE", "END", "FALSE", "FLOAT", "FROM",
+            "GROUP", "IFF", "IN", "INT", "IS", "LAG", "LEFT", "LIKE", "MAX",
+            "MIN", "MONTH", "NOT", "NULL", "NULLIF", "OR", "ORDER", "OVER",
+            "PARTITION", "ROWS", "SUM", "THEN", "TO_DATE", "TRUE",
+            "TRY_CAST", "TRY_TO_DATE", "VARCHAR", "WHEN", "WITH", "SYNONYMS", "YEAR",
+        }
+        for token in re.findall(r'\b[A-Za-z_][A-Za-z0-9_$]*\b', scrubbed):
+            upper = token.upper()
+            if upper in keywords or upper in metric_names:
+                continue
+            return True
+        return False
 
     def remediate_invalid_identifier(
         self,
