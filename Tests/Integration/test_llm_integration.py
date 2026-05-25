@@ -18,7 +18,7 @@ def test_llm_translator():
         return False
     
     print(f"[OK] Gemini LLM client initialized")
-    print(f"   Model preferences: {translator.model_preferences}")
+    print(f"   Model: {translator.model}")
     print(f"   Cache file: {translator.cache_file}")
     print(f"   Cached entries: {len(translator.cache)}")
     

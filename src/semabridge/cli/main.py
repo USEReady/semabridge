@@ -1728,7 +1728,7 @@ def _run_snowflake_to_fabric(
         raise typer.Exit(code=1)
 
 
-def _run_fabric_to_snowflake(settings, dataset_id, workspace_id, tag, sync, parallel=False):
+def _run_fabric_to_snowflake(settings, dataset_id, workspace_id, tag, sync, parallel=False, auto_enrich=False):
     ws_id = workspace_id or settings.fabric.workspace_id
     from semabridge.core.behavior import ConnectorBehavior
     from semabridge.core.config_loader import get_project_file_path
@@ -1740,6 +1740,11 @@ def _run_fabric_to_snowflake(settings, dataset_id, workspace_id, tag, sync, para
             behavior = ConnectorBehavior.from_yaml(behavior_path)
         except Exception as be:
             logger.warning(f"Failed to parse behavior.yaml, using defaults: {be}")
+            
+    if auto_enrich:
+        behavior.snowflake.auto_create_enriched_view = True
+        behavior.snowflake.auto_execute_precompute = True
+        behavior.snowflake.use_enriched_view_for_metrics = True
     
     console.print(Panel.fit(
         f"[bold]Deploy: Fabric -> Snowflake[/bold]\n"
@@ -1928,6 +1933,7 @@ def sync(
     ),
     output_dir: Path = typer.Option(Path("output"), "--output-dir", "-o", help="Output directory"),
     parallel: bool = typer.Option(False, "--parallel", "-p", help="Enable concurrent extraction and deployment"),
+    auto_enrich: bool = typer.Option(False, "--auto-enrich", help="Automatically enrich Snowflake tables with pre-computed columns"),
 ):
     """
     Core sync function.
@@ -1948,6 +1954,7 @@ def sync(
         include_tables=include_tables,
         output_dir=output_dir,
         parallel=parallel,
+        auto_enrich=auto_enrich,
     )
 
 
@@ -1972,6 +1979,7 @@ def semantic_sync(
     ),
     output_dir: Path = typer.Option(Path("output"), "--output-dir", "-o", help="Output directory"),
     parallel: bool = typer.Option(False, "--parallel", "-p", help="Enable concurrent extraction and deployment"),
+    auto_enrich: bool = typer.Option(False, "--auto-enrich", help="Automatically enrich Snowflake tables with pre-computed columns"),
 ):
     """
     Synchronize semantic model between platforms.
@@ -2083,7 +2091,7 @@ def semantic_sync(
              console.print("[red]Error: --dataset-id is required when source is 'fabric'[/red]")
              raise typer.Exit(code=1)
         sync_to_snowflake = not dry_run
-        _run_fabric_to_snowflake(settings, dataset_id, workspace_id, tag, sync_to_snowflake, parallel=parallel)
+        _run_fabric_to_snowflake(settings, dataset_id, workspace_id, tag, sync_to_snowflake, parallel=parallel, auto_enrich=auto_enrich)
     else:
         console.print(f"[red]Error: Unsupported flow from {source} to {target}[/red]")
         raise typer.Exit(code=1)

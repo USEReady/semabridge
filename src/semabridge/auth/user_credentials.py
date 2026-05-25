@@ -67,6 +67,16 @@ _ENV_MAP: Dict[str, Dict[str, str]] = {
         "catalog": "DATABRICKS_CATALOG",
         "schema_name": "DATABRICKS_SCHEMA",
     },
+    "api_secrets": {
+        "OPENAI_API_KEY": "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY": "ANTHROPIC_API_KEY",
+        "GOOGLE_API_KEY": "GOOGLE_API_KEY",
+        "MISTRAL_API_KEY": "MISTRAL_API_KEY",
+        "GROQ_API_KEY": "GROQ_API_KEY",
+        "CEREBRAS_API_KEY": "CEREBRAS_API_KEY",
+        "SAMBANOVA_API_KEY": "SAMBANOVA_API_KEY",
+        "OPENROUTER_API_KEY": "OPENROUTER_API_KEY",
+    },
 }
 
 

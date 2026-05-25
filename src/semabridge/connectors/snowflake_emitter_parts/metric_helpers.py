@@ -231,10 +231,10 @@ def normalize_metric_column_references(
     alias_to_dataset = {v: k for k, v in dataset_aliases.items()}
     normalized_sql = metric_sql
 
-    quoted_pattern = r'(\w+)\.(["\'])([^"\']+)\2'
+    quoted_pattern = r'(?:"(\w+)"|(\w+))\.(["\'])([^"\']+)\3'
     for match in re.finditer(quoted_pattern, normalized_sql):
-        table_alias = match.group(1)
-        col_name = match.group(3)
+        table_alias = match.group(1) or match.group(2)
+        col_name = match.group(4)
         dataset_name = alias_to_dataset.get(table_alias)
         if not dataset_name:
             continue
@@ -268,10 +268,10 @@ def normalize_metric_column_references(
             continue
         normalized_sql = normalized_sql.replace(match.group(0), f'{table_alias}.{sanitized_col_name}')
 
-    unquoted_pattern = r'(\w+)\.([A-Za-z_][A-Za-z0-9_$]*)'
+    unquoted_pattern = r'(?:"(\w+)"|(\w+))\.([A-Za-z_][A-Za-z0-9_$]*)'
     for match in re.finditer(unquoted_pattern, normalized_sql):
-        table_alias = match.group(1)
-        col_name = match.group(2)
+        table_alias = match.group(1) or match.group(2)
+        col_name = match.group(3)
         dataset_name = alias_to_dataset.get(table_alias)
         if not dataset_name:
             continue

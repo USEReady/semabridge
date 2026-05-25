@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import base64
+import json
+import time
+
 from semabridge.connectors.fabric_extractor import FabricExtractor
 from semabridge.core.settings import FabricConfig
 
@@ -33,6 +37,7 @@ def test_list_semantic_models_retries_once_after_401_and_refreshes_token(monkeyp
     extractor = FabricExtractor(config)
 
     auth_headers_seen: list[str] = []
+    stale_env_token = _fake_jwt(exp=int(time.time()) + 3600)
 
     def _fake_request(method: str, url: str, headers=None, **kwargs):
         del kwargs
@@ -41,7 +46,7 @@ def test_list_semantic_models_retries_once_after_401_and_refreshes_token(monkeyp
         auth_header = (headers or {}).get("Authorization", "")
         auth_headers_seen.append(auth_header)
 
-        if auth_header == "Bearer stale-env-token":
+        if auth_header == f"Bearer {stale_env_token}":
             return _FakeResponse(401, {"error": "Unauthorized"}, "Unauthorized")
 
         if auth_header == "Bearer fresh-service-token":
@@ -64,7 +69,7 @@ def test_list_semantic_models_retries_once_after_401_and_refreshes_token(monkeyp
 
     monkeypatch.setattr(
         "semabridge.connectors.fabric_extractor.get_fabric_access_token_from_env",
-        lambda: "stale-env-token",
+        lambda: stale_env_token,
     )
     monkeypatch.setattr("semabridge.connectors.fabric_extractor.requests.request", _fake_request)
     monkeypatch.setattr("semabridge.connectors.fabric_extractor.requests.post", _fake_post)
@@ -77,6 +82,14 @@ def test_list_semantic_models_retries_once_after_401_and_refreshes_token(monkeyp
 
     # First call uses stale env token, second call retries with refreshed token.
     assert auth_headers_seen == [
-        "Bearer stale-env-token",
+        f"Bearer {stale_env_token}",
         "Bearer fresh-service-token",
     ]
+
+
+def _fake_jwt(exp: int) -> str:
+    def encode(part: dict) -> str:
+        raw = json.dumps(part, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+    return f"{encode({'alg': 'none'})}.{encode({'exp': exp})}.signature"

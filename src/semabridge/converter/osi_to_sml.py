@@ -198,6 +198,7 @@ class OSIToSMLConverter(BaseConverter):
             description=osi_col.description or "",
             is_hidden=osi_col.is_hidden,
             is_key=osi_col.is_key,
+            is_measure_candidate=getattr(osi_col, "is_measure_candidate", False),
             format_string=osi_col.format_string,
             # Cortex AI metadata (propagated from OSI)
             synonyms=list(osi_col.synonyms),

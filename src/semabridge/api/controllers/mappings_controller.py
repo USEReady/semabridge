@@ -232,6 +232,13 @@ async def dry_run_mapping(
         # "metric" is the canonical kind for measures — include it alongside "column".
         FIELD_KINDS = {"field", "column", "measure", "metric"}
         filtered_mappings = []
+        if request.selected_sources:
+            fallback_model_name = request.selected_sources[0]
+        else:
+            fallback_model_name = "default"
+        model_name = str((sml_blob or {}).get("unique_name") or (sml_blob or {}).get("label") or fallback_model_name)
+        from semabridge.utils.synonyms import load_synonym_overrides, lookup_synonym_override
+        synonym_overrides = load_synonym_overrides(preview_project_id)
         for m in entity_mappings:
             if not isinstance(m, dict):
                 continue
@@ -240,12 +247,19 @@ async def dry_run_mapping(
                 continue
             # Normalise "metric" → "measure" so the frontend field_type split works
             normalised_kind = "measure" if kind in ("metric", "measure") else kind
+            source_name = str(m.get("source_name", "") or "").strip()
+            source_table = str(m.get("source_table", m.get("source_entity", "")) or "").strip()
+            measure_source_tables = list(m.get("measure_source_tables") or [])
+            if normalised_kind == "measure" and not source_table and measure_source_tables:
+                source_table = str(measure_source_tables[0] or "").strip()
             filtered_mappings.append({
                 "id": m.get("id", f"field_{len(filtered_mappings)}"),
+                "project_id": preview_project_id,
+                "model_name": model_name,
                 "entity_kind": normalised_kind,
-                "source_name": m.get("source_name", ""),
+                "source_name": source_name,
                 "source_data_type": m.get("source_data_type", "unknown"),
-                "source_table": m.get("source_table", m.get("source_entity", "")),
+                "source_table": source_table,
                 "source_path": m.get("source_path", ""),
                 "source_qualified_path": m.get("source_qualified_path", ""),
                 "target_name": m.get("target_name", ""),
@@ -257,8 +271,14 @@ async def dry_run_mapping(
                 "validation_status": m.get("validation_status", "valid"),
                 "validation_code": m.get("validation_code", "OK"),
                 "validation_message": m.get("validation_message", ""),
-                "measure_source_tables": list(m.get("measure_source_tables") or []),
+                "measure_source_tables": measure_source_tables,
                 "source_expression": m.get("source_expression", ""),
+                "synonym_overrides": lookup_synonym_override(
+                    synonym_overrides,
+                    [model_name],
+                    source_table,
+                    source_name,
+                ),
             })
 
         # Apply collision handling on top of what the serializer already did
@@ -270,6 +290,8 @@ async def dry_run_mapping(
 
         return {
             "success": True,
+            "project_id": preview_project_id,
+            "model_name": model_name,
             "entity_mappings": filtered_mappings,
             "summary": {
                 "total_fields": len(filtered_mappings),

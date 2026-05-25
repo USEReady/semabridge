@@ -1,5 +1,42 @@
+version: "3.0"
+
+default:
+  sync_mode: "copy"
+  parallelism: 4
+  deterministic_translation_enabled: true
+  enable_llm_dax_translation: true
+  llm_provider: "openai"
+  translation_priority: "llm_first"
+
 snowflake:
   apply_inferred_types: true
+  deterministic_translation_enabled: true
+  enable_llm_dax_translation: true
+  llm_provider: "openai"
+  measure_view_type: "metric_view"
+  dialect: "snowflake"
+  
+  # Auto-enrichment features (NEW)
+  auto_execute_precompute: true      # Automatically run ALTER TABLE ADD COLUMN
+  auto_create_enriched_view: true    # Create _ENRICHED view with anchors
+  use_enriched_view_for_metrics: true # Point semantic model to enriched view
+  
+  # Point to enriched view instead of base table
+  source_table_mapping:
+    "SalesFact": "SEMABRIDGE.PUBLIC.SALESFACT_ENRICHED"
+  
+  # Auto features (no manual mapping needed)
+  auto_qualify_cross_table_refs: true
+  auto_detect_date_table: true
+  auto_sanitize_names: true
+  
+  # Lower confidence threshold to avoid NULL fallbacks
+  enable_low_confidence_drafts: true
+  dummy_measure_anchor_confidence_threshold: 0.3
+  
+  # Source configuration
+  source_catalog: "semabridge"
+  source_schema: "public"
 
 features:
   offline_mode: false
@@ -41,6 +78,12 @@ databricks:
   strict_graph_coverage_validation: false # When true, fail deploy if relationship endpoint coverage is invalid; false logs warnings
   enable_auto_join_key_bridge: true # Auto-create/backfill missing physical relationship key columns during Databricks publish preflight
   enable_destructive_sync_operations: true # Allow DROP VIEW/TABLE before re-creating when an object-type conflict is detected at the target name
+
+  deterministic_translation_enabled: true
+  enable_llm_dax_translation: true
+  llm_provider: "openai"
+  catalog: "semabridge"
+  schema: "public"
 
 
   # -------- Semantic Router Configuration (Fact-Centric Artifact Generation) --------

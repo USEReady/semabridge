@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Set, Tuple, Optional
 
 from semabridge.utils.logger import get_logger
 from semabridge.utils.identifiers import IdentifierSanitizer
+from semabridge.connectors.synonym_clause import synonyms_clause
 
 logger = get_logger(__name__)
 
@@ -61,6 +62,7 @@ class DimensionsClauseBuilder:
     ) -> List[str]:
         dims_lines = []
         added_dimensions = set()
+        added_physical_dimensions = set()
         used_dimension_aliases: Set[str] = set()
 
         # 1. Add explicitly defined dimensions
@@ -85,18 +87,27 @@ class DimensionsClauseBuilder:
                     
                 semantic_name = self.sanitizer.sanitize_semantic_name(attr.unique_name)
                 dim_key = (alias, semantic_name, phys_col)
+                physical_dim_key = (alias, phys_col)
                 
                 if self._is_measure_column(attr, phys_col, measure_columns, is_osi):
                     continue
                 
-                if dim_key not in added_dimensions:
+                if dim_key not in added_dimensions and physical_dim_key not in added_physical_dimensions:
                     emitted_name = self._resolve_unique_dimension_alias(
                         semantic_name, used_dimension_aliases, attr.unique_name
                     )
+                    col_synonyms = self._lookup_attribute_synonyms(
+                        attr,
+                        dataset_by_name,
+                        phys_col,
+                    )
                     dims_lines.append(
-                        f'  {alias}."{emitted_name}" AS {self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
+                        f'  {alias}."{emitted_name}" AS '
+                        f'{self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
+                        f'{synonyms_clause(col_synonyms)}'
                     )
                     added_dimensions.add(dim_key)
+                    added_physical_dimensions.add(physical_dim_key)
                     
         # 2. Add raw attributes
         for dataset in datasets:
@@ -124,7 +135,8 @@ class DimensionsClauseBuilder:
                     continue
 
                 dim_key = (alias, semantic_name, phys_col)
-                if dim_key in added_dimensions:
+                physical_dim_key = (alias, phys_col)
+                if dim_key in added_dimensions or physical_dim_key in added_physical_dimensions:
                     continue
                 
                 sync_all = self.behavior.semantic_model.sync_all_attributes
@@ -139,9 +151,12 @@ class DimensionsClauseBuilder:
                     semantic_name, used_dimension_aliases, semantic_source_name
                 )
                 dims_lines.append(
-                    f'  {alias}."{emitted_name}" AS {self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
+                    f'  {alias}."{emitted_name}" AS '
+                    f'{self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
+                    f'{synonyms_clause(list(getattr(col, "synonyms", []) or []))}'
                 )
                 added_dimensions.add(dim_key)
+                added_physical_dimensions.add(physical_dim_key)
 
         # Fallback
         if not dims_lines and datasets:
@@ -163,6 +178,39 @@ class DimensionsClauseBuilder:
                 or self._measure_key(attr.dataset, attr.unique_name) in measure_columns
                 or self._measure_key(attr.dataset, phys_col) in measure_columns
             )
+
+    def _lookup_attribute_synonyms(
+        self,
+        attr: Any,
+        dataset_by_name: Dict[str, Any],
+        phys_col: str,
+    ) -> List[str]:
+        dataset_obj = dataset_by_name.get(attr.dataset)
+        if not dataset_obj:
+            return []
+
+        candidates = [
+            getattr(attr, "source_column", None),
+            getattr(attr, "dataset_column", None),
+            getattr(attr, "unique_name", None),
+            phys_col,
+        ]
+        columns = list(getattr(dataset_obj, "columns", []) or [])
+        for candidate in candidates:
+            if not candidate:
+                continue
+            col = dataset_obj.get_column(candidate) if hasattr(dataset_obj, "get_column") else None
+            if not col:
+                col = next(
+                    (
+                        item for item in columns
+                        if str(getattr(item, "unique_name", "")).casefold() == str(candidate).casefold()
+                    ),
+                    None,
+                )
+            if col:
+                return list(getattr(col, "synonyms", []) or [])
+        return []
 
     def _measure_key(self, dataset_name: Optional[str], column_name: Optional[str]) -> Tuple[str, str]:
         return (
@@ -222,7 +270,9 @@ class DimensionsClauseBuilder:
                 semantic = self.sanitizer.sanitize_semantic_name(col.unique_name)
                 emitted_name = self._resolve_unique_dimension_alias(semantic, used_dimension_aliases, col.unique_name)
                 dims_lines.append(
-                    f'  {alias}."{emitted_name}" AS {self.sanitizer.format_physical_column_ref(alias, phys, model_name=model_name)}'
+                    f'  {alias}."{emitted_name}" AS '
+                    f'{self.sanitizer.format_physical_column_ref(alias, phys, model_name=model_name)}'
+                    f'{synonyms_clause(list(getattr(col, "synonyms", []) or []))}'
                 )
                 return
 
@@ -234,5 +284,7 @@ class DimensionsClauseBuilder:
                     else self.schema_manager._resolve_physical_column_name(first_ds, col.unique_name))
             emitted_name = self._resolve_unique_dimension_alias(semantic, used_dimension_aliases, col.unique_name)
             dims_lines.append(
-                f'  {alias}."{emitted_name}" AS {self.sanitizer.format_physical_column_ref(alias, phys, model_name=model_name)}'
+                f'  {alias}."{emitted_name}" AS '
+                f'{self.sanitizer.format_physical_column_ref(alias, phys, model_name=model_name)}'
+                f'{synonyms_clause(list(getattr(col, "synonyms", []) or []))}'
             )

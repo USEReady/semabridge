@@ -438,7 +438,10 @@ class DatabricksMeasureTranslator:
                 "count",
             }
             # For metric views, use the deterministic bare alias so Publisher's AST parser passes it gracefully
-            col_ref = f"`{col}`"
+            if self._behavior.enable_cross_table_joins and table and func in qualify_for_join:
+                col_ref = f"{table}.`{col}`"
+            else:
+                col_ref = f"`{col}`"
             if func == "average":
                 func = "avg"
             elif func == "distinctcount":

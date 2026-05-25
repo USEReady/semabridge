@@ -12,6 +12,7 @@ Deployment produces three layers:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import re
 import time
@@ -1189,6 +1190,66 @@ class DatabricksPublisher:
                 
         return f"{cache_key}.{table_name.lower()}" in self._table_exists_cache
 
+    def _auto_infer_missing_relationships(self, sml_model: SMLModel) -> None:
+        """Automatically infer and inject missing relationships based on shared key columns."""
+        from semabridge.sml.models import SMLRelationship, Cardinality
+        
+        existing_edges = set()
+        for rel in sml_model.relationships:
+            if rel.from_dataset and rel.to_dataset:
+                existing_edges.add((rel.from_dataset.lower(), rel.to_dataset.lower()))
+                existing_edges.add((rel.to_dataset.lower(), rel.from_dataset.lower()))
+
+        datasets = sml_model.datasets
+        fact_datasets = [d for d in datasets if d.is_fact or "fact" in d.unique_name.lower() or "aggregate" in d.unique_name.lower()]
+        if not fact_datasets:
+            fact_datasets = datasets
+
+        inferred_count = 0
+        for ds1 in fact_datasets:
+            for ds2 in datasets:
+                if ds1.unique_name == ds2.unique_name:
+                    continue
+                edge = (ds1.unique_name.lower(), ds2.unique_name.lower())
+                if edge in existing_edges:
+                    continue
+                
+                ds1_cols = {str(c.unique_name).lower().replace(" ", "").replace("_", ""): c.unique_name for c in ds1.columns}
+                ds2_cols = {str(c.unique_name).lower().replace(" ", "").replace("_", ""): c.unique_name for c in ds2.columns}
+                
+                shared_norm = set(ds1_cols.keys()).intersection(set(ds2_cols.keys()))
+                
+                join_keys_1 = []
+                join_keys_2 = []
+                for norm in shared_norm:
+                    if "id" in norm or "key" in norm or "unit" in norm or "period" in norm or "date" in norm:
+                        join_keys_1.append(ds1_cols[norm])
+                        join_keys_2.append(ds2_cols[norm])
+                
+                if not join_keys_1:
+                    continue
+                    
+                new_rel = SMLRelationship(
+                    unique_name=f"auto_inferred_{self._sanitize_identifier(ds1.unique_name)}_to_{self._sanitize_identifier(ds2.unique_name)}",
+                    from_dataset=ds1.unique_name,
+                    from_columns=join_keys_1,
+                    to_dataset=ds2.unique_name,
+                    to_columns=join_keys_2,
+                    cardinality=Cardinality.MANY_TO_ONE,
+                    is_active=True
+                )
+                sml_model.relationships.append(new_rel)
+                existing_edges.add(edge)
+                existing_edges.add((edge[1], edge[0]))
+                inferred_count += 1
+                logger.info(
+                    "Auto-inferred missing relationship between %s and %s on columns %s",
+                    ds1.unique_name, ds2.unique_name, join_keys_1
+                )
+        
+        if inferred_count > 0:
+            logger.info("Automatically inferred and injected %d missing relationships.", inferred_count)
+
     def _auto_initialize_missing_tables(
         self,
         sml_model: SMLModel,
@@ -2263,7 +2324,13 @@ class DatabricksPublisher:
                 # not match semantic names.
                 lines.append("source: " + self._build_metric_view_source_query(bindings, source_fq))
             else:
-                lines.append(f"source: {yaml_quote(source_fq.replace('`', ''))}")
+                source_query = self._build_source_query_with_anchors(source_fq, ds_name, sml_model)
+                if "\n" in source_query:
+                    lines.append("source: |")
+                    for qline in source_query.split('\n'):
+                        lines.append(f"  {qline}")
+                else:
+                    lines.append("source: " + yaml_quote(source_query))
         else:
             # Inline SQL query as source — no physical table needed
             # Generates a typed schema SELECT using CAST(NULL AS type)
@@ -4073,6 +4140,20 @@ class DatabricksPublisher:
         if not dax_expr:
             return None
 
+        table_alias = self._sanitize_identifier(dataset.unique_name) or "source"
+        schema_context = self._build_llm_schema_context(sml_model)
+
+        # 1. Try OpenAI translation first if OPENAI_API_KEY is configured
+        openai_sql = self._try_openai_dax_translation(
+            dax_expression=dax_expr,
+            metric=metric,
+            table_alias=table_alias,
+            schema_context=schema_context,
+        )
+        if openai_sql:
+            return openai_sql
+
+        # 2. Fall back to Gemini
         try:
             from semabridge.converter.gemini_dax_translator import get_gemini_translator
         except Exception as exc:  # pragma: no cover - import guard
@@ -4084,8 +4165,6 @@ class DatabricksPublisher:
             logger.debug("Gemini translator disabled or missing API key")
             return None
 
-        table_alias = self._sanitize_identifier(dataset.unique_name) or "source"
-        schema_context = self._build_llm_schema_context(sml_model)
         result = translator.translate(
             dax=dax_expr,
             table_alias=table_alias,
@@ -4108,6 +4187,117 @@ class DatabricksPublisher:
                 result.sql[:80],
             )
         return None
+
+    def _try_openai_dax_translation(
+        self,
+        dax_expression: str,
+        metric: SMLMetric,
+        table_alias: str,
+        schema_context: dict[str, list[str]],
+    ) -> Optional[str]:
+        """Translate DAX with OpenAI when OPENAI_API_KEY is configured."""
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            return None
+
+        try:
+            from openai import OpenAI
+        except Exception as exc:
+            logger.warning("OpenAI DAX translation requested but openai package is unavailable: %s", exc)
+            return None
+
+        model_name = os.getenv("OPENAI_DAX_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o"))
+
+        schema_lines = []
+        for table, cols in sorted(schema_context.items()):
+            schema_lines.append(f"- {table}: {', '.join(cols[:80])}")
+        schema_text = "\n".join(schema_lines[:40]) or "- <schema unavailable>"
+
+        prompt = (
+            "Dialect: Databricks SQL expression\n"
+            f"Metric name: {metric.unique_name}\n"
+            f"Default table alias: {table_alias}\n"
+            "Rules:\n"
+            "- Return only a single SQL expression, no explanation.\n"
+            "- Use table aliases and columns from the schema context when known.\n"
+            "- Do not use SELECT, FROM, JOIN, CTEs, subqueries, DDL, or DML.\n"
+            "- Do not nest aggregate functions like SUM(MAX(...)).\n"
+            "- For CALCULATE/FILTER equality predicates, use SUM(CASE WHEN ... THEN column ELSE 0 END).\n"
+            "- Quote identifiers only when needed using backticks like `alias`.`column`.\n"
+            "- If a pattern is impossible, return CAST(NULL AS DOUBLE).\n"
+            "Schema context:\n"
+            f"{schema_text}\n"
+            "DAX:\n"
+            f"{dax_expression}"
+        )
+
+        try:
+            client = OpenAI(api_key=api_key, organization=os.getenv("OPENAI_ORGANIZATION") or None)
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You translate Power BI DAX measures to Databricks SQL aggregation expressions. "
+                            "Return only one SQL expression. Do not use markdown."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=float(os.getenv("OPENAI_DAX_TEMPERATURE", "0.1")),
+                max_tokens=int(os.getenv("OPENAI_DAX_MAX_TOKENS", "500")),
+                timeout=float(os.getenv("OPENAI_DAX_TIMEOUT", "30")),
+            )
+            sql = (response.choices[0].message.content or "").strip()
+        except Exception as exc:
+            logger.warning(
+                "OpenAI DAX translation failed for Databricks metric '%s': %s",
+                metric.unique_name,
+                exc,
+            )
+            return None
+
+        # Clean markdown if OpenAI wrapped it
+        if sql.startswith("```"):
+            sql = re.sub(r"^```(?:sql|python|.*?)\n", "", sql, flags=re.IGNORECASE)
+            sql = re.sub(r"\n```$", "", sql, flags=re.IGNORECASE)
+            sql = sql.strip()
+
+        # Simple validation
+        if not sql:
+            return None
+
+        sql_upper = sql.upper()
+        forbidden = (
+            " SELECT ",
+            "(SELECT",
+            " FROM ",
+            " JOIN ",
+            " WITH ",
+            " DROP ",
+            " DELETE ",
+            " TRUNCATE ",
+            " INSERT ",
+            " UPDATE ",
+            " ALTER ",
+            ";",
+        )
+        padded = f" {sql_upper} "
+        if any(token in padded for token in forbidden):
+            logger.warning(
+                "OpenAI DAX translation rejected (forbidden SQL tokens) for Databricks metric '%s': %s",
+                metric.unique_name,
+                sql[:120],
+            )
+            return None
+
+        logger.info(
+            "OpenAI translated DAX for Databricks metric '%s': %s",
+            metric.unique_name,
+            sql[:160],
+        )
+        return sql
 
     # ── Measure SQL Resolution ───────────────────────────────────────────────
 
@@ -6896,6 +7086,7 @@ class DatabricksPublisher:
                 self._dbx_behavior.measure_view_mode = selected_view_mode
 
             # Databricks pre-flight: ensure missing sources have a usable table/view shape
+            self._auto_infer_missing_relationships(sml_model)
             self._auto_initialize_missing_tables(
                 sml_model,
                 resolved_view_type=resolved_view_type,

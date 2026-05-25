@@ -181,6 +181,13 @@ class DatabricksBehavior(BaseModel):
         default=True,
         description="Translate simple DAX patterns (SUM, COUNT, etc.) to SQL for view creation"
     )
+    enable_llm_dax_translation: bool = Field(
+        default=True,
+        description=(
+            "Enable LLM-based DAX translation fallback for complex measures "
+            "(OpenAI/Gemini provider chain based on runtime wiring)."
+        ),
+    )
     metric_view_only_sum_translation: bool = Field(
         default=False,
         description=(

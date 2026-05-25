@@ -5,6 +5,7 @@ Implements the "Tiered Safety" translation strategy to convert Fabric DAX expres
 into Snowflake-compatible SQL for Semantic Views.
 """
 
+import os
 import re
 from typing import Optional, Tuple, Dict, List, Any
 
@@ -603,12 +604,11 @@ class DAXTranslator:
                 return f"{agg_func}(CASE WHEN {condition_sql} THEN {value_expr} END)"
 
         return None
-    
     def _try_llm_fallback(self,
-                         dax: str,
-                         table_alias: str,
-                         dataset_name: str,
-                         metric_name: Optional[str] = None) -> Optional[DAXTranslationResult]:
+                          dax: str,
+                          table_alias: str,
+                          dataset_name: str,
+                          metric_name: Optional[str] = None) -> Optional[DAXTranslationResult]:
         """
         Attempt Tier 5 LLM translation for complex expressions.
         
@@ -631,6 +631,83 @@ class DAXTranslator:
         else:
             logger.info(f"🟠 Metric classified as COMPLEX - requesting LLM translation: {metric_name or dax[:50]}")
         
+        # PRIORITY 0: OpenAI translation first if OPENAI_API_KEY is configured
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if openai_api_key:
+            try:
+                from openai import OpenAI
+                model_name = os.getenv("OPENAI_DAX_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o"))
+                client = OpenAI(api_key=openai_api_key, organization=os.getenv("OPENAI_ORGANIZATION") or None)
+                
+                logger.info(f"🤖 Calling OpenAI API for measure '{metric_name or dax[:30]}'...")
+                
+                prompt = (
+                    "Dialect: Snowflake Semantic View METRICS clause\n"
+                    f"Metric name: {metric_name or 'unnamed'}\n"
+                    f"Default table alias: {table_alias}\n"
+                    "Rules:\n"
+                    "- Return only a single SQL expression, no explanation.\n"
+                    "- Do not use SELECT, FROM, JOIN, CTEs, subqueries, OVER/window functions, DDL, or DML.\n"
+                    "- Do not nest aggregate functions like SUM(MAX(...)).\n"
+                    "- For CALCULATE/FILTER equality predicates, use SUM(CASE WHEN ... THEN column ELSE 0 END).\n"
+                    "- Quote identifiers only when needed as ALIAS.\"COLUMN\"; uppercase Snowflake column names.\n"
+                    "- If a pattern is impossible, return CAST(NULL AS DOUBLE).\n"
+                    "DAX:\n"
+                    f"{dax}"
+                )
+                
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You translate Power BI DAX measures to Snowflake Semantic View metric SQL. "
+                                "Return only one SQL expression. Do not use markdown."
+                            ),
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=float(os.getenv("OPENAI_DAX_TEMPERATURE", "0.1")),
+                    max_tokens=int(os.getenv("OPENAI_DAX_MAX_TOKENS", "500")),
+                    timeout=float(os.getenv("OPENAI_DAX_TIMEOUT", "30")),
+                )
+                sql = (response.choices[0].message.content or "").strip()
+                
+                if sql.startswith("```"):
+                    sql = re.sub(r"^```(?:sql|python|.*?)\n", "", sql, flags=re.IGNORECASE)
+                    sql = re.sub(r"\n```$", "", sql, flags=re.IGNORECASE)
+                    sql = sql.strip()
+                
+                if sql:
+                    sql_upper = sql.upper()
+                    forbidden = (
+                        " SELECT ",
+                        "(SELECT",
+                        " FROM ",
+                        " JOIN ",
+                        " WITH ",
+                        " DROP ",
+                        " DELETE ",
+                        " TRUNCATE ",
+                        " INSERT ",
+                        " UPDATE ",
+                        " ALTER ",
+                        ";",
+                    )
+                    padded = f" {sql_upper} "
+                    if any(token in padded for token in forbidden):
+                        logger.warning(
+                            "OpenAI DAX translation rejected (forbidden SQL tokens) for metric '%s': %s",
+                            metric_name,
+                            sql[:120],
+                        )
+                    else:
+                        logger.info(f"✓ [{metric_name or dax[:30]}]: OpenAI translation")
+                        return DAXTranslationResult(sql, 5, dax)
+            except Exception as exc:
+                logger.warning("OpenAI individual translation fallback failed: %s", exc)
+
         # Tier 5: LLM Fallback - Use Gemini for genuinely complex expressions
         try:
             from semabridge.converter.gemini_dax_translator import get_gemini_translator
@@ -734,8 +811,117 @@ class DAXTranslator:
                     f"   ⚠ [{metric_name}] Rule-based translation failed; escalating to LLM"
                 )
         
-        # LLM TRANSLATION: Only send complex metrics to Gemini
         llm_candidates = complex_metrics + simple_failed_for_llm
+        
+        # ─────────────────────────────────────────────────────────
+        # PRIORITY 0: OPENAI BATCH
+        # ─────────────────────────────────────────────────────────
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        openai_translated = {}
+        import json
+        
+        if openai_api_key and llm_candidates:
+            try:
+                from openai import OpenAI
+                model_name = os.getenv("OPENAI_DAX_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o"))
+                client = OpenAI(api_key=openai_api_key, organization=os.getenv("OPENAI_ORGANIZATION") or None)
+                
+                # Chunk candidates into batches of 20
+                chunk_size = 20
+                for start in range(0, len(llm_candidates), chunk_size):
+                    chunk = llm_candidates[start:start + chunk_size]
+                    logger.info(f"🤖 Calling OpenAI API for batch of {len(chunk)} measures...")
+                    
+                    # Build batch prompt
+                    metric_lines = []
+                    for metric_name, dax, alias, dataset in chunk:
+                        dax_clean = " ".join(dax.split())
+                        metric_lines.append(
+                            f'{{"name":"{metric_name}","dataset":"{dataset}","table_alias":"{alias}","dax":"{dax_clean}"}}'
+                        )
+                    
+                    prompt = (
+                        "Dialect: Snowflake Semantic View METRICS clause\n"
+                        "Rules:\n"
+                        "- Return ONLY valid JSON object mapping metric name to SQL expression.\n"
+                        "- No markdown, no extra keys, no prose.\n"
+                        "- Do not use SELECT, FROM, JOIN, CTEs, subqueries, OVER/window functions, DDL, or DML.\n"
+                        "- Do not nest aggregate functions like SUM(MAX(...)).\n"
+                        "- For CALCULATE/FILTER equality predicates, use SUM(CASE WHEN ... THEN measure_column ELSE 0 END).\n"
+                        "- Quote identifiers only when needed as ALIAS.\"COLUMN\"; uppercase Snowflake column names.\n"
+                        "- If a pattern is impossible in a metric expression, return CAST(NULL AS DOUBLE).\n"
+                        "Metrics:\n"
+                        + "\n".join(metric_lines)
+                    )
+                    
+                    response = client.chat.completions.create(
+                        model=model_name,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": (
+                                    "You translate Power BI DAX measures to Snowflake Semantic View metric SQL. "
+                                    "Return JSON only mapping measure names to translated SQL expressions."
+                                ),
+                            },
+                            {"role": "user", "content": prompt},
+                        ],
+                        temperature=float(os.getenv("OPENAI_DAX_TEMPERATURE", "0.1")),
+                        max_tokens=int(os.getenv("OPENAI_DAX_BATCH_MAX_TOKENS", "2200")),
+                        timeout=float(os.getenv("OPENAI_DAX_TIMEOUT", "30")),
+                    )
+                    
+                    payload = (response.choices[0].message.content or "").strip()
+                    logger.info(f"✅ OpenAI batch response received for {len(chunk)} measures")
+                    
+                    # Parse JSON payload
+                    if payload.startswith("```"):
+                        payload = re.sub(r"^```(?:json|sql|python|.*?)\n", "", payload, flags=re.IGNORECASE)
+                        payload = re.sub(r"\n```$", "", payload, flags=re.IGNORECASE)
+                        payload = payload.strip()
+                    payload = re.sub(r"^json\s*", "", payload, flags=re.IGNORECASE)
+                    
+                    parsed = {}
+                    try:
+                        parsed = json.loads(payload)
+                    except Exception:
+                        pass
+                    
+                    if isinstance(parsed, dict):
+                        for metric_name, dax, alias, dataset in chunk:
+                            sql = parsed.get(metric_name)
+                            if sql:
+                                sql = sql.strip()
+                                if sql.startswith("```"):
+                                    sql = re.sub(r"^```(?:sql|python|.*?)\n", "", sql, flags=re.IGNORECASE)
+                                    sql = re.sub(r"\n```$", "", sql, flags=re.IGNORECASE)
+                                    sql = sql.strip()
+                                
+                                # Safety validation
+                                sql_upper = sql.upper()
+                                forbidden = (
+                                    " SELECT ", "(SELECT", " FROM ", " JOIN ", " WITH ", " OVER ",
+                                    " DROP ", " DELETE ", " TRUNCATE ", " INSERT ", " UPDATE ", " ALTER ", ";"
+                                )
+                                padded = f" {sql_upper} "
+                                if any(token in padded for token in forbidden):
+                                    logger.warning(
+                                        "OpenAI batch translation rejected (forbidden SQL tokens) for metric '%s': %s",
+                                        metric_name,
+                                        sql[:120],
+                                    )
+                                else:
+                                    logger.info(f"✓ [{metric_name}]: OpenAI translation")
+                                    results[metric_name] = DAXTranslationResult(sql, 5, dax)
+                                    openai_translated[metric_name] = sql
+                
+                # Remove successfully translated candidates so they aren't processed by Gemini
+                llm_candidates = [c for c in llm_candidates if c[0] not in openai_translated]
+                
+            except Exception as exc:
+                logger.error(f"OpenAI batch translation failed: {exc}")
+        
+        # LLM TRANSLATION: Only send remaining complex metrics to Gemini
         if llm_candidates:
             try:
                 from semabridge.converter.gemini_dax_translator import get_gemini_translator
@@ -744,7 +930,8 @@ class DAXTranslator:
                 if not translator.api_key:
                     logger.debug("LLM API key not configured for batch translation")
                     for metric_name, _, _, _ in llm_candidates:
-                        results[metric_name] = None
+                        if metric_name not in results:
+                            results[metric_name] = None
                     return results
                 
                 # Prepare batch for Gemini translator (only complex metrics)
@@ -757,7 +944,7 @@ class DAXTranslator:
                 logger.info(
                     f"🔄 Batch translating {len(batch)} COMPLEX metrics via Tier 5 LLM "
                     f"(expected API calls: {(len(batch) + 19) // 20}) - "
-                    f"API CALL REDUCTION: {len(simple_metrics) - len(simple_failed_for_llm)} / {len(metrics_list)} metrics skipped LLM"
+                    f"API CALL REDUCTION: {len(simple_metrics) - len(simple_failed_for_llm) + len(openai_translated)} / {len(metrics_list)} metrics skipped LLM"
                 )
                 
                 # Call batch translation
@@ -786,9 +973,7 @@ class DAXTranslator:
                 successful = sum(1 for r in results.values() if r is not None)
                 if llm_candidates:
                     api_call_reduction = (simple_api_calls / len(metrics_list)) * 100
-                    # Note: If we sent N complex metrics for 1 API call, the reduction from
-                    # avoiding these N metrics is much clearer than traditional batching
-                    quota_reduction = (len(simple_metrics) / len(metrics_list)) * 100
+                    quota_reduction = ((len(simple_metrics) - len(simple_failed_for_llm) + len(openai_translated)) / len(metrics_list)) * 100
                 else:
                     api_call_reduction = 0
                     quota_reduction = 100
@@ -808,18 +993,22 @@ class DAXTranslator:
             except ImportError:
                 logger.debug("Batch LLM translator not available")
                 for metric_name, _, _, _ in llm_candidates:
-                    results[metric_name] = None
+                    if metric_name not in results:
+                        results[metric_name] = None
                 return results
             except Exception as e:
                 logger.error(f"Unexpected error in batch Tier 5 translation: {str(e)}")
                 for metric_name, _, _, _ in llm_candidates:
-                    results[metric_name] = None
+                    if metric_name not in results:
+                        results[metric_name] = None
                 return results
         else:
-            # All metrics were simple, no LLM needed
+            # All metrics were simple or translated by OpenAI, no Gemini needed
+            successful = sum(1 for r in results.values() if r is not None)
             logger.info(
-                f"✅ All {len(metrics_list)} metrics classified as SIMPLE - "
-                f"0 LLM API calls required (100% quota savings)"
+                f"✅ Batch translation complete:\n"
+                f"   ├─ Total metrics: {len(metrics_list)}\n"
+                f"   ├─ Successful: {successful}/{len(metrics_list)}"
             )
             return results
     

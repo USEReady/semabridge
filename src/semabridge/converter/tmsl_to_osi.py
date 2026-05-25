@@ -33,6 +33,11 @@ from semabridge.intermediate.models import (
 )
 from semabridge.utils.logger import get_logger
 from semabridge.utils.relationship_naming import generate_relationship_name
+from semabridge.utils.synonyms import (
+    load_synonym_overrides,
+    lookup_synonym_override,
+    merge_synonyms,
+)
 
 logger = get_logger(__name__)
 
@@ -46,6 +51,10 @@ class TMSLToOSIConverter(BaseConverter):
         "LocalDateTable_",
         "DateTableTemplate_",
     )
+
+    def __init__(self) -> None:
+        self._synonym_overrides: Dict[tuple[str, str, str], List[str]] = {}
+        self._synonym_model_names: List[str] = []
 
     def to_osi(self, source_data: Dict[str, Any]) -> OSIModel:
         """
@@ -76,15 +85,24 @@ class TMSLToOSIConverter(BaseConverter):
                 )
 
             model_obj = tmsl_json.get("model", {})
-            # Prioritize display_name passed from source_data, then dataset_id, then from model name, then default
-            display_name = source_data.get("display_name") or dataset_id or model_obj.get("name") or "FabricModel"
+            model_label = model_obj.get("name") or "FabricModel"
+            # Explicit connector display names control semantic view names; otherwise
+            # keep the historical dataset_id unique_name and model-name label.
+            display_name = source_data.get("display_name") or model_label
+            project_id = source_data.get("project_id") or dataset_id
+            explicit_overrides = source_data.get("synonym_overrides")
+            self._synonym_overrides = (
+                explicit_overrides
+                if isinstance(explicit_overrides, dict)
+                else load_synonym_overrides(project_id)
+            )
             self._dump_measure_audit(model_obj, dataset_id, phase="tmsl_to_osi_pre")
 
             # Guard: connector-type keywords used as model names produce misleading view names
             # (e.g. a dataset named "fabric" would generate a "fabric_SEMANTIC" view).
             # Fall back to the dataset_id when the display name collides with a reserved keyword.
             _RESERVED_MODEL_NAMES = frozenset({"fabric", "snowflake", "pbix", "databricks", "model"})
-            resolved_unique_name = display_name or dataset_id
+            resolved_unique_name = source_data.get("display_name") or dataset_id or display_name
             if str(resolved_unique_name).strip().lower() in _RESERVED_MODEL_NAMES:
                 logger.warning(
                     "Fabric dataset display name '%s' collides with a reserved connector keyword. "
@@ -94,6 +112,12 @@ class TMSLToOSIConverter(BaseConverter):
                     dataset_id,
                 )
                 resolved_unique_name = dataset_id
+
+            self._synonym_model_names = [
+                str(name).strip()
+                for name in (resolved_unique_name, display_name, dataset_id, model_obj.get("name"))
+                if str(name or "").strip()
+            ]
 
             # Use display name as unique_name to ensure Snowflake views use display names, not GUIDs.
             # GUID (dataset_id) is still preserved in metadata for traceability.
@@ -117,6 +141,9 @@ class TMSLToOSIConverter(BaseConverter):
                         continue
                     dataset = self._parse_dataset(table)
                     osi_model.datasets.append(dataset)
+
+                    for metric in self._create_metrics_from_aggregation_columns(dataset):
+                        osi_model.metrics.append(metric)
 
                     # Create corresponding Dimension for each Dataset
                     # In TMSL/Power BI, every table is potentially a dimension
@@ -251,7 +278,7 @@ class TMSLToOSIConverter(BaseConverter):
         attributes = []
         for col in dataset.columns:
             # Skip hidden columns or potential measures (metrics usually come separately, but columns might be hidden)
-            if col.is_hidden:
+            if col.is_hidden or getattr(col, "is_measure_candidate", False):
                 continue
                 
             attr = OSIAttribute(
@@ -274,6 +301,36 @@ class TMSLToOSIConverter(BaseConverter):
             attributes=attributes,
             is_hidden=dataset.is_hidden
         )
+
+    def _create_metrics_from_aggregation_columns(self, dataset: OSIDataset) -> List[OSIMetric]:
+        """Create OSI metrics for Fabric columns with summarizeBy aggregation."""
+        metrics: List[OSIMetric] = []
+        seen: set[str] = set()
+        for col in dataset.columns:
+            if col.is_hidden or not getattr(col, "is_measure_candidate", False):
+                continue
+            aggregation = getattr(col, "default_aggregation", None) or OSIAggregationType.SUM
+            metric_name = col.unique_name
+            metric_key = metric_name.casefold()
+            if metric_key in seen:
+                continue
+            seen.add(metric_key)
+            metrics.append(
+                OSIMetric(
+                    unique_name=metric_name,
+                    label=col.label or metric_name,
+                    dataset=dataset.unique_name,
+                    source_column=col.unique_name,
+                    expression=None,
+                    aggregation=aggregation,
+                    description=col.description,
+                    format_string=col.format_string,
+                    is_hidden=col.is_hidden,
+                    access_modifier="public_access",
+                    synonyms=list(getattr(col, "synonyms", []) or []),
+                )
+            )
+        return metrics
 
     def _parse_dataset(self, table_def: Dict[str, Any]) -> OSIDataset:
         """Parse a TMSL table into OSIDataset."""
@@ -367,14 +424,35 @@ class TMSLToOSIConverter(BaseConverter):
             is_key = True
 
         # ── Cortex AI metadata ──────────────────────────────────────────────
-        # Auto-generate synonyms from snake_case / PascalCase column names
-        synonyms = self._auto_synonyms(col_name)
+        user_synonyms = col_def.get("synonyms") or []
+        if not isinstance(user_synonyms, list):
+            user_synonyms = []
+        if user_synonyms:
+            logger.debug(
+                "Column '%s': loaded %d user-defined synonyms from TMSL",
+                col_name,
+                len(user_synonyms),
+            )
+        synonyms = merge_synonyms(
+            ui_overrides=lookup_synonym_override(
+                self._synonym_overrides,
+                self._synonym_model_names,
+                table_name,
+                col_name,
+            ),
+            user_defined=user_synonyms,
+            auto_generated=self._auto_synonyms(col_name),
+        )
 
         # is_enum heuristic: TMSL dataCategory == "Category" or boolean type
         is_enum = (
             col_def.get("dataCategory", "").lower() == "category"
             or mapped_type == OSIDataType.BOOLEAN
         )
+
+        summarize_by = str(col_def.get("summarizeBy") or "").strip().lower()
+        default_aggregation = self._map_summarize_by(summarize_by)
+        is_measure_candidate = default_aggregation is not None
 
         # Fabric may emit calculated column expressions as a list of lines.
         # OSIColumn.source_expression expects a string.
@@ -392,12 +470,34 @@ class TMSLToOSIConverter(BaseConverter):
             data_type=mapped_type,
             description=col_def.get("description"),
             is_hidden=col_def.get("isHidden", False),
+            is_measure_candidate=is_measure_candidate,
+            default_aggregation=default_aggregation,
             format_string=format_string,
             is_key=is_key,
             source_expression=source_expr,
             synonyms=synonyms,
             is_enum=is_enum,
         )
+
+    @staticmethod
+    def _map_summarize_by(summarize_by: str) -> Optional[OSIAggregationType]:
+        """Map Fabric summarizeBy to OSI aggregation; none/blank means dimension."""
+        normalized = str(summarize_by or "").strip().lower()
+        if not normalized or normalized == "none":
+            return None
+        mapping = {
+            "sum": OSIAggregationType.SUM,
+            "average": OSIAggregationType.AVG,
+            "avg": OSIAggregationType.AVG,
+            "count": OSIAggregationType.COUNT,
+            "distinctcount": OSIAggregationType.COUNT_DISTINCT,
+            "countdistinct": OSIAggregationType.COUNT_DISTINCT,
+            "min": OSIAggregationType.MIN,
+            "minimum": OSIAggregationType.MIN,
+            "max": OSIAggregationType.MAX,
+            "maximum": OSIAggregationType.MAX,
+        }
+        return mapping.get(normalized, OSIAggregationType.SUM)
 
     @staticmethod
     def _business_rule_type(
@@ -550,8 +650,25 @@ class TMSLToOSIConverter(BaseConverter):
         )
         access_modifier = "private_access" if is_helper else "public_access"
 
-        # Auto-generate synonyms from measure name
-        synonyms = TMSLToOSIConverter._auto_synonyms(display_name)
+        user_synonyms = measure_def.get("synonyms") or []
+        if not isinstance(user_synonyms, list):
+            user_synonyms = []
+        if user_synonyms:
+            logger.debug(
+                "Measure '%s': loaded %d user-defined synonyms from TMSL",
+                name,
+                len(user_synonyms),
+            )
+        synonyms = merge_synonyms(
+            ui_overrides=lookup_synonym_override(
+                self._synonym_overrides,
+                self._synonym_model_names,
+                dataset_name,
+                name,
+            ),
+            user_defined=user_synonyms,
+            auto_generated=TMSLToOSIConverter._auto_synonyms(display_name),
+        )
 
         return OSIMetric(
             unique_name=name,

@@ -754,6 +754,7 @@ class CLIExecutor:
             self._source_format.dataset_id,
             row_counts=self._source_format.row_counts,
             behavior=behavior,
+            project_id=self.project_id,
         )
     
     def _step_7_persist_artifacts(self) -> None:

@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional, Set, Tuple, List
 import re
 import os
+import json
 
 from semabridge.utils.logger import get_logger
 
@@ -19,6 +20,9 @@ logger = get_logger(__name__)
 class MetricExpressionTranslator:
     def __init__(self, identifier_sanitizer: Any = None) -> None:
         self._id = identifier_sanitizer
+        self._openai_prefetch_sql_by_metric: Dict[str, str] = {}
+        self._openai_prefetch_done = False
+        
     def _sanitize_semantic_name(self, name: str) -> str:
         """Sanitize semantic name and ensure it does not start with a digit."""
         sanitized = self._id.sanitize_column(name)
@@ -26,17 +30,35 @@ class MetricExpressionTranslator:
             sanitized = f"_{sanitized}"
         return sanitized
 
+    def _auto_qualify_cross_table_refs(self, sql: str, dataset_aliases: Dict[str, str]) -> str:
+        """
+        Automatically qualify TABLE.COLUMN references with proper aliases.
+        No hardcoding needed – works for any table.
+        """
+        if not sql or not dataset_aliases:
+            return sql
+        
+        # Sort by length (longest first) to avoid partial matches
+        sorted_tables = sorted(dataset_aliases.keys(), key=len, reverse=True)
+        
+        for table in sorted_tables:
+            alias = dataset_aliases[table]
+            
+            # Pattern: TABLE.COLUMN or TABLE."COLUMN"
+            pattern1 = rf'\b{re.escape(table)}\.\"([^"]+)\"'
+            sql = re.sub(pattern1, rf'{alias}."\1"', sql, flags=re.IGNORECASE)
+            
+            pattern2 = rf'\b{re.escape(table)}\.([A-Za-z_][A-Za-z0-9_]*)'
+            sql = re.sub(pattern2, rf'{alias}."\1"', sql, flags=re.IGNORECASE)
+        
+        return sql
+
     def _sanitize_sql_markdown(self, sql: str) -> str:
         if not sql: return ""
         sql = re.sub(r"```sql\s*", "", sql, flags=re.IGNORECASE)
         sql = re.sub(r"```\s*", "", sql, flags=re.IGNORECASE)
         return sql.strip()
 
-
-    # Implementations lifted from SnowflakeEmitter. These use the emitter
-    # delegate only for small utility helpers (sanitizers, logger, and
-    # fallback resolvers) so the main translation surface is owned here.
-    
     def _extract_column_names_from_metric_expression(self, expr: Optional[str], dataset_name: str) -> set[tuple[str, str]]:
         if not expr or not isinstance(expr, str):
             return set()
@@ -100,7 +122,6 @@ class MetricExpressionTranslator:
                 return self._build_safe_sum_sql(f'{table_alias}."{col_name}"', col_name)
             return f'{agg}({table_alias}."{col_name}")'
 
-        # For more complex patterns reuse emitter deterministic DAX translator
         if model is not None and getattr(model, "metrics", None):
             m_totalytd_metric_ref = re.match(r"(?i)^TOTALYTD\(\s*\[([^\]]+)\]\s*,\s*(?:'[^']+'\s*)?\[[^\]]+\]\s*\)$", expr)
             if m_totalytd_metric_ref:
@@ -155,13 +176,27 @@ class MetricExpressionTranslator:
         metric_name_set: set[str],
         all_physical_col_names: set[str],
         emittable_metric_name_set: set[str],
-        skipped_metric_names: set[str]
+        skipped_metric_names: set[str],
+        metric_to_alias: Optional[Dict[str, str]] = None
     ) -> Optional[str]:
         dax_expression = (getattr(metric, "expression", None) or "").strip()
         if not dax_expression:
             return None
 
         candidate_expressions: list[str] = []
+        prefetched_sql = self._openai_prefetch_sql_by_metric.get(metric_name)
+        if prefetched_sql:
+            candidate_expressions.append(prefetched_sql)
+
+        if not prefetched_sql:
+            openai_expr = self._try_openai_dax_translation(
+                dax_expression=dax_expression,
+                metric=metric,
+                table_alias=table_alias,
+                dataset_col_lookup=dataset_col_lookup,
+            )
+            if openai_expr:
+                candidate_expressions.append(openai_expr)
 
         try:
             from semabridge.converter.dax_rule_translator import (
@@ -217,6 +252,7 @@ class MetricExpressionTranslator:
                 dataset_aliases,
                 metric_names=metric_name_set,
                 preferred_table_alias=table_alias,
+                metric_to_alias=metric_to_alias
             )
 
             is_valid, _ = self._validate_metric_column_references(
@@ -253,6 +289,270 @@ class MetricExpressionTranslator:
 
         return None
 
+    def prefetch_openai_metric_translations(
+        self,
+        *,
+        metrics: List[Any],
+        table_alias: str,
+        dataset_col_lookup: Dict[str, set[str]],
+    ) -> None:
+        """Batch translate complex DAX metrics with OpenAI (up to 20 per batch)."""
+        if self._openai_prefetch_done:
+            return
+        self._openai_prefetch_done = True
+
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            return
+        try:
+            from openai import OpenAI
+        except Exception as exc:
+            logger.warning("OpenAI prefetch unavailable: %s", exc)
+            return
+
+        pending: List[Any] = []
+        for metric in metrics or []:
+            expr = (getattr(metric, "expression", None) or "").strip()
+            if not expr:
+                continue
+            pending.append(metric)
+        if not pending:
+            return
+
+        schema_context = {
+            ds_name: sorted(list(cols))
+            for ds_name, cols in dataset_col_lookup.items()
+            if cols
+        }
+        model_name = os.getenv("OPENAI_DAX_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o"))
+        client = OpenAI(api_key=api_key, organization=os.getenv("OPENAI_ORGANIZATION") or None)
+        batch_size = 20
+
+        for start in range(0, len(pending), batch_size):
+            chunk = pending[start:start + batch_size]
+            prompt = self._build_openai_batch_prompt(
+                metrics=chunk,
+                table_alias=table_alias,
+                schema_context=schema_context,
+            )
+            try:
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You translate Power BI DAX measures to Snowflake Semantic View metric SQL. "
+                                "Return JSON only."
+                            ),
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=float(os.getenv("OPENAI_DAX_TEMPERATURE", "0.1")),
+                    max_tokens=int(os.getenv("OPENAI_DAX_BATCH_MAX_TOKENS", "2200")),
+                    timeout=float(os.getenv("OPENAI_DAX_TIMEOUT", "30")),
+                )
+                payload = (response.choices[0].message.content or "").strip()
+                parsed = self._parse_openai_batch_payload(payload)
+                for metric in chunk:
+                    name = str(getattr(metric, "unique_name", "") or "")
+                    sql = self._sanitize_sql_markdown(parsed.get(name, ""))
+                    if sql and self._is_safe_llm_metric_sql(sql):
+                        self._openai_prefetch_sql_by_metric[name] = sql
+            except Exception as exc:
+                logger.warning("OpenAI prefetch batch failed for %d metrics: %s", len(chunk), exc)
+
+        if self._openai_prefetch_sql_by_metric:
+            logger.info(
+                "OpenAI batch-prefetched %d metric SQL expressions.",
+                len(self._openai_prefetch_sql_by_metric),
+            )
+
+    def _build_openai_batch_prompt(
+        self,
+        *,
+        metrics: List[Any],
+        table_alias: str,
+        schema_context: Dict[str, list[str]],
+    ) -> str:
+        schema_lines = []
+        for table, cols in sorted(schema_context.items()):
+            schema_lines.append(f"- {table}: {', '.join(cols[:80])}")
+        schema_text = "\n".join(schema_lines[:40]) or "- <schema unavailable>"
+
+        metric_lines = []
+        for metric in metrics:
+            metric_name = str(getattr(metric, "unique_name", "") or "")
+            dataset_name = str(getattr(metric, "dataset", "") or "")
+            dax_expr = " ".join(str(getattr(metric, "expression", "") or "").split())
+            metric_lines.append(
+                f'{{"name":"{metric_name}","dataset":"{dataset_name}","dax":"{dax_expr}"}}'
+            )
+
+        return (
+            "Dialect: Snowflake Semantic View METRICS clause\n"
+            f"Default table alias: {table_alias}\n"
+            "Rules:\n"
+            "- Return ONLY valid JSON object mapping metric name to SQL expression.\n"
+            "- No markdown, no extra keys, no prose.\n"
+            "- Do not use SELECT, FROM, JOIN, CTEs, subqueries, OVER/window functions, DDL, or DML.\n"
+            "- Do not nest aggregate functions like SUM(MAX(...)).\n"
+            "- For CALCULATE/FILTER equality predicates, use SUM(CASE WHEN ... THEN measure_column ELSE 0 END).\n"
+            "- If pattern is impossible in metric SQL, return CAST(NULL AS DOUBLE).\n"
+            "Schema context:\n"
+            f"{schema_text}\n"
+            "Metrics:\n"
+            + "\n".join(metric_lines)
+        )
+
+    def _parse_openai_batch_payload(self, payload: str) -> Dict[str, str]:
+        cleaned = self._sanitize_sql_markdown(payload or "").strip()
+        if not cleaned:
+            return {}
+        cleaned = re.sub(r"^json\s*", "", cleaned, flags=re.IGNORECASE)
+        try:
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, dict):
+                return {str(k): str(v) for k, v in parsed.items() if isinstance(v, str)}
+        except Exception:
+            pass
+        return {}
+
+    def _try_openai_dax_translation(
+        self,
+        *,
+        dax_expression: str,
+        metric: Any,
+        table_alias: str,
+        dataset_col_lookup: Dict[str, set[str]],
+    ) -> Optional[str]:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            return None
+
+        try:
+            from openai import OpenAI
+        except Exception as exc:
+            logger.warning("OpenAI DAX translation requested but openai package is unavailable: %s", exc)
+            return None
+
+        schema_context = {
+            ds_name: sorted(list(cols))
+            for ds_name, cols in dataset_col_lookup.items()
+            if cols
+        }
+        model_name = os.getenv("OPENAI_DAX_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o"))
+        prompt = self._build_openai_dax_prompt(
+            dax_expression=dax_expression,
+            metric_name=str(getattr(metric, "unique_name", "") or ""),
+            dataset_name=str(getattr(metric, "dataset", "") or ""),
+            table_alias=table_alias,
+            schema_context=schema_context,
+        )
+
+        try:
+            client = OpenAI(api_key=api_key, organization=os.getenv("OPENAI_ORGANIZATION") or None)
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You translate Power BI DAX measures to Snowflake Semantic View metric SQL. "
+                            "Return only one SQL expression. Do not use markdown."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=float(os.getenv("OPENAI_DAX_TEMPERATURE", "0.1")),
+                max_tokens=int(os.getenv("OPENAI_DAX_MAX_TOKENS", "500")),
+                timeout=float(os.getenv("OPENAI_DAX_TIMEOUT", "30")),
+            )
+            sql = (response.choices[0].message.content or "").strip()
+        except Exception as exc:
+            logger.warning(
+                "OpenAI DAX translation failed for metric '%s': %s",
+                getattr(metric, "unique_name", ""),
+                exc,
+            )
+            return None
+
+        sql = self._sanitize_sql_markdown(sql)
+        if not self._is_safe_llm_metric_sql(sql):
+            logger.warning(
+                "OpenAI DAX translation rejected for metric '%s': %s",
+                getattr(metric, "unique_name", ""),
+                sql[:120],
+            )
+            return None
+
+        logger.info(
+            "OpenAI translated DAX for metric '%s': %s",
+            getattr(metric, "unique_name", ""),
+            sql[:160],
+        )
+        return sql
+
+    def _build_openai_dax_prompt(
+        self,
+        *,
+        dax_expression: str,
+        metric_name: str,
+        dataset_name: str,
+        table_alias: str,
+        schema_context: Dict[str, list[str]],
+    ) -> str:
+        schema_lines = []
+        for table, cols in sorted(schema_context.items()):
+            schema_lines.append(f"- {table}: {', '.join(cols[:80])}")
+        schema_text = "\n".join(schema_lines[:40]) or "- <schema unavailable>"
+
+        return (
+            "Dialect: Snowflake Semantic View METRICS clause\n"
+            f"Metric name: {metric_name}\n"
+            f"Default dataset: {dataset_name}\n"
+            f"Default table alias: {table_alias}\n"
+            "Rules:\n"
+            "- Return only a single SQL expression, no explanation.\n"
+            "- Use table aliases and columns from the schema context when known.\n"
+            "- Prefer aggregate expressions valid in a Snowflake semantic view metric.\n"
+            "- Do not use SELECT, FROM, JOIN, CTEs, subqueries, OVER/window functions, DDL, or DML.\n"
+            "- Do not nest aggregate functions like SUM(MAX(...)).\n"
+            "- For CALCULATE/FILTER equality predicates, use SUM(CASE WHEN ... THEN measure_column ELSE 0 END).\n"
+            "- Quote identifiers only when needed as ALIAS.\"COLUMN\"; uppercase Snowflake column names.\n"
+            "- If a pattern is impossible in a metric expression, return CAST(NULL AS DOUBLE).\n"
+            "Schema context:\n"
+            f"{schema_text}\n"
+            "DAX:\n"
+            f"{dax_expression}"
+        )
+
+    def _is_safe_llm_metric_sql(self, sql: str) -> bool:
+        if not sql:
+            return False
+        upper = sql.upper()
+        forbidden = (
+            " SELECT ",
+            "(SELECT",
+            " FROM ",
+            " JOIN ",
+            " WITH ",
+            " OVER ",
+            " DROP ",
+            " DELETE ",
+            " TRUNCATE ",
+            " INSERT ",
+            " UPDATE ",
+            " ALTER ",
+            ";",
+        )
+        padded = f" {upper} "
+        if any(token in padded for token in forbidden):
+            return False
+        if re.search(r"\b(SUM|COUNT|AVG|MIN|MAX|ANY_VALUE)\s*\([^)]*\b(SUM|COUNT|AVG|MIN|MAX|ANY_VALUE)\s*\(", sql, re.IGNORECASE | re.DOTALL):
+            return False
+        return True
+
     def _validate_metric_column_references(
         self,
         metric_sql: str,
@@ -262,6 +562,8 @@ class MetricExpressionTranslator:
         metric_names: Optional[set[str]] = None
     ) -> Tuple[bool, Optional[str]]:
         alias_to_dataset = {v: k for k, v in dataset_aliases.items()}
+        alias_to_dataset.update({str(v).lower(): k for k, v in dataset_aliases.items()})
+        alias_to_dataset.update({str(v).upper(): k for k, v in dataset_aliases.items()})
 
         patterns = [
             r'(\w+)\."([^"]+)"',
@@ -336,16 +638,15 @@ class MetricExpressionTranslator:
         dataset_col_lookup: Dict[str, set[str]],
         dataset_aliases: Dict[str, str],
         metric_names: Optional[set[str]] = None,
-        preferred_table_alias: Optional[str] = None
+        preferred_table_alias: Optional[str] = None,
+        metric_to_alias: Optional[Dict[str, str]] = None
     ) -> str:
         alias_to_dataset = {v: k for k, v in dataset_aliases.items()}
+        alias_to_dataset.update({str(v).lower(): k for k, v in dataset_aliases.items()})
+        alias_to_dataset.update({str(v).upper(): k for k, v in dataset_aliases.items()})
         normalized_sql = metric_sql
+        normalized_sql = self._normalize_display_name_metric_references(normalized_sql, metric_names)
 
-        # Build a secondary lookup: to_alias(ds_name) -> declared_alias
-        # This remaps legacy aliases (e.g. 'l_date', 'measures') produced by
-        # to_alias() during DAX translation to the declared emitter aliases
-        # (e.g. 'COL_DATE', 'MEASURES') so sql_expressions stored at conversion
-        # time are consistent with what the emitter declares in the TABLES clause.
         try:
             from semabridge.utils.naming import to_alias as _to_alias
             legacy_alias_remap: Dict[str, str] = {}
@@ -355,7 +656,6 @@ class MetricExpressionTranslator:
                     legacy_alias_remap[legacy] = declared_alias
             if legacy_alias_remap:
                 for legacy, declared in legacy_alias_remap.items():
-                    # Replace legacy.col and legacy."col" patterns
                     normalized_sql = re.sub(
                         rf'\b{re.escape(legacy)}\.',
                         f'{declared}.',
@@ -371,10 +671,10 @@ class MetricExpressionTranslator:
                 return f'{safe_alias}."{col_name}"'
             return f"{safe_alias}.{col_name}"
 
-        quoted_pattern = r'(\w+)\.(["\'])([^"\']+)\2'
+        quoted_pattern = r'(?:"(\w+)"|(\w+))\.(["\'])([^"\']+)\3'
         for match in re.finditer(quoted_pattern, normalized_sql):
-            table_alias = match.group(1)
-            col_name = match.group(3)
+            table_alias = match.group(1) or match.group(2)
+            col_name = match.group(4)
             dataset_name = alias_to_dataset.get(table_alias)
             if not dataset_name:
                 continue
@@ -417,10 +717,10 @@ class MetricExpressionTranslator:
             normalized_sql = normalized_sql.replace(old_ref, new_ref)
             logger.debug(f"Normalized metric '{metric_name}': {old_ref} → {new_ref}")
 
-        unquoted_pattern = r'(\w+)\.([A-Za-z_][A-Za-z0-9_$]*)'
+        unquoted_pattern = r'(?:"(\w+)"|(\w+))\.([A-Za-z_][A-Za-z0-9_$]*)'
         for match in re.finditer(unquoted_pattern, normalized_sql):
-            table_alias = match.group(1)
-            col_name = match.group(2)
+            table_alias = match.group(1) or match.group(2)
+            col_name = match.group(3)
             dataset_name = alias_to_dataset.get(table_alias)
             if not dataset_name:
                 continue
@@ -458,7 +758,6 @@ class MetricExpressionTranslator:
                 normalized_sql = normalized_sql.replace(old_ref, new_ref)
                 continue
             else:
-                # Column found with same name — ensure it's quoted
                 old_ref = match.group(0)
                 new_ref = _format_metric_ref(table_alias, sanitized_col_name)
                 if old_ref != new_ref:
@@ -471,6 +770,8 @@ class MetricExpressionTranslator:
                 normalized_sql = normalized_sql.replace(old_ref, new_ref)
                 logger.debug(f"Normalized metric '{metric_name}': {old_ref} → {new_ref}")
 
+        normalized_sql = self._normalize_display_name_metric_references(normalized_sql, metric_names)
+        normalized_sql = self._qualify_bare_metric_references(normalized_sql, metric_to_alias)
         normalized_sql = self._quote_bare_metric_references(normalized_sql, metric_names)
         normalized_sql = self._rewrite_metric_aggregate_wrappers(normalized_sql, metric_names)
         normalized_sql = self._repair_bare_aggregate_identifiers(normalized_sql, metric_name, dataset_col_lookup, dataset_aliases, metric_names, preferred_table_alias=preferred_table_alias)
@@ -479,8 +780,61 @@ class MetricExpressionTranslator:
         normalized_sql = self._dedupe_qualified_column_tokens(normalized_sql)
         normalized_sql = self._rewrite_window_metric_expression(normalized_sql, preferred_table_alias=preferred_table_alias)
         normalized_sql = self._normalize_rolling_monthindex_max_predicates(normalized_sql)
+        normalized_sql = self._qualify_bare_metric_references(normalized_sql, metric_to_alias)
+        normalized_sql = self._route_qualified_metric_owner_refs(normalized_sql, metric_to_alias)
 
         return normalized_sql
+
+    @staticmethod
+    def _route_qualified_metric_owner_refs(metric_sql: str, metric_to_alias: Optional[Dict[str, str]]) -> str:
+        if not metric_sql or not metric_to_alias:
+            return metric_sql
+        owner_by_metric = {str(name).upper(): str(alias).upper() for name, alias in metric_to_alias.items()}
+
+        def _replace(match: re.Match) -> str:
+            alias = match.group(1)
+            metric_name = match.group(2).upper()
+            owner_alias = owner_by_metric.get(metric_name)
+            if owner_alias and alias.upper() != owner_alias:
+                return f'{owner_alias}."{metric_name}"'
+            return match.group(0)
+
+        return re.sub(r'\b([A-Za-z_][A-Za-z0-9_$]*)\."([A-Z_][A-Z0-9_$]*)"', _replace, metric_sql)
+
+    def _normalize_display_name_metric_references(self, metric_sql: str, metric_names: Optional[set[str]]) -> str:
+        """Rewrite quoted display-name metric refs to their emitted Snowflake names."""
+        if not metric_sql or not metric_names:
+            return metric_sql
+
+        def _replace(match: re.Match) -> str:
+            token = match.group(1)
+            sanitized = self._id.sanitize_alias(token)
+            if sanitized in metric_names and sanitized != token:
+                return f'"{sanitized}"'
+            resolved = self._resolve_metric_reference_name(metric_names, sanitized, allow_fuzzy=True)
+            if resolved and resolved != token:
+                return f'"{resolved}"'
+            return match.group(0)
+
+        def _replace_qualified(match: re.Match) -> str:
+            alias = match.group(1)
+            token = match.group(2)
+            sanitized = self._id.sanitize_alias(token)
+            resolved = sanitized if sanitized in metric_names else self._resolve_metric_reference_name(
+                metric_names,
+                sanitized,
+                allow_fuzzy=True,
+            )
+            if resolved:
+                return f'{alias.upper()}."{resolved}"'
+            return match.group(0)
+
+        normalized = re.sub(
+            r'"([A-Za-z_][A-Za-z0-9_$]*)"\."([^"]+)"',
+            _replace_qualified,
+            metric_sql,
+        )
+        return re.sub(r'(?<!\.)"([^"]+)"', _replace, normalized)
 
     def _repair_bare_aggregate_identifiers(
         self,
@@ -580,8 +934,6 @@ class MetricExpressionTranslator:
             return f"SUM({expr_sql})"
         return f"SUM({expr_sql}::FLOAT)"
 
-    # Internal Translation Helpers (Migrated from Emitter)
-    
     def _resolve_column_name_for_dataset(self, known_columns: set[str], candidate: str) -> Optional[str]:
         if not known_columns: return None
         if candidate in known_columns: return candidate
@@ -605,6 +957,29 @@ class MetricExpressionTranslator:
         contains_matches = [m for m in metric_names if candidate in m]
         if len(contains_matches) == 1: return contains_matches[0]
         return None
+
+    # ================================================================
+    # CRITICAL FIX: Qualify bare metric references WITH sanitization
+    # ================================================================
+    def _qualify_bare_metric_references(self, metric_sql: str, metric_to_alias: Optional[Dict[str, str]]) -> str:
+        if not metric_to_alias:
+            return metric_sql
+        normalized = metric_sql
+        # Loop through metrics sorted by length descending to prevent partial replacements
+        for metric_name, owner_alias in sorted(metric_to_alias.items(), key=lambda x: len(x[0]), reverse=True):
+            # ✅ CRITICAL: Sanitize metric name first (remove %, $, @, #, spaces)
+            sanitized_metric_name = self._id.sanitize_column(metric_name)
+            
+            # 1. Match already quoted bare references: e.g. "SENTIMENT_GAP" not preceded by a dot
+            quoted_pattern = rf'(?<!\.)"{re.escape(metric_name)}"'
+            normalized = re.sub(quoted_pattern, f'{owner_alias}."{sanitized_metric_name}"', normalized)
+            
+            # 2. Match unquoted bare references: e.g. SENTIMENT_GAP not preceded by dot, quotes or word chars
+            unquoted_pattern = rf'(?<![\w\.\"])\b{re.escape(metric_name)}\b(?![\w\."])'
+            normalized = re.sub(unquoted_pattern, f'{owner_alias}."{sanitized_metric_name}"', normalized)
+            
+        return normalized
+    # ================================================================
 
     def _quote_bare_metric_references(self, metric_sql: str, metric_names: Optional[set[str]]) -> str:
         if not metric_names: return metric_sql

@@ -60,7 +60,11 @@ class RelationshipsClauseBuilder:
         rel_lines = []
         for rel in relationships:
             if not rel.is_active:
-                continue
+                logger.info(
+                    "Including inactive Fabric relationship '%s' -> '%s' for Snowflake metadata parity.",
+                    rel.from_dataset,
+                    rel.to_dataset,
+                )
 
             from_alias = dataset_aliases.get(rel.from_dataset)
             to_alias = dataset_aliases.get(rel.to_dataset)

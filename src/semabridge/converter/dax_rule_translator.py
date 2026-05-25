@@ -11,11 +11,13 @@ Key functions:
 """
 
 import re
+import threading
 from typing import Optional, Dict, List, Tuple
 from semabridge.utils.logger import get_logger
 from semabridge.converter.api_usage_tracker import log_complexity_classification, log_rule_based_result
 
 logger = get_logger(__name__)
+_local_state = threading.local()
 
 
 # Common DAX aggregation functions
@@ -135,6 +137,11 @@ def is_simple_metric(dax: str) -> bool:
         return False
     
     clean_dax = dax.strip()
+
+    if _is_deterministic_rule_supported(clean_dax):
+        logger.debug(f"Deterministic DAX rule supported: {clean_dax[:60]}...")
+        log_complexity_classification(True)
+        return True
     
     # ========================================================================
     # Step 1: Check for TRUE COMPLEXITY (TIER 4+) that needs LLM
@@ -235,7 +242,12 @@ def is_simple_metric(dax: str) -> bool:
     return False
 
 
-def rule_based_translation(dax: str, table_alias: str) -> Optional[str]:
+def rule_based_translation(
+    dax: str,
+    table_alias: str,
+    metric_name: str = "",
+    dialect: str = "snowflake",
+) -> Optional[str]:
     """
     Translate simple DAX expressions to SQL using deterministic rules.
     
@@ -252,7 +264,29 @@ def rule_based_translation(dax: str, table_alias: str) -> Optional[str]:
     if not dax or not isinstance(dax, str):
         return None
     
+    set_dialect(dialect)
     clean_dax = dax.strip()
+
+    advanced_translators = (
+        ("time_intelligence", translate_time_intelligence_with_anchors),
+        ("fiscal_cutoff", translate_fiscal_cutoff),
+        ("calculate_filters", translate_calculate_with_filters),
+        ("iterator", translate_iterator),
+    )
+    for pattern_name, translator in advanced_translators:
+        try:
+            result = translator(clean_dax, table_alias)
+            if result:
+                logger.info(
+                    "Rule-based translation successful: %s%s -> %s",
+                    pattern_name,
+                    f" for {metric_name}" if metric_name else "",
+                    result[:80],
+                )
+                log_rule_based_result(True)
+                return _compact_sql(result)
+        except Exception as e:
+            logger.warning(f"Rule handler {pattern_name} failed: {e}")
     
     # Try each simple pattern
     for pattern_name, (regex, handler_name) in SIMPLE_PATTERNS.items():
@@ -343,18 +377,255 @@ def translate_count_distinct(dax: str, table_alias: str, match: re.Match) -> Opt
 
 def _quote_identifier(name: str) -> str:
     """
-    Sanitize and quote identifier safely for Snowflake.
+    Sanitize and quote identifier safely for the current SQL dialect.
     """
     name = name.strip().strip('"').strip("'")
     try:
         from semabridge.utils.identifiers import IdentifierSanitizer
         sanitizer = IdentifierSanitizer()
         safe_name = sanitizer.sanitize_column(name)
-        return f'"{safe_name}"'
     except ImportError:
         import re
-        safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', name).upper()
-        return f'"{safe_name}"'
+        safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', name)
+
+    dialect = getattr(_local_state, "dialect", "snowflake")
+    if str(dialect).lower() == "databricks":
+        return f"`{safe_name}`"
+    return f'"{safe_name.upper()}"'
+
+
+def set_dialect(dialect: str) -> None:
+    """Set SQL dialect for the current thread."""
+    _local_state.dialect = (dialect or "snowflake").lower()
+
+
+def _compact_sql(sql: str) -> str:
+    return " ".join(str(sql or "").split())
+
+
+def _split_top_level(text: str) -> List[str]:
+    """Split comma-separated DAX arguments without splitting nested calls."""
+    parts: List[str] = []
+    current: List[str] = []
+    depth = 0
+    in_string: Optional[str] = None
+
+    for ch in text:
+        if ch in ("'", '"'):
+            if in_string == ch:
+                in_string = None
+            elif in_string is None:
+                in_string = ch
+        elif in_string is None:
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth = max(depth - 1, 0)
+            elif ch == "," and depth == 0:
+                parts.append("".join(current).strip())
+                current = []
+                continue
+        current.append(ch)
+
+    if current:
+        parts.append("".join(current).strip())
+    return parts
+
+
+def _parse_table_column(ref: str) -> Optional[Tuple[str, str]]:
+    match = re.search(r"(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_ ]*))?\s*\[([^\]]+)\]", ref or "")
+    if not match:
+        return None
+    table = (match.group(1) or match.group(2) or "").strip()
+    column = match.group(3).strip()
+    return table, column
+
+
+def _parse_aggregation(expr: str) -> Optional[Tuple[str, str, str, str]]:
+    match = re.match(
+        r"\s*(SUM|AVERAGE|AVG|COUNT|MIN|MAX|DISTINCTCOUNT)\s*\(\s*(.+?)\s*\)\s*$",
+        expr or "",
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return None
+
+    func = match.group(1).upper()
+    if func == "AVERAGE":
+        func = "AVG"
+    ref = _parse_table_column(match.group(2))
+    if not ref:
+        return None
+    table, column = ref
+    return func, table, column, match.group(2)
+
+
+def _column_ref(table: str, column: str, default_alias: str = "") -> str:
+    alias = table or default_alias
+    quoted_col = _quote_identifier(column)
+    if alias:
+        try:
+            from semabridge.utils.identifiers import IdentifierSanitizer
+            safe_alias = IdentifierSanitizer().sanitize_alias(alias)
+        except ImportError:
+            safe_alias = re.sub(r"[^A-Za-z0-9_]", "_", alias).upper()
+        return f"{safe_alias}.{quoted_col}"
+    return quoted_col
+
+
+def _is_deterministic_rule_supported(dax: str) -> bool:
+    clean = dax or ""
+    return bool(
+        re.search(r"\bTOTAL[YM]TD\s*\(|\bTOTALQTD\s*\(", clean, re.IGNORECASE)
+        or re.search(r"\bfiscal_yr_period\b", clean, re.IGNORECASE)
+        or re.search(r"^\s*CALCULATE\s*\(", clean, re.IGNORECASE)
+        or re.search(r"^\s*(SUMX|AVERAGEX|MINX|MAXX)\s*\(", clean, re.IGNORECASE)
+    )
+
+
+def translate_time_intelligence_with_anchors(
+    dax: str,
+    table_alias: str,
+    date_alias: str = "",
+) -> Optional[str]:
+    """Translate TOTALYTD/TOTALMTD/TOTALQTD using the max_date anchor."""
+    del date_alias
+    match = re.match(
+        r"\s*(TOTALYTD|TOTALMTD|TOTALQTD)\s*\(\s*(.+?)\s*,\s*(.+?)\s*\)\s*$",
+        dax or "",
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return None
+
+    func_name = match.group(1).upper()
+    agg_expr = match.group(2).strip()
+    date_ref = _parse_table_column(match.group(3).strip())
+    agg = _parse_aggregation(agg_expr)
+    if not date_ref or not agg:
+        return None
+
+    _, measure_table, measure_col, _ = agg
+    date_table, date_col = date_ref
+    trunc_part = {
+        "TOTALYTD": "YEAR",
+        "TOTALMTD": "MONTH",
+        "TOTALQTD": "QUARTER",
+    }[func_name]
+    date_sql = _column_ref(date_table, date_col, table_alias)
+    measure_sql = _column_ref(measure_table, measure_col, table_alias)
+    return (
+        f"SUM(CASE WHEN {date_sql} >= DATE_TRUNC('{trunc_part}', max_date) "
+        f"AND {date_sql} <= max_date THEN {measure_sql} ELSE 0 END)"
+    )
+
+
+def translate_fiscal_cutoff(dax: str, table_alias: str) -> Optional[str]:
+    """Translate common fiscal period VAR/RETURN cutoff patterns."""
+    if not re.search(r"\bfiscal_yr_period\b", dax or "", re.IGNORECASE):
+        return None
+
+    return_match = re.search(r"\bRETURN\b\s+(.+)$", dax or "", re.IGNORECASE | re.DOTALL)
+    return_block = return_match.group(1).strip() if return_match else dax
+    agg_match = re.search(
+        r"SUM\s*\(\s*(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_ ]*))?\s*\[([^\]]+)\]\s*\)",
+        return_block,
+        re.IGNORECASE,
+    )
+    if not agg_match:
+        return None
+
+    measure_table = (agg_match.group(1) or agg_match.group(2) or table_alias).strip()
+    measure_col = agg_match.group(3).strip()
+    period_match = re.search(
+        r"(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_ ]*))?\s*\[\s*FISCAL_YR_PERIOD\s*\]\s*(<=|>=|<>|=|<|>)\s*(?:fiscalMonth|currentPeriod|_current_fiscal_period)",
+        return_block,
+        re.IGNORECASE,
+    )
+    op = period_match.group(3) if period_match else "<"
+    period_table = ((period_match.group(1) or period_match.group(2)) if period_match else "DATES") or "DATES"
+    return (
+        f"SUM(CASE WHEN {_column_ref(period_table, 'FISCAL_YR_PERIOD', table_alias)} {op} _current_fiscal_period "
+        f"THEN {_column_ref(measure_table, measure_col, table_alias)} ELSE 0 END)"
+    )
+
+
+def translate_calculate_with_filters(dax: str, table_alias: str) -> Optional[str]:
+    """Translate CALCULATE with direct or FILTER equality/comparison predicates."""
+    if not re.match(r"\s*CALCULATE\s*\(", dax or "", re.IGNORECASE):
+        return None
+
+    inner = re.sub(r"^\s*CALCULATE\s*\(", "", dax.strip(), flags=re.IGNORECASE)
+    if inner.endswith(")"):
+        inner = inner[:-1]
+    parts = _split_top_level(inner)
+    if len(parts) < 2:
+        return None
+
+    agg = _parse_aggregation(parts[0])
+    if not agg:
+        return None
+    func, measure_table, measure_col, _ = agg
+    if func == "DISTINCTCOUNT":
+        measure_expr = f"COUNT(DISTINCT {_column_ref(measure_table, measure_col, table_alias)})"
+    else:
+        measure_expr = f"{func}({_column_ref(measure_table, measure_col, table_alias)})"
+
+    conditions: List[str] = []
+    for raw_filter in parts[1:]:
+        filter_expr = raw_filter.strip()
+        filter_match = re.match(r"FILTER\s*\(\s*[^,]+,\s*(.+)\s*\)\s*$", filter_expr, re.IGNORECASE | re.DOTALL)
+        if filter_match:
+            filter_expr = filter_match.group(1).strip()
+        filter_expr = filter_expr.replace("&&", " AND ")
+
+        for predicate in re.split(r"\s+\bAND\b\s+", filter_expr, flags=re.IGNORECASE):
+            predicate = predicate.strip()
+            pred_match = re.match(
+                r"(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_ ]*))?\s*\[\s*([^\]]+)\s*\]\s*(<=|>=|<>|=|<|>)\s*(\"[^\"]*\"|'[^']*'|[-+]?\d+(?:\.\d+)?)",
+                predicate,
+                re.IGNORECASE,
+            )
+            if not pred_match:
+                continue
+            table = (pred_match.group(1) or pred_match.group(2) or table_alias).strip()
+            column = pred_match.group(3).strip()
+            op = pred_match.group(4)
+            value = pred_match.group(5).strip()
+            if value.startswith('"') and value.endswith('"'):
+                value = "'" + value[1:-1].replace("'", "''") + "'"
+            conditions.append(f"{_column_ref(table, column, table_alias)} {op} {value}")
+
+    if not conditions:
+        return None
+
+    # Rebuild CASE around the aggregate argument to avoid nested aggregates.
+    measure_col_ref = _column_ref(measure_table, measure_col, table_alias)
+    return f"SUM(CASE WHEN {' AND '.join(conditions)} THEN {measure_col_ref} ELSE 0 END)"
+
+
+def translate_iterator(dax: str, table_alias: str) -> Optional[str]:
+    """Translate simple SUMX/AVERAGEX/MINX/MAXX iterator expressions."""
+    match = re.match(
+        r"\s*(SUMX|AVERAGEX|MINX|MAXX)\s*\(\s*([^,]+)\s*,\s*(.+)\s*\)\s*$",
+        dax or "",
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return None
+
+    func = match.group(1).upper()
+    iterator_table = match.group(2).strip().strip("'\"") or table_alias
+    expression = match.group(3).strip()
+    sql_func = {"SUMX": "SUM", "AVERAGEX": "AVG", "MINX": "MIN", "MAXX": "MAX"}[func]
+
+    def repl_col(col_match: re.Match) -> str:
+        return _column_ref(iterator_table, col_match.group(1), table_alias)
+
+    expr_sql = re.sub(r"\[([^\]]+)\]", repl_col, expression)
+    if re.search(r"\b(CALCULATE|FILTER|TOPN|RANKX|ALL|ALLEXCEPT|SELECTEDVALUE)\b", expr_sql, re.IGNORECASE):
+        return None
+    return f"{sql_func}({expr_sql})"
 
 
 

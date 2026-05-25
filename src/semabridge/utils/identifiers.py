@@ -131,88 +131,75 @@ class IdentifierSanitizer:
 
     def sanitize_column(self, name: str) -> str:
         """
-        Sanitize a column name to Snowflake-compatible format.
-
-        Steps:
-        1. Strips DAX table qualifiers (``'Table'[Column]`` → ``Column``).
-        2. Splits dot-notation (``TABLE.COLUMN`` → ``COLUMN``).
-        3. Replaces non-alphanumeric characters (except ``_`` and ``$``) with ``_``.
-        4. Collapses consecutive underscores.
-        5. Removes leading/trailing underscores (unless from digit-prefixing).
-        6. If name starts with digit → prefix with underscore.
-        7. Uppercases (when configured).
-
-        Snowflake Rules:
-        - Identifiers cannot start with a digit → prefix with ``_``
-        - Only ``[A-Z0-9_$]`` allowed
-        - Spaces/special chars → ``_``
-        - Multiple underscores → collapse to single
-
-        Examples:
-            "18_MONTH_FORWARD" → "_18_MONTH_FORWARD"
-            "Revenue % Growth" → "REVENUE__GROWTH"
-            "customer-id" → "CUSTOMER_ID"
-
-        Args:
-            name: Raw column name
-
-        Returns:
-            Sanitized column name (NOT quoted)
+        Sanitize a column name to Snowflake/Databricks compatible format.
+        NO HARDCODING – just character mapping.
         """
         if not name:
             return "UNKNOWN"
-
-        original = name  # Track for logging
-
+        
+        original = name
+        
+        # ================================================================
+        # COMPLETE CHARACTER REPLACEMENTS (Add these!)
+        # ================================================================
+        replacements = {
+            '%': 'PCT', '$': 'DOL', '@': 'AT', '#': 'NUM',
+            '&': 'AND', '*': 'STAR', '+': 'PLUS', '=': 'EQ',
+            '?': 'Q', '!': 'EXCL', '<': 'LT', '>': 'GT',
+            '{': '_', '}': '_', '|': '_', ';': '_',
+            ':': '_', ',': '_', '.': '_', '/': '_',
+            '\\': '_', '(': '_', ')': '_', '[': '_',
+            ']': '_', ' ': '_', '-': '_', "'": '',
+            '"': '',
+        }
+        
+        for old, new in replacements.items():
+            name = name.replace(old, new)
+        
         # Strip DAX table qualifier (e.g., 'Sales'[Amount] → Amount)
         bracket_match = re.search(r"\[(.+?)\]", name)
         if bracket_match:
             name = bracket_match.group(1)
-
+        
         # Split dot-notation — TABLE.COLUMN → COLUMN (only for 2-part refs)
-        # Preserve 3+ part names (e.g., DB.SCHEMA.TABLE)
         if '.' in name and not name.startswith('"'):
             parts = name.split('.')
             if len(parts) == 2:
                 left, right = parts
-                # Only split if both parts are simple identifiers
                 if re.fullmatch(r'[A-Za-z_]\w*', left) and re.fullmatch(r'[A-Za-z_]\w*', right):
-                    name = right  # discard the table qualifier
-
+                    name = right
+        
         # Replace illegal characters with underscore (keep only [A-Za-z0-9_$])
         clean = re.sub(r"[^A-Za-z0-9_$]", "_", name)
-
+        
         # Collapse consecutive underscores
         clean = re.sub(r"_+", "_", clean)
-
-        # Strip leading/trailing underscores ONLY from replacements
-        # but preserve those needed for digit-prefixing below
+        
+        # Strip leading/trailing underscores
         clean = clean.strip("_")
-
+        
         # Handle empty result
         if not clean:
             return "COLUMN_UNKNOWN"
-
-        # CRITICAL: If name starts with digit, prefix with underscore (Snowflake requirement)
+        
+        # If name starts with digit, prefix with underscore
         if clean[0].isdigit():
             clean = f"_{clean}"
-
-        # Uppercase
+        
+        # Uppercase if configured
         result = clean.upper() if self.force_uppercase else clean
-
-        # Reserved words are invalid semantic identifiers in Snowflake.
-        # Apply mandatory COL_ prefix when enabled.
+        
+        # Reserved word handling
         if self.suppress_reserved and result.lower() in self._reserved:
             result = f"COL_{result}"
-
-        # Validate: should only contain [A-Z0-9_$]
+        
+        # Validate
         if not re.match(r"^[A-Z_][A-Z0-9_$]*$", result):
-            logger.warning(
-                f"Identifier sanitization: '{original}' → '{result}' "
-                f"contains unexpected characters after normalization"
-            )
-
-        logger.debug(f"sanitize_column: '{original}' → '{result}'")
+            logger.warning(f"Identifier sanitization: '{original}' → '{result}' contains unexpected characters")
+        
+        if original != result:
+            logger.debug(f"sanitize_column: '{original}' → '{result}'")
+        
         return result
 
     def sanitize_alias(self, name: str) -> str:
@@ -317,9 +304,9 @@ class IdentifierSanitizer:
 
     # ─── Module 2: Centralized dot-notation resolution ──────────────────
 
-    # Master regex for cross-table references: matches WORD."COL" or WORD.WORD
+    # Master regex for cross-table references: matches WORD."COL", "WORD"."COL", WORD.WORD, or "WORD".WORD
     _DOT_REF_RE = re.compile(
-        r'\b([A-Za-z_]\w*)\s*(\.\.?\s*"[^"]+"|\.\.?(?:[A-Za-z_]\w*))'
+        r'(?:"([A-Za-z_]\w*)"|\b([A-Za-z_]\w*))\s*(\.\.?\s*"[^"]+"|\.\.?(?:[A-Za-z_]\w*))'
     )
     # Simpler pattern for defence-in-depth: finds remaining TABLE. prefixes
     _TABLE_PREFIX_RE = re.compile(r'\b([A-Z_]\w*)\.')
@@ -353,12 +340,15 @@ class IdentifierSanitizer:
         _sanitize = sanitize_col_fn or self.sanitize_column
 
         def _rewrite(m: re.Match) -> str:
-            raw_table = m.group(1).upper()
-            dot_rest = m.group(2)  # e.g. ."COL" or .COL
+            raw_table = (m.group(1) or m.group(2)).upper()
+            dot_rest = m.group(3)  # e.g. ."COL" or .COL
             resolved = alias_lookup.get(raw_table)
             if resolved:
                 col_part = dot_rest.lstrip('. ')
-                if not col_part.startswith('"'):
+                if col_part.startswith('"') and col_part.endswith('"'):
+                    inner_col = col_part[1:-1]
+                    col_part = f'"{_sanitize(inner_col)}"'
+                elif not col_part.startswith('"'):
                     col_part = f'"{_sanitize(col_part)}"'
                 return f"{resolved}.{col_part}"
             return m.group(0)  # leave untouched

@@ -13,6 +13,7 @@ from semabridge.connectors.ddl_helpers import (
     extract_expr_key,
     extract_expr_key_osi,
 )
+from semabridge.connectors.synonym_clause import synonyms_clause
 
 logger = get_logger(__name__)
 
@@ -87,6 +88,14 @@ class MetricsClauseBuilder:
         valid_metrics = [m for m in model.metrics if "$" not in m.unique_name]
         metric_name_set = {self.identifier_sanitizer.sanitize_alias(m.unique_name) for m in valid_metrics}
 
+        # Build metric name to table alias mapping for qualifying bare cross-table metric references
+        metric_to_alias: Dict[str, str] = {}
+        for m in valid_metrics:
+            m_alias = dataset_aliases.get(m.dataset)
+            if m_alias:
+                sanitized_name = self.identifier_sanitizer.sanitize_alias(m.unique_name)
+                metric_to_alias[sanitized_name] = m_alias
+
         # Build set of fact-table aliases so metric prefix resolution prefers them
         fact_aliases: Set[str] = {
             alias
@@ -103,6 +112,26 @@ class MetricsClauseBuilder:
         metric_signature_seen: Dict[str, int] = {}
         metric_namespace = self._duplicate_namespace_key(model.unique_name or model.label)
         model_name = model.unique_name or model.label
+
+        # Priority 0: prefetch OpenAI translations in batches (up to 20),
+        # so complex DAX gets one network round-trip per chunk instead of per metric.
+        try:
+            self.translator.prefetch_openai_metric_translations(
+                metrics=valid_metrics,
+                table_alias=next(iter(fact_aliases), "FACT"),
+                dataset_col_lookup=dataset_col_lookup,
+            )
+        except Exception as exc:
+            logger.warning("OpenAI metric prefetch skipped: %s", exc)
+
+        # ================================================================
+        # DEBUG: Check metric name sanitization
+        # ================================================================
+        for metric in valid_metrics:
+            raw_name = metric.unique_name
+            sanitized_name = self.identifier_sanitizer.sanitize_alias(raw_name)
+            logger.info(f"🔍 METRIC SANITIZATION: raw='{raw_name}' → sanitized='{sanitized_name}'")
+        # ================================================================
 
         for metric in valid_metrics:
             alias = dataset_aliases.get(metric.dataset)
@@ -138,12 +167,23 @@ class MetricsClauseBuilder:
                 metric, metric_name, alias, dataset_by_name, dataset_aliases, 
                 dataset_col_lookup, alias_by_raw, metric_name_set, 
                 all_physical_col_names, emittable_metric_name_set, skipped_metric_names, model_name, is_osi,
-                fact_aliases=fact_aliases
+                fact_aliases=fact_aliases,
+                metric_to_alias=metric_to_alias
             )
             
             if expr:
                 metric_entity_alias = self._resolve_metric_emission_alias(alias, expr, dataset_aliases, fact_aliases)
-                metrics_lines.append(f'  {metric_entity_alias}."{metric_name}" AS {expr}')
+                safe_metric_name = self.identifier_sanitizer.sanitize_column(metric_name)
+                if metric_name != safe_metric_name:
+                    logger.info(
+                        "METRIC DDL FIX: '%s' -> '%s'",
+                        metric_name,
+                        safe_metric_name,
+                    )
+                metrics_lines.append(
+                    f'  {metric_entity_alias}."{safe_metric_name}" AS {expr}'
+                    f'{synonyms_clause(list(getattr(metric, "synonyms", []) or []))}'
+                )
 
         # Pruning and Fallbacks...
         metrics_lines = self._prune_unresolved_metric_lines(metrics_lines, metric_name_set)
@@ -273,7 +313,8 @@ class MetricsClauseBuilder:
         skipped_metric_names: Set[str],
         model_name: str,
         is_osi: bool,
-        fact_aliases: Optional[Set[str]] = None
+        fact_aliases: Optional[Set[str]] = None,
+        metric_to_alias: Optional[Dict[str, str]] = None
     ) -> Optional[str]:
         if (metric.source_column and metric.aggregation and 
             (not getattr(metric, "sql_expression", None) or self._should_use_direct_metric_aggregation(metric))):
@@ -344,10 +385,15 @@ class MetricsClauseBuilder:
                     )
                     return None
             expr = sql_expr
-            # Normalize and validate
+            
+            # ✅ NEW: Qualify cross-table references FIRST (before normalization)
+            expr = self.translator._auto_qualify_cross_table_refs(expr, dataset_aliases)
+            
+            # Then normalize and validate
             expr = self.translator._normalize_metric_column_references(
                 expr, metric.unique_name, dataset_col_lookup, dataset_aliases, 
-                metric_names=metric_name_set, preferred_table_alias=alias
+                metric_names=metric_name_set, preferred_table_alias=alias,
+                metric_to_alias=metric_to_alias
             )
             is_valid, reason = self.translator._validate_metric_column_references(
                 expr,
@@ -367,14 +413,9 @@ class MetricsClauseBuilder:
         
         # If we have DAX expression, try to translate it
         if dax_expr:
-            # Try basic DAX translation first (COUNTROWS, COUNTBLANK, etc.)
-            translated = self.translator._try_basic_dax_metric_fallback_expression(
-                metric, alias, dataset_col_lookup, model=None, dataset_by_name=dataset_by_name
-            )
-            if translated:
-                return translated
-            
-            # Try LLM fallback for complex DAX
+            # Try LLM fallback first when configured (OpenAI is preferred inside
+            # the translator). This keeps complex Fabric DAX from being dropped
+            # before provider-backed translation gets a chance.
             translated = self.translator._try_llm_metric_fallback_expression(
                 metric=metric,
                 metric_name=metric_name,
@@ -385,7 +426,17 @@ class MetricsClauseBuilder:
                 metric_name_set=metric_name_set,
                 all_physical_col_names=all_physical_col_names,
                 emittable_metric_name_set=emittable_metric_name_set,
-                skipped_metric_names=skipped_metric_names
+                skipped_metric_names=skipped_metric_names,
+                metric_to_alias=metric_to_alias
+            )
+            if translated:
+                # ✅ NEW: Qualify cross-table references in translated SQL
+                translated = self.translator._auto_qualify_cross_table_refs(translated, dataset_aliases)
+                return translated
+
+            # Try basic DAX translation first (COUNTROWS, COUNTBLANK, etc.)
+            translated = self.translator._try_basic_dax_metric_fallback_expression(
+                metric, alias, dataset_col_lookup, model=None, dataset_by_name=dataset_by_name
             )
             if translated:
                 return translated
@@ -399,6 +450,8 @@ class MetricsClauseBuilder:
             return None
             
         return None
+
+
 
     def _apply_osi_fallbacks(
         self, metrics_lines: List[str], expected_metrics: List[Any], osi: Any, 
@@ -518,18 +571,19 @@ class MetricsClauseBuilder:
             for line in current:
                 m = re.search(r'([A-Z_][A-Z0-9_]*)\."([^\"]+)"\s+AS\s+(.+?)\s*$', line.strip().rstrip(','))
                 if not m:
-                    parsed.append((line, None, None, ""))
+                    parsed.append((line, None, None, "", ""))
                     continue
                 alias, name, expr = m.groups()
+                expr, synonym_suffix = self._split_outer_synonyms_clause(expr)
                 defined.add(name)
                 expr_by_name[name] = expr
                 if re.search(r'\bOVER\b', expr, flags=re.IGNORECASE):
                     window_metrics.add(name)
-                parsed.append((line, alias, name, expr))
+                parsed.append((line, alias, name, expr, synonym_suffix))
 
             removed = rewritten = False
             next_lines = []
-            for line, alias, name, expr in parsed:
+            for line, alias, name, expr, synonym_suffix in parsed:
                 if not name:
                     next_lines.append(line)
                     continue
@@ -548,7 +602,7 @@ class MetricsClauseBuilder:
                             expanded_expr = re.sub(rf'"{re.escape(ref_name)}"', f'({ref_expr})', expanded_expr)
                             substituted = True
                     if substituted:
-                        next_lines.append(f'  {alias}."{name}" AS {expanded_expr}')
+                        next_lines.append(f'  {alias}."{name}" AS {expanded_expr}{synonym_suffix}')
                         rewritten = True
                         continue
                     removed = True
@@ -557,3 +611,10 @@ class MetricsClauseBuilder:
             current = next_lines
             if not removed and not rewritten:
                 return current
+
+    def _split_outer_synonyms_clause(self, expr: str) -> Tuple[str, str]:
+        marker = " WITH SYNONYMS = ("
+        idx = str(expr or "").upper().rfind(marker)
+        if idx < 0:
+            return expr, ""
+        return expr[:idx].rstrip(), expr[idx:]

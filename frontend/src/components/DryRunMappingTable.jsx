@@ -10,11 +10,12 @@
  *   relationships : Array<{ source, target, joinType, condition, confidence }>
  */
 import { useState, useMemo, useCallback } from 'react';
-import { Edit2, GitMerge, Zap, CheckCircle } from 'lucide-react';
+import { Edit2, GitMerge, Zap, CheckCircle, Tags } from 'lucide-react';
 import StatusBadge from './common/StatusBadge';
 import SmartSearchBar from './common/SmartSearchBar';
 import { matchesSmartQuery } from './common/smartSearchQuery.js';
 import { api } from '../utils/api';
+import SynonymEditModal from './SynonymEditModal';
 
 // ─── Filter tab definitions ───────────────────────────────────────────────────
 const MAPPING_FILTERS = [
@@ -90,7 +91,7 @@ function TableHeader() {
   return (
     <div style={{
       display: 'grid',
-      gridTemplateColumns: '1.5fr 1.5fr 120px 100px',
+      gridTemplateColumns: '1.5fr 1.5fr minmax(180px, 0.8fr) 120px 100px',
       gap: '1rem',
       padding: '10px 14px',
       background: 'var(--bg-surface-raised)',
@@ -103,6 +104,7 @@ function TableHeader() {
     }}>
       <div>Source Field</div>
       <div>Target Field</div>
+      <div>Synonyms</div>
       <div style={{ textAlign: 'center' }}>Status</div>
       <div style={{ textAlign: 'right' }}>Action</div>
     </div>
@@ -110,7 +112,7 @@ function TableHeader() {
 }
 
 // ─── Single mapping row ───────────────────────────────────────────────────────
-function MappingRow({ row, onEdit }) {
+function MappingRow({ row, onEdit, onSynonymEdit }) {
   const badgeCfg = STATUS_BADGE_MAP[String(row.status || '').toLowerCase()]
     ?? { status: 'draft', label: row.status };
   const isCollision = String(row.status || '').toLowerCase() === 'collision';
@@ -120,7 +122,7 @@ function MappingRow({ row, onEdit }) {
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: '1.5fr 1.5fr 120px 100px',
+        gridTemplateColumns: '1.5fr 1.5fr minmax(180px, 0.8fr) 120px 100px',
         gap: '1rem',
         padding: '10px 14px',
         borderBottom: '1px solid var(--border-main)',
@@ -187,6 +189,58 @@ function MappingRow({ row, onEdit }) {
             (Suggestion: {row.suggested_target_name})
           </div>
         )}
+      </div>
+
+      {/* Synonyms */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, overflow: 'hidden' }}>
+          {(row.synonym_overrides || row.synonymOverrides || []).slice(0, 2).map((synonym) => (
+            <span
+              key={synonym}
+              title={synonym}
+              style={{
+                maxWidth: 78,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                fontSize: 10,
+                fontWeight: 700,
+                padding: '2px 6px',
+                borderRadius: 999,
+                border: '1px solid rgba(56, 189, 248, 0.35)',
+                background: 'rgba(56, 189, 248, 0.12)',
+                color: '#7dd3fc',
+              }}
+            >
+              {synonym}
+            </span>
+          ))}
+          {(row.synonym_overrides || row.synonymOverrides || []).length > 2 && (
+            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>
+              +{(row.synonym_overrides || row.synonymOverrides || []).length - 2}
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => onSynonymEdit?.(row)}
+          title="Edit synonyms"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+            width: 24,
+            height: 24,
+            borderRadius: 6,
+            border: '1px solid var(--border-main)',
+            background: 'var(--bg-surface-raised)',
+            color: 'var(--text-secondary)',
+            cursor: 'pointer',
+          }}
+        >
+          <Tags size={12} />
+        </button>
       </div>
 
       {/* Status */}
@@ -347,6 +401,9 @@ function RelationshipsSection({ relationships }) {
 export default function DryRunMappingTable({
   mappings = [],
   onEdit,
+  onSynonymUpdate,
+  projectId = 'preview',
+  modelName = '',
   onBulkResolved,     // (resolvedMap: Record<rowId, suggestedTarget>) => void
   summary,
   relationships = [],
@@ -356,6 +413,7 @@ export default function DryRunMappingTable({
   const [useRegex, setUseRegex] = useState(false);
   const [bulkResolving, setBulkResolving] = useState(false);
   const [bulkToast, setBulkToast] = useState(null); // { type: 'success'|'error', msg }
+  const [synonymModal, setSynonymModal] = useState(null);
 
   // ── Split columns vs measures ───────────────────────────────────────────────
   const { columns, measures } = useMemo(() => {
@@ -422,6 +480,32 @@ export default function DryRunMappingTable({
       setTimeout(() => setBulkToast(null), 4000);
     }
   }, [mappings, onBulkResolved]);
+
+  const openSynonymModal = useCallback(async (row) => {
+    const tableName = row.source_table_name || row.measure_source_tables?.[0] || row.parent_table || '';
+    const modalData = {
+      rowId: row.id,
+      projectId: row.project_id || projectId || 'preview',
+      modelName: row.model_name || row.modelName || modelName || 'default',
+      tableName,
+      columnName: row.source_field,
+      currentSynonyms: row.synonym_overrides || row.synonymOverrides || [],
+    };
+    setSynonymModal(modalData);
+    try {
+      const response = await api.getSynonymOverride(modalData);
+      setSynonymModal((current) => current?.rowId === row.id
+        ? { ...current, currentSynonyms: response?.synonyms || [] }
+        : current);
+    } catch {
+      // Missing override table or row should not block the edit dialog.
+    }
+  }, [projectId, modelName]);
+
+  const handleSynonymSave = useCallback((synonyms) => {
+    if (!synonymModal?.rowId) return;
+    onSynonymUpdate?.(synonymModal.rowId, synonyms);
+  }, [synonymModal, onSynonymUpdate]);
 
   // ── Filtered rows ───────────────────────────────────────────────────────────
   const filterRow = (row) => {
@@ -636,7 +720,7 @@ export default function DryRunMappingTable({
                 </div>
               ) : (
                 filteredColumns.map(row => (
-                  <MappingRow key={row.id} row={row} onEdit={onEdit} />
+                  <MappingRow key={row.id} row={row} onEdit={onEdit} onSynonymEdit={openSynonymModal} />
                 ))
               )}
             </div>
@@ -668,7 +752,7 @@ export default function DryRunMappingTable({
                 </div>
               ) : (
                 filteredMeasures.map(row => (
-                  <MappingRow key={row.id} row={row} onEdit={onEdit} />
+                  <MappingRow key={row.id} row={row} onEdit={onEdit} onSynonymEdit={openSynonymModal} />
                 ))
               )}
             </div>
@@ -678,6 +762,16 @@ export default function DryRunMappingTable({
 
       {/* ── Relationships section ─────────────────────────────────────────────── */}
       <RelationshipsSection relationships={relationships} />
+      <SynonymEditModal
+        open={Boolean(synonymModal)}
+        onClose={() => setSynonymModal(null)}
+        projectId={synonymModal?.projectId || projectId}
+        modelName={synonymModal?.modelName || modelName || 'default'}
+        tableName={synonymModal?.tableName || ''}
+        columnName={synonymModal?.columnName || ''}
+        currentSynonyms={synonymModal?.currentSynonyms || []}
+        onSave={handleSynonymSave}
+      />
     </div>
   );
 }

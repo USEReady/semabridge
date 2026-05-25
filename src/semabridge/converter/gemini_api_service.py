@@ -48,12 +48,9 @@ except ImportError:
 
 # Import Gemini SDK
 try:
-    import google.genai as genai
+    import google.generativeai as genai
 except ImportError:
-    try:
-        import google.generativeai as genai
-    except ImportError:
-        genai = None
+    genai = None
 
 logger = logging.getLogger(__name__)
 

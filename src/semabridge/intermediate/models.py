@@ -149,6 +149,14 @@ class OSIColumn(OSIBaseModel):
     description: Optional[str] = Field(default=None, description="Column description")
     is_key: bool = Field(default=False, description="Primary/foreign key indicator")
     is_hidden: bool = Field(default=False, description="Hidden from end users")
+    is_measure_candidate: bool = Field(
+        default=False,
+        description="Whether this source column has a default aggregation and should be emitted as a metric",
+    )
+    default_aggregation: Optional[OSIAggregationType] = Field(
+        default=None,
+        description="Default aggregation from source metadata, such as Fabric summarizeBy",
+    )
     format_string: Optional[str] = Field(default=None, description="Display format")
     source_expression: Optional[str] = Field(
         default=None, description="Source SQL expression if computed"

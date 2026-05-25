@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 # Add src to path
-root_dir = Path(__file__).resolve().parent
+root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir / "src"))
 
 def test_metric_filtering():
@@ -66,11 +66,37 @@ def test_syntax():
         print(f"❌ FAIL: Syntax error in snowflake_emitter.py:\n{e}")
         return False
 
+def test_quoted_table_alias_and_special_character_resolution():
+    """Test that double-quoted table names and double-quoted column names are properly resolved and sanitized"""
+    from semabridge.utils.identifiers import IdentifierSanitizer
+    
+    sanitizer = IdentifierSanitizer()
+    alias_lookup = {"SALESFACT": "salesfact"}
+    
+    # Test case 1: Double-quoted table name and double-quoted column name containing %
+    expr = '"salesfact"."% UNIT MARKET SHARE YOY CHANGE"'
+    resolved = sanitizer.resolve_dot_notation(expr, alias_lookup)
+    assert resolved == 'salesfact."PCT_UNIT_MARKET_SHARE_YOY_CHANGE"'
+    
+    # Test case 2: Double-quoted table name and unquoted column name
+    expr2 = '"salesfact".UNITS'
+    resolved2 = sanitizer.resolve_dot_notation(expr2, alias_lookup)
+    assert resolved2 == 'salesfact."UNITS"'
+    
+    # Test case 3: Unquoted table name and double-quoted column name with special character
+    expr3 = 'salesfact."% Category Compete Share"'
+    resolved3 = sanitizer.resolve_dot_notation(expr3, alias_lookup)
+    assert resolved3 == 'salesfact."PCT_CATEGORY_COMPETE_SHARE"'
+    
+    print("✅ PASS: Quoted table alias and special character resolution verified")
+    return True
+
 if __name__ == "__main__":
     results = []
     results.append(test_metric_filtering())
     results.append(test_relationship_validation())
     results.append(test_syntax())
+    results.append(test_quoted_table_alias_and_special_character_resolution())
     
     print("\n" + "=" * 70)
     print("TEST SUMMARY")

@@ -357,6 +357,8 @@ function normalizeRows(data) {
       const targetName = String(row?.target_name || row?.name || '').trim();
       return {
         id: String(row?.id || `entity-${index}`),
+        project_id: String(row?.project_id || data?.project_id || ''),
+        model_name: String(row?.model_name || data?.model_name || data?.semantic_model_name || ''),
         source_field: sourceName || `field_${index + 1}`,
         source_path: String(row?.source_path || '').trim(),
         entity_kind: kind,
@@ -374,6 +376,7 @@ function normalizeRows(data) {
         validation_message: String(row?.validation_message || ''),
         suggested_target_name: String(row?.suggested_target_name || ''),
         collision_detected: Boolean(row?.collision_detected),
+        synonym_overrides: Array.isArray(row?.synonym_overrides) ? row.synonym_overrides : [],
         isDirty: false,
       };
     });
@@ -395,6 +398,8 @@ function normalizeRows(data) {
       const fieldType = String(column?.field_type || '').toLowerCase() === 'measure' ? 'measure' : 'column';
       rows.push({
         id: `${table?.id || tableSource || `t${tableIndex}`}::${column?.source_path || colSource || columnIndex}`,
+        project_id: String(column?.project_id || data?.project_id || ''),
+        model_name: String(column?.model_name || data?.model_name || data?.semantic_model_name || ''),
         source_field: colSource || `column_${columnIndex + 1}`,
         source_path: String(column?.source_path || '').trim(),
         entity_kind: String(column?.entity_kind || 'column').toLowerCase(),
@@ -412,6 +417,7 @@ function normalizeRows(data) {
         suggested_target_name: String(column?.suggested_target_name || ''),
         collision_detected: Boolean(column?.collision_detected),
         parent_table: tableSource,
+        synonym_overrides: Array.isArray(column?.synonym_overrides) ? column.synonym_overrides : [],
         isDirty: false,
       });
     });
@@ -1325,7 +1331,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               ...mapping,
               project_id: projectId,
             };
-            await api.updateMapping(String(mapping.id), payloadMapping);
+            await api.updateMapping(projectId, String(mapping.id), payloadMapping);
           }
         } catch (mappingPersistErr) {
           const persistMsg = mappingPersistErr?.message || 'Mappings could not be fully persisted.';
@@ -1800,6 +1806,14 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     }));
   }, []);
 
+  const handleSynonymUpdate = useCallback((rowId, synonyms) => {
+    setDetectedMappings(prev => prev.map(row =>
+      row.id === rowId
+        ? { ...row, synonym_overrides: Array.isArray(synonyms) ? synonyms : [], isDirty: true }
+        : row
+    ));
+  }, []);
+
   // ── handleDeploy — deploys finalized mappings and advances to Step 5 ─────────
   const handleDeploy = useCallback(async () => {
     const blockingRows = detectedMappings.filter(row => isDryRunBlockingRow(row));
@@ -2255,6 +2269,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
                 onDeployMappings={handleDeploy}
                 targetConnectors={targetConnectors}
                 onBulkResolved={handleBulkResolved}
+                onSynonymUpdate={handleSynonymUpdate}
+                projectId={createdProject?.id || createdProject?.project_id || dryRunData?.project_id || 'preview'}
               />
             </ErrorBoundary>
           )}
@@ -4901,6 +4917,8 @@ function StepMappingOptions({
   onDeployMappings,
   targetConnectors,
   onBulkResolved,
+  onSynonymUpdate,
+  projectId,
 }) {
   const [autoMappingMode, setAutoMappingMode] = useState(true);
   const [rows, setRows] = useState([]);
@@ -5014,7 +5032,7 @@ function StepMappingOptions({
   }, [onRunDryRun]);
 
   const handleInlineTargetChange = useCallback((rowId, value) => {
-    const projectId = 'preview'; // Replace with real one if accessible, but endpoints handle preview
+    const effectiveProjectId = projectId || dryRunData?.project_id || 'preview';
     // Optimistic update
     setRows((prev) => prev.map((row) => {
       if (row.id !== rowId) return row;
@@ -5046,11 +5064,11 @@ function StepMappingOptions({
     }));
 
     // Call API
-    api.updateMapping(projectId, rowId, value).catch(err => {
+    api.updateMapping(effectiveProjectId, rowId, value).catch(err => {
       console.error('Failed to update mapping:', err);
       // Let user know mapping failed. We would normally rollback here, but a toast or error state works.
     });
-  }, [primaryTargetConnector]);
+  }, [dryRunData?.project_id, primaryTargetConnector, projectId]);
 
 
   const applySuggestion = useCallback((rowId) => {
@@ -5347,6 +5365,8 @@ function StepMappingOptions({
         <div ref={mappingTableRef}>
           <DryRunMappingTable
             mappings={detectedMappings}
+            projectId={projectId || dryRunData?.project_id || 'preview'}
+            modelName={dryRunData?.model_name || selectedModelNames?.[0] || ''}
             summary={dryRunData?.summary}
             relationships={(() => {
               try {
@@ -5359,6 +5379,7 @@ function StepMappingOptions({
               if (row) setEditingRow(row);
             }}
             onBulkResolved={onBulkResolved}
+            onSynonymUpdate={onSynonymUpdate}
           />
         </div>
       )}

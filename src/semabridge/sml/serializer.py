@@ -308,6 +308,7 @@ class SMLSerializer:
             "description": column.description,
             "is_hidden": column.is_hidden,
             "is_key": column.is_key,
+            "is_measure_candidate": column.is_measure_candidate,
             "format_string": column.format_string,
             "folder": column.folder,
         }
@@ -323,6 +324,7 @@ class SMLSerializer:
             description=data.get("description", ""),
             is_hidden=data.get("is_hidden", False),
             is_key=data.get("is_key", False),
+            is_measure_candidate=data.get("is_measure_candidate", False),
             format_string=data.get("format_string"),
             folder=data.get("folder"),
         )
