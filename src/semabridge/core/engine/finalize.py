@@ -158,6 +158,21 @@ def _step10_finalize(
     self._summary.target_artifact_path = context.target_artifact_path
     self._summary.routing_summary = context.routing_summary
 
+    if status == RunStatus.FAILED and self._summary.sml_snapshot_id:
+        failure_message = self._summary.errors[-1].message if self._summary.errors else None
+        try:
+            self.db_manager.update_snapshot_status(
+                self._summary.sml_snapshot_id,
+                "failed",
+                failure_message,
+            )
+        except Exception as snapshot_exc:
+            logger.warning(
+                "Failed to mark snapshot %s as failed after run failure: %s",
+                self._summary.sml_snapshot_id,
+                snapshot_exc,
+            )
+
     self._record_step(10, StepStatus.SUCCESS, f"Status: {status.value}")
 
     finalized = self._summary.finalize()

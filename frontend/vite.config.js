@@ -12,7 +12,7 @@ export default defineConfig(({ mode }) => {
   const repoEnv = loadEnv(mode, repoRoot, '')
   const localEnv = loadEnv(mode, process.cwd(), '')
   const env = { ...repoEnv, ...localEnv }
-  const target = env.VITE_API_URL || 'http://127.0.0.1:8000'
+  const target = env.VITE_API_URL || 'http://127.0.0.1:8001'
 
   return {
     envDir: repoRoot,

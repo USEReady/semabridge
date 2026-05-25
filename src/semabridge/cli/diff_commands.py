@@ -49,7 +49,7 @@ def diff_source(
         semabridge diff source -d "Customer Profitability" --source fabric
     """
     from semabridge.core.settings import get_settings
-    from semabridge.repository.duckdb_manager import DuckDBManager
+    from semabridge.repository.model_repository import ModelRepository
     from semabridge.repository.semantic_diff_engine import SemanticDiffEngine
     from semabridge.repository.command_logger import (
         get_command_logger, CommandType, ActionType
@@ -74,7 +74,7 @@ def diff_source(
     
     try:
         settings = get_settings()
-        db_manager = DuckDBManager()
+        db_manager = ModelRepository()
         
         # Step 1: Get repository HEAD
         console.print("\n[bold cyan]Step 1/3: Loading repository HEAD...[/bold cyan]")
@@ -200,7 +200,7 @@ def diff_versions(
         semabridge diff versions -d "mymodel" --from v1.0 --to v2.0
         semabridge diff versions -d "mymodel" --from v1.0  # Compare v1.0 to HEAD
     """
-    from semabridge.repository.duckdb_manager import DuckDBManager
+    from semabridge.repository.model_repository import ModelRepository
     from semabridge.repository.semantic_diff_engine import SemanticDiffEngine
     from semabridge.repository.command_logger import (
         get_command_logger, CommandType, ActionType
@@ -224,7 +224,7 @@ def diff_versions(
     ))
     
     try:
-        db_manager = DuckDBManager()
+        db_manager = ModelRepository()
         
         # Resolve versions
         console.print("\n[bold cyan]Step 1/2: Resolving versions...[/bold cyan]")
@@ -420,7 +420,7 @@ def diff_stats(
     
     Displays current HEAD statistics.
     """
-    from semabridge.repository.duckdb_manager import DuckDBManager
+    from semabridge.repository.model_repository import ModelRepository
     
     console.print(Panel.fit(
         f"[bold]Model Statistics[/bold]\n"
@@ -428,7 +428,7 @@ def diff_stats(
         title="Stats",
     ))
     
-    db_manager = DuckDBManager()
+    db_manager = ModelRepository()
     head = db_manager.get_head(dataset_id)
     
     if not head:
@@ -482,7 +482,7 @@ def diff_compare(
         semabridge diff compare -d "mymodel" --from v1.0 --to v2.0
         semabridge diff compare -d "mymodel" -f abc123 -t def456 --markdown
     """
-    from semabridge.repository.duckdb_manager import DuckDBManager
+    from semabridge.repository.model_repository import ModelRepository
     
     console.print(Panel.fit(
         f"[bold]Compare Versions[/bold]\n"
@@ -491,7 +491,7 @@ def diff_compare(
         title="Compare",
     ))
     
-    db_manager = DuckDBManager()
+    db_manager = ModelRepository()
     
     # Resolve snapshot IDs (try tag first, then direct ID)
     from_snap = db_manager.get_snapshot_by_tag(dataset_id, from_id)

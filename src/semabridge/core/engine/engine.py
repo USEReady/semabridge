@@ -144,6 +144,7 @@ class ExecutionEngine:
         self,
         source: Literal["snowflake", "fabric", "pbix"],
         target: Optional[Literal["snowflake", "fabric", "databricks"]] = None,
+        project_id: Optional[str] = None,
         project_name: Optional[str] = None,
         config_path: Optional[Path] = None,
         deploy: bool = True,
@@ -165,6 +166,7 @@ class ExecutionEngine:
         Args:
             source: Source connector type ("snowflake" or "fabric")
             target: Target connector type (optional)
+            project_id: Stable project identifier override
             project_name: Override project name
             config_path: Path to config file (uses .env by default)
             deploy: Whether to deploy to target
@@ -204,7 +206,14 @@ class ExecutionEngine:
             
             # Step 2: Initialize Identifiers
             context = self._step2_init_identifiers(
-                config, source, target, project_name, dataset_id, config_path, sync_mode=sync_mode
+                config,
+                source,
+                target,
+                project_id,
+                project_name,
+                dataset_id,
+                config_path,
+                sync_mode=sync_mode,
             )
             self._context = context
             self._summary = create_run_summary(

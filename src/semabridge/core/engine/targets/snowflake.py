@@ -50,6 +50,7 @@ logger = get_logger(__name__)
 def _convert_to_snowflake_target(self, context: RunContext) -> None:
     """Generate Snowflake DDL."""
     from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+    from semabridge.sml.serializer import SMLSerializer
 
     config = context.config
     emitter = SnowflakeEmitter(config.snowflake, behavior=context.behavior)
@@ -70,5 +71,9 @@ def _convert_to_snowflake_target(self, context: RunContext) -> None:
         f.write(full_ddl)
     with open(yaml_path, "w", encoding="utf-8") as f:
         f.write(yaml_out)
+
+    if isinstance(context.sml_model, SMLModel):
+        sml_path = output_dir / "sml" / "model.yaml"
+        SMLSerializer.save(context.sml_model, sml_path)
 
     context.target_artifact_path = str(ddl_path)

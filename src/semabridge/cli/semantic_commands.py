@@ -46,7 +46,7 @@ def snapshot_create(
 ):
     """Create a manual snapshot of current semantic state."""
     from semabridge.repository.semantic_snapshot_manager import SemanticSnapshotManager
-    from semabridge.repository.duckdb_manager import DuckDBManager
+    from semabridge.repository.model_repository import ModelRepository
     
     console.print(Panel.fit(
         f"[bold]Create Snapshot[/bold]\n"
@@ -55,8 +55,8 @@ def snapshot_create(
     ))
     
     try:
-        # Get current state from DuckDB
-        db_manager = DuckDBManager()
+        # Get current state from the repository
+        db_manager = ModelRepository()
         snapshot_manager = SemanticSnapshotManager()
         
         if project_id:
@@ -192,7 +192,7 @@ def compare_current(
     """Compare current state vs last snapshot."""
     from semabridge.repository.semantic_snapshot_manager import SemanticSnapshotManager
     from semabridge.repository.semantic_diff_engine import SemanticDiffEngine
-    from semabridge.repository.duckdb_manager import DuckDBManager
+    from semabridge.repository.model_repository import ModelRepository
     
     console.print(Panel.fit(
         f"[bold]Compare Current State[/bold]\n"
@@ -202,7 +202,7 @@ def compare_current(
     ))
     
     try:
-        db_manager = DuckDBManager()
+        db_manager = ModelRepository()
         snapshot_manager = SemanticSnapshotManager()
         diff_engine = SemanticDiffEngine(snapshot_manager)
         

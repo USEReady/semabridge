@@ -42,7 +42,8 @@ from semabridge.repository.orm.models import (
 from semabridge.utils.logger import get_logger
 
 # Re-export Pydantic models for backward compat
-from semabridge.repository.duckdb_manager import ModelChange, Snapshot  # noqa: F401
+# Import canonical schemas (avoid importing the DuckDB-backed manager)
+from semabridge.repository.schemas import ModelChange, Snapshot  # noqa: F401
 
 logger = get_logger(__name__)
 
@@ -73,16 +74,33 @@ def _deserialize_sml_blob(blob: Any) -> Dict[str, Any]:
         return {}
 
 
-def _serialize_sml_blob(sml_json: Dict[str, Any]) -> str:
-    """Serialize snapshot payload as canonical SML YAML when possible."""
+def _serialize_sml_blob(sml_json: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Serialize snapshot payload as canonical SML YAML when possible.
+
+    Returns `None` when `sml_json` is falsy to allow storing NULL payloads
+    for failed sync attempts that didn't produce an extract.
+    """
     try:
         from semabridge.formats.sml.models import SMLModel
         from semabridge.formats.sml.serializer import SMLSerializer
+        if not sml_json:
+            return None
 
         model = SMLModel.model_validate(sml_json)
         return SMLSerializer.to_yaml(model)
     except Exception:
-        return json.dumps(sml_json)
+        return json.dumps(sml_json) if sml_json else None
+
+
+def _payload_for_snapshot(status: str, sml_json: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Return the stored payload for a snapshot row.
+
+    Failed snapshots intentionally persist metadata only, so the semantic
+    payload is cleared even if a caller passes one in.
+    """
+    if str(status or "").strip().lower() == "failed":
+        return None
+    return _serialize_sml_blob(sml_json)
 
 
 class _DBAPICursorResult:
@@ -217,10 +235,19 @@ class ModelRepository:
                     inspector = inspect(conn)
                     if "snapshots" in inspector.get_table_names():
                         snapshot_columns = {col["name"] for col in inspector.get_columns("snapshots")}
-                        if "connector_id" not in snapshot_columns:
-                            conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN connector_id VARCHAR(36)")
-                        if "trigger" not in snapshot_columns:
-                            conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN trigger VARCHAR(50)")
+                        if "ix_snapshots_trigger" in {idx["name"] for idx in inspector.get_indexes("snapshots")}:
+                            conn.exec_driver_sql("DROP INDEX IF EXISTS ix_snapshots_trigger")
+                        if "ix_snapshots_connector" in {idx["name"] for idx in inspector.get_indexes("snapshots")}:
+                            conn.exec_driver_sql("DROP INDEX IF EXISTS ix_snapshots_connector")
+                        if "initiated_by" in snapshot_columns:
+                            conn.exec_driver_sql("ALTER TABLE snapshots DROP COLUMN initiated_by")
+                            snapshot_columns.discard("initiated_by")
+                        if "connector_id" in snapshot_columns:
+                            conn.exec_driver_sql("ALTER TABLE snapshots DROP COLUMN connector_id")
+                            snapshot_columns.discard("connector_id")
+                        if "trigger" in snapshot_columns:
+                            conn.exec_driver_sql("ALTER TABLE snapshots DROP COLUMN trigger")
+                            snapshot_columns.discard("trigger")
                         if "sync_mode" not in snapshot_columns:
                             conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN sync_mode VARCHAR(20) NOT NULL DEFAULT 'copy'")
                     if "runs" in inspector.get_table_names():
@@ -296,7 +323,6 @@ class ModelRepository:
             status=row.status,
             duration_ms=row.duration_ms,
             error_message=row.error_message,
-            initiated_by=row.initiated_by,
             run_id=row.run_id,
             sync_mode=getattr(row, 'sync_mode', 'copy'),
         )
@@ -344,12 +370,24 @@ class ModelRepository:
     # ------------------------------------------------------------------
 
     def get_head(self, project_id: str) -> Optional[Snapshot]:
-        """Get the latest snapshot for a project."""
+        """Get the latest *successful* snapshot for a project.
+
+        Downstream production code should always use `get_head()` which
+        returns the most recent row where `status = 'success'`. Failed
+        attempts are still recorded (see `commit_model`) but are excluded
+        from the production head lookup to avoid replacing the last
+        known-good state.
+        """
         with self._session() as session:
             row = (
                 session.execute(
                     select(SnapshotRow)
-                    .where(SnapshotRow.project_id == project_id)
+                    .where(
+                        and_(
+                            SnapshotRow.project_id == project_id,
+                            SnapshotRow.status == 'success',
+                        )
+                    )
                     .order_by(SnapshotRow.timestamp.desc())
                     .limit(1)
                 )
@@ -365,39 +403,44 @@ class ModelRepository:
             return self._row_to_snapshot(row) if row else None
 
     def get_snapshot_by_tag(
-        self, project_id: str, tag: str
+        self, project_id: str, tag: str, include_failed: bool = False
     ) -> Optional[Snapshot]:
-        """Get a snapshot by its version tag."""
+        """Get a snapshot by its version tag.
+
+        By default this returns the latest successful snapshot matching the
+        tag. Set `include_failed=True` when inspecting failures in the UI
+        or runbook tools.
+        """
         with self._session() as session:
+            q = select(SnapshotRow).where(
+                and_(SnapshotRow.project_id == project_id, SnapshotRow.version_tag == tag)
+            )
+            if not include_failed:
+                q = q.where(SnapshotRow.status == 'success')
+
             row = (
-                session.execute(
-                    select(SnapshotRow)
-                    .where(
-                        and_(
-                            SnapshotRow.project_id == project_id,
-                            SnapshotRow.version_tag == tag,
-                        )
-                    )
-                    .order_by(SnapshotRow.timestamp.desc())
-                    .limit(1)
-                )
+                session.execute(q.order_by(SnapshotRow.timestamp.desc()).limit(1))
                 .scalars()
                 .first()
             )
             return self._row_to_snapshot(row) if row else None
 
     def list_snapshots(
-        self, project_id: str, limit: int = 10
+        self, project_id: str, limit: int = 10, include_failed: bool = False
     ) -> List[Snapshot]:
-        """List snapshots for a project, newest first."""
+        """List snapshots for a project, newest first.
+
+        By default only successful snapshots are returned. Set
+        `include_failed=True` to include failed attempts for debugging or
+        UI inspection.
+        """
         with self._session() as session:
+            q = select(SnapshotRow).where(SnapshotRow.project_id == project_id)
+            if not include_failed:
+                q = q.where(SnapshotRow.status == 'success')
+
             rows = (
-                session.execute(
-                    select(SnapshotRow)
-                    .where(SnapshotRow.project_id == project_id)
-                    .order_by(SnapshotRow.timestamp.desc())
-                    .limit(limit)
-                )
+                session.execute(q.order_by(SnapshotRow.timestamp.desc()).limit(limit))
                 .scalars()
                 .all()
             )
@@ -406,15 +449,14 @@ class ModelRepository:
     def commit_model(
         self,
         project_id: str,
-        sml_json: Dict[str, Any],
+        sml_json: Optional[Dict[str, Any]] = None,
         tag: Optional[str] = None,
         status: str = "success",
         duration_ms: Optional[int] = None,
         initiated_by: str = "cli",
         run_id: Optional[str] = None,
-        connector_id: Optional[str] = None,
-        trigger: Optional[str] = None,
         sync_mode: str = "copy",
+        error_message: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """Commit a new version of the model.
 
@@ -427,12 +469,13 @@ class ModelRepository:
         head = self.get_head(project_id)
 
         changes: List[ModelChange] = []
-        if head:
+        # Only compute diffs when we actually have an extracted snapshot.
+        if head and sml_json:
             changes = _compute_diff(head.sml_blob, sml_json)
             if not changes and not tag:
                 logger.info("No changes detected. Skipping commit.")
                 return False, head.snapshot_id
-        else:
+        elif not head:
             logger.info("No previous history. Initial commit.")
 
         snapshot_id = str(uuid.uuid4())
@@ -445,14 +488,11 @@ class ModelRepository:
                     project_id=project_id,
                     timestamp=timestamp,
                     version_tag=tag,
-                    sml_blob=_serialize_sml_blob(sml_json),
+                    sml_blob=_payload_for_snapshot(status, sml_json),
                     status=status,
                     duration_ms=duration_ms,
-                    error_message=None,
-                    initiated_by=initiated_by,
+                    error_message=error_message,
                     run_id=run_id,
-                    connector_id=connector_id,
-                    trigger=trigger,
                     sync_mode=sync_mode,
                 )
             )
@@ -480,6 +520,33 @@ class ModelRepository:
             "Committed snapshot %s with %d changes (sync_mode=%s)", snapshot_id, len(changes), sync_mode
         )
         return True, snapshot_id
+
+    def update_snapshot_status(
+        self,
+        snapshot_id: str,
+        status: str,
+        error_message: Optional[str] = None,
+    ) -> bool:
+        """Update the persisted status for an existing snapshot."""
+        with self._session() as session:
+            values: Dict[str, Any] = {"status": status, "error_message": error_message}
+            if str(status or "").strip().lower() == "failed":
+                values["sml_blob"] = None
+            result = session.execute(
+                update(SnapshotRow)
+                .where(SnapshotRow.snapshot_id == snapshot_id)
+                .values(**values)
+            )
+            session.commit()
+
+        updated = bool(getattr(result, "rowcount", 0))
+        if not updated:
+            logger.warning(
+                "Snapshot %s not found while updating status to %s",
+                snapshot_id,
+                status,
+            )
+        return updated
 
     def rollback(
         self,

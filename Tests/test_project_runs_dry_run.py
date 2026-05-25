@@ -340,3 +340,77 @@ def test_latest_identifier_diagnostics_ignores_stale_older_runs(monkeypatch):
 
     diagnostics = pri._compat_latest_identifier_diagnostics("project-1")
     assert diagnostics == []
+
+
+def test_capture_snapshots_strips_runtime_metadata(monkeypatch):
+    def has_runtime_keys(value):
+        runtime_keys = {"initiated_by", "connector_id", "trigger", "trigger_by"}
+
+        if isinstance(value, dict):
+            for key, child in value.items():
+                normalized = str(key or "").strip().lower().replace(" ", "_").replace("-", "_")
+                if normalized in runtime_keys:
+                    return True
+                if has_runtime_keys(child):
+                    return True
+        elif isinstance(value, list):
+            for item in value:
+                if has_runtime_keys(item):
+                    return True
+        return False
+
+    monkeypatch.setattr(pri, "_compat_save_store", lambda: None)
+    monkeypatch.setattr(pri, "_compat_project_snapshots", {"project-1": []})
+    monkeypatch.setattr(pri, "_compat_snapshot_groups", {"project-1": []})
+    monkeypatch.setattr(pri, "_compat_selected_intermediate_format", lambda _project_cfg: "sml")
+    monkeypatch.setattr(
+        pri,
+        "_compat_latest_sml_state",
+        lambda _project_id, _preferred_snapshot_id="": {
+            "unique_name": "demo",
+            "initiated_by": "api",
+            "datasets": [
+                {
+                    "unique_name": "Sales",
+                    "connector_id": "source-1",
+                    "columns": [
+                        {
+                            "unique_name": "Revenue",
+                            "trigger": "manual",
+                        }
+                    ],
+                }
+            ],
+            "metrics": [
+                {
+                    "unique_name": "Total Revenue",
+                    "trigger_by": "retry",
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        pri,
+        "_compat_connector_descriptors",
+        lambda _project_cfg: {
+            "source": {"connector_type": "fabric", "connector_identifier": "source-1"},
+            "targets": [
+                {"target_id": "target-1", "connector_type": "snowflake", "connector_identifier": "target-1"},
+            ],
+        },
+    )
+
+    run = {"id": "run-1", "run_id": "run-1", "sync_mode": "copy"}
+    pri._compat_capture_snapshots_for_run(
+        project_id="project-1",
+        run=run,
+        project_cfg="project_name: demo\n",
+        stage="before",
+    )
+
+    assert run["before_src_snapshot_id"]
+    assert run["before_target_snapshot_ids"]
+
+    snapshots = pri._compat_project_snapshots["project-1"]
+    assert snapshots
+    assert all(not has_runtime_keys(snapshot.get("state")) for snapshot in snapshots)

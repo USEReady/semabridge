@@ -347,8 +347,8 @@ class SnapshotRow(Base):
     __tablename__ = "snapshots"
     __table_args__ = (
         Index("ix_snapshots_project_ts", "project_id", "timestamp"),
-        Index("ix_snapshots_connector", "connector_id"),
-        Index("ix_snapshots_trigger", "trigger"),
+        # Composite index for common queries that filter by project and status
+        Index("ix_snapshots_project_status_ts", "project_id", "status", "timestamp"),
     )
 
     snapshot_id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -361,11 +361,8 @@ class SnapshotRow(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="success")
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    initiated_by: Mapped[str] = mapped_column(String(20), nullable=False, default="cli")
     run_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
-    connector_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
-    trigger: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     sync_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="copy")
 
     # Relationships

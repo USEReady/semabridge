@@ -3,7 +3,7 @@ Migration to add retention_policies table and update snapshots schema.
 
 This migration:
 1. Creates the retention_policies table
-2. Adds connector_id and trigger columns to snapshots table
+2. Ensures the snapshots table retains only the supported schema
 3. Creates indexes for performance
 """
 
@@ -36,24 +36,14 @@ def migrate(db_path: str):
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS ix_retention_project ON retention_policies(project_id)")
         
-        # 2. Add connector_id and trigger to snapshots if not exists
+        # 2. Ensure snapshots only carries supported fields
         logger.info("Updating snapshots table...")
         
         # Check if columns already exist
         cursor.execute("PRAGMA table_info(snapshots)")
         columns = [row[1] for row in cursor.fetchall()]
-        
-        if 'connector_id' not in columns:
-            cursor.execute("ALTER TABLE snapshots ADD COLUMN connector_id TEXT")
-            logger.info("Added connector_id column to snapshots")
-        
-        if 'trigger' not in columns:
-            cursor.execute("ALTER TABLE snapshots ADD COLUMN trigger TEXT")
-            logger.info("Added trigger column to snapshots")
-        
+
         # Create indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS ix_snapshots_connector ON snapshots(connector_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS ix_snapshots_trigger ON snapshots(trigger)")
         cursor.execute("CREATE INDEX IF NOT EXISTS ix_snapshots_project_ts ON snapshots(project_id, timestamp)")
         
         conn.commit()

@@ -688,6 +688,7 @@ def _compat_project_payload(project_id: str, payload: dict) -> Dict[str, Any]:
     return {
         "id": project_id,
         "project_id": project_id,
+        "semantic_name": project_name,
         "display_name": project_name,
         "name": project_name,
         "description": payload.get("description") or "",
