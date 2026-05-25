@@ -5,7 +5,12 @@ const TOKEN_KEY = 'semabridge-token';
 const FABRIC_TOKEN_KEY = 'semabridge-fabric-token';
 const FABRIC_TOKEN_EXPIRES_KEY = 'semabridge-fabric-token-expires';
 const API_CACHE_TTL_MS = 2 * 60 * 1000;
+const API_REQUEST_TIMEOUT_MS = 15000;
+const UI_LIST_REQUEST_TIMEOUT_MS = 12000;
+const PROJECT_LIST_REQUEST_TIMEOUT_MS = 20000;
+const UI_LIST_CACHE_TTL_MS = 20000;
 const apiCache = new Map();
+const inFlightApiCalls = new Map();
 
 function getCachedApiValue(cacheKey) {
     const cached = apiCache.get(cacheKey);
@@ -23,6 +28,35 @@ function setCachedApiValue(cacheKey, value, ttlMs = API_CACHE_TTL_MS) {
         expiresAt: Date.now() + ttlMs,
     });
     return value;
+}
+
+function coalesceApiCall(cacheKey, callFn) {
+    if (inFlightApiCalls.has(cacheKey)) {
+        return inFlightApiCalls.get(cacheKey);
+    }
+    const next = (async () => callFn())().finally(() => {
+        inFlightApiCalls.delete(cacheKey);
+    });
+    inFlightApiCalls.set(cacheKey, next);
+    return next;
+}
+
+function isTimeoutError(error) {
+    return /timed out/i.test(String(error?.message || ''));
+}
+
+async function withSingleTimeoutRetry(callFn, retryDelayMs = 250) {
+    try {
+        return await callFn();
+    } catch (error) {
+        if (!isTimeoutError(error)) throw error;
+        await new Promise((resolve) => window.setTimeout(resolve, retryDelayMs));
+        return callFn();
+    }
+}
+
+function isRetriableStatus(status) {
+    return status === 429 || status >= 500;
 }
 
 function extractSnapshotList(payload) {
@@ -219,6 +253,25 @@ function getFabricAuthHeaders() {
     return {};
 }
 
+export async function fetchWithTimeout(url, options = {}, timeoutMs = API_REQUEST_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        return await fetch(url, {
+            ...options,
+            signal: controller.signal,
+        });
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            throw new Error(`Request timed out after ${timeoutMs}ms`);
+        }
+        throw error;
+    } finally {
+        window.clearTimeout(timeoutId);
+    }
+}
+
 function hasValidFabricToken() {
     const token = localStorage.getItem(FABRIC_TOKEN_KEY);
     const expiresAt = parseInt(localStorage.getItem(FABRIC_TOKEN_EXPIRES_KEY) || '0', 10);
@@ -228,6 +281,39 @@ function hasValidFabricToken() {
 const AUTH_BASE = (import.meta.env.VITE_AUTH_BASE_URL || '/auth').replace(/\/$/, '');
 
 let _refreshPromise = null;
+let _lastRefreshFailureAt = 0;
+let _lastAuthExpiredEventAt = 0;
+const REFRESH_FAILURE_COOLDOWN_MS = 2000;
+const AUTH_EXPIRED_EVENT_COOLDOWN_MS = 1000;
+
+function hasJwtToken() {
+    try {
+        return Boolean(localStorage.getItem(TOKEN_KEY));
+    } catch {
+        return false;
+    }
+}
+
+function readPersistentListCache(key) {
+    try {
+        const raw = localStorage.getItem(key);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+function emitAuthExpiredOnce() {
+    const now = Date.now();
+    if (now - _lastAuthExpiredEventAt < AUTH_EXPIRED_EVENT_COOLDOWN_MS) return;
+    _lastAuthExpiredEventAt = now;
+    window.dispatchEvent(new Event('semabridge:auth-expired'));
+}
+
+function isAuthError(error) {
+    return Number(error?.status) === 401 || Number(error?.status) === 403;
+}
 
 /**
  * Attempt to refresh the JWT access token using the HttpOnly refresh cookie.
@@ -238,12 +324,15 @@ let _refreshPromise = null;
  * single promise so that parallel API calls don't each trigger separate
  * refresh/auto-login requests.
  */
-async function tryRefreshToken() {
+export async function tryRefreshToken() {
     if (_refreshPromise) return _refreshPromise;
+    if (Date.now() - _lastRefreshFailureAt < REFRESH_FAILURE_COOLDOWN_MS) {
+        return null;
+    }
     _refreshPromise = (async () => {
         try {
             // Step 1: Try refresh via HttpOnly cookie
-            const res = await fetch(`${AUTH_BASE}/refresh`, {
+            const res = await fetchWithTimeout(`${AUTH_BASE}/refresh`, {
                 method: 'POST',
                 credentials: 'include',
             });
@@ -252,12 +341,13 @@ async function tryRefreshToken() {
                 if (data.access_token) {
                     localStorage.setItem(TOKEN_KEY, data.access_token);
                     window.dispatchEvent(new CustomEvent('semabridge:token-refreshed', { detail: data.access_token }));
+                    _lastRefreshFailureAt = 0;
                     return data.access_token;
                 }
             }
 
             // Step 2: Refresh cookie failed — try auto-login (dev mode)
-            const autoRes = await fetch(`${AUTH_BASE}/auto-login`, {
+            const autoRes = await fetchWithTimeout(`${AUTH_BASE}/auto-login`, {
                 method: 'POST',
                 credentials: 'include',
             });
@@ -266,18 +356,31 @@ async function tryRefreshToken() {
                 if (autoData.access_token) {
                     localStorage.setItem(TOKEN_KEY, autoData.access_token);
                     window.dispatchEvent(new CustomEvent('semabridge:token-refreshed', { detail: autoData.access_token }));
+                    _lastRefreshFailureAt = 0;
                     return autoData.access_token;
                 }
             }
 
+            _lastRefreshFailureAt = Date.now();
             return null;
         } catch {
+            _lastRefreshFailureAt = Date.now();
             return null;
         } finally {
             _refreshPromise = null;
         }
     })();
     return _refreshPromise;
+}
+
+/**
+ * Reset the refresh-failure cooldown timer.
+ * Call this when an external recovery path (e.g. AuthContext silentRecover
+ * or the proactive timer) succeeds, so that api.js' 401 handler can
+ * immediately attempt recovery on the next failure instead of waiting.
+ */
+export function resetRefreshCooldown() {
+    _lastRefreshFailureAt = 0;
 }
 
 async function handleResponse(res) {
@@ -288,11 +391,13 @@ async function handleResponse(res) {
             if (data?.error === 'reauth_required' || data?.detail?.error === 'reauth_required') {
                 return data.detail || data;
             }
-        } catch (e) { }
+        } catch {
+            // Response may not be JSON; continue recovery flow.
+        }
 
         // Try refresh + auto-login before giving up
         const _retryFn = res._retryFn;
-        if (_retryFn) {
+        if (_retryFn && hasJwtToken()) {
             const newToken = await tryRefreshToken();
             if (newToken) {
                 // Retry the original request with the new token
@@ -304,8 +409,10 @@ async function handleResponse(res) {
         // All recovery failed — notify AuthContext to handle cleanup.
         // Important: Do NOT clear localStorage here. AuthContext's
         // silentRecover will decide whether to clear state.
-        window.dispatchEvent(new Event('semabridge:auth-expired'));
-        throw new Error('Session expired. Please log in again.');
+        emitAuthExpiredOnce();
+        const error = new Error('Session expired. Please log in again.');
+        error.status = 401;
+        throw error;
     }
     if (!res.ok) {
         const text = await res.text();
@@ -320,7 +427,9 @@ async function handleResponse(res) {
             } else if (typeof parsed?.message === 'string' && parsed.message.trim()) {
                 detail = parsed.message;
             }
-        } catch (e) { }
+        } catch {
+            // Keep raw response text detail when JSON parsing fails.
+        }
         const error = new Error(`API Error ${res.status}: ${detail}`);
         error.status = res.status;
         error.payload = parsed;
@@ -334,22 +443,48 @@ async function handleResponse(res) {
  * Authorization header when a token is stored.
  */
 async function authFetch(url, options = {}) {
+    const { timeoutMs = API_REQUEST_TIMEOUT_MS, ...restOptions } = options;
+    const method = String(restOptions.method || 'GET').toUpperCase();
+    const maxAttempts = method === 'GET' || method === 'HEAD' ? 2 : 1;
+    const retryDelayMs = 250;
     // Inject X-Fabric-Context header if workspace ID is available
     let workspaceId = null;
     let tokenPresent = false;
     try {
         workspaceId = localStorage.getItem('FABRIC_WORKSPACE_ID');
         tokenPresent = Boolean(localStorage.getItem(TOKEN_KEY));
-    } catch (e) { }
-    const headers = { ...getAuthHeaders(), ...options.headers };
+    } catch {
+        workspaceId = null;
+        tokenPresent = false;
+    }
+    const headers = { ...getAuthHeaders(), ...restOptions.headers };
     if (workspaceId) {
         headers['X-Fabric-Context'] = workspaceId;
     }
-    const res = await fetch(url, { ...options, headers, credentials: 'include' });
+    let res;
+    let lastError = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+            res = await fetchWithTimeout(url, { ...restOptions, headers, credentials: 'include' }, timeoutMs);
+            if (attempt < maxAttempts && isRetriableStatus(Number(res.status))) {
+                await new Promise((resolve) => window.setTimeout(resolve, retryDelayMs));
+                continue;
+            }
+            break;
+        } catch (error) {
+            lastError = error;
+            if (attempt < maxAttempts && isTimeoutError(error)) {
+                await new Promise((resolve) => window.setTimeout(resolve, retryDelayMs));
+                continue;
+            }
+            throw error;
+        }
+    }
+    if (!res && lastError) throw lastError;
     if (res.status === 403 && /\/projects\/[^/]+(?:\/config)?(?:\?|$)/.test(String(url))) {
         console.warn('[authFetch] Project request forbidden', {
             url,
-            method: options.method || 'GET',
+            method: restOptions.method || 'GET',
             tokenPresent,
             hasFabricContext: Boolean(workspaceId),
         });
@@ -358,7 +493,7 @@ async function authFetch(url, options = {}) {
     // Attach retry info so handleResponse can retry on 401 with a fresh token
     res._retryFn = (newToken) => {
         const retryHeaders = { ...headers, Authorization: `Bearer ${newToken}` };
-        return fetch(url, { ...options, headers: retryHeaders, credentials: 'include' });
+        return fetchWithTimeout(url, { ...restOptions, headers: retryHeaders, credentials: 'include' }, timeoutMs);
     };
     return res;
 }
@@ -390,13 +525,18 @@ export const api = {
 
     // ── Auth & Identity Vault ──────────────────────────────────────────────
     async getAccounts(connectorType = '') {
-        const cacheKey = `accounts:${String(connectorType || '').trim().toLowerCase()}`;
-        const cached = getCachedApiValue(cacheKey);
-        if (cached) return cached;
-        const query = connectorType ? `?connector_type=${encodeURIComponent(connectorType)}` : '';
-        const res = await authFetch(`${API_BASE_URL}/accounts${query}`);
-        const data = await handleResponse(res);
-        return setCachedApiValue(cacheKey, data);
+        try {
+            const cacheKey = `accounts:${String(connectorType || '').trim().toLowerCase()}`;
+            const cached = getCachedApiValue(cacheKey);
+            if (cached) return cached;
+            const query = connectorType ? `?connector_type=${encodeURIComponent(connectorType)}` : '';
+            const res = await authFetch(`${API_BASE_URL}/accounts${query}`);
+            const data = await handleResponse(res);
+            return setCachedApiValue(cacheKey, data);
+        } catch (error) {
+            if (isAuthError(error)) return [];
+            throw error;
+        }
     },
 
     async createAccount(payload) {
@@ -568,9 +708,14 @@ export const api = {
 
     // Workspaces
     async getWorkspaces() {
-        const res = await authFetch(`${API_BASE_URL}/workspaces`);
-        const data = await handleResponse(res);
-        return (data || []).map(normalizeWorkspace);
+        try {
+            const res = await authFetch(`${API_BASE_URL}/workspaces`);
+            const data = await handleResponse(res);
+            return (data || []).map(normalizeWorkspace);
+        } catch (error) {
+            if (isAuthError(error)) return [];
+            throw error;
+        }
     },
 
     // --- Repository Map ---
@@ -832,16 +977,30 @@ export const api = {
             hasFabricToken: Boolean(getFabricAuthHeaders().Authorization),
         });
 
-        const res = await fetch(`${API_BASE_URL}/connections/fabric/workspaces${query}`, {
-            headers,
-            credentials: 'include',
-        });
+        let res;
+        try {
+            res = await fetchWithTimeout(
+                `${API_BASE_URL}/connections/fabric/workspaces${query}`,
+                { headers, credentials: 'include' },
+                7000,
+            );
+        } catch (error) {
+            console.warn('[SemaBridge][FabricDiscovery] api:timeout_or_network_error', {
+                accountId: resolvedConnectionId || '(none)',
+                message: error?.message || String(error),
+            });
+            return { workspaces: [] };
+        }
 
         console.info('[SemaBridge][FabricDiscovery] api:response', {
             accountId: resolvedConnectionId || '(none)',
             status: res.status,
             ok: res.ok,
         });
+
+        if (res.status === 401 || res.status === 403) {
+            return { workspaces: [] };
+        }
 
         return handleResponse(res);
     },
@@ -953,14 +1112,33 @@ export const api = {
 
     // ── Projects ───────────────────────────────────────────────────────────
     async listProjects() {
-        const res = await authFetch(`${API_BASE_URL}/projects`);
-        const data = await handleResponse(res);
-        return dedupeProjects(data || []);
-    },
+        const cacheKey = 'projects:list';
+        const cached = getCachedApiValue(cacheKey);
+        if (cached) return cached;
 
-    async getProjectRuns(projectId) {
-        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/runs`);
-        return handleResponse(res);
+        return coalesceApiCall(cacheKey, async () => {
+            try {
+                const res = await withSingleTimeoutRetry(() =>
+                    authFetch(`${API_BASE_URL}/projects`, { timeoutMs: PROJECT_LIST_REQUEST_TIMEOUT_MS })
+                );
+                const data = await handleResponse(res);
+                const normalized = dedupeProjects(data || []);
+                return setCachedApiValue(cacheKey, normalized, UI_LIST_CACHE_TTL_MS);
+            } catch (error) {
+                if (isAuthError(error) || isTimeoutError(error)) {
+                    const fallback = getCachedApiValue(cacheKey);
+                    if (fallback != null) {
+                        return setCachedApiValue(cacheKey, fallback, 4000);
+                    }
+                    const persistent = dedupeProjects(readPersistentListCache('semabridge:cache:projects'));
+                    if (persistent.length > 0) {
+                        return setCachedApiValue(cacheKey, persistent, 4000);
+                    }
+                    throw error;
+                }
+                throw error;
+            }
+        });
     },
 
     async getProjectLineage(projectId) {
@@ -1093,27 +1271,56 @@ export const api = {
         if (filters.status) params.set('status', filters.status);
         if (filters.project_id) params.set('project_id', filters.project_id);
         const query = params.toString();
-        const res = await authFetch(`${API_BASE_URL}/jobs/runs${query ? `?${query}` : ''}`);
-        const runs = await handleResponse(res);
-        return (Array.isArray(runs) ? runs : []).map((run) => ({
-            ...run,
-            id: run?.id ?? run?.run_id,
-            run_id: run?.run_id ?? run?.id,
-            source_type: run?.source_type ?? run?.source ?? run?.adapter,
-            message: run?.message ?? run?.error ?? run?.error_message ?? '',
-            before_target_snapshot_ids: Array.isArray(run?.before_target_snapshot_ids) ? run.before_target_snapshot_ids : (run?.before_target_snapshot_ids ? [run.before_target_snapshot_ids] : []),
-            after_target_snapshot_ids: Array.isArray(run?.after_target_snapshot_ids) ? run.after_target_snapshot_ids : (run?.after_target_snapshot_ids ? [run.after_target_snapshot_ids] : []),
-            after_tgt_snapshots: Array.isArray(run?.after_tgt_snapshots) ? run.after_tgt_snapshots : (run?.after_tgt_snapshots ? [run.after_tgt_snapshots] : []),
-            error: run?.error ?? run?.error_message ?? '',
-        }));
+        const querySuffix = query ? `?${query}` : '';
+        const cacheKey = `jobs:runs:${querySuffix || 'all'}`;
+        const cached = getCachedApiValue(cacheKey);
+        if (cached) return cached;
+
+        return coalesceApiCall(cacheKey, async () => {
+            try {
+                const res = await authFetch(`${API_BASE_URL}/jobs/runs${querySuffix}`, { timeoutMs: UI_LIST_REQUEST_TIMEOUT_MS });
+                const runs = await handleResponse(res);
+                const normalized = (Array.isArray(runs) ? runs : []).map((run) => ({
+                    ...run,
+                    id: run?.id ?? run?.run_id,
+                    run_id: run?.run_id ?? run?.id,
+                    source_type: run?.source_type ?? run?.source ?? run?.adapter,
+                    message: run?.message ?? run?.error ?? run?.error_message ?? '',
+                    before_target_snapshot_ids: Array.isArray(run?.before_target_snapshot_ids) ? run.before_target_snapshot_ids : (run?.before_target_snapshot_ids ? [run.before_target_snapshot_ids] : []),
+                    after_target_snapshot_ids: Array.isArray(run?.after_target_snapshot_ids) ? run.after_target_snapshot_ids : (run?.after_target_snapshot_ids ? [run.after_target_snapshot_ids] : []),
+                    after_tgt_snapshots: Array.isArray(run?.after_tgt_snapshots) ? run.after_tgt_snapshots : (run?.after_tgt_snapshots ? [run.after_tgt_snapshots] : []),
+                    error: run?.error ?? run?.error_message ?? '',
+                }));
+                return setCachedApiValue(cacheKey, normalized, 8000);
+            } catch (error) {
+                if (isAuthError(error) || isTimeoutError(error)) {
+                    return setCachedApiValue(cacheKey, getCachedApiValue(cacheKey) || [], 3000);
+                }
+                throw error;
+            }
+        });
     },
 
     async listJobSchedules() {
-        const res = await authFetch(`${API_BASE_URL}/jobs/schedules`);
-        if (res.status === 404) {
-            return [];
-        }
-        return handleResponse(res);
+        const cacheKey = 'jobs:schedules';
+        const cached = getCachedApiValue(cacheKey);
+        if (cached) return cached;
+
+        return coalesceApiCall(cacheKey, async () => {
+            try {
+                const res = await authFetch(`${API_BASE_URL}/jobs/schedules`, { timeoutMs: UI_LIST_REQUEST_TIMEOUT_MS });
+                if (res.status === 404) {
+                    return setCachedApiValue(cacheKey, [], 8000);
+                }
+                const data = await handleResponse(res);
+                return setCachedApiValue(cacheKey, Array.isArray(data) ? data : [], 8000);
+            } catch (error) {
+                if (isAuthError(error) || isTimeoutError(error)) {
+                    return setCachedApiValue(cacheKey, getCachedApiValue(cacheKey) || [], 3000);
+                }
+                throw error;
+            }
+        });
     },
 
 
@@ -1465,9 +1672,29 @@ export const api = {
     // ── Folders ───────────────────────────────────────────────────────────
 
     async listFolders() {
-        const res = await authFetch(`${API_BASE_URL}/folders`);
-        const data = await handleResponse(res);
-        return (data || []).map(normalizeFolder);
+        const cacheKey = 'folders:list';
+        const cached = getCachedApiValue(cacheKey);
+        if (cached) return cached;
+
+        return coalesceApiCall(cacheKey, async () => {
+            try {
+                const res = await withSingleTimeoutRetry(() =>
+                    authFetch(`${API_BASE_URL}/folders`, { timeoutMs: UI_LIST_REQUEST_TIMEOUT_MS })
+                );
+                const data = await handleResponse(res);
+                const normalized = (data || []).map(normalizeFolder);
+                return setCachedApiValue(cacheKey, normalized, UI_LIST_CACHE_TTL_MS);
+            } catch (error) {
+                if (isAuthError(error) || isTimeoutError(error)) {
+                    const fallback = getCachedApiValue(cacheKey);
+                    if (fallback != null) {
+                        return setCachedApiValue(cacheKey, fallback, 4000);
+                    }
+                    throw error;
+                }
+                throw error;
+            }
+        });
     },
 
     async createFolder(data) {
@@ -1693,6 +1920,47 @@ export const api = {
             method: 'DELETE',
         });
         if (res.status === 204) return null;
+        return handleResponse(res);
+    },
+
+    async browseDirectory(pathValue = '') {
+        const params = new URLSearchParams();
+        const normalizedPath = String(pathValue || '').trim();
+        if (normalizedPath) params.set('path', normalizedPath);
+        const query = params.toString();
+        const res = await authFetch(`${API_BASE_URL}/browse-directory${query ? `?${query}` : ''}`);
+        return handleResponse(res);
+    },
+
+    // Backward-compatible local-folder APIs used by settings and wizard flows.
+    async listLocalFolders(includeInactive = false) {
+        try {
+            const params = new URLSearchParams();
+            if (includeInactive) params.set('include_inactive', 'true');
+            const query = params.toString();
+            const res = await authFetch(`${API_BASE_URL}/settings/local-folders${query ? `?${query}` : ''}`);
+            const data = await handleResponse(res);
+            return (data || []).map(normalizeLocalFolder);
+        } catch (error) {
+            if (isAuthError(error)) return [];
+            throw error;
+        }
+    },
+
+    async saveLocalFolder(payload) {
+        const res = await authFetch(`${API_BASE_URL}/settings/local-folders`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload || {}),
+        });
+        const data = await handleResponse(res);
+        return normalizeLocalFolder(data);
+    },
+
+    async getLocalFolderFiles(tagName) {
+        const tag = String(tagName || '').trim();
+        if (!tag) throw new Error('Folder tag is required.');
+        const res = await authFetch(`${API_BASE_URL}/folders/${encodeURIComponent(tag)}/files`);
         return handleResponse(res);
     },
 };

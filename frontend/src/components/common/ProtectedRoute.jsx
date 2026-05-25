@@ -8,10 +8,10 @@ import { Hexagon } from 'lucide-react';
  * Shows a loading spinner while auth state is being confirmed.
  */
 export default function ProtectedRoute() {
-  const { isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, loading, token } = useAuth();
   const location = useLocation();
 
-  if (loading) {
+  if (loading && !token) {
     return (
       <div
         className="flex items-center justify-center h-screen bg-app"
@@ -21,6 +21,12 @@ export default function ProtectedRoute() {
         <span className="text-secondary text-sm">Loading…</span>
       </div>
     );
+  }
+
+  // Optimistic route access: if a token exists, allow app routes while
+  // AuthContext finishes background profile recovery.
+  if (!isAuthenticated && token) {
+    return <Outlet />;
   }
 
   if (!isAuthenticated) {

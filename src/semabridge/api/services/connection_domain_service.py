@@ -746,6 +746,22 @@ def _resolve_fabric_access_token(
     if identity_id:
         header_bearer_token = None
 
+    # Skip validation if the header bearer token is actually our backend's JWT
+    if header_bearer_token:
+        try:
+            import base64
+            import json
+            parts = header_bearer_token.split(".")
+            if len(parts) == 3:
+                payload_b64 = parts[1]
+                payload_b64 += "=" * ((4 - len(payload_b64) % 4) % 4)
+                payload = json.loads(base64.urlsafe_b64decode(payload_b64).decode("utf-8"))
+                if "username" in payload or (payload.get("type") == "access"):
+                    logger.info("Bearer token is our backend's JWT, not a Fabric token. Skipping Phase 0.")
+                    header_bearer_token = None
+        except Exception:
+            pass
+
     if header_bearer_token:
         try:
             fabric_validator.validate_msal_token(header_bearer_token)

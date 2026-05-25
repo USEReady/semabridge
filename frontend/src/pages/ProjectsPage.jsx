@@ -1,9 +1,10 @@
 /**
  * ProjectsPage — Folder-grouped projects with HP search, drag-drop, and import/export.
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   FolderOpen, Plus, MoreVertical, Layers, Trash2, Edit3,
   Upload, Download, Play, Settings, Copy, Folder, FolderPlus,
@@ -20,6 +21,7 @@ import { api } from '../utils/api';
 import { resolveProjectSyncMode } from '../utils/syncMode';
 import React, { useContext } from 'react';
 import { SyncContext } from '../context/SyncContext';
+import { useAuth } from '../context/AuthContext';
 import { DEFAULT_FILTER_OPTIONS, useUIStore } from '../store/uiStore';
 import { SidebarSystemGroup, SidebarAddButton } from '../components/projects/SystemSidebar';
 import { hasFailures } from '../utils/statusUtils';
@@ -93,8 +95,30 @@ const SOURCE_TARGET_OPTIONS = [
   { value: 'salesforce', label: 'Salesforce' },
 ];
 
+const PROJECTS_CACHE_KEY = 'semabridge:cache:projects';
+const FOLDERS_CACHE_KEY = 'semabridge:cache:folders';
+
+function readCachedList(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCachedList(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(Array.isArray(value) ? value : []));
+  } catch {
+    // Ignore storage write errors (private mode / quota).
+  }
+}
+
 /* ─── Main Page ─── */
 export default function ProjectsPage() {
+  const { loading: authLoading, token } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [menuOpen, setMenuOpen] = useState(null);
@@ -132,21 +156,40 @@ export default function ProjectsPage() {
     data: projects = [],
     isLoading: projectsLoading,
     refetch: refetchProjects,
+    isError: projectsError,
   } = useQuery({
     queryKey: ['projects'],
-    queryFn: api.listProjects,
+    initialData: () => readCachedList(PROJECTS_CACHE_KEY),
+    staleTime: 5000,
+    retry: 0,
+    enabled: !authLoading && !!token,
+    queryFn: async () => {
+      const data = await api.listProjects();
+      writeCachedList(PROJECTS_CACHE_KEY, data);
+      return data;
+    },
   });
 
   const {
     data: folders = [],
     isLoading: foldersLoading,
     refetch: refetchFolders,
+    isError: foldersError,
   } = useQuery({
     queryKey: ['folders'],
-    queryFn: api.listFolders,
+    initialData: () => readCachedList(FOLDERS_CACHE_KEY),
+    staleTime: 5000,
+    retry: 0,
+    enabled: !authLoading && !!token,
+    queryFn: async () => {
+      const data = await api.listFolders();
+      writeCachedList(FOLDERS_CACHE_KEY, data);
+      return data;
+    },
   });
 
-  const loading = projectsLoading || foldersLoading;
+  const loading = (projectsLoading && projects.length === 0) || (foldersLoading && folders.length === 0);
+  const loadFailed = (projectsError || foldersError) && projects.length === 0 && folders.length === 0;
 
   const setProjects = useCallback((updater) => {
     queryClient.setQueryData(['projects'], (current = []) => (
@@ -233,9 +276,12 @@ export default function ProjectsPage() {
     });
   }, [setFilterOptions, targetFilters]);
 
-  const allProjectTags = [...new Set(projects.flatMap(p => p.tags || []))];
+  const allProjectTags = useMemo(
+    () => [...new Set(projects.flatMap(p => p.tags || []))],
+    [projects],
+  );
 
-  const folderFiltered = projects.filter(p => {
+  const folderFiltered = useMemo(() => projects.filter(p => {
     // Handle both folder and source selection
     if (selectedFolder !== null) {
       const selectedFolderKey = String(selectedFolder);
@@ -271,11 +317,14 @@ export default function ProjectsPage() {
     if (isTestProject) return false;
     
     return true;
-  });
+  }), [projects, selectedFolder, sourceFilter, targetFilters, tagFilters]);
 
-  const queryMode = getSmartQueryMode(searchQuery, useRegexSearch);
+  const queryMode = useMemo(
+    () => getSmartQueryMode(searchQuery, useRegexSearch),
+    [searchQuery, useRegexSearch],
+  );
 
-  const filtered = searchQuery.trim()
+  const filtered = useMemo(() => searchQuery.trim()
     ? folderFiltered.filter((p) => {
         if (queryMode.mode === 'prefix' && queryMode.strictPrefix) {
           return matchesSmartQuery(p.name || '', searchQuery, useRegexSearch);
@@ -291,7 +340,8 @@ export default function ProjectsPage() {
         ].join(' ');
         return matchesSmartQuery(haystack, searchQuery, useRegexSearch);
       })
-    : folderFiltered;
+    : folderFiltered,
+  [folderFiltered, queryMode, searchQuery, useRegexSearch]);
 
   /* ── Folder actions ── */
   const handleCreateFolder = async () => {
@@ -424,6 +474,14 @@ export default function ProjectsPage() {
   }, [setProjects]);
 
   /* ── Render ── */
+  if (loadFailed) {
+    return (
+      <div style={{ padding: '80px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+        Unable to load projects right now. Retrying may help.
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'row-reverse', height: '100%', overflow: 'hidden' }}>
 
@@ -913,49 +971,25 @@ export default function ProjectsPage() {
         </div>
 
         {/* Cards grid */}
-        <div
-          id="projects-grid-scroll"
-          onScroll={(e) => setProjectListScrollTop(e.currentTarget.scrollTop)}
-          style={{ flex: 1, overflowY: 'auto', padding: '4px 0 28px' }}
-        >
-          {loading ? (
-            <div style={{ padding: '80px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-              Loading projects…
-            </div>
-          ) : filtered.length === 0 && !searchQuery ? (
-            <EmptyState
-              icon={<FolderOpen size={26} />}
-              title="No projects yet"
-              description="Create your first project to start connecting sources and building semantic models."
-              actionLabel="Create Project"
-              onAction={() => navigate('/projects/new', { state: { fresh: true } })}
-            />
-          ) : filtered.length === 0 ? (
-            <div style={{ padding: '80px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-              No projects match "{searchQuery}"
-            </div>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))', gap: 14 }}>
-              {filtered.map(project => (
-                <ProjectCard
-                  key={project.id}
-                  project={project}
-                  menuOpen={menuOpen}
-                  onMenuToggle={setMenuOpen}
-                  onViewDetail={() => { setActiveProjectId(project.id); setDetailProject(project); }}
-                  onConfigure={() => { setActiveProjectId(project.id); navigate(`/projects/${project.id}/edit`); }}
-                  onRunNow={() => handleRunNow(project)}
-                  isRunning={runningProjectIds.has(project.id)}
-                  onDuplicate={() => handleDuplicate(project)}
-                  onExport={() => handleExportSingle(project)}
-                  onDelete={() => handleDelete(project)}
-                  onDragStart={handleDragStart}
-                  onDragEnd={handleDragEnd}
-                />
-              ))}
-            </div>
-          )}
-        </div>
+        <VirtualProjectGrid
+          filtered={filtered}
+          loading={loading}
+          searchQuery={searchQuery}
+          menuOpen={menuOpen}
+          setMenuOpen={setMenuOpen}
+          setActiveProjectId={setActiveProjectId}
+          setDetailProject={setDetailProject}
+          navigate={navigate}
+          handleRunNow={handleRunNow}
+          runningProjectIds={runningProjectIds}
+          handleDuplicate={handleDuplicate}
+          handleExportSingle={handleExportSingle}
+          handleDelete={handleDelete}
+          handleDragStart={handleDragStart}
+          handleDragEnd={handleDragEnd}
+          setProjectListScrollTop={setProjectListScrollTop}
+          projectListScrollTop={projectListScrollTop}
+        />
       </div>
 
       {/* Modals */}
@@ -1054,7 +1088,6 @@ function SidebarFolder({
   onRunAll
 }) {
   const [hover, setHover] = useState(false);
-  const failureCount = projectsInFolder.filter(p => (p.status || '').toLowerCase() === 'failed').length;
 
   return (
     <div
@@ -1135,7 +1168,7 @@ function SidebarFolder({
 }
 
 /* ─── Project Card ─── */
-function ProjectCard({
+const ProjectCard = React.memo(function ProjectCard({
   project, menuOpen, onMenuToggle,
   onViewDetail, onConfigure, onRunNow, isRunning = false, onDuplicate, onExport, onDelete,
   onDragStart, onDragEnd,
@@ -1150,17 +1183,6 @@ function ProjectCard({
       String(run.project_id) === String(project.id)
   );
   const status = myRun ? myRun.status : (project.status || 'Idle');
-  let progress = 0;
-  if (myRun) {
-    if (myRun.progress !== undefined) {
-      progress = myRun.progress;
-    } else if (myRun.stepName) {
-      const stepMatch = myRun.stepName.match(/Step\s+(\d+)/i);
-      if (stepMatch && stepMatch[1]) {
-        progress = (parseInt(stepMatch[1], 10) / 10) * 100;
-      }
-    }
-  }
   const syncInFlight = isRunning || status === 'Running';
 
   const handleSyncClick = async () => {
@@ -1289,7 +1311,7 @@ function ProjectCard({
       {/* Card progress/status bar removed; global StatusBar will be used instead */}
     </div>
   );
-}
+});
 
 function IconBtn({ title, onClick, disabled = false, children }) {
   return (
@@ -1367,6 +1389,134 @@ function ProjectMenu({ onViewDetail, onConfigure, onRunNow, onDuplicate, onExpor
             </button>
           )
       )}
+    </div>
+  );
+}
+
+/* ─── Virtual grid wrapper ─── */
+const CARD_HEIGHT = 160; // approximate card height in px
+const CARD_MIN_WIDTH = 290;
+const GRID_GAP = 14;
+
+function VirtualProjectGrid({
+  filtered, loading, searchQuery,
+  menuOpen, setMenuOpen, setActiveProjectId, setDetailProject,
+  navigate, handleRunNow, runningProjectIds,
+  handleDuplicate, handleExportSingle, handleDelete,
+  handleDragStart, handleDragEnd,
+  setProjectListScrollTop, projectListScrollTop,
+}) {
+  const scrollRef = useRef(null);
+
+  // Compute column count from container width
+  const [colCount, setColCount] = useState(3);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const update = () => {
+      const w = el.clientWidth;
+      setColCount(Math.max(1, Math.floor((w + GRID_GAP) / (CARD_MIN_WIDTH + GRID_GAP))));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Build rows from flat list
+  const rows = useMemo(() => {
+    const out = [];
+    for (let i = 0; i < filtered.length; i += colCount) {
+      out.push(filtered.slice(i, i + colCount));
+    }
+    return out;
+  }, [filtered, colCount]);
+
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => CARD_HEIGHT + GRID_GAP,
+    overscan: 4,
+  });
+
+  // Restore scroll position
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !Number.isFinite(projectListScrollTop)) return;
+    el.scrollTop = projectListScrollTop;
+  }, [projectListScrollTop, loading]);
+
+  if (loading) {
+    return (
+      <div style={{ padding: '80px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+        Loading projects…
+      </div>
+    );
+  }
+  if (filtered.length === 0 && !searchQuery) {
+    return (
+      <EmptyState
+        icon={<FolderOpen size={26} />}
+        title="No projects yet"
+        description="Create your first project to start connecting sources and building semantic models."
+        actionLabel="Create Project"
+        onAction={() => navigate('/projects/new', { state: { fresh: true } })}
+      />
+    );
+  }
+  if (filtered.length === 0) {
+    return (
+      <div style={{ padding: '80px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+        No projects match "{searchQuery}"
+      </div>
+    );
+  }
+
+  return (
+    <div
+      id="projects-grid-scroll"
+      ref={scrollRef}
+      onScroll={(e) => setProjectListScrollTop(e.currentTarget.scrollTop)}
+      style={{ flex: 1, overflowY: 'auto', padding: '4px 0 28px' }}
+    >
+      <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
+        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+          const rowProjects = rows[virtualRow.index];
+          return (
+            <div
+              key={virtualRow.key}
+              style={{
+                position: 'absolute',
+                top: virtualRow.start,
+                left: 0,
+                right: 0,
+                display: 'grid',
+                gridTemplateColumns: `repeat(${colCount}, minmax(0, 1fr))`,
+                gap: GRID_GAP,
+                paddingBottom: GRID_GAP,
+              }}
+            >
+              {rowProjects.map(project => (
+                <ProjectCard
+                  key={project.id}
+                  project={project}
+                  menuOpen={menuOpen}
+                  onMenuToggle={setMenuOpen}
+                  onViewDetail={() => { setActiveProjectId(project.id); setDetailProject(project); }}
+                  onConfigure={() => { setActiveProjectId(project.id); navigate(`/projects/${project.id}/edit`); }}
+                  onRunNow={() => handleRunNow(project)}
+                  isRunning={runningProjectIds.has(project.id)}
+                  onDuplicate={() => handleDuplicate(project)}
+                  onExport={() => handleExportSingle(project)}
+                  onDelete={() => handleDelete(project)}
+                  onDragStart={handleDragStart}
+                  onDragEnd={handleDragEnd}
+                />
+              ))}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

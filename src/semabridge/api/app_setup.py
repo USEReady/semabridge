@@ -545,7 +545,12 @@ class RequestResponseLoggingMiddleware(BaseHTTPMiddleware):
 
 
 def configure_app(app: FastAPI) -> FastAPI:
-    # Middleware stays centralized here so main.py only wires the app together.
+    # Starlette processes add_middleware() in REVERSE order: last-added runs first.
+    # We want the execution order: CORSMiddleware → Logging → AuthMiddleware
+    # So we add them in reverse: Auth first, Logging second, CORS last.
+    if AuthMiddleware is not None:
+        app.add_middleware(AuthMiddleware)
+    app.add_middleware(RequestResponseLoggingMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -558,7 +563,4 @@ def configure_app(app: FastAPI) -> FastAPI:
         allow_methods=['*'],
         allow_headers=['*'],
     )
-    app.add_middleware(RequestResponseLoggingMiddleware)
-    if AuthMiddleware is not None:
-        app.add_middleware(AuthMiddleware)
     return app

@@ -41,3 +41,6 @@ project_id: proj-sync
 display_name: sync
 target:
   type: snowflake
+owner_user_id: '1'
+project_metadata:
+  owner_user_id: '1'

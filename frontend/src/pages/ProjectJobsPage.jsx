@@ -196,6 +196,7 @@ export default function ProjectJobsPage() {
 
   useEffect(() => {
     let cancelled = false;
+    let timerId;
 
     const loadPageData = async () => {
       try {
@@ -225,14 +226,18 @@ export default function ProjectJobsPage() {
       }
     };
 
-    loadPageData();
-    const intervalId = window.setInterval(() => {
-      loadPageData();
-    }, REFRESH_INTERVAL_MS);
+    const poll = async () => {
+      if (cancelled) return;
+      await loadPageData();
+      if (cancelled) return;
+      timerId = window.setTimeout(poll, REFRESH_INTERVAL_MS);
+    };
+
+    poll();
 
     return () => {
       cancelled = true;
-      window.clearInterval(intervalId);
+      window.clearTimeout(timerId);
     };
   }, []);
 

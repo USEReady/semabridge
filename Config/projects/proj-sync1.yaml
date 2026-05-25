@@ -38,3 +38,6 @@ options:
   generate_descriptions: true
 project_id: proj-sync1
 display_name: sync1
+owner_user_id: '1'
+project_metadata:
+  owner_user_id: '1'

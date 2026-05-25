@@ -517,9 +517,13 @@ def _compat_save_store() -> None:
     payload = {
         "projects": _compat_projects,
         "project_configs": _compat_project_configs,
-        "project_runs": _compat_project_runs,
-        "project_snapshots": _compat_project_snapshots,
-        "snapshot_groups": _compat_snapshot_groups,
+        # Strip large run detail blobs (summary/results/logs) — only needed
+        # for run detail views, not the list.
+        "project_runs": _strip_run_blobs(_compat_project_runs),
+        # Strip large state/config/artifact blobs before persisting — they are
+        # re-hydrated from the source on demand (snapshot detail view).
+        # This keeps the store file small and cold-start parsing fast.
+        "project_snapshots": _strip_snapshot_blobs(_compat_project_snapshots),
         "run_snapshots": _compat_run_snapshots,
         "folders": _compat_folders,
         "mappings": _compat_mappings,
@@ -538,6 +542,50 @@ def _compat_clear_project_schedule(project_id: str) -> None:
     _compat_save_store()
 
 
+_SNAPSHOT_BLOB_KEYS = frozenset({"state", "project_config_yaml", "artifact"})
+_RUN_BLOB_KEYS = frozenset({"summary", "results", "logs", "stage_states"})
+
+
+def _strip_snapshot_blobs(snapshots_by_project: dict) -> dict:
+    """Remove large state/config/artifact blobs from snapshot list entries.
+
+    These fields are only needed for snapshot detail/compare views and are
+    fetched on-demand via get_snapshot_content_compat / compare_project_snapshots_compat.
+    Keeping them in the in-memory list inflates the compat store to 6+ MB and
+    causes slow cold-start JSON parsing on every process restart.
+    """
+    stripped: dict = {}
+    for pid, snaps in snapshots_by_project.items():
+        if not isinstance(snaps, list):
+            stripped[pid] = snaps
+            continue
+        stripped[pid] = [
+            {k: v for k, v in snap.items() if k not in _SNAPSHOT_BLOB_KEYS}
+            if isinstance(snap, dict) else snap
+            for snap in snaps
+        ]
+    return stripped
+
+
+def _strip_run_blobs(runs_by_project: dict) -> dict:
+    """Remove large summary/results/logs blobs from run list entries.
+
+    These fields are only needed for run detail views. Stripping them from
+    the in-memory list keeps the compat store small and cold-start fast.
+    """
+    stripped: dict = {}
+    for pid, runs in runs_by_project.items():
+        if not isinstance(runs, list):
+            stripped[pid] = runs
+            continue
+        stripped[pid] = [
+            {k: v for k, v in run.items() if k not in _RUN_BLOB_KEYS}
+            if isinstance(run, dict) else run
+            for run in runs
+        ]
+    return stripped
+
+
 def _compat_load_store() -> None:
     global _compat_store_loaded
     if _compat_store_loaded:
@@ -549,15 +597,26 @@ def _compat_load_store() -> None:
         return
 
     try:
+        import time as _time
+        _t0 = _time.perf_counter()
         data = json.loads(p.read_text(encoding="utf-8")) or {}
+        logger.debug(
+            "Compat store loaded in %.3fs (%.1f KB)",
+            _time.perf_counter() - _t0,
+            p.stat().st_size / 1024,
+        )
         if isinstance(data.get("projects"), dict):
             _compat_projects.update(data.get("projects") or {})
         if isinstance(data.get("project_configs"), dict):
             _compat_project_configs.update(data.get("project_configs") or {})
         if isinstance(data.get("project_runs"), dict):
-            _compat_project_runs.update(data.get("project_runs") or {})
+            _compat_project_runs.update(
+                _strip_run_blobs(data.get("project_runs") or {})
+            )
         if isinstance(data.get("project_snapshots"), dict):
-            _compat_project_snapshots.update(data.get("project_snapshots") or {})
+            _compat_project_snapshots.update(
+                _strip_snapshot_blobs(data.get("project_snapshots") or {})
+            )
         if isinstance(data.get("snapshot_groups"), dict):
             _compat_snapshot_groups.update(data.get("snapshot_groups") or {})
         if isinstance(data.get("run_snapshots"), dict):

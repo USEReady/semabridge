@@ -98,6 +98,31 @@ def test_is_project_owned_by_user_uses_direct_owner_only(monkeypatch):
     assert pos.is_project_owned_by_user("proj-1", "8", log_denied=False) is False
 
 
+def test_is_project_owned_by_user_dynamic_backfill(monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    project = {"id": "proj-unowned", "project_id": "proj-unowned", "name": "Unowned"}
+    persist_calls = []
+
+    monkeypatch.setattr(
+        pos,
+        "ensure_project_owner",
+        lambda project_id: {
+            "project": project,
+            "owner_user_id": None,
+            "ownership_source": "unresolved",
+            "recovered": False,
+        },
+    )
+    monkeypatch.setattr(
+        pos,
+        "_persist_project_owner",
+        lambda project_id, proj, user_id, source: persist_calls.append((project_id, user_id, source)),
+    )
+
+    assert pos.is_project_owned_by_user("proj-unowned", "42") is True
+    assert persist_calls == [("proj-unowned", "42", "dynamic_backfill")]
+
+
 def test_project_run_route_requires_owned_project_and_injects_user_id(monkeypatch):
     captured = {}
 

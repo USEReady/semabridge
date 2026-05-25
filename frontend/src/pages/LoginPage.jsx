@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Hexagon, Eye, EyeOff, LogIn, UserPlus, AlertCircle } from 'lucide-react';
 
@@ -8,7 +8,7 @@ import { Hexagon, Eye, EyeOff, LogIn, UserPlus, AlertCircle } from 'lucide-react
  * After successful login, redirects to the originally requested page (or /explore).
  */
 export default function LoginPage() {
-  const { login, register, error, clearError, loading } = useAuth();
+  const { login, register, error, clearError, loading, isAuthenticated, token } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const from = typeof location.state?.from === 'string'
@@ -22,6 +22,10 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
+
+  if (isAuthenticated) {
+    return <Navigate to={from} replace />;
+  }
 
   const switchMode = (newMode) => {
     setMode(newMode);
@@ -53,7 +57,7 @@ export default function LoginPage() {
     }
   };
 
-  if (loading) {
+  if (loading && !token) {
     return (
       <div className="flex items-center justify-center h-screen bg-app">
         <div className="flex flex-col items-center gap-3">

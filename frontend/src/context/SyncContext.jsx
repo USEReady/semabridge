@@ -1,12 +1,20 @@
 import React, { createContext, useState, useEffect } from 'react';
 import { api } from '../utils/api';
+import { useAuth } from './AuthContext';
 
 export const SyncContext = createContext();
+const ACTIVE_POLL_MS = 5000;
+const BACKGROUND_POLL_MS = 15000;
 
 export const SyncProvider = ({ children }) => {
   const [activeRuns, setActiveRuns] = useState([]);
+  const { token } = useAuth();
 
   useEffect(() => {
+    if (!token) {
+      return undefined;
+    }
+
     let timerId;
     let isMounted = true;
     let consecutiveErrors = 0;
@@ -17,7 +25,8 @@ export const SyncProvider = ({ children }) => {
         if (isMounted) {
           consecutiveErrors = 0; // Reset on success
           setActiveRuns(data);
-          timerId = setTimeout(pollGlobalRuns, 1500);
+          const interval = document.hidden ? BACKGROUND_POLL_MS : ACTIVE_POLL_MS;
+          timerId = setTimeout(pollGlobalRuns, interval);
         }
       } catch (error) {
         // Silently handle auth-related errors during polling.
@@ -42,7 +51,7 @@ export const SyncProvider = ({ children }) => {
       isMounted = false;
       clearTimeout(timerId);
     };
-  }, []);
+  }, [token]);
 
   return (
     <SyncContext.Provider value={{ activeRuns }}>

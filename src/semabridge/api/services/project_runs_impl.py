@@ -50,6 +50,31 @@ def _compat_parse_project_cfg_dict(project_cfg: str) -> Dict[str, Any]:
         return {}
 
 
+def _compat_load_snapshot_state_from_orm(snapshot_id: str) -> Any:
+    """Load sml_blob/state for a single snapshot from the ORM (on-demand).
+
+    State blobs are stripped from the in-memory compat store to keep the
+    store file small and cold-start parsing fast. This function fetches the
+    blob from the database only when a detail/compare view actually needs it.
+    Returns the raw value (str or dict) or an empty dict on failure.
+    """
+    try:
+        from semabridge.repository.orm.models import SnapshotRow
+        from sqlalchemy import select
+        from semabridge.repository.orm.session_factory import db_manager
+
+        with db_manager.get_session() as session:
+            row = session.execute(
+                select(SnapshotRow.sml_blob).where(
+                    SnapshotRow.snapshot_id == snapshot_id
+                )
+            ).scalar_one_or_none()
+        return row or {}
+    except Exception as exc:
+        logger.debug("ORM snapshot state load skipped for %s: %s", snapshot_id, exc)
+        return {}
+
+
 def _compat_source_model_names_from_project_cfg(project_cfg: str) -> List[str]:
     parsed = _compat_parse_project_cfg_dict(project_cfg)
     source_cfg = parsed.get("source") if isinstance(parsed.get("source"), dict) else {}
@@ -519,8 +544,81 @@ async def list_project_snapshots_compat(
     limit: int = Query(default=200, ge=1, le=500),
 ):
     _compat_ensure_loaded()
+    cached_snaps = _compat_project_snapshots.get(project_id, [])
+    if not cached_snaps:
+        try:
+            import json
+            from semabridge.repository.orm.models import SnapshotRow
+            from sqlalchemy import select
+            from semabridge.repository.orm.session_factory import db_manager
+
+            with db_manager.get_session() as session:
+                stmt = (
+                    select(SnapshotRow)
+                    .where(SnapshotRow.project_id == project_id)
+                    .where(SnapshotRow.deleted_at == None)
+                    .order_by(SnapshotRow.timestamp.desc())
+                    .limit(limit)
+                )
+                db_rows = session.execute(stmt).scalars().all()
+                
+                cached_snaps = []
+                for row in db_rows:
+                    state_val = {}
+                    if row.sml_blob:
+                        try:
+                            state_val = json.loads(row.sml_blob) if isinstance(row.sml_blob, str) else row.sml_blob
+                        except Exception:
+                            pass
+                    
+                    # Default values
+                    snap_role = "source"
+                    system_role = "SOURCE"
+                    snap_stage = "manual"
+                    connector = "fabric"
+                    snapshot_origin = "MANUAL"
+                    snapshot_group_id = None
+                    project_cfg = ""
+                    
+                    if isinstance(state_val, dict):
+                        snap_role = state_val.get("role", snap_role)
+                        system_role = state_val.get("system_role", system_role)
+                        snap_stage = state_val.get("stage", snap_stage)
+                        connector = state_val.get("connector") or state_val.get("source_type") or connector
+                        snapshot_origin = state_val.get("snapshot_origin", snapshot_origin)
+                        snapshot_group_id = state_val.get("snapshot_group_id", snapshot_group_id)
+                        project_cfg = state_val.get("project_config_yaml", project_cfg)
+                        
+                    snap_data = {
+                        "snapshot_id": row.snapshot_id,
+                        "project_id": row.project_id,
+                        "run_id": row.run_id,
+                        "stage": snap_stage,
+                        "role": snap_role,
+                        "timing": None,
+                        "target_index": None,
+                        "target_id": None,
+                        "connector": connector,
+                        "intermediate_format": "sml",
+                        "state": state_val,
+                        "snapshot_origin": snapshot_origin,
+                        "snapshot_group_id": snapshot_group_id,
+                        "system_role": system_role,
+                        "project_config_yaml": project_cfg,
+                        "created_at": row.timestamp.isoformat() if row.timestamp else _compat_now_iso(),
+                        "is_pinned": False,
+                        "tag": row.version_tag or "",
+                        "comment": "",
+                    }
+                    cached_snaps.append(snap_data)
+                
+                if cached_snaps:
+                    _compat_project_snapshots[project_id] = cached_snaps
+        except Exception as exc:
+            logger.error("Failed to retrieve snapshots from ORM: %s", exc)
+
     rows: List[Dict[str, Any]] = []
-    for row in _compat_project_snapshots.get(project_id, []):
+    for row in cached_snaps:
         if not isinstance(row, dict):
             continue
         if role and str(row.get("role") or row.get("system_role") or "").lower() != str(role).lower():
@@ -602,11 +700,15 @@ async def compare_project_snapshots_compat(
     if not to_row:
         raise HTTPException(status_code=404, detail="to_snapshot_id not found")
     left_state = from_row.get("state")
+    if not left_state:
+        left_state = _compat_load_snapshot_state_from_orm(from_snapshot_id)
     if isinstance(left_state, str):
         try: left_state = json.loads(left_state)
         except: left_state = {}
-        
+
     right_state = to_row.get("state")
+    if not right_state:
+        right_state = _compat_load_snapshot_state_from_orm(to_snapshot_id)
     if isinstance(right_state, str):
         try: right_state = json.loads(right_state)
         except: right_state = {}
@@ -2057,8 +2159,10 @@ async def preview_restore_compat(project_id: str, snapshot_id: str) -> Dict[str,
             
     if not target_snap:
         raise HTTPException(status_code=404, detail="Target snapshot not found")
-        
+
     target_state = target_snap.get("state") or {}
+    if not target_state:
+        target_state = _compat_load_snapshot_state_from_orm(snapshot_id)
     if isinstance(target_state, str):
         try: target_state = json.loads(target_state)
         except: target_state = {}
@@ -2211,12 +2315,16 @@ async def get_snapshot_content_compat(project_id: str, snapshot_id: str) -> Dict
     snap = next((s for s in snaps if s.get("snapshot_id") == snapshot_id), None)
     if not snap:
         raise HTTPException(status_code=404, detail="Snapshot not found")
-    
+
+    # State blobs are stripped from the in-memory list to keep the compat store
+    # small. Load from ORM on demand when the blob is absent.
     state = snap.get("sml_blob") or snap.get("state") or {}
+    if not state:
+        state = _compat_load_snapshot_state_from_orm(snapshot_id)
     if isinstance(state, str):
         try: state = json.loads(state)
         except: state = {}
-        
+
     return {
         "snapshot_id": snapshot_id,
         "project_id": project_id,

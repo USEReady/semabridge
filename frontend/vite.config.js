@@ -27,10 +27,33 @@ export default defineConfig(({ mode }) => {
           target,
           changeOrigin: true,
         },
+        '/ws': {
+          target,
+          changeOrigin: true,
+          ws: true,
+        },
       },
     },
     build: {
       chunkSizeWarningLimit: 750,
+      rollupOptions: {
+        output: {
+          // Split vendor libraries into stable, cacheable chunks
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              // Heavy graph/layout libs get their own chunk
+              if (id.includes('dagre') || id.includes('@dagrejs')) return 'vendor-dagre'
+              if (id.includes('@xyflow') || id.includes('reactflow')) return 'vendor-reactflow'
+              // Search lib
+              if (id.includes('minisearch')) return 'vendor-search'
+              // React core
+              if (id.includes('react-dom') || id.includes('react/')) return 'vendor-react'
+              // Everything else in node_modules
+              return 'vendor'
+            }
+          },
+        },
+      },
     },
   }
 })

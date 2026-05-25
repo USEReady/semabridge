@@ -496,16 +496,6 @@ async def list_projects_compat():
         if p.get("is_transient_preview") or pid == "preview" or pid.startswith("preview-"):
             continue
         
-        # Filter out auto-generated test projects
-        project_name = str(p.get("name") or "").strip().lower()
-        is_test = (
-            project_name in ("test", "teste", "test project") or
-            project_name == "fabricmodel"  # Auto-generated default
-        )
-        if is_test:
-            # Skip test/auto-generated projects
-            continue
-        
         current = deduped.get(semantic_key)
         if not current:
             deduped[semantic_key] = _project_with_semantic_models(p, pid)

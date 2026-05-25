@@ -729,6 +729,8 @@ export default function VersionControlPage() {
     const [versions, setVersions] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isProjectsLoading, setIsProjectsLoading] = useState(false);
+    const [projectsLoadError, setProjectsLoadError] = useState('');
+    const [versionsLoadError, setVersionsLoadError] = useState('');
     const [selectedRun, setSelectedRun] = useState(null);
     const [diffSelection, setDiffSelection] = useState([]);
     const [diffData, setDiffData] = useState(null);
@@ -755,29 +757,38 @@ export default function VersionControlPage() {
     const setSearchQuery = (v) => setVcCache({ searchQuery: typeof v === 'function' ? v(searchQuery) : v });
     const setShowPinnedOnly = (v) => setVcCache({ showPinnedOnly: typeof v === 'function' ? v(showPinnedOnly) : v });
     const { addLog } = useLogs();
+    const normalizeId = useCallback((value) => String(value ?? '').trim(), []);
 
     const loadProjects = useCallback(async () => {
         setIsProjectsLoading(true);
+        setProjectsLoadError('');
         try {
             const data = await api.listProjects();
-            setProjects(data || []);
-            if (!selectedProjectId && data.length > 0) {
-                setSelectedProjectId(data[0].id);
+            const projectList = Array.isArray(data) ? data : [];
+            setProjects(projectList);
+
+            const currentId = normalizeId(selectedProjectId);
+            const hasCurrent = currentId && projectList.some((p) => normalizeId(p?.id ?? p?.project_id) === currentId);
+            if (projectList.length > 0 && !hasCurrent) {
+                setSelectedProjectId(normalizeId(projectList[0].id ?? projectList[0].project_id));
             }
         } catch (err) {
+            setProjectsLoadError(err?.message || 'Failed to load projects');
             addLog('error', 'VC', 'Failed to load projects: ' + err.message);
         } finally {
             setIsProjectsLoading(false);
         }
-    }, [selectedProjectId, addLog]);
+    }, [selectedProjectId, addLog, normalizeId]);
 
     const loadVersions = useCallback(async (projId) => {
-        if (!projId) return;
+        const projectId = normalizeId(projId);
+        if (!projectId) return;
         setIsLoading(true);
+        setVersionsLoadError('');
         try {
             const [runs, vcStats] = await Promise.all([
-                api.getProjectRuns(projId),
-                api.apiFetch ? api.apiFetch(`/projects/${projId}/stats`) : Promise.resolve(null)
+                api.getProjectRuns(projectId),
+                api.apiFetch ? api.apiFetch(`/projects/${projectId}/stats`) : Promise.resolve(null)
             ]);
             
             const sorted = (Array.isArray(runs) ? runs : []).sort((a, b) => new Date(b.started_at || 0) - new Date(a.started_at || 0));
@@ -797,11 +808,12 @@ export default function VersionControlPage() {
                 return prev;
             });
         } catch (err) {
+            setVersionsLoadError(err?.message || 'Failed to load version history');
             addLog('error', 'VC', 'Load failed: ' + err.message);
         } finally {
             setIsLoading(false);
         }
-    }, [addLog]);
+    }, [addLog, normalizeId]);
 
     useEffect(() => {
         loadProjects();
@@ -919,7 +931,9 @@ export default function VersionControlPage() {
         }
     };
 
-    const selectedProject = projects.find(p => p.id === selectedProjectId);
+    const selectedProject = projects.find(
+        (p) => normalizeId(p?.id ?? p?.project_id) === normalizeId(selectedProjectId)
+    );
 
     return (
         <div className="p-8 max-w-[1600px] mx-auto min-h-full">
@@ -941,16 +955,24 @@ export default function VersionControlPage() {
                         </div>
 
                         <div className="space-y-4">
+                            {projectsLoadError && (
+                                <div className="p-3 rounded-xl border border-rose-500/20 bg-rose-500/10">
+                                    <p className="text-[11px] text-rose-400 font-bold mb-2">Project load blocked: {projectsLoadError}</p>
+                                    <ActionButton variant="ghost" onClick={loadProjects} className="w-full justify-center">
+                                        <RefreshCw size={13} /> Retry
+                                    </ActionButton>
+                                </div>
+                            )}
                             <div>
                                 <label className="text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-[0.1em] block mb-2 px-1">Active Project</label>
                                 <div className="relative group">
                                     <select 
-                                        value={selectedProjectId}
+                                        value={normalizeId(selectedProjectId)}
                                         onChange={(e) => setSelectedProjectId(e.target.value)}
                                         className="w-full bg-[var(--bg-surface-raised)] border border-[var(--border-main)] rounded-xl px-4 py-3 text-[13px] font-bold text-[var(--text-primary)] appearance-none cursor-pointer outline-none focus:border-[var(--accent-blue)] transition-all group-hover:bg-[var(--bg-surface)]"
                                     >
                                         {projects.map(p => (
-                                            <option key={p.id} value={p.id}>{p.name}</option>
+                                            <option key={normalizeId(p?.id ?? p?.project_id)} value={normalizeId(p?.id ?? p?.project_id)}>{p.name}</option>
                                         ))}
                                     </select>
                                     <ChevronRight size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] rotate-90 pointer-events-none" />
@@ -1035,6 +1057,18 @@ export default function VersionControlPage() {
                     
                     {viewMode === 'history' && (
                         <div className="flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                            {versionsLoadError && (
+                                <div className="p-3 rounded-xl border border-amber-500/20 bg-amber-500/10 flex items-center justify-between">
+                                    <p className="text-[11px] text-amber-300 font-bold">Version history blocked: {versionsLoadError}</p>
+                                    <ActionButton
+                                        variant="ghost"
+                                        onClick={() => loadVersions(selectedProjectId)}
+                                        className="justify-center"
+                                    >
+                                        <RefreshCw size={13} /> Retry
+                                    </ActionButton>
+                                </div>
+                            )}
                             {/* --- Selected Version Overview --- */}
                             <GlassCard className="p-8 relative overflow-hidden group">
                                 <div className="absolute top-0 right-0 w-64 h-64 blur-[100px] opacity-[0.03] -mr-32 -mt-32 bg-blue-500" />

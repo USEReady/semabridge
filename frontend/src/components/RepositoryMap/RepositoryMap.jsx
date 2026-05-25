@@ -442,6 +442,14 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         return { ...rawGraph, nodes, edges };
     };
 
+    // Stable structural key — only changes when node/edge IDs actually change,
+    // preventing Dagre from re-running on unrelated state updates.
+    const graphStructureKey = useMemo(() => {
+        const nodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
+        const edges = Array.isArray(graphData?.edges) ? graphData.edges : [];
+        return nodes.map(n => n.id).join(',') + '|' + edges.map(e => `${e.source}-${e.target}`).join(',');
+    }, [graphData]);
+
     const renderedGraphData = useMemo(() => {
         // Use diff graph if in diff mode
         let baseGraph = graphData;
@@ -457,7 +465,8 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         }
         // For non-ER mode, keep original positions (e.g., force layout)
         return baseGraph;
-    }, [diffMode, diffReport, graphData, erMode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [diffMode, diffReport, graphStructureKey, erMode]);
 
     const connectorOptions = useMemo(() => {
         const nodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];

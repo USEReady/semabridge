@@ -63,7 +63,7 @@ dev:
 
 run:
 	@echo "$(YELLOW)Starting Uvicorn server on http://127.0.0.1:8001...$(NC)"
-	uv run uvicorn semabridge.api.main:app --host 127.0.0.1 --port 8001 --reload
+	uv run uvicorn semabridge.api.main:app --host 127.0.0.1 --port 8001 --reload --reload-dir src
 
 run-frontend:
 	@echo "$(YELLOW)Starting Vite frontend dev server...$(NC)"

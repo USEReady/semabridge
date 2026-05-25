@@ -19,3 +19,6 @@ options:
   generate_descriptions: true
 project_id: proj-fd
 display_name: fd
+owner_user_id: '1'
+project_metadata:
+  owner_user_id: '1'

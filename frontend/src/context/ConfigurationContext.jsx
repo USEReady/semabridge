@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { api } from '../utils/api';
+import { useAuth } from './AuthContext';
 
 const ConfigurationContext = createContext();
 
@@ -9,6 +10,7 @@ export function ConfigurationProvider({ children }) {
   const [ghostConfig, setGhostConfig] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+  const { isAuthenticated, token } = useAuth();
 
   const fetchConfig = async () => {
     setIsLoading(true);
@@ -42,8 +44,16 @@ export function ConfigurationProvider({ children }) {
   };
 
   useEffect(() => {
-    fetchConfig();
-  }, []);
+    if (isAuthenticated || token) {
+      fetchConfig();
+    } else {
+      setConfig(null);
+      setGlobalConfig(null);
+      setGhostConfig(null);
+      setIsLoading(false);
+      setError(null);
+    }
+  }, [isAuthenticated, token]);
 
   return (
     <ConfigurationContext.Provider value={{
@@ -61,3 +71,4 @@ export function ConfigurationProvider({ children }) {
 }
 
 export const useConfiguration = () => useContext(ConfigurationContext);
+

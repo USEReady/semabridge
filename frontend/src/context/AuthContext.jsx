@@ -1,9 +1,13 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { clearUIStoreStorage } from '../store/uiStore';
+import { fetchWithTimeout, tryRefreshToken, resetRefreshCooldown } from '../utils/api';
 
 
 const AUTH_BASE = (import.meta.env.VITE_AUTH_BASE_URL || '/auth').replace(/\/$/, '');
 const TOKEN_KEY = 'semabridge-token';
+const AUTH_REQUEST_TIMEOUT_MS = 8000;
+const AUTH_BOOTSTRAP_RETRY_DELAY_MS = 350;
 
 const AuthContext = createContext(undefined);
 
@@ -18,6 +22,7 @@ const AuthContext = createContext(undefined);
  * have been exhausted. Uses proactive refresh to avoid 401 flashes.
  */
 export function AuthProvider({ children }) {
+  const queryClient = useQueryClient();
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY));
   const [loading, setLoading] = useState(true);
@@ -27,6 +32,7 @@ export function AuthProvider({ children }) {
   const recoveringRef = useRef(false);
   // Timer for proactive token refresh
   const refreshTimerRef = useRef(null);
+  const previousTokenRef = useRef(token);
 
   // ── helpers ──────────────────────────────────────────────────
 
@@ -44,9 +50,9 @@ export function AuthProvider({ children }) {
   /** Fetch /auth/me with current token */
   const fetchMe = useCallback(async (jwt) => {
     try {
-      const res = await fetch(`${AUTH_BASE}/me`, {
+      const res = await fetchWithTimeout(`${AUTH_BASE}/me`, {
         headers: { Authorization: `Bearer ${jwt}` },
-      });
+      }, AUTH_REQUEST_TIMEOUT_MS);
       if (!res.ok) {
         return false;
       }
@@ -63,7 +69,7 @@ export function AuthProvider({ children }) {
    * This prevents the token from ever actually expiring during use,
    * eliminating 401 flashes entirely.
    */
-  const scheduleProactiveRefresh = useCallback((jwt) => {
+  const scheduleProactiveRefresh = useCallback(function scheduleRefresh(jwt) {
     if (refreshTimerRef.current) {
       clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = null;
@@ -87,31 +93,17 @@ export function AuthProvider({ children }) {
 
       refreshTimerRef.current = setTimeout(async () => {
         try {
-          const res = await fetch(`${AUTH_BASE}/refresh`, {
-            method: 'POST',
-            credentials: 'include',
-          });
-          if (res.ok) {
-            const data = await res.json();
-            if (data.access_token) {
-              saveToken(data.access_token);
-              scheduleProactiveRefresh(data.access_token);
-              return;
-            }
+          // Delegate to api.js singleton to avoid one-time-use refresh
+          // token race conditions between this timer and 401 recovery.
+          const newToken = await tryRefreshToken();
+          if (newToken) {
+            saveToken(newToken);
+            resetRefreshCooldown();
+            scheduleRefresh(newToken);
+            return;
           }
-          // Refresh cookie failed — try auto-login silently
-          const autoRes = await fetch(`${AUTH_BASE}/auto-login`, {
-            method: 'POST',
-            credentials: 'include',
-          });
-          if (autoRes.ok) {
-            const autoData = await autoRes.json();
-            if (autoData.access_token) {
-              saveToken(autoData.access_token);
-              await fetchMe(autoData.access_token);
-              scheduleProactiveRefresh(autoData.access_token);
-            }
-          }
+          // tryRefreshToken already tried /auth/refresh + /auth/auto-login
+          // and both failed. Schedule another attempt after a short delay.
         } catch {
           // Network error — will retry on next API call
         }
@@ -119,15 +111,15 @@ export function AuthProvider({ children }) {
     } catch {
       // JWT decode failed — skip proactive refresh
     }
-  }, [saveToken, fetchMe]);
+  }, [saveToken]);
 
   /** Auto-login: create a dev user and get JWT without credentials */
   const autoLogin = useCallback(async () => {
     try {
-      const res = await fetch(`${AUTH_BASE}/auto-login`, {
+      const res = await fetchWithTimeout(`${AUTH_BASE}/auto-login`, {
         method: 'POST',
         credentials: 'include',
-      });
+      }, AUTH_REQUEST_TIMEOUT_MS);
       if (!res.ok) return false;
       const data = await res.json();
       if (data.access_token) {
@@ -142,6 +134,17 @@ export function AuthProvider({ children }) {
     }
   }, [saveToken, fetchMe, scheduleProactiveRefresh]);
 
+  const autoLoginWithRetry = useCallback(async (attempts = 2) => {
+    for (let i = 0; i < attempts; i += 1) {
+      const ok = await autoLogin();
+      if (ok) return true;
+      if (i < attempts - 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, AUTH_BOOTSTRAP_RETRY_DELAY_MS));
+      }
+    }
+    return false;
+  }, [autoLogin]);
+
   /**
    * Silent recovery: attempt to restore the session WITHOUT clearing
    * UI state first. Only clears state if ALL recovery paths fail.
@@ -154,10 +157,10 @@ export function AuthProvider({ children }) {
     try {
       // Step 1: Try refresh via HttpOnly cookie
       try {
-        const res = await fetch(`${AUTH_BASE}/refresh`, {
+        const res = await fetchWithTimeout(`${AUTH_BASE}/refresh`, {
           method: 'POST',
           credentials: 'include',
-        });
+        }, AUTH_REQUEST_TIMEOUT_MS);
         if (res.ok) {
           const data = await res.json();
           if (data.access_token) {
@@ -184,33 +187,40 @@ export function AuthProvider({ children }) {
 
   // On mount: validate existing token, or auto-login if none
   useEffect(() => {
+    let cancelled = false;
+    const markLoaded = () => {
+      if (!cancelled) setLoading(false);
+    };
+
     (async () => {
       const existingToken = localStorage.getItem(TOKEN_KEY);
-      
+
       if (existingToken) {
-        // Try the existing token
         const valid = await fetchMe(existingToken);
         if (valid) {
           scheduleProactiveRefresh(existingToken);
-          setLoading(false);
           return;
         }
-        // Token invalid — try silent recovery (don't clear state yet)
         await silentRecover();
-      } else {
-        // No token at all — auto-login
-        await autoLogin();
+        return;
       }
 
-      setLoading(false);
-    })();
+      await autoLoginWithRetry();
+    })()
+      .catch(() => {
+        // Non-blocking bootstrap: app can still render login and public UI states.
+      })
+      .finally(() => {
+        markLoaded();
+      });
 
     return () => {
+      cancelled = true;
       if (refreshTimerRef.current) {
         clearTimeout(refreshTimerRef.current);
       }
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fetchMe, silentRecover, autoLoginWithRetry]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Listen for auth events from api.js 401 handler
   useEffect(() => {
@@ -222,6 +232,7 @@ export function AuthProvider({ children }) {
     const refreshHandler = (e) => {
       const newToken = e.detail;
       saveToken(newToken);
+      resetRefreshCooldown();
       scheduleProactiveRefresh(newToken);
     };
 
@@ -233,6 +244,15 @@ export function AuthProvider({ children }) {
       window.removeEventListener('semabridge:token-refreshed', refreshHandler);
     };
   }, [silentRecover, saveToken, scheduleProactiveRefresh]);
+
+  // If token changes (auto-login / refresh / login), refetch all stale query data
+  // that may have loaded before auth became available.
+  useEffect(() => {
+    const previousToken = previousTokenRef.current;
+    if (!token || token === previousToken) return;
+    previousTokenRef.current = token;
+    queryClient.invalidateQueries();
+  }, [token, queryClient]);
 
   // ── public API ───────────────────────────────────────────────
 

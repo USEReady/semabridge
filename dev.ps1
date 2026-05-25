@@ -112,7 +112,7 @@ switch ($Command.ToLower()) {
     "run" {
         Check-Venv
         Write-Host "Starting Uvicorn server on http://127.0.0.1:8001..." -ForegroundColor Yellow
-        uv run uvicorn semabridge.api.main:app --host 127.0.0.1 --port 8001 --reload
+        uv run uvicorn semabridge.api.main:app --host 127.0.0.1 --port 8001 --reload --reload-dir src
     }
     
     "run-frontend" {

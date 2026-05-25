@@ -95,11 +95,12 @@ export function useHPSearch(items, fields, options = {}) {
   const [isSearching, setIsSearching] = useState(false);
   const [searchIndex, setSearchIndex] = useState(null);
 
-  // Build MiniSearch index whenever items or fields change
+  // Build MiniSearch index whenever items or fields change.
+  // Debounced by 150 ms so rapid item-list changes (e.g. live filter updates)
+  // don't rebuild the index on every intermediate render.
   useEffect(() => {
     let cancelled = false;
 
-    // Use a microtask to avoid blocking the render thread on large datasets
     const tid = setTimeout(() => {
       if (cancelled) return;
 
@@ -136,7 +137,7 @@ export function useHPSearch(items, fields, options = {}) {
       ms.addAll(docs);
       setSearchIndex(ms);
       setIsSearching(false);
-    }, 0);
+    }, 150); // 150 ms debounce — avoids blocking on rapid item changes
 
     return () => {
       cancelled = true;

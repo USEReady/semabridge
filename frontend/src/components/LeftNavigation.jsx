@@ -30,10 +30,10 @@ export default function LeftNavigation({ onEmergencyReset, searchQuery = '' }) {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  // 1. Initialize state from localStorage (default to floating/false for a cleaner first impression)
+  // 1. Initialize state from localStorage (default to pinned/true so the workspace opens expanded)
   const [isPinned, setIsPinned] = useState(() => {
     const saved = localStorage.getItem('semabridge_sidebar_pinned');
-    return saved !== null ? JSON.parse(saved) : false;
+    return saved !== null ? JSON.parse(saved) : true;
   });
 
   // 2. Persist to localStorage whenever it changes

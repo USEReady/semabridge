@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../utils/api';
+import { useAuth } from './AuthContext';
 
 const WorkspaceContext = createContext(null);
 
@@ -11,20 +12,27 @@ export function WorkspaceProvider({ children }) {
         () => localStorage.getItem(STORAGE_KEY) || ''
     );
     const [isLoading, setIsLoading] = useState(false);
-
-let apiLock = false;
+    const { isAuthenticated, token } = useAuth();
+    const apiLockRef = useRef(false);
 
     // Fetch workspaces from the DB-driven Fabric endpoint on every mount.
     // This keeps the workspace list aligned with the current Fabric account selection.
     useEffect(() => {
+        if (!isAuthenticated && !token) {
+            setWorkspaces([]);
+            setActiveWorkspaceId('');
+            // Do not delete STORAGE_KEY on unauthenticated logout to preserve for next login
+            return;
+        }
+
         const load = async () => {
-            if (apiLock) return;
-            apiLock = true;
+            if (apiLockRef.current) return;
+            apiLockRef.current = true;
             setIsLoading(true);
             try {
                 // Use only the DB-driven /connections/fabric/workspaces endpoint.
                 // The old /api/workspaces (settings-based) is intentionally NOT called here.
-                const fabricResponse = await api.fabricListWorkspaces().catch(() => ({ workspaces: [] }));
+                const fabricResponse = await api.fabricListWorkspaces();
                 console.log('WorkspaceContext: raw fabricListWorkspaces response:', fabricResponse);
 
                 const raw = (fabricResponse?.workspaces) || [];
@@ -65,17 +73,15 @@ let apiLock = false;
                 // else: stored ID is valid — keep it
             } catch (err) {
                 console.warn('WorkspaceContext: failed to load workspaces:', err.message);
-                setWorkspaces([]);
+                // Keep existing workspaces on network/transient failures rather than purging
             } finally {
                 setIsLoading(false);
+                apiLockRef.current = false;
             }
         };
+
         load();
-        
-        return () => {
-            apiLock = false; // reset lock if entire app unmounts
-        };
-    }, []);
+    }, [isAuthenticated, token]);
 
 
     const selectWorkspace = useCallback((id) => {

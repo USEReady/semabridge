@@ -48,17 +48,45 @@ def _normalize_snowflake_account(raw_account: str) -> str:
 def _format_pem_key(raw: str) -> str:
     """Ensure a PEM private key string has correct formatting.
 
-    Handles keys that arrive as single-line blobs or with irregular
-    whitespace from browser ``<textarea>`` inputs.
+    Handles keys that arrive as single-line blobs, with irregular whitespace
+    from browser ``<textarea>`` inputs, or with literal ``\\n`` escape
+    sequences instead of real newlines.
 
     Args:
         raw: Raw private key string (may be mangled).
 
     Returns:
         A well-formed PEM block with 64-char lines.
+
+    Raises:
+        ValueError: If the input is clearly not a PEM key (e.g. JSON blob).
     """
+    import json as _json
+
     # Strip surrounding whitespace
     raw = raw.strip()
+
+    # Detect JSON blobs — the credential store sometimes injects the entire
+    # JSON credential bundle as the key value when env-var mapping goes wrong.
+    # byte 0 == '{' (ASCII 123) is the symptom reported by cryptography.
+    if raw.startswith("{"):
+        try:
+            bundle = _json.loads(raw)
+            if isinstance(bundle, dict) and "private_key" in bundle:
+                # Unwrap the actual key from the bundle and recurse
+                return _format_pem_key(bundle["private_key"])
+        except _json.JSONDecodeError:
+            pass
+        raise ValueError(
+            "SNOWFLAKE_PRIVATE_KEY contains a JSON object instead of a PEM key. "
+            "Ensure the credential store maps only the private_key field, not the "
+            "entire credential bundle."
+        )
+
+    # Expand literal \\n escape sequences (common when keys are stored in
+    # .env files or JSON as a single-line string with escaped newlines).
+    if "\\n" in raw and "\n" not in raw:
+        raw = raw.replace("\\n", "\n")
 
     # Already looks correct — return as-is
     if raw.startswith("-----BEGIN") and "\n" in raw:

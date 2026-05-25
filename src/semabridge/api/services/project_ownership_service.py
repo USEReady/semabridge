@@ -179,12 +179,23 @@ def ensure_project_owner(project_id: str) -> Dict[str, Any]:
     pid = str(project_id or "").strip()
     project = _compat_projects.get(pid)
     if not isinstance(project, dict):
-        return {
-            "project": None,
-            "owner_user_id": None,
-            "ownership_source": "missing_project",
-            "recovered": False,
-        }
+        parsed_yaml = _parse_project_yaml_dict(pid)
+        if parsed_yaml:
+            from semabridge.api.services.project_shared import _compat_project_payload, _compat_save_store
+            project = _compat_project_payload(pid, parsed_yaml)
+            _compat_projects[pid] = project
+            try:
+                _compat_save_store()
+            except Exception as exc:
+                logger.warning("Failed to save store after modular project dynamic registration: %s", exc)
+            logger.info("[ProjectOwnership] Dynamically constructed and registered in-memory project payload for modular project %s", pid)
+        else:
+            return {
+                "project": None,
+                "owner_user_id": None,
+                "ownership_source": "missing_project",
+                "recovered": False,
+            }
 
     owner_user_id = (
         _normalize_owner_user_id(project.get("owner_user_id"))
@@ -252,6 +263,15 @@ def is_project_owned_by_user(project_id: str, user_id: str | None, *, log_denied
     context = ensure_project_owner(project_id)
     owner_user_id = context["owner_user_id"]
     if owner_user_id and owner_user_id == normalized_user_id:
+        return True
+
+    if context["project"] and (not owner_user_id or owner_user_id == "1"):
+        logger.info(
+            "[ProjectOwnership] dynamically backfilling owner_user_id=%s for unowned or default project_id=%s",
+            normalized_user_id,
+            project_id,
+        )
+        _persist_project_owner(project_id, context["project"], normalized_user_id, "dynamic_backfill")
         return True
 
     if log_denied:

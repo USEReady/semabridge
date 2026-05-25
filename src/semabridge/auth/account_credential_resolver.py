@@ -112,10 +112,23 @@ def _load_account_credentials(
             bundle = json.loads(decrypted)
 
             if isinstance(bundle, dict) and len(bundle) > 1:
-                # This is a full credential bundle — map keys to env vars
+                # This is a full credential bundle — map keys to env vars.
+                # Each key maps to a single scalar env var value.  Never
+                # inject the entire bundle JSON as the value of a single
+                # env var (e.g. SNOWFLAKE_PRIVATE_KEY must be the PEM
+                # string, not the whole JSON object).
                 for key, value in bundle.items():
                     env_var = env_map.get(key)
                     if env_var and value:
+                        # Guard: if the value is itself a dict/list (shouldn't
+                        # happen for well-formed bundles, but be defensive),
+                        # skip it rather than injecting raw JSON.
+                        if isinstance(value, (dict, list)):
+                            logger.warning(
+                                "Skipping non-scalar credential key '%s' for %s/%s",
+                                key, connector, account.tag,
+                            )
+                            continue
                         result[env_var] = str(value)
                         has_full_bundle = True
 

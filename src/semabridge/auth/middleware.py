@@ -78,6 +78,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         path = request.url.path.rstrip("/")
 
+        # CORS preflight requests (OPTIONS) must never require authentication.
+        # Browsers do not attach Authorization headers to preflight requests per
+        # the CORS specification.  Blocking them causes intermittent failures
+        # whenever the browser's preflight-response cache expires.
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         # Allow public paths unconditionally
         if path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES):
             return await call_next(request)

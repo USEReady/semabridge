@@ -1,7 +1,36 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../utils/api';
+import { useAuth } from './AuthContext';
 
 const SyncStatusContext = createContext(null);
+const RUNNING_POLL_INTERVAL_MS = 4000;
+const IDLE_POLL_INTERVAL_MS = 10000;
+const ENABLE_JOBS_SSE = String(import.meta.env.VITE_ENABLE_JOBS_SSE || '').toLowerCase() === 'true';
+
+// ---------------------------------------------------------------------------
+// SSE connection helper — falls back to polling if SSE is unavailable
+// ---------------------------------------------------------------------------
+function tryConnectSSE(onMessage, onError) {
+  if (!ENABLE_JOBS_SSE) {
+    onError();
+    return null;
+  }
+  try {
+    const url = '/api/jobs/stream';
+    const es = new EventSource(url);
+    es.onmessage = (e) => {
+      try { onMessage(JSON.parse(e.data)); } catch { /* ignore malformed frames */ }
+    };
+    es.onerror = () => {
+      es.close();
+      onError();
+    };
+    return es;
+  } catch {
+    onError();
+    return null;
+  }
+}
 
 function shallowEqualObject(a, b) {
   if (a === b) return true;
@@ -50,11 +79,6 @@ function getRunSortTimestamp(run) {
   return 0;
 }
 
-function isTransientPreviewProjectId(projectId) {
-  const normalized = String(projectId || '').trim().toLowerCase();
-  return normalized === 'preview' || normalized.startsWith('preview-');
-}
-
 export function SyncStatusProvider({ children }) {
   const [runs, setRuns] = useState([]);
   const [projectStatusById, setProjectStatusById] = useState({});
@@ -64,6 +88,7 @@ export function SyncStatusProvider({ children }) {
   const [currentProgress, setCurrentProgress] = useState(0);
   const [indeterminate, setIndeterminate] = useState(false);
   const [warning, setWarning] = useState('');
+  const { isAuthenticated, token } = useAuth();
 
   const realProgressRef = useRef(0);
   const lastRealChangeAtRef = useRef(Date.now());
@@ -71,8 +96,140 @@ export function SyncStatusProvider({ children }) {
   const completionTimeoutRef = useRef(null);
 
   useEffect(() => {
+    // Don't start SSE or polling until authenticated
+    if (!isAuthenticated && !token) return;
+
     let disposed = false;
     let timeoutId;
+    let esRef = null;
+    let sseActive = false;
+
+    // ── SSE handler: process a single run-list frame from the server ──────
+    function processRunList(runList) {
+      if (disposed) return;
+      if (!Array.isArray(runList)) return;
+
+      const sortedRuns = [...runList].sort((a, b) => getRunSortTimestamp(b) - getRunSortTimestamp(a));
+      setRuns(runList);
+
+      const nextStatusById = {};
+      const nextProgressById = {};
+      for (const run of sortedRuns) {
+        const pid = String(run?.project_id || '');
+        if (!pid) continue;
+        if (!(pid in nextStatusById)) nextStatusById[pid] = normalizeStatus(run?.status);
+        if (!(pid in nextProgressById)) nextProgressById[pid] = deriveProgressFromRun(run);
+      }
+
+      setProjectStatusById((prev) => {
+        const merged = { ...prev, ...nextStatusById };
+        return shallowEqualObject(prev, merged) ? prev : merged;
+      });
+      setProjectProgressById((prev) => {
+        const merged = { ...prev, ...nextProgressById };
+        return shallowEqualObject(prev, merged) ? prev : merged;
+      });
+
+      const completedRun = sortedRuns.find((r) => normalizeStatus(r?.status) === 'success');
+      if (completedRun) {
+        setCurrentProgress(100);
+        setCurrentSyncStatus('success');
+      }
+
+      const now = Date.now();
+      const activeRun = sortedRuns.find((r) => {
+        if (normalizeStatus(r?.status) !== 'running') return false;
+        const started = r?.started_at ? new Date(r.started_at).getTime() : 0;
+        if (!started) {
+          const fallbackTs = getRunSortTimestamp(r);
+          return fallbackTs > 0 && (Date.now() - fallbackTs) < 3600000;
+        }
+        return (now - started) < 3600000;
+      }) || null;
+
+      if (!activeRun) {
+        setCurrentSyncStatus((prev) => (prev === 'draft' ? prev : 'draft'));
+        if (completionTimeoutRef.current) {
+          clearTimeout(completionTimeoutRef.current);
+          completionTimeoutRef.current = null;
+        }
+        if (currentSyncId) {
+          completionTimeoutRef.current = setTimeout(() => {
+            setCurrentSyncId((prev) => (prev === '' ? prev : ''));
+            setCurrentProgress((prev) => (prev === 0 ? prev : 0));
+            realProgressRef.current = 0;
+            previousSyncIdRef.current = '';
+            completionTimeoutRef.current = null;
+          }, 2000);
+        } else {
+          setCurrentSyncId((prev) => (prev === '' ? prev : ''));
+          setCurrentProgress((prev) => (prev === 0 ? prev : 0));
+          realProgressRef.current = 0;
+          previousSyncIdRef.current = '';
+        }
+        lastRealChangeAtRef.current = Date.now();
+        setIndeterminate((prev) => (prev ? false : prev));
+        setWarning((prev) => (prev ? '' : prev));
+        return;
+      }
+
+      const pid = String(activeRun?.project_id || '');
+      const realProgress = deriveProgressFromRun(activeRun);
+
+      if (completionTimeoutRef.current) {
+        clearTimeout(completionTimeoutRef.current);
+        completionTimeoutRef.current = null;
+      }
+
+      if (pid !== previousSyncIdRef.current) {
+        previousSyncIdRef.current = pid;
+        setCurrentProgress((prev) => (prev === 0 ? prev : 0));
+        realProgressRef.current = 0;
+        lastRealChangeAtRef.current = Date.now();
+      }
+
+      setCurrentSyncId((prev) => (prev === pid ? prev : pid));
+      setCurrentSyncStatus((prev) => (prev === 'running' ? prev : 'running'));
+
+      if (realProgress !== realProgressRef.current) {
+        realProgressRef.current = realProgress;
+        lastRealChangeAtRef.current = Date.now();
+        setCurrentProgress((prev) => {
+          const next = Math.max(prev, realProgress);
+          return next === prev ? prev : next;
+        });
+        setIndeterminate((prev) => (prev ? false : prev));
+        setWarning((prev) => (prev ? '' : prev));
+      }
+
+      const stalledMs = Date.now() - lastRealChangeAtRef.current;
+      if (stalledMs > 60000) {
+        setIndeterminate((prev) => (prev ? prev : true));
+        setWarning((prev) => (prev === 'Sync is taking longer than expected...' ? prev : 'Sync is taking longer than expected...'));
+      }
+    }
+
+    // ── Try SSE first; fall back to polling on error ───────────────────────
+    function startSSE() {
+      esRef = tryConnectSSE(
+        (data) => {
+          // Server sends either a run-list array or a single run object
+          const list = Array.isArray(data) ? data : (data?.runs ?? null);
+          if (list) processRunList(list);
+        },
+        () => {
+          // SSE unavailable — fall back to polling
+          sseActive = false;
+          if (!disposed) schedulePoll(IDLE_POLL_INTERVAL_MS);
+        },
+      );
+      if (esRef) sseActive = true;
+    }
+
+    function schedulePoll(delay) {
+      if (disposed || sseActive) return;
+      timeoutId = setTimeout(poll, delay);
+    }
 
     // Listen for fallback event from sync POST
     function handleFallback(e) {
@@ -110,158 +267,39 @@ export function SyncStatusProvider({ children }) {
     window.addEventListener('semabridge-sync-fallback', handleFallback);
 
     const poll = async () => {
-      if (disposed) return;
+      if (disposed || sseActive) return;
       try {
         const data = await api.listJobRuns();
         if (disposed) return;
 
         const runList = Array.isArray(data) ? data : [];
-        const sortedRuns = [...runList].sort((a, b) => getRunSortTimestamp(b) - getRunSortTimestamp(a));
-        setRuns(runList);
+        processRunList(runList);
 
-        const nextStatusById = {};
-        const nextProgressById = {};
-
-        // Keep the latest run per project (sortedRuns is newest-first).
-        for (const run of sortedRuns) {
-          const pid = String(run?.project_id || '');
-          if (!pid) continue;
-          if (!(pid in nextStatusById)) {
-            nextStatusById[pid] = normalizeStatus(run?.status);
-          }
-          if (!(pid in nextProgressById)) {
-            nextProgressById[pid] = deriveProgressFromRun(run);
-          }
-        }
-
-        setProjectStatusById((prev) => {
-          const merged = { ...prev, ...nextStatusById };
-          return shallowEqualObject(prev, merged) ? prev : merged;
-        });
-        setProjectProgressById((prev) => {
-          const merged = { ...prev, ...nextProgressById };
-          return shallowEqualObject(prev, merged) ? prev : merged;
-        });
-
-        // Fallback: if any run is success/completed, force progress to 100%
-        const completedRun = sortedRuns.find((r) => normalizeStatus(r?.status) === 'success');
-        if (completedRun) {
-          setCurrentProgress(100);
-          setCurrentSyncStatus('success');
-        }
-
-        // Only consider a run as active if it started less than 1 hour ago
-        const now = Date.now();
-        const activeRun = sortedRuns.find((r) => {
-          if (normalizeStatus(r?.status) !== 'running') return false;
-          const started = r?.started_at ? new Date(r.started_at).getTime() : 0;
-          // If no started_at, treat as active but only if it looks fresh by alternate timestamps.
-          if (!started) {
-            const fallbackTs = getRunSortTimestamp(r);
-            return fallbackTs > 0 && (Date.now() - fallbackTs) < 3600000;
-          }
-          // 1 hour = 3600000 ms
-          return (now - started) < 3600000;
-        }) || null;
-        if (!activeRun) {
-          setCurrentSyncStatus((prev) => (prev === 'draft' ? prev : 'draft'));
-          if (completionTimeoutRef.current) {
-            clearTimeout(completionTimeoutRef.current);
-            completionTimeoutRef.current = null;
-          }
-          if (currentSyncId) {
-            completionTimeoutRef.current = setTimeout(() => {
-              setCurrentSyncId((prev) => (prev === '' ? prev : ''));
-              setCurrentProgress((prev) => (prev === 0 ? prev : 0));
-              realProgressRef.current = 0;
-              previousSyncIdRef.current = '';
-              completionTimeoutRef.current = null;
-            }, 2000);
-          } else {
-            setCurrentSyncId((prev) => (prev === '' ? prev : ''));
-            setCurrentProgress((prev) => (prev === 0 ? prev : 0));
-            realProgressRef.current = 0;
-            previousSyncIdRef.current = '';
-          }
-          lastRealChangeAtRef.current = Date.now();
-          setIndeterminate((prev) => (prev ? false : prev));
-          setWarning((prev) => (prev ? '' : prev));
-          return;
-        }
-
-        const pid = String(activeRun?.project_id || '');
-        const realProgress = deriveProgressFromRun(activeRun);
-
-        if (completionTimeoutRef.current) {
-          clearTimeout(completionTimeoutRef.current);
-          completionTimeoutRef.current = null;
-        }
-
-        if (pid !== previousSyncIdRef.current) {
-          previousSyncIdRef.current = pid;
-          setCurrentProgress((prev) => (prev === 0 ? prev : 0));
-          realProgressRef.current = 0;
-          lastRealChangeAtRef.current = Date.now();
-        }
-
-        setCurrentSyncId((prev) => (prev === pid ? prev : pid));
-        setCurrentSyncStatus((prev) => (prev === 'running' ? prev : 'running'));
-
-        if (realProgress !== realProgressRef.current) {
-          realProgressRef.current = realProgress;
-          lastRealChangeAtRef.current = Date.now();
-          setCurrentProgress((prev) => {
-            const next = Math.max(prev, realProgress);
-            return next === prev ? prev : next;
-          });
-          setIndeterminate((prev) => (prev ? false : prev));
-          setWarning((prev) => (prev ? '' : prev));
-        }
-
-        try {
-          if (pid && !isTransientPreviewProjectId(pid)) {
-            const project = await api.getProject(pid, { noCache: true });
-            if (!disposed && project?.id) {
-              setProjectStatusById((prev) => {
-                const normalizedProjectStatus = normalizeStatus(project.status);
-                if (prev[project.id] === normalizedProjectStatus) return prev;
-                return {
-                  ...prev,
-                  [project.id]: normalizedProjectStatus,
-                };
-              });
-            }
-          }
-        } catch {}
-
-        const stalledMs = Date.now() - lastRealChangeAtRef.current;
-        if (stalledMs > 60000) {
-          setIndeterminate((prev) => (prev ? prev : true));
-          setWarning((prev) => (prev === 'Sync is taking longer than expected...' ? prev : 'Sync is taking longer than expected...'));
-        }
-
-        // Recursive polling: only schedule next poll after this one finishes
-        if (!disposed && (activeRun || !completedRun)) {
-          timeoutId = setTimeout(poll, 1000);
+        // Schedule next poll only when SSE is not active
+        if (!disposed && !sseActive) {
+          const hasActive = runList.some(r => normalizeStatus(r?.status) === 'running');
+          schedulePoll(hasActive ? RUNNING_POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS);
         }
       } catch {
-        // Keep previous values on transient poll errors.
-        if (!disposed) {
-          timeoutId = setTimeout(poll, 2000);
-        }
+        if (!disposed && !sseActive) schedulePoll(RUNNING_POLL_INTERVAL_MS);
       }
     };
 
+    // Prefer SSE; polling is the fallback
+    startSSE();
+    // Always do one immediate poll to populate state before SSE delivers its first frame
     poll();
+
     return () => {
       disposed = true;
       clearTimeout(timeoutId);
+      if (esRef) { esRef.close(); esRef = null; }
       if (completionTimeoutRef.current) {
         clearTimeout(completionTimeoutRef.current);
       }
       window.removeEventListener('semabridge-sync-fallback', handleFallback);
     };
-  }, []);
+  }, [isAuthenticated, token]);
 
   // Completion watcher: when progress hits 100, force status to 'success' after a short delay
   useEffect(() => {

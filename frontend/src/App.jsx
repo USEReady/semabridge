@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, lazy, Suspense } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { LogsProvider } from './context/LogsContext';
 import { WorkspaceProvider } from './context/WorkspaceContext';
@@ -12,19 +12,28 @@ import { ConfigurationProvider } from './context/ConfigurationContext';
 // Layouts
 import DashboardLayout from './layouts/DashboardLayout';
 
-// Pages
-import ExplorePage      from './pages/ExplorePage';
+// Pages — eagerly load the two most-visited routes; lazy-load the rest
 import ProjectsPage     from './pages/ProjectsPage';
-import CreateProjectPage from './pages/CreateProjectPage';
-import EditProjectPage  from './pages/EditProjectPage';
-import ProjectConfigPage from './pages/ProjectConfigPage';
-import ProjectJobsPage  from './pages/ProjectJobsPage';
-import SettingsPage    from './pages/SettingsPage';
-import GlobalConfigPage from './pages/GlobalConfigPage';
-import ProjectDetailPage from './pages/ProjectDetailPage';
-import ComparatorPage from './pages/ComparatorPage';
-import VersionControlPage from './pages/VersionControlPage';
-import LoginPage from './pages/LoginPage';
+import LoginPage        from './pages/LoginPage';
+
+const ExplorePage        = lazy(() => import('./pages/ExplorePage'));
+const CreateProjectPage  = lazy(() => import('./pages/CreateProjectPage'));
+const EditProjectPage    = lazy(() => import('./pages/EditProjectPage'));
+const ProjectConfigPage  = lazy(() => import('./pages/ProjectConfigPage'));
+const ProjectJobsPage    = lazy(() => import('./pages/ProjectJobsPage'));
+const SettingsPage       = lazy(() => import('./pages/SettingsPage'));
+const GlobalConfigPage   = lazy(() => import('./pages/GlobalConfigPage'));
+const ProjectDetailPage  = lazy(() => import('./pages/ProjectDetailPage'));
+const ComparatorPage     = lazy(() => import('./pages/ComparatorPage'));
+const VersionControlPage = lazy(() => import('./pages/VersionControlPage'));
+
+function PageFallback() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-tertiary)', fontSize: 13 }}>
+      Loading…
+    </div>
+  );
+}
 
 export default function App() {
   const [isMobile, setIsMobile] = useState(false);
@@ -64,14 +73,14 @@ export default function App() {
   }
 
   return (
-    <ConfigurationProvider>
-      <div style={{ minHeight: '100vh' }}>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
+    <div style={{ minHeight: '100vh' }}>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
 
-          {/* Protected: All app routes — auto-login handles auth transparently */}
+        {/* Protected: All app routes — auto-login handles auth transparently */}
+        <Route element={<ProtectedRoute />}>
           <Route element={
-            <ProtectedRoute>
+            <ConfigurationProvider>
               <WorkspaceProvider>
                 <LogsProvider>
                   <SyncStatusProvider>
@@ -79,27 +88,27 @@ export default function App() {
                   </SyncStatusProvider>
                 </LogsProvider>
               </WorkspaceProvider>
-            </ProtectedRoute>
+            </ConfigurationProvider>
           }>
             <Route index element={<Navigate to="/projects" replace />} />
-            <Route path="/explore"       element={<ExplorePage />} />
+            <Route path="/explore"       element={<Suspense fallback={<PageFallback />}><ExplorePage /></Suspense>} />
             <Route path="/projects"      element={<ProjectsPage />} />
-            <Route path="/projects/new"  element={<CreateProjectPage />} />
-            <Route path="/projects/:id" element={<ProjectDetailPage />} />
-            <Route path="/projects/:id/edit" element={<EditProjectPage />} />
-            <Route path="/projects/:id/config" element={<ProjectConfigPage />} />
-            <Route path="/jobs"          element={<ProjectJobsPage />} />
+            <Route path="/projects/new"  element={<Suspense fallback={<PageFallback />}><CreateProjectPage /></Suspense>} />
+            <Route path="/projects/:id" element={<Suspense fallback={<PageFallback />}><ProjectDetailPage /></Suspense>} />
+            <Route path="/projects/:id/edit" element={<Suspense fallback={<PageFallback />}><EditProjectPage /></Suspense>} />
+            <Route path="/projects/:id/config" element={<Suspense fallback={<PageFallback />}><ProjectConfigPage /></Suspense>} />
+            <Route path="/jobs"          element={<Suspense fallback={<PageFallback />}><ProjectJobsPage /></Suspense>} />
             <Route path="/model-mapping" element={<Navigate to="/projects/new?step=4" replace />} />
-            <Route path="/comparator"    element={<ComparatorPage />} />
-            <Route path="/settings"      element={<SettingsPage />} />
-            <Route path="/global-config" element={<GlobalConfigPage />} />
-            <Route path="/version-control" element={<VersionControlPage />} />
+            <Route path="/comparator"    element={<Suspense fallback={<PageFallback />}><ComparatorPage /></Suspense>} />
+            <Route path="/settings"      element={<Suspense fallback={<PageFallback />}><SettingsPage /></Suspense>} />
+            <Route path="/global-config" element={<Suspense fallback={<PageFallback />}><GlobalConfigPage /></Suspense>} />
+            <Route path="/version-control" element={<Suspense fallback={<PageFallback />}><VersionControlPage /></Suspense>} />
           </Route>
+        </Route>
 
-          {/* Fallback */}
-          <Route path="*" element={<Navigate to="/projects" replace />} />
-        </Routes>
-      </div>
-    </ConfigurationProvider>
+        {/* Fallback */}
+        <Route path="*" element={<Navigate to="/projects" replace />} />
+      </Routes>
+    </div>
   );
 }

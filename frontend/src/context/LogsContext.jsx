@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import { useAuth } from './AuthContext';
 
 const LogsContext = createContext(null);
 
@@ -12,7 +13,7 @@ const WS_URL = (() => {
     }
 
     if (import.meta.env.DEV) {
-        return 'ws://127.0.0.1:8000/ws/alerts';
+        return 'ws://127.0.0.1:8001/ws/alerts';
     }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -20,6 +21,7 @@ const WS_URL = (() => {
 })();
 const RECONNECT_STEPS_MS = [5000, 10000, 30000];
 const TOAST_DURATION_MS = 6000;
+const WS_PING_INTERVAL_MS = 30000;
 
 export function LogsProvider({ children }) {
     const [logs, setLogs] = useState([]);
@@ -28,6 +30,8 @@ export function LogsProvider({ children }) {
     const wsRef = useRef(null);
     const reconnectAttempt = useRef(0);
     const reconnectTimer = useRef(null);
+    const pingTimer = useRef(null);
+    const { isAuthenticated, token } = useAuth();
 
     const getReconnectDelay = useCallback((attempt) => {
         if (attempt <= 0) return RECONNECT_STEPS_MS[0];
@@ -76,6 +80,13 @@ export function LogsProvider({ children }) {
                 setWsConnected(true);
                 reconnectAttempt.current = 0;
                 console.log('[SemaBridge] WebSocket connected to alerts');
+                // Start keepalive pings to prevent idle disconnects
+                if (pingTimer.current) clearInterval(pingTimer.current);
+                pingTimer.current = setInterval(() => {
+                    if (wsRef.current?.readyState === WebSocket.OPEN) {
+                        wsRef.current.send('ping');
+                    }
+                }, WS_PING_INTERVAL_MS);
             };
 
             ws.onmessage = (event) => {
@@ -97,6 +108,7 @@ export function LogsProvider({ children }) {
             ws.onclose = () => {
                 setWsConnected(false);
                 wsRef.current = null;
+                if (pingTimer.current) { clearInterval(pingTimer.current); pingTimer.current = null; }
                 // Auto-reconnect with exponential backoff: 5s, 10s, then 30s capped.
                 const delayMs = getReconnectDelay(reconnectAttempt.current);
                 reconnectTimer.current = setTimeout(() => {
@@ -120,14 +132,16 @@ export function LogsProvider({ children }) {
         }
     }, [addLog, getReconnectDelay]);
 
-    // Connect on mount, cleanup on unmount
+    // Connect on mount (when authenticated), cleanup on unmount
     useEffect(() => {
+        if (!isAuthenticated && !token) return;
         connectWebSocket();
         return () => {
             if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+            if (pingTimer.current) clearInterval(pingTimer.current);
             if (wsRef.current) wsRef.current.close();
         };
-    }, [connectWebSocket]);
+    }, [connectWebSocket, isAuthenticated, token]);
 
     return (
         <LogsContext.Provider value={{
