@@ -25,3 +25,6 @@ concurrency:
 options:
   global_exclude_models: []
 config_path: Config/semabridge.yaml
+fabric:
+  workspace_id: d6e5bfe7-c544-4474-ac3b-ddce9a02e712
+  workspace_name: semabridge

@@ -249,7 +249,11 @@ class CredentialManager:
     # ------------------------------------------------------------------
 
     def get_credentials(
-        self, service: str, mask_secrets: bool = True, user_id: int = 0
+        self,
+        service: str,
+        mask_secrets: bool = True,
+        user_id: int = 0,
+        include_env_fallback: bool = True,
     ) -> Dict[str, str]:
         """Retrieve stored credentials for a service.
 
@@ -263,6 +267,9 @@ class CredentialManager:
             service:      Service name ('fabric', 'snowflake', 'databricks').
             mask_secrets: If True, secret values are replaced with '••••••••'.
             user_id:      Authenticated user ID.  ``0`` reads global rows only.
+            include_env_fallback: If True, fill missing keys from the current
+                                  process environment. If False, return only
+                                  credentials persisted in the database.
 
         Returns:
             Dictionary of credential key-value pairs.
@@ -309,6 +316,9 @@ class CredentialManager:
             except Exception:
                 pass
 
+        if not include_env_fallback:
+            return result
+
         # --- Step 3: Supplement from os.environ for any keys NOT already in DB ---
         # This ensures credentials set only in .env are always surfaced in the UI,
         # and that required fields like workspace_id are not hidden when the DB
@@ -337,24 +347,41 @@ class CredentialManager:
         status: Dict[str, Any] = {}
         for service in _ENV_MAP:
             stored = self.get_credentials(service, mask_secrets=True, user_id=user_id)
-            # Use raw (unmasked) credentials for auth-type detection
-            raw = self.get_credentials(service, mask_secrets=False, user_id=user_id)
-            required = self._get_required_keys(service, raw)
-            missing = [k for k in required if k not in stored]
+            persisted = self.get_credentials(
+                service,
+                mask_secrets=True,
+                user_id=user_id,
+                include_env_fallback=False,
+            )
+            raw_persisted = self.get_credentials(
+                service,
+                mask_secrets=False,
+                user_id=user_id,
+                include_env_fallback=False,
+            )
+            required = self._get_required_keys(service, raw_persisted)
+            missing = [k for k in required if k not in persisted]
 
-            is_configured = len(missing) == 0 and len(stored) > 0
+            is_configured = len(missing) == 0 and len(persisted) > 0
 
             svc_status: Dict[str, Any] = {
                 "configured": is_configured,
-                "fields_stored": len(stored),
+                "fields_stored": len(persisted),
                 "fields_required": len(required),
                 "missing_fields": missing,
                 "credentials": stored,
+                "has_saved_credentials": len(persisted) > 0,
             }
 
             # Fabric-specific: check auth method availability
             if service == "fabric":
-                auth_method = self.get_fabric_auth_method()
+                token = self.get_msal_token(user_id=user_id)
+                if token and token.get("access_token"):
+                    auth_method = "interactive"
+                elif raw_persisted.get("client_secret"):
+                    auth_method = "service_principal"
+                else:
+                    auth_method = "none"
                 svc_status["auth_method"] = auth_method
                 svc_status["has_auth"] = auth_method != "none"
                 # Only truly configured if workspace + auth both exist
@@ -367,7 +394,19 @@ class CredentialManager:
 
             # Databricks-specific: include auth_type and auth_method
             if service == "databricks":
-                auth_method = self.get_databricks_auth_method()
+                auth_type = raw_persisted.get("auth_type", "pat")
+                if auth_type == "interactive" and raw_persisted.get("access_token"):
+                    auth_method = "interactive"
+                elif (
+                    auth_type == "service_principal"
+                    and raw_persisted.get("client_id")
+                    and raw_persisted.get("client_secret")
+                ):
+                    auth_method = "service_principal"
+                elif raw_persisted.get("token"):
+                    auth_method = "pat"
+                else:
+                    auth_method = "none"
                 svc_status["auth_method"] = auth_method
                 svc_status["auth_type"] = stored.get("auth_type", "pat")
 

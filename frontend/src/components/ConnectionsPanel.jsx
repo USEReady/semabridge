@@ -112,8 +112,10 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
         setLoadingWorkspaces(true);
         try {
             const result = await api.fabricListWorkspaces();
-            setWorkspaces(result.workspaces || []);
-            addLog('info', 'Fabric', `Discovered ${result.workspaces?.length || 0} workspaces`);
+            const nextWorkspaces = result.workspaces || [];
+            setWorkspaces(nextWorkspaces);
+            setSelectedWorkspaceId((current) => current || nextWorkspaces[0]?.id || '');
+            addLog('info', 'Fabric', `Discovered ${nextWorkspaces.length || 0} workspaces`);
         } catch (err) {
             addLog('warning', 'Fabric', `Could not fetch workspaces: ${err.message}`);
         } finally {
@@ -241,13 +243,25 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
     };
 
     const handleSaveIdentity = async () => {
+        if (!selectedWorkspaceId) {
+            setError('Choose a Fabric workspace before saving this identity.');
+            return;
+        }
+
         try {
+            setWorkspaceSaving(true);
             const effectiveConnectionId = connectionId || authStatus?.connection_id || generateConnectionId();
+            const selectedWorkspace = workspaces.find((w) => w.id === selectedWorkspaceId);
+            const workspaceName = selectedWorkspace?.displayName || savedWorkspaceName || '';
+
+            await api.fabricSelectWorkspace(selectedWorkspaceId, workspaceName);
+            setSavedWorkspaceName(workspaceName);
+
             const vaultAccounts = await api.createAccount({
                 connection_id: effectiveConnectionId,
                 connector_type: 'FABRIC',
                 tag: initialTag,
-                identity_email: authStatus?.username || savedWorkspaceName || 'N/A',
+                identity_email: authStatus?.username || workspaceName || 'N/A',
                 encrypted_token: authStatus?.access_token || null,
             });
 
@@ -255,7 +269,7 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
             const newConnection = {
                 id: effectiveConnectionId,
                 tag: initialTag,
-                identity_email: authStatus?.username || savedWorkspaceName || 'N/A',
+                identity_email: authStatus?.username || workspaceName || 'N/A',
                 connector_type: 'FABRIC',
                 status: 'Active',
             };
@@ -270,7 +284,10 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
                 });
             }
         } catch (err) {
+            setError(err.message);
             addLog('error', 'Connections', `Failed to create Fabric account: ${err.message}`);
+        } finally {
+            setWorkspaceSaving(false);
         }
     };
 
@@ -308,6 +325,42 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
                                     Tenant: {authStatus?.tenant_id?.substring(0, 8)}...
                                 </div>
                             </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                                <label className="block text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+                                    Fabric Workspace
+                                </label>
+                                <button
+                                    onClick={fetchWorkspaces}
+                                    disabled={loadingWorkspaces}
+                                    className="text-[11px] font-medium"
+                                    style={{ color: loadingWorkspaces ? 'var(--text-tertiary)' : 'var(--accent-blue)' }}
+                                >
+                                    {loadingWorkspaces ? 'Loading...' : 'Refresh'}
+                                </button>
+                            </div>
+                            <select
+                                value={selectedWorkspaceId}
+                                onChange={(e) => setSelectedWorkspaceId(e.target.value)}
+                                className="w-full px-3 py-2 rounded-lg text-xs border"
+                                style={{
+                                    background: 'var(--bg-input)',
+                                    borderColor: 'var(--border-main)',
+                                    color: 'var(--text-primary)',
+                                }}
+                            >
+                                <option value="">Select a workspace</option>
+                                {workspaces.map((workspace) => (
+                                    <option key={workspace.id} value={workspace.id}>
+                                        {workspace.displayName || workspace.name || workspace.id}
+                                    </option>
+                                ))}
+                            </select>
+                            <p className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                                Saving the identity also stores the selected Fabric workspace for connector status and syncs.
+                            </p>
                         </div>
                     </div>
                 )}
@@ -392,7 +445,11 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
 
             {isLoggedIn && (
                 <div className="pt-4 flex justify-end gap-2 border-t" style={{ borderColor: 'var(--border-main)' }}>
-                    <button onClick={handleSaveIdentity} className="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold rounded-lg transition-colors">
+                    <button
+                        onClick={handleSaveIdentity}
+                        disabled={workspaceSaving || loadingWorkspaces || !selectedWorkspaceId}
+                        className="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold rounded-lg transition-colors disabled:opacity-60"
+                    >
                         Save Identity
                     </button>
                     <button onClick={handleLogout} className="px-4 py-2 border border-red-500/30 text-red-500 hover:bg-red-500/10 text-xs font-bold rounded-lg transition-colors">

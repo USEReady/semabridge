@@ -136,48 +136,28 @@ export default function SettingsPage() {
       // Fabric connector
       const fabricConn = status?.fabric;
       const fabricConfigured = fabricConn?.configured === true;
-      const fabricHasAuth = fabricConn?.has_auth === true;
-      const fabricHasWorkspace = !!fabricConn?.credentials?.workspace_id;
-      const fabricStatus = fabricConfigured
-        ? 'connected'
-        : fabricHasWorkspace
-          ? 'configured'
-          : 'disconnected';
+      const fabricStatus = fabricConfigured ? 'connected' : 'disconnected';
       rows.push({
         id: 'fabric',
         name: 'Microsoft Fabric',
         type: 'Analytics Platform',
         status: normalizeStatus(fabricStatus),
         last_sync: null,
-        detail: fabricStatus === 'connected'
-          ? 'Configured'
-          : fabricStatus === 'configured'
-            ? 'Setup in progress'
-            : 'Not configured',
+        detail: fabricConfigured ? 'Configured' : 'Not configured',
         tags: ['production', 'analytics'],
       });
 
       // Snowflake connector
       const snowConn = status?.snowflake;
       const snowConfigured = snowConn?.configured === true;
-      const snowHasFields = (snowConn?.fields_stored ?? 0) > 0;
-      const snowMissing  = snowConn?.missing_fields ?? [];
-      const snowStatus = snowConfigured
-        ? 'connected'
-        : snowHasFields
-          ? 'configured'
-          : 'disconnected';
+      const snowStatus = snowConfigured ? 'connected' : 'disconnected';
       rows.push({
         id: 'snowflake',
         name: 'Snowflake',
         type: 'Data Warehouse',
         status: normalizeStatus(snowStatus),
         last_sync: null,
-        detail: snowStatus === 'connected'
-          ? 'Configured'
-          : snowStatus === 'configured'
-            ? 'Setup in progress'
-            : 'Not configured',
+        detail: snowConfigured ? 'Configured' : 'Not configured',
         tags: ['warehouse', 'target'],
       });
 
@@ -504,7 +484,7 @@ export default function SettingsPage() {
                 </div>
               </div>
               <div className="flex items-center gap-3" style={{ flexShrink: 0, marginLeft: '16px' }}>
-                <StatusBadge status={conn.status} label={conn.status === 'connected' ? 'Connected' : conn.status === 'configured' ? 'Configured' : 'Disconnected'} />
+                <StatusBadge status={conn.status} label={conn.status === 'connected' ? 'Connected' : 'Disconnected'} />
                 <button
                   onClick={() => openManage(conn.id)}
                   className="flex items-center gap-1.5 rounded-lg text-xs font-semibold px-4 py-2 theme-transition"
