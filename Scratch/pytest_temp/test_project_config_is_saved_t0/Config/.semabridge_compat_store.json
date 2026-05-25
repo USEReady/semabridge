@@ -1,0 +1,62 @@
+{
+  "projects": {
+    "proj-db6486702756": {
+      "id": "proj-db6486702756",
+      "project_id": "proj-db6486702756",
+      "name": "GLOBAL",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "created_at": "2026-05-25T08:37:06.968441",
+      "updated_at": "2026-05-25T08:37:06.968441"
+    },
+    "cust_sf": {
+      "id": "cust_sf",
+      "project_id": "cust_sf",
+      "name": "CUST",
+      "description": "",
+      "source": "fabric",
+      "adapter": "fabric",
+      "workspace_id": "",
+      "target_type": "snowflake",
+      "folder_id": null,
+      "status": "draft",
+      "mapping_profile": "",
+      "config_source": "modular",
+      "created_at": "2026-05-25T08:37:06.969447",
+      "updated_at": "2026-05-25T08:37:07.001280"
+    }
+  },
+  "project_configs": {
+    "proj-db6486702756": "project_name: GLOBAL\nsource:\n  type: fabric\n",
+    "cust_sf": "project_id: cust_sf\ndisplay_name: Customer SF Updated\nproject_name: CUST UPDATED\nsource:\n  type: fabric\n"
+  },
+  "project_runs": {
+    "proj-db6486702756": [],
+    "cust_sf": []
+  },
+  "project_snapshots": {
+    "proj-db6486702756": [],
+    "cust_sf": []
+  },
+  "snapshot_groups": {
+    "proj-db6486702756": [],
+    "cust_sf": []
+  },
+  "run_snapshots": {},
+  "folders": {},
+  "mappings": {},
+  "project_schedules": {},
+  "deleted_project_ids": [],
+  "job_config": {
+    "schedule_type": "Manual Trigger Only",
+    "cron": "0 0 * * *",
+    "timezone": "UTC",
+    "enabled": false,
+    "mode": "local"
+  }
+}

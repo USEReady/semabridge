@@ -19,11 +19,11 @@ Write-Host "Running alembic $Command $Revision..." -ForegroundColor Yellow
 switch ($Command) {
     "upgrade" {
         alembic upgrade $Revision
-        Write-Host "✓ Database upgraded to $Revision" -ForegroundColor Green
+        Write-Host "Database upgraded to $Revision" -ForegroundColor Green
     }
     "downgrade" {
         alembic downgrade $Revision
-        Write-Host "✓ Database downgraded to $Revision" -ForegroundColor Green
+        Write-Host "Database downgraded to $Revision" -ForegroundColor Green
     }
     "current" {
         alembic current
@@ -38,4 +38,4 @@ switch ($Command) {
     }
 }
 
-Write-Host "✓ Migration complete" -ForegroundColor Green
+Write-Host "Migration complete" -ForegroundColor Green

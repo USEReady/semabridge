@@ -45,6 +45,7 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Te
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from semabridge.repository.orm.base import Base
+from semabridge.repository.schema_compat import PROJECT_ID_LENGTH
 
 # Timezone-aware DateTime used everywhere for portability.
 # SQLite stores as TEXT, PostgreSQL as TIMESTAMPTZ, MySQL as DATETIME,
@@ -312,7 +313,7 @@ class Project(Base):
 
     __tablename__ = "projects"
 
-    project_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(PROJECT_ID_LENGTH), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     account_id: Mapped[Optional[str]] = mapped_column(ForeignKey("accounts.id"), nullable=True)
     workspace_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -855,7 +856,7 @@ class CommandLog(Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     adapter: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    project_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    project_id: Mapped[Optional[str]] = mapped_column(String(PROJECT_ID_LENGTH), nullable=True)
     initiated_by: Mapped[str] = mapped_column(
         String(20), nullable=False, default="cli"
     )

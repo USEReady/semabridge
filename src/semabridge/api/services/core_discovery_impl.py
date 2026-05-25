@@ -196,6 +196,78 @@ def discover_snowflake(identity_id: Optional[str] = Query(None)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Snowflake semantic view discovery failed: {e}")
 
+def _get_snowflake_extractor(identity_id: Optional[str] = None):
+    from pydantic import ValidationError
+    from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
+    from semabridge.repository.orm.models import Account
+    from semabridge.repository.orm.session_factory import db_manager
+    from semabridge.auth.account_credential_resolver import scoped_account_env
+    from fastapi import HTTPException
+    from sqlalchemy import select
+
+    if identity_id:
+        with db_manager.get_session() as session:
+            account = session.execute(
+                select(Account).where(
+                    Account.connector_type == "SNOWFLAKE",
+                    Account.id == identity_id,
+                )
+            ).scalars().first()
+
+            if not account:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"No Snowflake account found for identity_id '{identity_id}'. "
+                        "Link this account in Settings -> Connections or POST to /api/accounts with connector_type 'SNOWFLAKE'."
+                    ),
+                )
+                
+            with scoped_account_env(account, session):
+                from semabridge.core.settings import reload_settings
+                scoped_settings = reload_settings()
+                return SnowflakeExtractor(scoped_settings.snowflake)
+    else:
+        settings = get_settings()
+        try:
+            snowflake_config = settings.snowflake
+        except ValidationError:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Snowflake is not configured. "
+                    "Set SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, and SNOWFLAKE_PASSWORD in .env or environment variables."
+                ),
+            )
+        return SnowflakeExtractor(snowflake_config)
+
+def discover_snowflake_warehouses(identity_id: Optional[str] = Query(None)):
+    try:
+        extractor = _get_snowflake_extractor(identity_id)
+        return extractor.get_warehouses()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Snowflake warehouse discovery failed: {e}")
+
+def discover_snowflake_databases(identity_id: Optional[str] = Query(None)):
+    try:
+        extractor = _get_snowflake_extractor(identity_id)
+        return extractor.get_databases()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Snowflake database discovery failed: {e}")
+
+def discover_snowflake_schemas(database: str, identity_id: Optional[str] = Query(None)):
+    try:
+        extractor = _get_snowflake_extractor(identity_id)
+        return extractor.get_schemas(database)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Snowflake schema discovery failed: {e}")
+
 
 def discover_repository():
     from semabridge.repository.orm.models import ModelVersion

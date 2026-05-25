@@ -1,0 +1,7 @@
+project_id: "proj-1777017550799"
+display_name: "Q1 Sales Analytics Sync"
+project_name: cust
+source:
+  type: fabric
+target:
+  type: snowflake

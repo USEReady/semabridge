@@ -1,0 +1,5 @@
+project_id: cust_sf
+display_name: Customer SF Updated
+project_name: CUST UPDATED
+source:
+  type: fabric

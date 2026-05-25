@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import time as _time
@@ -11,7 +12,9 @@ from starlette.responses import Response
 from semabridge.api.services.project_shared import (
     _compat_clean_project_name,
     _compat_default_project_yaml,
+    _compat_deleted_project_ids,
     _compat_ensure_loaded,
+    _compat_folders,
     _compat_load_project_yaml_text,
     _compat_load_repo_yaml_text,
     _compat_mappings,
@@ -19,11 +22,17 @@ from semabridge.api.services.project_shared import (
     _compat_project_configs,
     _compat_project_payload,
     _compat_project_runs,
+    _compat_project_schedules,
+    _compat_project_snapshots,
+    _compat_project_yaml_paths,
     _compat_project_yaml_path,
     _compat_projects,
-    _compat_projects_dir,
+    _compat_projects_dirs,
+    _compat_run_snapshots,
     _compat_save_project_yaml_text,
     _compat_save_store,
+    _compat_snapshot_groups,
+    _compat_store_loaded,
     db_manager,
     logger,
 )
@@ -45,6 +54,49 @@ def _clear_project_mapping_cache(project_id: str) -> None:
         logger.info("Cleared %s cached mapping row(s) for project %s after config write", removed, pid)
 
 
+def _delete_project_config_files(project_id: str) -> None:
+    pid = str(project_id or "").strip()
+    if not pid:
+        return
+
+    failures: List[str] = []
+    for path in _compat_project_yaml_paths(pid):
+        try:
+            if path.exists() and path.is_file():
+                path.unlink()
+        except Exception as exc:
+            logger.warning("Failed to delete project config file %s: %s", path, exc)
+            failures.append(f"{path}: {exc}")
+
+    remaining = [str(path) for path in _compat_project_yaml_paths(pid) if path.exists()]
+    if failures or remaining:
+        details = "; ".join(failures + [f"still exists: {path}" for path in remaining])
+        raise RuntimeError(f"Failed to delete project config file(s) for {pid}: {details}")
+
+
+def _delete_project_from_orm(project_id: str) -> None:
+    pid = str(project_id or "").strip()
+    if not pid:
+        return
+
+    try:
+        from semabridge.repository.orm.models import Project
+
+        session = db_manager._session()
+        try:
+            project = session.get(Project, pid)
+            if project is not None:
+                session.delete(project)
+                session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+    except Exception as exc:
+        logger.warning("Failed to delete ORM project %s: %s", pid, exc)
+
+
 def _project_display_name_from_cfg(project_cfg: Dict[str, Any], fallback: str) -> str:
     if not isinstance(project_cfg, dict):
         return fallback
@@ -63,10 +115,6 @@ def _normalize_project_config_yaml(project_id: str, yaml_text: str, default_name
 
     if not isinstance(parsed, dict):
         raise HTTPException(status_code=400, detail="Project YAML must be an object mapping")
-
-    parsed_project_id = str(parsed.get("project_id") or "").strip()
-    if parsed_project_id and parsed_project_id != project_id:
-        raise HTTPException(status_code=400, detail="project_id in YAML must match route project_id")
 
     display_name = _project_display_name_from_cfg(parsed, default_name)
     if not display_name:
@@ -102,38 +150,45 @@ def _project_discovery_entry(project_id: str, file_path: Path, project_cfg: Dict
 
 
 async def list_project_discovery_compat():
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     entries: List[Dict[str, Any]] = []
-    projects_dir = _compat_projects_dir()
-    if not projects_dir.exists() or not projects_dir.is_dir():
-        return entries
-
-    for file_path in sorted(projects_dir.glob("*.y*ml")):
-        project_id = file_path.stem.strip()
-        if not project_id:
+    seen: set[str] = set()
+    for projects_dir in _compat_projects_dirs():
+        if not projects_dir.exists() or not projects_dir.is_dir():
             continue
-        try:
-            project_cfg = yaml.safe_load(file_path.read_text(encoding="utf-8")) or {}
-            if not isinstance(project_cfg, dict):
+
+        for file_path in sorted(projects_dir.glob("*.y*ml")):
+            project_id = file_path.stem.strip()
+            if not project_id or project_id in seen or project_id in _compat_deleted_project_ids:
                 continue
-            entries.append(_project_discovery_entry(project_id, file_path, project_cfg))
-        except Exception as exc:
-            logger.warning("Failed to load project discovery entry %s: %s", file_path, exc)
+            try:
+                file_text = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
+                project_cfg = yaml.safe_load(file_text) or {}
+                if not isinstance(project_cfg, dict):
+                    continue
+                entries.append(_project_discovery_entry(project_id, file_path, project_cfg))
+                seen.add(project_id)
+            except Exception as exc:
+                logger.warning("Failed to load project discovery entry %s: %s", file_path, exc)
     return entries
 
 
 async def list_projects_compat():
     """Compatibility: newfrontend expects a projects collection."""
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     deduped: Dict[str, Dict[str, Any]] = {}
     
     # Load modular projects from Config/projects (or config/projects)
-    projects_dir = _compat_projects_dir()
-    if projects_dir.exists() and projects_dir.is_dir():
+    for projects_dir in _compat_projects_dirs():
+        if not projects_dir.exists() or not projects_dir.is_dir():
+            continue
         for file_path in sorted(projects_dir.glob("*.y*ml")):
-            pid = file_path.stem
+            pid = file_path.stem.strip()
+            if not pid or pid in deduped or pid in _compat_deleted_project_ids:
+                continue
             try:
-                project_cfg = yaml.safe_load(file_path.read_text(encoding="utf-8")) or {}
+                file_text = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
+                project_cfg = yaml.safe_load(file_text) or {}
                 if not isinstance(project_cfg, dict):
                     continue
                 deduped[pid] = _project_discovery_entry(pid, file_path, project_cfg)
@@ -169,7 +224,7 @@ async def list_projects_compat():
 
 async def create_project_compat(request: dict):
     """Compatibility: create in-memory project for UI continuity."""
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     payload = request or {}
     payload_name = _compat_clean_project_name(payload.get("name"), "")
     src = payload.get("source") if isinstance(payload.get("source"), dict) else {}
@@ -184,6 +239,7 @@ async def create_project_compat(request: dict):
     default_id = f"proj-{safe_name}" if safe_name else f"proj-{int(_time.time() * 1000)}"
     requested_id = str(payload.get("id") or payload.get("project_id") or default_id).strip()
     project_id = requested_id or default_id
+    _compat_deleted_project_ids.discard(project_id)
     if project_id in _compat_projects:
         # Avoid reusing an existing project's mapping cache/state when the user
         # creates another project with the same semantic model/name.
@@ -196,45 +252,37 @@ async def create_project_compat(request: dict):
         normalized_yaml = _normalize_project_config_yaml(project_id, config_yaml, project.get("name") or project_id)
         _compat_project_configs[project_id] = normalized_yaml
         try:
-            _compat_save_project_yaml_text(project_id, normalized_yaml)
+            await asyncio.to_thread(_compat_save_project_yaml_text, project_id, normalized_yaml)
             _clear_project_mapping_cache(project_id)
         except Exception as exc:
             logger.warning("Failed to persist project config for %s: %s", project_id, exc)
     else:
-        project_yaml = _compat_load_project_yaml_text(project_id)
-        repo_yaml = _compat_load_repo_yaml_text()
+        project_yaml = await asyncio.to_thread(_compat_load_project_yaml_text, project_id)
+        repo_yaml = await asyncio.to_thread(_compat_load_repo_yaml_text)
         selected_yaml = project_yaml or repo_yaml or _compat_default_project_yaml(project)
         normalized_yaml = _normalize_project_config_yaml(project_id, selected_yaml, project.get("name") or project_id)
         _compat_project_configs.setdefault(project_id, normalized_yaml)
         try:
-            _compat_save_project_yaml_text(project_id, normalized_yaml)
+            await asyncio.to_thread(_compat_save_project_yaml_text, project_id, normalized_yaml)
             _clear_project_mapping_cache(project_id)
         except Exception as exc:
             logger.warning("Failed to initialize project config file for %s: %s", project_id, exc)
 
     _compat_project_runs.setdefault(project_id, [])
-    _compat_save_store()
+    await asyncio.to_thread(_compat_save_store)
     return project
 
 
 async def get_project_compat(project_id: str):
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     project = _compat_projects.get(project_id)
     if not project:
-        # Compatibility upsert for stale in-memory cache after reload.
-        project = _compat_project_payload(project_id, {
-            "id": project_id,
-            "name": f"Recovered {project_id}",
-            "source": {"type": "fabric"},
-            "target": {"type": "snowflake"},
-        })
-        _compat_projects[project_id] = project
-        _compat_save_store()
+        raise HTTPException(status_code=404, detail="Project not found")
     return project
 
 
 async def patch_project_compat(project_id: str, payload: dict):
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     project = _compat_projects.get(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -272,38 +320,41 @@ async def patch_project_compat(project_id: str, payload: dict):
 
     project["updated_at"] = _compat_now_iso()
     _compat_projects[project_id] = project
-    _compat_save_store()
+    await asyncio.to_thread(_compat_save_store)
     return project
 
 
 async def delete_project_compat(project_id: str):
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
+    _compat_deleted_project_ids.add(project_id)
+    await asyncio.to_thread(_delete_project_config_files, project_id)
+    await asyncio.to_thread(_delete_project_from_orm, project_id)
     _compat_projects.pop(project_id, None)
     _compat_project_configs.pop(project_id, None)
     _compat_project_runs.pop(project_id, None)
-    _compat_save_store()
+    _compat_project_snapshots.pop(project_id, None)
+    _compat_snapshot_groups.pop(project_id, None)
+    _compat_run_snapshots.pop(project_id, None)
+    _compat_project_schedules.pop(project_id, None)
+    for mapping_id, mapping in list(_compat_mappings.items()):
+        if isinstance(mapping, dict) and str(mapping.get("project_id") or "").strip() == project_id:
+            _compat_mappings.pop(mapping_id, None)
+    await asyncio.to_thread(_compat_save_store)
     return Response(status_code=204)
 
 
 async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(default=False)):
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     project = _compat_projects.get(project_id)
     if not project:
-        # Compatibility upsert: keep UI editable even if project cache was reset.
-        project = _compat_project_payload(project_id, {
-            "id": project_id,
-            "name": f"Recovered {project_id}",
-            "source": {"type": "fabric"},
-            "target": {"type": "snowflake"},
-        })
-        _compat_projects[project_id] = project
+        raise HTTPException(status_code=404, detail="Project not found")
     # IMPORTANT: default behavior prefers per-project config so "Copy Presets"
     # can load different YAMLs for different projects. Some UI flows (for
     # example Model Mapping) can opt into prefer_repo=True to reflect the
     # workspace semabridge.yaml as the single source of truth.
-    repo_yaml = _compat_load_repo_yaml_text()
+    repo_yaml = await asyncio.to_thread(_compat_load_repo_yaml_text)
     prefer_repo_flag = prefer_repo if isinstance(prefer_repo, bool) else False
-    project_yaml = _compat_load_project_yaml_text(project_id)
+    project_yaml = await asyncio.to_thread(_compat_load_project_yaml_text, project_id)
     if prefer_repo_flag and repo_yaml:
         yaml_text = repo_yaml
         _compat_project_configs[project_id] = repo_yaml
@@ -312,7 +363,7 @@ async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(d
         yaml_text = _normalize_project_config_yaml(project_id, yaml_text, project.get("name") or project_id)
         if not project_yaml and yaml_text:
             try:
-                _compat_save_project_yaml_text(project_id, yaml_text)
+                await asyncio.to_thread(_compat_save_project_yaml_text, project_id, yaml_text)
             except Exception as exc:
                 logger.warning("Failed to persist hydrated project config for %s: %s", project_id, exc)
     _compat_project_configs[project_id] = yaml_text
@@ -324,29 +375,22 @@ async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(d
 
 
 async def save_project_config_compat(project_id: str, payload: dict):
-    _compat_ensure_loaded()
+    await asyncio.to_thread(_compat_ensure_loaded)
     project = _compat_projects.get(project_id)
     if not project:
-        # Compatibility upsert: allow saving config even when only project_id is known.
-        project = _compat_project_payload(project_id, {
-            "id": project_id,
-            "name": f"Recovered {project_id}",
-            "source": {"type": "fabric"},
-            "target": {"type": "snowflake"},
-        })
-        _compat_projects[project_id] = project
+        raise HTTPException(status_code=404, detail="Project not found")
     yaml_text = str((payload or {}).get("config_yaml") or "").strip()
     if not yaml_text:
         raise HTTPException(status_code=400, detail="config_yaml is required")
     yaml_text = _normalize_project_config_yaml(project_id, yaml_text, project.get("name") or project_id)
     _compat_project_configs[project_id] = yaml_text
     try:
-        _compat_save_project_yaml_text(project_id, yaml_text)
+        await asyncio.to_thread(_compat_save_project_yaml_text, project_id, yaml_text)
         _clear_project_mapping_cache(project_id)
     except Exception as exc:
         logger.warning("Failed to persist project config for %s: %s", project_id, exc)
     project["updated_at"] = _compat_now_iso()
-    _compat_save_store()
+    await asyncio.to_thread(_compat_save_store)
     return {
         "status": "saved",
         "project_id": project_id,
