@@ -30,6 +30,29 @@ class MetricExpressionTranslator:
             sanitized = f"_{sanitized}"
         return sanitized
 
+    def _auto_qualify_cross_table_refs(self, sql: str, dataset_aliases: Dict[str, str]) -> str:
+        """
+        Automatically qualify TABLE.COLUMN references with proper aliases.
+        No hardcoding needed – works for any table.
+        """
+        if not sql or not dataset_aliases:
+            return sql
+        
+        # Sort by length (longest first) to avoid partial matches
+        sorted_tables = sorted(dataset_aliases.keys(), key=len, reverse=True)
+        
+        for table in sorted_tables:
+            alias = dataset_aliases[table]
+            
+            # Pattern: TABLE.COLUMN or TABLE."COLUMN"
+            pattern1 = rf'\b{re.escape(table)}\.\"([^"]+)\"'
+            sql = re.sub(pattern1, rf'{alias}."\1"', sql, flags=re.IGNORECASE)
+            
+            pattern2 = rf'\b{re.escape(table)}\.([A-Za-z_][A-Za-z0-9_]*)'
+            sql = re.sub(pattern2, rf'{alias}."\1"', sql, flags=re.IGNORECASE)
+        
+        return sql
+
     def _sanitize_sql_markdown(self, sql: str) -> str:
         if not sql: return ""
         sql = re.sub(r"```sql\s*", "", sql, flags=re.IGNORECASE)

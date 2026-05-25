@@ -20,6 +20,57 @@ class TablesClauseBuilder:
         self.behavior = behavior
         self.live_schema_metadata = live_schema_metadata
 
+    def _find_date_table(self, model: Any) -> Optional[Tuple[str, str, str]]:
+        """
+        Dynamically find the date/calendar table in the model.
+        Returns (table_name, date_column, fiscal_period_column) or None.
+        No hardcoding!
+        """
+        date_keywords = ['date', 'calendar', 'cal', 'dim_date', 'dates']
+        fiscal_keywords = ['fiscal_yr_period', 'fiscal_period', 'fiscal_year_period']
+        
+        for dataset in model.datasets:
+            dataset_name = dataset.unique_name.lower()
+            
+            # Check if this looks like a date table
+            is_date_table = any(kw in dataset_name for kw in date_keywords)
+            
+            if is_date_table:
+                # Find date column
+                date_col = None
+                fiscal_col = None
+                
+                for col in dataset.columns:
+                    col_name = col.unique_name.lower()
+                    if col_name in ['cal_dt', 'date', 'calendar_date', 'cal_date']:
+                        date_col = col.unique_name
+                    if any(fk in col_name for fk in fiscal_keywords):
+                        fiscal_col = col.unique_name
+                
+                if date_col and fiscal_col:
+                    return (dataset.unique_name, date_col, fiscal_col)
+        
+        return None
+
+    def _build_source_query_with_anchors(self, source_fq: str, fact_table: str, model: Any) -> str:
+        """
+        Automatically inject anchors using dynamically detected date table.
+        No hardcoded table names!
+        """
+        date_info = self._find_date_table(model)
+        
+        if not date_info:
+            return source_fq
+        
+        date_table, date_col, fiscal_col = date_info
+        
+        return f"""(
+    SELECT 
+        f.*,
+        (SELECT MAX("{fiscal_col}") FROM "{date_table}" WHERE "{date_col}" = CURRENT_DATE()) AS "_CURRENT_FISCAL_PERIOD"
+    FROM {source_fq} f
+)"""
+
     def build_for_sml(
         self,
         sml: Any,
@@ -27,6 +78,7 @@ class TablesClauseBuilder:
         metric_counts_by_dataset: dict[str, int],
         related_datasets: set[str],
     ) -> Tuple[List[str], Dict[str, List[str]], Dict[tuple, str], Dict[str, set[str]], Dict[str, Any]]:
+        self._current_model = sml
         return self._build(sml.datasets, sml.relationships, registry, metric_counts_by_dataset, related_datasets, is_osi=False)
 
     def build_for_osi(
@@ -36,6 +88,7 @@ class TablesClauseBuilder:
         metric_counts_by_dataset: dict[str, int],
         related_datasets: set[str],
     ) -> Tuple[List[str], Dict[str, List[str]], Dict[tuple, str], Dict[str, set[str]], Dict[str, Any]]:
+        self._current_model = osi
         return self._build(osi.datasets, osi.relationships, registry, metric_counts_by_dataset, related_datasets, is_osi=True)
 
     def _build(
@@ -120,6 +173,10 @@ class TablesClauseBuilder:
                 relationship_target_alias[(dataset.unique_name, verified_pk[0].strip('"').upper())] = alias
 
             pk_clause = f"PRIMARY KEY ({', '.join(verified_pk)})" if verified_pk else ""
+            
+            if getattr(self.behavior.snowflake, "auto_add_anchors", True) and (dataset.is_fact or is_measure_only or "fact" in dataset.unique_name.lower()):
+                full_table = self._build_source_query_with_anchors(full_table, dataset.unique_name, self._current_model)
+
             tables_lines.append(f'  {alias} AS {full_table} {pk_clause}')
 
             for rel_pk in relationship_pk_cols[1:]:

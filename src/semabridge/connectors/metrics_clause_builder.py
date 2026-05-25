@@ -385,7 +385,11 @@ class MetricsClauseBuilder:
                     )
                     return None
             expr = sql_expr
-            # Normalize and validate
+            
+            # ✅ NEW: Qualify cross-table references FIRST (before normalization)
+            expr = self.translator._auto_qualify_cross_table_refs(expr, dataset_aliases)
+            
+            # Then normalize and validate
             expr = self.translator._normalize_metric_column_references(
                 expr, metric.unique_name, dataset_col_lookup, dataset_aliases, 
                 metric_names=metric_name_set, preferred_table_alias=alias,
@@ -426,6 +430,8 @@ class MetricsClauseBuilder:
                 metric_to_alias=metric_to_alias
             )
             if translated:
+                # ✅ NEW: Qualify cross-table references in translated SQL
+                translated = self.translator._auto_qualify_cross_table_refs(translated, dataset_aliases)
                 return translated
 
             # Try basic DAX translation first (COUNTROWS, COUNTBLANK, etc.)
@@ -444,6 +450,8 @@ class MetricsClauseBuilder:
             return None
             
         return None
+
+
 
     def _apply_osi_fallbacks(
         self, metrics_lines: List[str], expected_metrics: List[Any], osi: Any, 

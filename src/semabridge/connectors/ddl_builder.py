@@ -66,6 +66,53 @@ class SemanticViewBuilder:
             identifier_sanitizer, schema_manager, self.sanitizer, translator, config, dup_name_repo
         )
 
+    def _precompute_suggestions(self, model: Any) -> dict[str, list[str]]:
+        """
+        Analyze model and suggest pre-computed columns for cross-table references.
+        This runs automatically and tells you what columns to add to fact table.
+        NO HARDCODING!
+        """
+        suggestions = {}
+        
+        for metric in model.metrics:
+            dax = getattr(metric, 'expression', '') or ''
+            
+            # Detect RELATED('Table'[Column]) patterns
+            related_pattern = r'RELATED\([\'"](\w+)[\'"]\[(\w+)\]\)'
+            matches = re.findall(related_pattern, dax, re.IGNORECASE)
+            
+            for table, column in matches:
+                if table not in suggestions:
+                    suggestions[table] = []
+                if column not in suggestions[table]:
+                    suggestions[table].append(column)
+            
+            # Detect direct 'Table'[Column] references (cross-table)
+            direct_pattern = r"'(\w+)'\[(\w+)\]"
+            matches = re.findall(direct_pattern, dax, re.IGNORECASE)
+            
+            for table, column in matches:
+                # Skip if it's the same as metric's dataset
+                if table == metric.dataset:
+                    continue
+                if table not in suggestions:
+                    suggestions[table] = []
+                if column not in suggestions[table]:
+                    suggestions[table].append(column)
+        
+        if suggestions:
+            logger.warning("=" * 70)
+            logger.warning("🔍 PRE-COMPUTE SUGGESTIONS FOR CROSS-TABLE REFERENCES")
+            logger.warning("=" * 70)
+            for table, cols in suggestions.items():
+                logger.warning(f"  Table: {table}")
+                logger.warning(f"  Columns to add: {', '.join(cols)}")
+                logger.warning(f"  SQL: ALTER TABLE {table} ADD COLUMN {', '.join(cols)} VARCHAR;")
+                logger.warning("-" * 70)
+            logger.warning("=" * 70)
+        
+        return suggestions
+
     def generate_ddls(self, sml: SMLModel) -> list[str]:
         if not sml.datasets:
             return []
@@ -76,6 +123,7 @@ class SemanticViewBuilder:
             len(getattr(sml, "datasets", []) or []),
             len(getattr(sml, "metrics", []) or []),
         )
+        self._precompute_suggestions(sml)
         snapshot_ddls, source_overrides = self.snapshot_orchestrator.build_for_sml(sml)
         all_ddls = list(snapshot_ddls)
 
