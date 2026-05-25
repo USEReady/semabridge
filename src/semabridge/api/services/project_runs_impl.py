@@ -167,15 +167,34 @@ def _compat_latest_sml_state(project_id: str, preferred_snapshot_id: str = "") -
 
 
 def _compat_state_in_selected_format(state_sml: Dict[str, Any], selected_format: str) -> Dict[str, Any]:
-    if not isinstance(state_sml, dict) or not state_sml or selected_format != "osi":
-        return state_sml if isinstance(state_sml, dict) else {}
+    sanitized_state = _compat_strip_runtime_metadata(state_sml)
+    if not isinstance(sanitized_state, dict) or not sanitized_state or selected_format != "osi":
+        return sanitized_state if isinstance(sanitized_state, dict) else {}
     try:
         from semabridge.formats.sml.models import SMLModel
         from semabridge.converter.sml_to_osi import SMLToOSIConverter
 
-        return SMLToOSIConverter().to_osi(SMLModel.model_validate(state_sml)).model_dump(mode="json")
+        return SMLToOSIConverter().to_osi(SMLModel.model_validate(sanitized_state)).model_dump(mode="json")
     except Exception:
-        return state_sml
+        return sanitized_state
+
+
+def _compat_strip_runtime_metadata(value: Any) -> Any:
+    """Remove deployment-runtime metadata from a snapshot payload copy."""
+    runtime_keys = {"initiated_by", "connector_id", "trigger", "trigger_by"}
+
+    def _normalize_key(key: Any) -> str:
+        return str(key or "").strip().lower().replace(" ", "_").replace("-", "_")
+
+    if isinstance(value, dict):
+        return {
+            key: _compat_strip_runtime_metadata(child)
+            for key, child in value.items()
+            if _normalize_key(key) not in runtime_keys
+        }
+    if isinstance(value, list):
+        return [_compat_strip_runtime_metadata(item) for item in value]
+    return value
 
 
 def _compat_create_snapshot_group(project_id: str, created_by: str, label: str, origin: str, run_id: Optional[str] = None) -> str:
@@ -274,7 +293,10 @@ def _compat_capture_snapshots_for_run(
     _compat_project_snapshots.setdefault(project_id, [])
     selected_format = _compat_selected_intermediate_format(project_cfg)
     connector_descriptors = _compat_connector_descriptors(project_cfg)
-    state_blob = _compat_state_in_selected_format(_compat_latest_sml_state(project_id, preferred_snapshot_id), selected_format)
+    state_blob = _compat_state_in_selected_format(
+        _compat_latest_sml_state(project_id, preferred_snapshot_id),
+        selected_format,
+    )
     run_id = str(run.get("run_id") or run.get("id") or "")
     origin = "RUN_BEFORE" if stage == "before" else "RUN_AFTER"
     timing = "before" if stage == "before" else "after"

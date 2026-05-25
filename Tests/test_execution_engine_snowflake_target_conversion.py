@@ -4,6 +4,8 @@ import pytest
 
 from semabridge.core.behavior import ConnectorBehavior
 from semabridge.core.execution_engine import DeploymentError, ExecutionEngine, RunContext
+from semabridge.core.run_summary import RunStatus, create_run_summary
+from semabridge.sml.models import SMLModel
 
 
 class _EmitterWithoutCortexMethod:
@@ -54,6 +56,15 @@ class _EmptyDbManager:
         return _EmptySessionContext()
 
 
+class _SnapshotStatusRecorder:
+    def __init__(self):
+        self.calls = []
+
+    def update_snapshot_status(self, snapshot_id, status, error_message=None):
+        self.calls.append((snapshot_id, status, error_message))
+        return True
+
+
 def test_convert_to_snowflake_target_falls_back_when_emitter_lacks_cortex_method(
     monkeypatch,
     tmp_path,
@@ -94,6 +105,40 @@ def test_convert_to_snowflake_target_falls_back_when_emitter_lacks_cortex_method
     )
     assert (tmp_path / "cortex_analyst.yaml").read_text(encoding="utf-8") == "name: demo-model\n"
     assert context.target_artifact_path == str(tmp_path / "semantic_view.sql")
+
+
+def test_convert_to_snowflake_target_persists_sml_yaml_for_real_model(
+    monkeypatch,
+    tmp_path,
+):
+    engine = ExecutionEngine()
+    context = RunContext(
+        project_id="Demo Model",
+        run_id="run-1",
+        config=SimpleNamespace(
+            snowflake=SimpleNamespace(
+                account="acct",
+                warehouse="wh",
+                database="db",
+                schema_name="schema",
+            )
+        ),
+        start_time=0.0,
+        source_type="fabric",
+        target_type="snowflake",
+        behavior=ConnectorBehavior(),
+    )
+    context.sml_model = SMLModel(unique_name="demo_model", datasets=[], metrics=[])
+
+    monkeypatch.setattr(
+        "semabridge.connectors.snowflake_emitter.SnowflakeEmitter",
+        _EmitterWithoutCortexMethod,
+    )
+    monkeypatch.setattr(ExecutionEngine, "_model_output_dir", lambda self, *args, **kwargs: tmp_path)
+
+    engine._convert_to_snowflake_target(context)
+
+    assert (tmp_path / "sml" / "model.yaml").exists()
 
 
 def test_snowflake_deploy_error_includes_root_cause(
@@ -172,3 +217,31 @@ def test_deploy_to_snowflake_falls_back_when_target_identity_is_unlinked(
     engine._deploy_to_snowflake(context)
 
     assert deployed_configs == [context.config.snowflake]
+
+
+def test_finalize_marks_snapshot_failed_when_run_fails():
+    engine = ExecutionEngine(db_manager=_SnapshotStatusRecorder())
+    context = RunContext(
+        project_id="Demo Model",
+        run_id="run-1",
+        config=SimpleNamespace(snowflake=SimpleNamespace(push_run_summary_to_snowflake=False)),
+        start_time=0.0,
+        source_type="fabric",
+        target_type="snowflake",
+        behavior=ConnectorBehavior(),
+    )
+    context.sml_snapshot_id = "snapshot-123"
+
+    engine._summary = create_run_summary(
+        project_id="Demo Model",
+        run_id="run-1",
+        source_type="fabric",
+        target_type="snowflake",
+    )
+    engine._summary.sml_snapshot_id = "snapshot-123"
+    engine._summary.add_error(9, "Deploy to Target", RuntimeError("copy sync failed"))
+
+    finalized = engine._step10_finalize(context, RunStatus.FAILED)
+
+    assert engine.db_manager.calls == [("snapshot-123", "failed", "copy sync failed")]
+    assert finalized.status == RunStatus.FAILED

@@ -12,7 +12,8 @@
 import { useState, useMemo, useCallback } from 'react';
 import { Edit2, GitMerge, Zap, CheckCircle, Tags } from 'lucide-react';
 import StatusBadge from './common/StatusBadge';
-import SmartSearchBar, { matchesSmartQuery } from './common/SmartSearchBar';
+import SmartSearchBar from './common/SmartSearchBar';
+import { matchesSmartQuery } from './common/smartSearchQuery.js';
 import { api } from '../utils/api';
 import SynonymEditModal from './SynonymEditModal';
 

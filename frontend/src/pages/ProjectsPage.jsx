@@ -14,12 +14,15 @@ import StatusBadge from '../components/common/StatusBadge';
 import EmptyState from '../components/common/EmptyState';
 import ProjectDetailModal from '../components/projects/ProjectDetailModal';
 import ImportProjectModal from '../components/projects/ImportProjectModal';
-import SmartSearchBar, { matchesSmartQuery } from '../components/common/SmartSearchBar';
+import SmartSearchBar from '../components/common/SmartSearchBar';
+import { getSmartQueryMode, matchesSmartQuery } from '../components/common/smartSearchQuery.js';
 import { api } from '../utils/api';
 import { resolveProjectSyncMode } from '../utils/syncMode';
 import React, { useContext } from 'react';
 import { SyncContext } from '../context/SyncContext';
 import { DEFAULT_FILTER_OPTIONS, useUIStore } from '../store/uiStore';
+import { SidebarSystemGroup, SidebarAddButton } from '../components/projects/SystemSidebar';
+import { hasFailures } from '../utils/statusUtils';
 
 function openRunsPage() {
   if (typeof window !== 'undefined') {
@@ -107,6 +110,7 @@ export default function ProjectsPage() {
   const [sidebarWidth, setSidebarWidth] = useState(240);
   const [isResizing, setIsResizing] = useState(false);
   const [runningProjectIds, setRunningProjectIds] = useState(new Set());
+  const [expandedGroups, setExpandedGroups] = useState(new Set());
   const searchQuery = useUIStore(state => state.searchQuery);
   const setSearchQuery = useUIStore(state => state.setSearchQuery);
   const filterOptions = useUIStore(state => state.filterOptions);
@@ -191,6 +195,29 @@ export default function ProjectsPage() {
     };
   }, [isResizing]);
 
+  // Smart Expand: Automatically expand systems with failures
+  useEffect(() => {
+    if (viewMode === 'adapter' && projects.length > 0) {
+      const systemsWithFailures = new Set();
+      const systems = [...new Set(projects.map(p => sourceKeyOf(p)).filter(Boolean))];
+      
+      systems.forEach(system => {
+        const systemProjects = projects.filter(p => sourceKeyOf(p) === system);
+        if (hasFailures(systemProjects)) {
+          systemsWithFailures.add(system);
+        }
+      });
+
+      if (systemsWithFailures.size > 0) {
+        setExpandedGroups(prev => {
+          const next = new Set(prev);
+          systemsWithFailures.forEach(s => next.add(s));
+          return next;
+        });
+      }
+    }
+  }, [viewMode, projects.length]);
+
   const updateFilterOption = useCallback((key, value) => {
     setFilterOptions({ [key]: value });
   }, [setFilterOptions]);
@@ -215,6 +242,9 @@ export default function ProjectsPage() {
       if (selectedFolderKey.startsWith('source:')) {
         const source = selectedFolderKey.substring(7);
         if (sourceKeyOf(p) !== source) return false;
+      } else if (selectedFolderKey.startsWith('project:')) {
+        const projectId = selectedFolderKey.substring(8);
+        if (String(p.id) !== projectId) return false;
       } else {
         if (String(p.folder_id ?? '') !== selectedFolderKey) return false;
       }
@@ -243,8 +273,14 @@ export default function ProjectsPage() {
     return true;
   });
 
+  const queryMode = getSmartQueryMode(searchQuery, useRegexSearch);
+
   const filtered = searchQuery.trim()
     ? folderFiltered.filter((p) => {
+        if (queryMode.mode === 'prefix' && queryMode.strictPrefix) {
+          return matchesSmartQuery(p.name || '', searchQuery, useRegexSearch);
+        }
+
         const haystack = [
           p.name,
           p.description,
@@ -426,14 +462,15 @@ export default function ProjectsPage() {
               <button
                 onClick={() => updateFilterOption('viewMode', 'folder')}
                 style={{
-                  border: '1px solid var(--border-main)',
+                  border: viewMode === 'folder' ? '1px solid var(--accent-blue)' : '1px solid var(--border-dark, #2d3139)',
                   borderRadius: 6,
-                  padding: '5px 6px',
+                  padding: '6px 4px',
                   fontSize: 11,
                   fontWeight: 600,
                   cursor: 'pointer',
-                  background: viewMode === 'folder' ? 'var(--accent-blue)18' : 'var(--bg-surface)',
-                  color: viewMode === 'folder' ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                  background: viewMode === 'folder' ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
+                  color: viewMode === 'folder' ? 'var(--accent-blue)' : '#888888',
+                  transition: 'all 0.2s'
                 }}
               >
                 Group by Folder
@@ -441,18 +478,40 @@ export default function ProjectsPage() {
               <button
                 onClick={() => updateFilterOption('viewMode', 'adapter')}
                 style={{
-                  border: '1px solid var(--border-main)',
+                  border: viewMode === 'adapter' ? '1px solid var(--accent-blue)' : '1px solid var(--border-dark, #2d3139)',
                   borderRadius: 6,
-                  padding: '5px 6px',
+                  padding: '6px 4px',
                   fontSize: 11,
                   fontWeight: 600,
                   cursor: 'pointer',
-                  background: viewMode === 'adapter' ? 'var(--accent-blue)18' : 'var(--bg-surface)',
-                  color: viewMode === 'adapter' ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                  background: viewMode === 'adapter' ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
+                  color: viewMode === 'adapter' ? 'var(--accent-blue)' : '#888888',
+                  transition: 'all 0.2s'
                 }}
               >
                 Group by System
               </button>
+            </div>
+            <div 
+              onClick={() => {
+                updateFilterOption('selectedFolder', null);
+                updateFilterOption('searchQuery', '');
+              }}
+              style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: 8, 
+                padding: '6px 0',
+                fontSize: 13, 
+                fontWeight: 500, 
+                color: selectedFolder === null ? 'var(--text-primary)' : '#6b7280', 
+                cursor: 'pointer',
+                marginTop: 4
+              }}
+              className="hover:text-gray-300 transition-colors"
+            >
+              <Folder size={14} />
+              <span>All Projects ({projects.length})</span>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 4, marginLeft: 8 }}>
@@ -502,46 +561,86 @@ export default function ProjectsPage() {
 
         {/* Folder list or Source list */}
         {viewMode === 'folder' ? (
-          folders.map(f => (
-          <SidebarFolder
-            key={f.id}
-            folder={f}
-            projectCount={projects.filter(p => p.folder_id === f.id).length}
-            active={selectedFolder === f.id}
-            onClick={() => updateFilterOption('selectedFolder', f.id)}
-            isRenaming={renameFolderId === f.id}
-            renameValue={renameFolderName}
-            onRenameChange={setRenameFolderName}
-            onRenameSubmit={() => handleRenameFolder(f.id)}
-            onRenameStart={() => { setRenameFolderId(f.id); setRenameFolderName(f.name); }}
-            onDelete={() => handleDeleteFolder(f.id)}
-            isDragOver={dragOverFolder === f.id}
-            isDraggingGlobal={!!draggingProjectId}
-            onDragOver={e => { e.preventDefault(); setDragOverFolder(f.id); }}
-            onDragLeave={() => setDragOverFolder(null)}
-            onDrop={async e => {
-              await handleDropOnFolder(e, f.id);
-              setDraggingProjectId(null);
-            }}
-          />
-        ))
+          folders.map(f => {
+            const projectsInFolder = projects.filter(p => p.folder_id === f.id);
+            return (
+              <SidebarFolder
+                key={f.id}
+                folder={f}
+                projectsInFolder={projectsInFolder}
+                active={selectedFolder === f.id}
+                onClick={() => updateFilterOption('selectedFolder', f.id)}
+                isRenaming={renameFolderId === f.id}
+                renameValue={renameFolderName}
+                onRenameChange={setRenameFolderName}
+                onRenameSubmit={() => handleRenameFolder(f.id)}
+                onRenameStart={() => { setRenameFolderId(f.id); setRenameFolderName(f.name); }}
+                onDelete={() => handleDeleteFolder(f.id)}
+                isDragOver={dragOverFolder === f.id}
+                isDraggingGlobal={!!draggingProjectId}
+                onDragOver={e => { e.preventDefault(); setDragOverFolder(f.id); }}
+                onDragLeave={() => setDragOverFolder(null)}
+                onDrop={async e => {
+                  await handleDropOnFolder(e, f.id);
+                  setDraggingProjectId(null);
+                }}
+                onRunAll={() => {
+                  projectsInFolder.forEach(p => handleRunNow(p));
+                }}
+              />
+            );
+          })
         ) : (
-          // Adapter/Source view
-          [...new Set(projects.map(p => sourceKeyOf(p)).filter(Boolean))]
-            .sort()
-            .map(source => {
-              const sourceProjects = projects.filter(p => sourceKeyOf(p) === source);
-              return (
-                <SidebarItem
-                  key={source}
-                  color="var(--accent-blue)"
-                  icon={renderSourceIcon(source, 13)}
-                  label={`${source} (${sourceProjects.length})`}
-                  active={selectedFolder === `source:${source}`}
-                  onClick={() => updateFilterOption('selectedFolder', `source:${source}`)}
-                />
-              );
-            })
+          // Adapter/Source view (Refined)
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {[...new Set(projects.map(p => sourceKeyOf(p)).filter(Boolean))]
+              .sort()
+              .map(source => {
+                const sourceProjects = projects.filter(p => sourceKeyOf(p) === source);
+                return (
+                  <SidebarSystemGroup
+                    key={source}
+                    systemName={source.toUpperCase()}
+                    projects={sourceProjects}
+                    icon={renderSourceIcon(source, 14)}
+                    expanded={expandedGroups.has(source)}
+                    onToggle={() => {
+                      setExpandedGroups(prev => {
+                        const next = new Set(prev);
+                        if (next.has(source)) next.delete(source);
+                        else next.add(source);
+                        return next;
+                      });
+                    }}
+                    onHeaderClick={() => {
+                      updateFilterOption('selectedFolder', `source:${source}`);
+                    }}
+                    activeProject={selectedFolder && selectedFolder.startsWith('project:') ? projects.find(p => `project:${p.id}` === selectedFolder) : null}
+                    onProjectClick={(project) => {
+                      updateFilterOption('selectedFolder', `project:${project.id}`);
+                      setActiveProjectId(project.id);
+                    }}
+                    onMenuToggle={setMenuOpen}
+                    onRunFailed={() => {
+                      const failed = sourceProjects.filter(p => (p.status || '').toLowerCase() === 'failed');
+                      if (failed.length > 0) {
+                        failed.forEach(p => handleRunNow(p));
+                      } else {
+                        // If none failed, run all that are 'stale' or just run all
+                        sourceProjects.forEach(p => handleRunNow(p));
+                      }
+                    }}
+                    onForceRunAll={() => {
+                      sourceProjects.forEach(p => handleRunNow(p));
+                    }}
+                  />
+                );
+              })}
+            <SidebarAddButton 
+              label="Add New System/Connection" 
+              onClick={() => navigate('/connections/new')} 
+            />
+          </div>
         )}
 
         {/* New folder input */}
@@ -876,6 +975,53 @@ export default function ProjectsPage() {
 }
 
 /* ─── Sidebar helpers ─── */
+function FolderStatusDistribution({ projects = [] }) {
+  if (projects.length === 0) return null;
+  
+  const total = projects.length;
+  const counts = projects.reduce((acc, p) => {
+    const s = (p.status || 'idle').toLowerCase();
+    acc[s] = (acc[s] || 0) + 1;
+    return acc;
+  }, {});
+
+  const statuses = [
+    { key: 'failed', color: 'var(--color-error)' },
+    { key: 'error', color: 'var(--color-error)' },
+    { key: 'warning', color: 'var(--color-warning)' },
+    { key: 'running', color: 'var(--accent-blue)' },
+    { key: 'success', color: 'var(--color-success)' },
+    { key: 'active', color: 'var(--color-success)' },
+  ];
+
+  return (
+    <div style={{ 
+      display: 'flex', 
+      height: 6, 
+      width: 60, 
+      background: 'var(--bg-surface-raised, #1a1d23)', 
+      borderRadius: 99, 
+      overflow: 'hidden',
+      marginRight: 8
+    }}>
+      {statuses.map(s => {
+        const count = counts[s.key] || 0;
+        if (count === 0) return null;
+        return (
+          <div 
+            key={s.key} 
+            style={{ 
+              width: `${(count / total) * 100}%`, 
+              height: '100%', 
+              background: s.color 
+            }} 
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 function SidebarItem({ color, label, active, onClick, icon, isDraggingGlobal, isDragOver, onDragOver, onDragLeave, onDrop }) {
   return (
     <button
@@ -902,24 +1048,29 @@ function SidebarItem({ color, label, active, onClick, icon, isDraggingGlobal, is
 }
 
 function SidebarFolder({
-  folder, projectCount, active, onClick,
+  folder, projectsInFolder = [], active, onClick,
   isRenaming, renameValue, onRenameChange, onRenameSubmit, onRenameStart,
   onDelete, isDragOver, isDraggingGlobal, onDragOver, onDragLeave, onDrop,
+  onRunAll
 }) {
   const [hover, setHover] = useState(false);
+  const failureCount = projectsInFolder.filter(p => (p.status || '').toLowerCase() === 'failed').length;
+
   return (
     <div
       role="button"
       tabIndex={0}
       style={{
         display: 'flex', alignItems: 'center', gap: 6,
-        padding: '6px 10px', cursor: 'pointer',
+        padding: '6px 12px', cursor: 'pointer',
         background: isDragOver ? `${folder.color}22` : active ? 'var(--accent-blue)14' : 'transparent',
         borderLeft: isDragOver ? `4px solid ${folder.color}` : active ? `3px solid ${folder.color}` : '3px solid transparent',
         transition: 'all 0.2s',
         animation: isDraggingGlobal && !isDragOver ? 'pulse 2s infinite' : 'none',
         position: 'relative',
+        minHeight: 36
       }}
+      className="hover:bg-white/5"
       onClick={onClick}
       onKeyDown={e => e.key === 'Enter' && onClick()}
       onMouseEnter={() => setHover(true)}
@@ -953,17 +1104,32 @@ function SidebarFolder({
           {folder.name}
         </span>
       )}
-      <span style={{ fontSize: 10, color: 'var(--text-tertiary)', flexShrink: 0 }}>{projectCount}</span>
-      {hover && !isRenaming && (
-        <>
-          <button onClick={e => { e.stopPropagation(); onRenameStart(); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 1 }}>
-            <Edit3 size={10} />
-          </button>
-          <button onClick={e => { e.stopPropagation(); onDelete(); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 1 }}>
-            <Trash2 size={10} />
-          </button>
-        </>
-      )}
+      
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {hover && !isRenaming ? (
+          <div className="flex items-center gap-2 animate-fade-in">
+            <button 
+              onClick={e => { e.stopPropagation(); onRunAll(); }}
+              title="Run All"
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 1 }}
+              className="hover:text-white"
+            >
+              <Play size={12} fill="currentColor" />
+            </button>
+            <button onClick={e => { e.stopPropagation(); onRenameStart(); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 1 }} className="hover:text-white">
+              <Edit3 size={12} />
+            </button>
+            <button onClick={e => { e.stopPropagation(); onDelete(); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 1 }} className="hover:text-white">
+              <Trash2 size={12} />
+            </button>
+          </div>
+        ) : (
+          <>
+            <FolderStatusDistribution projects={projectsInFolder} />
+            <span style={{ fontSize: 10, color: 'var(--text-tertiary)', flexShrink: 0 }}>({projectsInFolder.length})</span>
+          </>
+        )}
+      </div>
     </div>
   );
 }

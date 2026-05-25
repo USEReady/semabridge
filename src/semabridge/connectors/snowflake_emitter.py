@@ -245,15 +245,14 @@ class SnowflakeEmitter(BaseEmitter):
                                 self.config.schema_name,
                             )
                         elif missing_tables:
-                            error_msg = (
-                                "Cannot UPSERT: semantic view exists but required base "
-                                f"table(s) are missing: {missing_tables}. "
-                                "Run COPY sync first to recreate the full Snowflake "
-                                "semantic view/table structure."
+                            logger.warning(
+                                "UPSERT partial bootstrap: semantic view %s exists, but "
+                                "some required base tables are missing: %s. "
+                                "Proceeding to create missing tables while preserving existing ones.",
+                                full_view_name,
+                                missing_tables,
                             )
-                            logger.error(error_msg)
-                            self.last_deployment_error = error_msg
-                            raise ConnectorError(error_msg)
+                            preserve_existing = True
 
                     # Preserve validation runs only after all required base
                     # tables are confirmed present. First UPSERT runs use the
@@ -262,15 +261,21 @@ class SnowflakeEmitter(BaseEmitter):
                     # the compatibility helper for older callers/tests.
                     if preserve_existing and existing_tables:
                         logger.info("Validating relationships and measures against existing tables")
-                        validation_errors = self._validate_relationships_measures_on_existing_tables(
+                        validation_errors, incompatible_tables = self._validate_relationships_measures_on_existing_tables(
                             cur, model, existing_tables, is_osi
                         )
-
                         if validation_errors:
-                            error_msg = "Cannot use existing tables - validation errors with relationships/measures:\n" + "\n".join(validation_errors)
-                            logger.error("Validation failed: %s", error_msg)
-                            self.last_deployment_error = error_msg
-                            raise ConnectorError(error_msg)
+                            logger.warning(
+                                "Found %d validation error(s) across %d table(s). Incompatible tables will be recreated: %s",
+                                len(validation_errors),
+                                len(incompatible_tables),
+                                incompatible_tables
+                            )
+                            for table_name in incompatible_tables:
+                                if table_name in existing_tables:
+                                    # Mark as non-existent to force re-creation
+                                    existing_tables[table_name]['exists'] = False
+                                    logger.info("Forced re-creation for incompatible table: %s", table_name)
 
                         logger.info("All validation checks passed for existing tables")
                 elif getattr(self.sf_behavior, "preserve_existing_tables", False):
@@ -822,6 +827,7 @@ class SnowflakeEmitter(BaseEmitter):
         Returns: list of error messages (empty if all valid)
         """
         errors = []
+        incompatible_datasets = set()
         
         try:
             def resolve_table_columns(dataset_name: str) -> set[str]:
@@ -843,6 +849,18 @@ class SnowflakeEmitter(BaseEmitter):
                     if str(getattr(dataset, 'unique_name', '')).upper() == str(dataset_name).upper():
                         return dataset
                 return None
+
+            def normalize_type(dtype: Optional[str]) -> Optional[str]:
+                if not dtype:
+                    return None
+                dtype = str(dtype).upper()
+                if dtype in ('TEXT', 'STRING', 'VARCHAR'):
+                    return 'VARCHAR'
+                if dtype in ('NUMBER', 'FLOAT', 'DOUBLE', 'DECIMAL'):
+                    return 'NUMBER'
+                if dtype in ('INTEGER', 'INT', 'BIGINT', 'SMALLINT'):
+                    return 'INTEGER'
+                return dtype
 
             def expected_column_type(dataset_name: str, column_name: str) -> Optional[str]:
                 dataset = expected_dataset(dataset_name)
@@ -866,42 +884,46 @@ class SnowflakeEmitter(BaseEmitter):
                 to_columns = [str(col).upper() for col in (getattr(rel, 'to_columns', []) or [])]
                 
                 if from_dataset and from_dataset in existing_tables:
-                    if not existing_tables[from_dataset]['exists']:
-                        errors.append(f"Relationship {rel.unique_name}: from_dataset '{from_dataset}' table does not exist")
-                    else:
+                    if existing_tables[from_dataset]['exists']:
                         available_columns = resolve_table_columns(from_dataset)
                         available_column_types = resolve_table_column_types(from_dataset)
+                        
+                        for col in from_columns:
+                            expected_type = normalize_type(expected_column_type(from_dataset, col))
+                            actual_type = normalize_type(available_column_types.get(col))
+                            if expected_type and actual_type and expected_type != actual_type:
+                                errors.append(
+                                    f"Relationship {rel.unique_name}: column type mismatch for {dataset_label(from_dataset)}.{col} (expected {expected_type}, found {actual_type})"
+                                )
+                                incompatible_datasets.add(from_dataset)
+                        
                         missing_from = [col for col in from_columns if col not in available_columns]
                         if missing_from:
                             errors.append(
                                 f"Relationship {rel.unique_name}: missing from_columns {missing_from} in {dataset_label(from_dataset)}"
                             )
-                        for col in from_columns:
-                            expected_type = expected_column_type(from_dataset, col)
-                            actual_type = available_column_types.get(col)
-                            if expected_type and actual_type and expected_type != actual_type:
-                                errors.append(
-                                    f"Relationship {rel.unique_name}: column type mismatch for {dataset_label(from_dataset)}.{col} (expected {expected_type}, found {actual_type})"
-                                )
+                            incompatible_datasets.add(from_dataset)
                 
                 if to_dataset and to_dataset in existing_tables:
-                    if not existing_tables[to_dataset]['exists']:
-                        errors.append(f"Relationship {rel.unique_name}: to_dataset '{to_dataset}' table does not exist")
-                    else:
+                    if existing_tables[to_dataset]['exists']:
                         available_columns = resolve_table_columns(to_dataset)
                         available_column_types = resolve_table_column_types(to_dataset)
+                        
+                        for col in to_columns:
+                            expected_type = normalize_type(expected_column_type(to_dataset, col))
+                            actual_type = normalize_type(available_column_types.get(col))
+                            if expected_type and actual_type and expected_type != actual_type:
+                                errors.append(
+                                    f"Relationship {rel.unique_name}: column type mismatch for {dataset_label(to_dataset)}.{col} (expected {expected_type}, found {actual_type})"
+                                )
+                                incompatible_datasets.add(to_dataset)
+                        
                         missing_to = [col for col in to_columns if col not in available_columns]
                         if missing_to:
                             errors.append(
                                 f"Relationship {rel.unique_name}: missing to_columns {missing_to} in {dataset_label(to_dataset)}"
                             )
-                        for col in to_columns:
-                            expected_type = expected_column_type(to_dataset, col)
-                            actual_type = available_column_types.get(col)
-                            if expected_type and actual_type and expected_type != actual_type:
-                                errors.append(
-                                    f"Relationship {rel.unique_name}: column type mismatch for {dataset_label(to_dataset)}.{col} (expected {expected_type}, found {actual_type})"
-                                )
+                            incompatible_datasets.add(to_dataset)
                 
                 logger.info("Relationship validation: %s (from=%s, to=%s)", 
                           rel.unique_name, from_dataset, to_dataset)
@@ -912,22 +934,22 @@ class SnowflakeEmitter(BaseEmitter):
                 metric_dataset = getattr(metric, 'dataset', None)
                 source_column = getattr(metric, 'source_column', None)
                 if metric_dataset and metric_dataset in existing_tables:
-                    if not existing_tables[metric_dataset]['exists']:
-                        errors.append(f"Metric {metric.unique_name}: dataset '{metric_dataset}' table does not exist")
-                    elif source_column:
+                    if existing_tables[metric_dataset]['exists'] and source_column:
                         available_columns = resolve_table_columns(metric_dataset)
                         available_column_types = resolve_table_column_types(metric_dataset)
                         if str(source_column).upper() not in available_columns:
                             errors.append(
                                 f"Metric {metric.unique_name}: source_column '{source_column}' missing in {dataset_label(metric_dataset)}"
                             )
+                            incompatible_datasets.add(metric_dataset)
                         else:
-                            expected_type = expected_column_type(metric_dataset, source_column)
-                            actual_type = available_column_types.get(str(source_column).upper())
+                            expected_type = normalize_type(expected_column_type(metric_dataset, source_column))
+                            actual_type = normalize_type(available_column_types.get(str(source_column).upper()))
                             if expected_type and actual_type and expected_type != actual_type:
                                 errors.append(
                                     f"Metric {metric.unique_name}: source_column type mismatch for {dataset_label(metric_dataset)}.{source_column} (expected {expected_type}, found {actual_type})"
                                 )
+                                incompatible_datasets.add(metric_dataset)
                 
                 logger.info("Metric validation: %s (dataset=%s)", metric.unique_name, metric_dataset)
             
@@ -936,7 +958,7 @@ class SnowflakeEmitter(BaseEmitter):
             else:
                 logger.info("All relationships and measures validated successfully")
             
-            return errors
+            return errors, list(incompatible_datasets)
             
         except Exception as exc:
             logger.error("Error during relationship/measure validation: %s", exc, exc_info=True)

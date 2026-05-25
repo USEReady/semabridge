@@ -12,7 +12,7 @@ import {
     Layers,
     Command,
 } from 'lucide-react';
-import { getSmartQueryError, matchesSmartQuery } from './common/SmartSearchBar';
+import { getSmartQueryError, matchesSmartQuery } from './common/smartSearchQuery.js';
 
 const COMMANDS = [
     { id: 'repo-map', label: 'Open Repository Map', icon: Map, action: 'toggleRepoMap', category: 'View' },

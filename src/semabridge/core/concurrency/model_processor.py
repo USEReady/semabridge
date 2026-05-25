@@ -61,10 +61,13 @@ def _process_model_in_worker(
     try:
         # Import inside worker to avoid pickling issues
         from semabridge.core.execution_engine import ExecutionEngine
-        from semabridge.repository.duckdb_manager import DuckDBManager
+        from semabridge.repository.model_repository import ModelRepository
         from pathlib import Path
 
-        db_manager = DuckDBManager(db_path=db_path) if db_path else DuckDBManager()
+        # Use ModelRepository as the canonical repository implementation.
+        # When a `db_path` was previously provided for DuckDB, the repository
+        # selection should be driven by global config; ignore `db_path` here.
+        db_manager = ModelRepository()
         engine = ExecutionEngine(db_manager=db_manager)
 
         def _run():
@@ -187,17 +190,16 @@ class ModelProcessor:
         Returns:
             ModelResult with success/failure details.
         """
+
         from pathlib import Path
         from semabridge.core.execution_engine import ExecutionEngine
-        from semabridge.repository.duckdb_manager import DuckDBManager
+        from semabridge.repository.model_repository import ModelRepository
 
         start = time.time()
         try:
-            db_manager = (
-                DuckDBManager(db_path=self._db_path)
-                if self._db_path
-                else DuckDBManager()
-            )
+            # Use ModelRepository instead of DuckDBManager. Backend selection
+            # is controlled by configuration; ignore `_db_path` parameter.
+            db_manager = ModelRepository()
             engine = ExecutionEngine(db_manager=db_manager)
 
             def _run():
@@ -276,7 +278,7 @@ class ModelProcessor:
             BroadcastResult with per-target results.
         """
         from semabridge.core.execution_engine import ExecutionEngine
-        from semabridge.repository.duckdb_manager import DuckDBManager
+        from semabridge.repository.model_repository import ModelRepository
         from pathlib import Path
 
         extraction_start = time.time()
@@ -284,11 +286,7 @@ class ModelProcessor:
 
         try:
             # Phase 1: Extract + convert (once)
-            db_manager = (
-                DuckDBManager(db_path=self._db_path)
-                if self._db_path
-                else DuckDBManager()
-            )
+            db_manager = ModelRepository()
             engine = ExecutionEngine(db_manager=db_manager)
 
             # Run extraction and conversion (steps 1-7)

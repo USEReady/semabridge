@@ -33,6 +33,47 @@ def test_model_repository_backfills_missing_run_sync_mode_column(tmp_path):
     finally:
         conn.close()
 
+
+def test_model_repository_drops_legacy_snapshot_runtime_columns(tmp_path):
+    db_path = tmp_path / "legacy_snapshots.db"
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE snapshots (
+                snapshot_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                version_tag TEXT,
+                sml_blob TEXT,
+                status TEXT NOT NULL,
+                duration_ms INTEGER,
+                error_message TEXT,
+                initiated_by TEXT NOT NULL DEFAULT 'cli',
+                run_id TEXT,
+                deleted_at TEXT,
+                connector_id TEXT,
+                trigger TEXT
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    ModelRepository(url_override=f"sqlite:///{db_path.as_posix()}")
+
+    conn = sqlite3.connect(db_path)
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(snapshots)")}
+        assert "initiated_by" not in columns
+        assert "connector_id" not in columns
+        assert "trigger" not in columns
+        assert "sync_mode" in columns
+    finally:
+        conn.close()
+
     repo = ModelRepository(url_override=f"sqlite:///{db_path.as_posix()}")
     repo.record_run_start(
         run_id="run-legacy-sync-mode",

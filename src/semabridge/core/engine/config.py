@@ -238,6 +238,7 @@ def _step2_init_identifiers(
     config: Settings,
     source: str,
     target: Optional[str],
+    requested_project_id: Optional[str],
     project_name: Optional[str],
     dataset_id: Optional[str],
     config_path: Optional[Path] = None,
@@ -257,7 +258,9 @@ def _step2_init_identifiers(
         sync_mode = "copy"
 
     # Determine project_id
-    if dataset_id:
+    if requested_project_id:
+        project_id = str(requested_project_id).strip()
+    elif dataset_id:
         # For Fabric source, use dataset_id as project_id
         project_id = dataset_id
     elif project_name:

@@ -4,7 +4,7 @@ import { Play, RefreshCw, Clock, CalendarClock, ChevronDown, ChevronRight, BarCh
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
 import SearchInput from '../components/common/SearchInput';
-import { matchesSmartQuery } from '../components/common/SmartSearchBar';
+import { matchesSmartQuery } from '../components/common/smartSearchQuery.js';
 import { api } from '../utils/api';
 import { buildMockRunLogs, getRunLogs, saveRunLogs } from '../utils/runLogs';
 

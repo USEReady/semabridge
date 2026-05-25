@@ -42,7 +42,7 @@ from semabridge.utils.logger import setup_logging, get_logger
 # Import reverse flow components (lazy loaded in command but good to have ready)
 from semabridge.connectors.fabric_extractor import FabricExtractor
 from semabridge.converter.tmsl_to_sml import TMSLTransformer
-from semabridge.repository.duckdb_manager import DuckDBManager
+from semabridge.repository.model_repository import ModelRepository
 from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
 
 # Import semantic CLI commands
@@ -996,7 +996,7 @@ def history(
         title="History",
     ))
     
-    db_manager = DuckDBManager()
+    db_manager = ModelRepository()
     snapshots = db_manager.list_snapshots(dataset_id, limit=limit)
     
     if not snapshots:
@@ -1100,7 +1100,7 @@ def rollback(
     ))
     
     try:
-        db_manager = DuckDBManager()
+        db_manager = ModelRepository()
         diff_engine = SemanticDiffEngine()
         
         # ================================================================
@@ -1287,10 +1287,10 @@ def rollback(
 def _display_rollback_preview(diff, current, target):
     """Display the semantic diff preview for rollback with tabular format."""
     from rich.tree import Tree
-    from semabridge.repository.duckdb_manager import DuckDBManager
+    from semabridge.repository.model_repository import ModelRepository
     
     # Use DuckDBManager.compare_versions for accurate diff (filters false positives)
-    db_manager = DuckDBManager()
+    db_manager = ModelRepository()
     real_changes = db_manager.compare_versions(
         current.project_id,
         current.snapshot_id,  # From (current HEAD)
@@ -1388,7 +1388,7 @@ def list_projects():
         title="Projects",
     ))
     
-    db_manager = DuckDBManager()
+    db_manager = ModelRepository()
     conn = db_manager._get_connection()
     
     try:
@@ -1475,7 +1475,7 @@ def _run_snowflake_to_fabric(
         from semabridge.connectors.tmsl_generator import TMSLGenerator
         from semabridge.connectors.fabric_publisher import FabricPublisher
         from semabridge.utils.cache import MetadataCache
-        from semabridge.repository.duckdb_manager import DuckDBManager
+        from semabridge.repository.model_repository import ModelRepository
         from semabridge.connectors.inference_engine import SmlInferenceEngine
         from semabridge.converter.semantic_view_to_osi import SemanticViewToOSIConverter
         from semabridge.converter.osi_to_sml import OSIToSMLConverter
@@ -1665,7 +1665,7 @@ def _run_snowflake_to_fabric(
             db_manager.dispose()
         except Exception as _dispose_err:
             logger.debug(f"Non-fatal DB engine dispose warning: {_dispose_err}")
-        db_manager = DuckDBManager()
+        db_manager = ModelRepository()
         db_manager.ensure_project(model_name, sml_model.label, settings.fabric.workspace_id, adapter="snowflake")
         sml_dict = sml_model.model_dump(mode='json')
         committed, snapshot_id = db_manager.commit_model(
@@ -1718,7 +1718,7 @@ def _run_snowflake_to_fabric(
         
         cmd_logger.log_failure(log_entry, str(e), duration)
         try:
-             db_manager = DuckDBManager()
+             db_manager = ModelRepository()
              db_manager.commit_model(project_id=model_name, sml_json={}, status="failed", duration_ms=duration, error_message=str(e), run_id=run_id)
         except: pass
         
@@ -1770,7 +1770,8 @@ def _run_fabric_to_snowflake(settings, dataset_id, workspace_id, tag, sync, para
         from semabridge.connectors.fabric_extractor import FabricExtractor
         from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
         from semabridge.converter.osi_to_sml import OSIToSMLConverter
-        from semabridge.repository.duckdb_manager import DuckDBManager
+        from semabridge.sml.serializer import SMLSerializer
+        from semabridge.repository.model_repository import ModelRepository
         from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
         
         # Step 1: Extract
@@ -1824,7 +1825,7 @@ def _run_fabric_to_snowflake(settings, dataset_id, workspace_id, tag, sync, para
             db_manager.dispose()
         except Exception as _dispose_err:
             logger.debug(f"Non-fatal DB engine dispose warning: {_dispose_err}")
-        db_manager = DuckDBManager()
+        db_manager = ModelRepository()
         db_manager.ensure_project(dataset_id, sml_model.label, ws_id, adapter="fabric")
         
         sml_dict = sml_model.model_dump(mode='json')
@@ -1848,6 +1849,10 @@ def _run_fabric_to_snowflake(settings, dataset_id, workspace_id, tag, sync, para
         emitter = SnowflakeEmitter(settings.snowflake, behavior=behavior)
         output_dir = Path("output/reverse")
         output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Persist SML artifact for inspection and downstream reuse.
+        sml_artifact_path = output_dir / "sml" / "model.yaml"
+        SMLSerializer.save(sml_model, sml_artifact_path)
         
         ddls = emitter.generate_ddls(sml_model)
         full_ddl = "\n\n".join(ddls)
@@ -1856,6 +1861,7 @@ def _run_fabric_to_snowflake(settings, dataset_id, workspace_id, tag, sync, para
         with open(output_dir / "semantic_view.sql", "w") as f: f.write(full_ddl)
         with open(output_dir / "cortex_analyst.yaml", "w") as f: f.write(yaml_out)
         console.print(f"  [green][OK][/green] Artifacts generated in {output_dir}")
+        console.print(f"  [dim]SML artifact: {sml_artifact_path}[/dim]")
         
         if sync:
             console.print("  Deploying to Snowflake...")
@@ -1900,7 +1906,7 @@ def _run_fabric_to_snowflake(settings, dataset_id, workspace_id, tag, sync, para
         
         cmd_logger.log_failure(log_entry, str(e), duration)
         try:
-            db_manager = DuckDBManager()
+            db_manager = ModelRepository()
             head = db_manager.get_head(dataset_id)
             sml_json = head.sml_blob if head else {}
             db_manager.commit_model(project_id=dataset_id, sml_json=sml_json, tag=tag, status="failed", duration_ms=duration, error_message=str(e), run_id=run_id)
@@ -2113,8 +2119,8 @@ def compare(
     target = target.lower()
     
     # 1. Resolve Dataset ID
-    from semabridge.repository.duckdb_manager import DuckDBManager
-    db_manager = DuckDBManager()
+    from semabridge.repository.model_repository import ModelRepository
+    db_manager = ModelRepository()
     conn = db_manager._get_connection()
     try:
         results = conn.execute("SELECT project_id, name FROM projects").fetchall()

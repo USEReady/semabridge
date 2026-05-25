@@ -136,7 +136,7 @@ class RollbackCommand:
         from semabridge.core.engine import SemaBridgeEngine
         from semabridge.core.project import load_project_config
         from semabridge.core.config_loader import get_default_config_path
-        from semabridge.repository.duckdb_manager import DuckDBManager
+        from semabridge.repository.model_repository import ModelRepository
         from semabridge.formats.sml.serializer import SMLSerializer
         import json
         
@@ -162,7 +162,7 @@ class RollbackCommand:
             engine = SemaBridgeEngine(config)
             
             # 2. Retrieve Snapshot from Repository
-            db_manager = DuckDBManager()
+            db_manager = ModelRepository()
             snapshot = db_manager.get_snapshot_by_tag(project_id, tag)
             
             if not snapshot:

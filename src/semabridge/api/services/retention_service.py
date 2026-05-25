@@ -37,39 +37,68 @@ def _get_all_referenced_snapshot_ids(session: Session) -> Set[str]:
     - after_tgt_snapshots (JSON array)
     """
     referenced: Set[str] = set()
-    
+
     runs = session.execute(select(Run)).scalars().all()
-    
+
+    def _extract_snapshot_ids_from_field(field_value) -> Set[str]:
+        ids: Set[str] = set()
+        if not field_value:
+            return ids
+
+        # If it's already a Python structure, normalise it to a list
+        candidates = None
+        if isinstance(field_value, (list, tuple)):
+            candidates = list(field_value)
+        elif isinstance(field_value, dict):
+            candidates = [field_value]
+        elif isinstance(field_value, str):
+            # Could be a raw id or a JSON-encoded list/dict
+            try:
+                parsed = json.loads(field_value)
+                if isinstance(parsed, (list, tuple)):
+                    candidates = list(parsed)
+                elif isinstance(parsed, dict):
+                    candidates = [parsed]
+                elif isinstance(parsed, str):
+                    candidates = [parsed]
+                else:
+                    return ids
+            except (json.JSONDecodeError, TypeError):
+                # Treat the string as a plain snapshot id
+                candidates = [field_value]
+        else:
+            return ids
+
+        for item in candidates:
+            if isinstance(item, dict):
+                # Common key names that may carry an id
+                sid = item.get("snapshot_id") or item.get("id") or item.get("snapshot")
+                if isinstance(sid, str):
+                    ids.add(sid)
+            elif isinstance(item, str):
+                ids.add(item)
+
+        return ids
+
     for run in runs:
-        # Check direct FK columns
-        if run.before_src_snapshot_id:
+        # Check direct FK columns (model uses these canonical names)
+        if getattr(run, "before_src_snapshot_id", None):
             referenced.add(run.before_src_snapshot_id)
-        if run.restore_snapshot_id:
-            referenced.add(run.restore_snapshot_id)
-        
-        # Check JSONB array memberships
-        for json_field in [run.before_tgt_snapshots, run.after_tgt_snapshots]:
-            if json_field:
-                try:
-                    # Parse JSON array - could be string or list of dicts
-                    data = json.loads(json_field)
-                    if isinstance(data, list):
-                        for item in data:
-                            if isinstance(item, dict):
-                                # Extract snapshot_id from dict
-                                if "snapshot_id" in item:
-                                    referenced.add(item["snapshot_id"])
-                            elif isinstance(item, str):
-                                # Direct string reference
-                                referenced.add(item)
-                    elif isinstance(data, dict):
-                        # Single dict with snapshot_id
-                        if "snapshot_id" in data:
-                            referenced.add(data["snapshot_id"])
-                except (json.JSONDecodeError, TypeError):
-                    logger.debug("Failed to parse JSON field for run %s: %s", run.run_id, json_field)
-                    continue
-    
+        if getattr(run, "restored_from_snapshot_id", None):
+            referenced.add(run.restored_from_snapshot_id)
+
+        # Check JSON/text array fields (canonical names)
+        for json_field in (
+            getattr(run, "before_target_snapshot_ids", None),
+            getattr(run, "after_target_snapshot_ids", None),
+        ):
+            try:
+                ids = _extract_snapshot_ids_from_field(json_field)
+                referenced.update(ids)
+            except Exception:
+                logger.debug("Failed to parse JSON field for run %s: %r", run.run_id, json_field)
+                continue
+
     return referenced
 
 
@@ -79,12 +108,12 @@ def apply_retention_policy(
     connector_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Apply retention policy for a project/connector.
+    Apply retention policy for a project.
     
     Args:
         session: Database session.
         project_id: Project ID to apply policy for.
-        connector_id: Optional connector ID for per-connector pruning.
+        connector_id: Deprecated and ignored. Retention is project-wide.
     
     Returns:
         Dictionary with pruning statistics.
@@ -105,33 +134,6 @@ def apply_retention_policy(
         SnapshotRow.deleted_at.is_(None),  # Only active snapshots
     )
     
-    # Filter by connector if provided
-    if connector_id:
-        query = query.where(SnapshotRow.connector_id == connector_id)
-    elif policy.strategy == "count" and not connector_id:
-        # For count strategy without connector, we need to handle per-connector
-        # Get all connectors for this project
-        connectors = session.execute(
-            select(SnapshotRow.connector_id).where(
-                SnapshotRow.project_id == project_id,
-                SnapshotRow.connector_id.isnot(None)
-            ).distinct()
-        ).scalars().all()
-        
-        # Apply policy per connector
-        total_pruned = 0
-        for conn_id in connectors:
-            result = apply_retention_policy_for_connector(
-                session, project_id, conn_id, policy
-            )
-            total_pruned += result.get("pruned", 0)
-        
-        return {"pruned": total_pruned, "per_connector": True}
-    
-    # Filter by connector if we have one
-    if connector_id:
-        query = query.where(SnapshotRow.connector_id == connector_id)
-    
     snapshots = session.execute(query).scalars().all()
     
     if not snapshots:
@@ -140,14 +142,10 @@ def apply_retention_policy(
     # Get all referenced snapshot IDs (CRITICAL: never prune these)
     referenced_ids = _get_all_referenced_snapshot_ids(session)
     
-    # Filter out manual snapshots if policy says so
-    if not policy.prune_manual_snapshots:
-        snapshots = [s for s in snapshots if s.trigger != "manual"]
-    
     to_prune: List[str] = []
     
     if policy.strategy == "count":
-        # Keep only max_snapshots_per_connector most recent
+        # Keep only max_snapshots_per_connector most recent across the project
         all_snaps = sorted(
             snapshots, 
             key=lambda s: s.timestamp or datetime.min, 
@@ -192,62 +190,12 @@ def apply_retention_policy_for_connector(
     connector_id: str,
     policy: RetentionPolicy,
 ) -> Dict[str, Any]:
-    """Apply retention policy for a specific connector."""
-    
-    # Get snapshots for this connector
-    snapshots = session.execute(
-        select(SnapshotRow).where(
-            SnapshotRow.project_id == project_id,
-            SnapshotRow.connector_id == connector_id,
-            SnapshotRow.deleted_at.is_(None),
-        )
-    ).scalars().all()
-    
-    if not snapshots:
-        return {"pruned": 0, "connector_id": connector_id}
-    
-    # Get all referenced snapshot IDs
-    referenced_ids = _get_all_referenced_snapshot_ids(session)
-    
-    # Filter out manual snapshots if policy says so
-    if not policy.prune_manual_snapshots:
-        snapshots = [s for s in snapshots if s.trigger != "manual"]
-    
-    to_prune: List[str] = []
-    
-    if policy.strategy == "count":
-        all_snaps = sorted(
-            snapshots,
-            key=lambda s: s.timestamp or datetime.min,
-            reverse=True
-        )
-        max_count = policy.max_snapshots_per_connector or 0
-        to_keep = {s.snapshot_id for s in all_snaps[:max_count]}
-        to_prune = [
-            s.snapshot_id for s in all_snaps
-            if s.snapshot_id not in to_keep and s.snapshot_id not in referenced_ids
-        ]
-    
-    elif policy.strategy == "days":
-        if policy.max_age_days:
-            cutoff = datetime.utcnow() - timedelta(days=policy.max_age_days)
-            to_prune = [
-                s.snapshot_id for s in snapshots
-                if s.timestamp and s.timestamp < cutoff and s.snapshot_id not in referenced_ids
-            ]
-    
-    if to_prune:
-        stmt = update(SnapshotRow).where(
-            SnapshotRow.snapshot_id.in_(to_prune)
-        ).values(deleted_at=datetime.utcnow())
-        session.execute(stmt)
-        session.commit()
-    
-    return {
-        "pruned": len(to_prune),
-        "kept": len(snapshots) - len(to_prune),
-        "connector_id": connector_id,
-    }
+    """Backward-compatible wrapper for legacy connector-scoped callers."""
+    logger.debug(
+        "Connector-scoped retention is no longer supported; applying project-wide policy for %s",
+        project_id,
+    )
+    return apply_retention_policy(session, project_id)
 
 
 def set_retention_policy(
@@ -265,7 +213,7 @@ def set_retention_policy(
         session: Database session.
         project_id: Project ID.
         strategy: One of 'count', 'days', 'unlimited'.
-        max_snapshots_per_connector: Max snapshots per connector (for 'count' strategy).
+        max_snapshots_per_connector: Max snapshots to keep for the project when using 'count'.
         max_age_days: Max age in days (for 'days' strategy).
         prune_manual_snapshots: Whether to prune manual snapshots.
     

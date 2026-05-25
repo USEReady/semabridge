@@ -64,14 +64,14 @@ export default function App() {
   }
 
   return (
-    <div style={{ minHeight: '100vh' }}>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
+    <ConfigurationProvider>
+      <div style={{ minHeight: '100vh' }}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
 
-        {/* Protected: All app routes */}
-        <Route element={<ProtectedRoute />}>
+          {/* Protected: All app routes — auto-login handles auth transparently */}
           <Route element={
-            <ConfigurationProvider>
+            <ProtectedRoute>
               <WorkspaceProvider>
                 <LogsProvider>
                   <SyncStatusProvider>
@@ -79,7 +79,7 @@ export default function App() {
                   </SyncStatusProvider>
                 </LogsProvider>
               </WorkspaceProvider>
-            </ConfigurationProvider>
+            </ProtectedRoute>
           }>
             <Route index element={<Navigate to="/projects" replace />} />
             <Route path="/explore"       element={<ExplorePage />} />
@@ -95,11 +95,11 @@ export default function App() {
             <Route path="/global-config" element={<GlobalConfigPage />} />
             <Route path="/version-control" element={<VersionControlPage />} />
           </Route>
-        </Route>
 
-        {/* Fallback */}
-        <Route path="*" element={<Navigate to="/projects" replace />} />
-      </Routes>
-    </div>
+          {/* Fallback */}
+          <Route path="*" element={<Navigate to="/projects" replace />} />
+        </Routes>
+      </div>
+    </ConfigurationProvider>
   );
 }

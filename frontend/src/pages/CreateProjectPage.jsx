@@ -19,7 +19,9 @@ import {
 } from 'lucide-react';
 import { api } from '../utils/api';
 import { useHPSearch } from '../hooks/useHPSearch';
-import SmartSearchBar, { matchesSmartQuery } from '../components/common/SmartSearchBar';
+import SearchableSelect from '../components/common/SearchableSelect';
+import SmartSearchBar from '../components/common/SmartSearchBar';
+import { matchesSmartQuery } from '../components/common/smartSearchQuery.js';
 import SourceIcon from '../components/common/SourceIcon';
 import StatusBadge from '../components/common/StatusBadge';
 import Modal from '../components/common/Modal';

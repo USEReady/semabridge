@@ -109,6 +109,7 @@ function normalizeProject(project) {
     }
 
     const id = project.id ?? project.project_id ?? null;
+    const semanticName = project.semantic_name ?? project.display_name ?? project.name ?? project.project_name ?? id;
     const source = project.source ?? project.adapter ?? project.source_type ?? null;
     const targetType = project.target_type ?? project.target?.type ?? project.targets?.[0]?.type ?? null;
 
@@ -116,6 +117,8 @@ function normalizeProject(project) {
         ...project,
         id,
         project_id: project.project_id ?? id,
+        semantic_name: semanticName,
+        name: semanticName,
         source,
         adapter: project.adapter ?? source,
         target_type: targetType,
@@ -123,33 +126,33 @@ function normalizeProject(project) {
 }
 
 function dedupeProjects(projects) {
-    const byId = new Map();
+    const bySemanticName = new Map();
     const unnamed = [];
 
     for (const raw of (projects || [])) {
         const p = normalizeProject(raw);
-        const id = p?.id != null ? String(p.id) : '';
+        const semanticName = String(p?.semantic_name || p?.name || '').trim().toLowerCase();
 
-        if (!id) {
+        if (!semanticName) {
             unnamed.push(p);
             continue;
         }
 
-        const existing = byId.get(id);
+        const existing = bySemanticName.get(semanticName);
         if (!existing) {
-            byId.set(id, p);
+            bySemanticName.set(semanticName, p);
             continue;
         }
 
-        // Keep the freshest payload when duplicate IDs are returned.
+        // Keep the freshest payload when duplicate semantic names are returned.
         const prevTs = String(existing.updated_at || existing.created_at || '');
         const nextTs = String(p.updated_at || p.created_at || '');
         if (nextTs.localeCompare(prevTs) >= 0) {
-            byId.set(id, p);
+            bySemanticName.set(semanticName, p);
         }
     }
 
-    return [...byId.values(), ...unnamed];
+    return [...bySemanticName.values(), ...unnamed];
 }
 
 function normalizeFolder(folder) {

@@ -354,6 +354,7 @@ def _run_single_job(
     config_path: str,
     deploy_enabled: bool,
     resolved_workspace_id: str,
+    requested_project_id: Optional[str] = None,
     account_id: Optional[str] = None,
     sync_mode: str = "copy",
     force: bool = False,
@@ -367,9 +368,11 @@ def _run_single_job(
         summary = engine.execute(
             source=engine_source_type,
             target=target_type,
+            project_id=requested_project_id,
             config_path=Path(config_path) if config_path else None,
             config_dict=config,
             dataset_id=job["dataset_id"],
+            workspace_id=resolved_workspace_id,
             pbix_path=job["pbix_path"],
             project_name=model_label,
             tag=str(config.get("version_tag", "v1.0")),
@@ -494,6 +497,7 @@ def _run_parallel_jobs(
     config_path: str,
     deploy_enabled: bool,
     resolved_workspace_id: str,
+    requested_project_id: Optional[str] = None,
     account_id: Optional[str] = None,
     sync_mode: str = "copy",
     force: bool = False,
@@ -510,6 +514,7 @@ def _run_parallel_jobs(
                 config_path=config_path,
                 deploy_enabled=deploy_enabled,
                 resolved_workspace_id=resolved_workspace_id,
+                requested_project_id=requested_project_id,
                 account_id=account_id,
                 sync_mode=sync_mode,
                 force=force,
@@ -540,6 +545,7 @@ def _run_parallel_jobs(
                     config_path=config_path,
                     deploy_enabled=deploy_enabled,
                     resolved_workspace_id=resolved_workspace_id,
+                    requested_project_id=requested_project_id,
                     account_id=account_id,
                     sync_mode=sync_mode,
                     force=force,
@@ -558,6 +564,7 @@ def _run_parallel_jobs(
                     config_path=config_path,
                     deploy_enabled=deploy_enabled,
                     resolved_workspace_id=resolved_workspace_id,
+                    requested_project_id=requested_project_id,
                     account_id=account_id,
                     sync_mode=sync_mode,
                     force=force,
@@ -601,6 +608,7 @@ def _run_parallel_jobs(
 def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fields, account_id: Optional[str] = None, force: bool = False) -> Dict[str, Any]:
     _config_path, config = _load_config(payload, normalize_yaml_windows_path_fields)
     config_path = str(Path(_config_path).resolve()) if _config_path else ""
+    requested_project_id = str(payload.get("project_id") or config.get("project_id") or "").strip() or None
     sync_jobs, source_type, target_type, source_cfg, target_cfg = _build_sync_jobs(config)
     settings = get_settings()
 
@@ -653,6 +661,7 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
             config_path=config_path,
             deploy_enabled=deploy_enabled,
             resolved_workspace_id=resolved_workspace_id,
+            requested_project_id=requested_project_id,
             account_id=account_id,
             sync_mode=sync_mode,
             force=force or bool(payload.get("force", False)),
@@ -681,6 +690,7 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
                 config_path=config_path,
                 deploy_enabled=deploy_enabled,
                 resolved_workspace_id=resolved_workspace_id,
+                requested_project_id=requested_project_id,
                 account_id=account_id,
             )
         else:

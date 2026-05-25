@@ -14,7 +14,6 @@ from semabridge.api.services.project_shared import (
     _compat_default_project_yaml,
     _compat_deleted_project_ids,
     _compat_ensure_loaded,
-    _compat_folders,
     _compat_load_project_yaml_text,
     _compat_load_repo_yaml_text,
     _compat_mappings,
@@ -24,15 +23,14 @@ from semabridge.api.services.project_shared import (
     _compat_project_runs,
     _compat_project_schedules,
     _compat_project_snapshots,
-    _compat_project_yaml_paths,
     _compat_project_yaml_path,
+    _compat_project_yaml_paths,
     _compat_projects,
     _compat_projects_dirs,
     _compat_run_snapshots,
     _compat_save_project_yaml_text,
     _compat_save_store,
     _compat_snapshot_groups,
-    _compat_store_loaded,
     db_manager,
     logger,
 )
@@ -240,6 +238,129 @@ def _project_display_name_from_cfg(project_cfg: Dict[str, Any], fallback: str) -
     )
 
 
+def _project_semantic_name(project: Dict[str, Any], fallback: str = "") -> str:
+    if not isinstance(project, dict):
+        return fallback
+    return _compat_clean_project_name(
+        project.get("semantic_name") or project.get("display_name") or project.get("name") or project.get("project_name"),
+        fallback,
+    )
+
+
+def _project_semantic_key(project: Dict[str, Any], fallback: str = "") -> str:
+    return _project_semantic_name(project, fallback).strip().casefold()
+
+
+def _project_semantic_models_from_yaml(project_cfg: Dict[str, Any]) -> List[str]:
+    if not isinstance(project_cfg, dict):
+        return []
+
+    names: List[str] = []
+
+    def add_name(raw_value: Any) -> None:
+        name = str(raw_value or "").strip()
+        if name and name != "*" and name not in names:
+            names.append(name)
+
+    if isinstance(project_cfg.get("semantic_models"), list):
+        for item in project_cfg.get("semantic_models"):
+            add_name(item)
+
+    if isinstance(project_cfg.get("models"), list):
+        for item in project_cfg.get("models"):
+            add_name(item)
+
+    source_cfg = project_cfg.get("source") if isinstance(project_cfg.get("source"), dict) else {}
+    if isinstance(source_cfg.get("models"), list):
+        for item in source_cfg.get("models"):
+            add_name(item)
+
+    add_name(source_cfg.get("model"))
+
+    if not names:
+        top_level_model = project_cfg.get("model")
+        if isinstance(top_level_model, str):
+            add_name(top_level_model)
+
+    return names
+
+
+def _project_semantic_models(project: Dict[str, Any], project_id: str = "") -> List[str]:
+    if not isinstance(project, dict):
+        return []
+
+    names: List[str] = []
+
+    def extend_with(values: List[str]) -> None:
+        for item in values:
+            name = str(item or "").strip()
+            if name and name not in names:
+                names.append(name)
+
+    if isinstance(project.get("semantic_models"), list):
+        extend_with([str(item or "").strip() for item in project.get("semantic_models")])
+
+    if isinstance(project.get("models"), list):
+        extend_with([str(item or "").strip() for item in project.get("models")])
+
+    if not names and isinstance(project.get("config_yaml"), str):
+        try:
+            parsed = yaml.safe_load(project.get("config_yaml") or "") or {}
+        except Exception:
+            parsed = {}
+        extend_with(_project_semantic_models_from_yaml(parsed if isinstance(parsed, dict) else {}))
+
+    if not names and project_id:
+        config_yaml = _compat_project_configs.get(project_id)
+        if isinstance(config_yaml, str) and config_yaml.strip():
+            try:
+                parsed = yaml.safe_load(config_yaml) or {}
+            except Exception:
+                parsed = {}
+            extend_with(_project_semantic_models_from_yaml(parsed if isinstance(parsed, dict) else {}))
+
+    if not names:
+        source_cfg = project.get("source") if isinstance(project.get("source"), dict) else {}
+        extend_with(_project_semantic_models_from_yaml({"source": source_cfg}))
+
+    if not names and project_id:
+        for snapshot in _compat_project_snapshots.get(project_id, []):
+            if not isinstance(snapshot, dict):
+                continue
+            for key in ("semantic_name", "model_name", "display_name", "name", "unique_name"):
+                value = str(snapshot.get(key) or "").strip()
+                if value and value not in names:
+                    names.append(value)
+            sml_blob = snapshot.get("sml_blob") or snapshot.get("state")
+            if isinstance(sml_blob, dict):
+                for key in ("semantic_name", "model_name", "display_name", "name", "unique_name"):
+                    value = str(sml_blob.get(key) or "").strip()
+                    if value and value not in names:
+                        names.append(value)
+                nested_models = sml_blob.get("models") or sml_blob.get("datasets")
+                if isinstance(nested_models, list):
+                    for item in nested_models:
+                        if isinstance(item, dict):
+                            for key in ("semantic_name", "model_name", "display_name", "name", "unique_name"):
+                                value = str(item.get(key) or "").strip()
+                                if value and value not in names:
+                                    names.append(value)
+                        elif isinstance(item, str):
+                            value = item.strip()
+                            if value and value not in names:
+                                names.append(value)
+
+    return names
+
+
+def _project_with_semantic_models(project: Dict[str, Any], project_id: str = "") -> Dict[str, Any]:
+    enriched = dict(project or {})
+    semantic_models = _project_semantic_models(enriched, project_id or str(enriched.get("id") or enriched.get("project_id") or ""))
+    enriched["semantic_models"] = semantic_models
+    enriched["model_count"] = len(semantic_models)
+    return enriched
+
+
 def _normalize_project_config_yaml(
     project_id: str,
     yaml_text: str,
@@ -280,7 +401,8 @@ def _project_discovery_entry(project_id: str, file_path: Path, project_cfg: Dict
             target = first_target
 
     display_name = _project_display_name_from_cfg(project_cfg, project_id)
-    return {
+    semantic_models = _project_semantic_models_from_yaml(project_cfg)
+    entry = {
         "id": project_id,
         "project_id": project_id,
         "name": display_name,
@@ -290,7 +412,10 @@ def _project_discovery_entry(project_id: str, file_path: Path, project_cfg: Dict
         "source": source.get("type", "fabric"),
         "target_type": target.get("type", "snowflake"),
         "workspace_id": source.get("workspace_id", ""),
+        "semantic_models": semantic_models,
+        "model_count": len(semantic_models),
     }
+    return entry
 
 
 def _project_id_exists_anywhere(project_id: str) -> bool:
@@ -358,13 +483,15 @@ async def list_projects_compat():
                 project_cfg = yaml.safe_load(file_text) or {}
                 if not isinstance(project_cfg, dict):
                     continue
-                deduped[pid] = _project_discovery_entry(pid, file_path, project_cfg)
+                entry = _project_discovery_entry(pid, file_path, project_cfg)
+                deduped[_project_semantic_key(entry, pid)] = entry
             except Exception as e:
                 logger.warning(f"Failed to load project config {file_path}: {e}")
 
     for p in _compat_projects.values():
         pid = str(p.get("id") or p.get("project_id") or "").strip()
-        if not pid or pid in deduped:
+        semantic_key = _project_semantic_key(p, pid)
+        if not pid or not semantic_key:
             continue
         if p.get("is_transient_preview") or pid == "preview" or pid.startswith("preview-"):
             continue
@@ -379,16 +506,16 @@ async def list_projects_compat():
             # Skip test/auto-generated projects
             continue
         
-        current = deduped.get(pid)
+        current = deduped.get(semantic_key)
         if not current:
-            deduped[pid] = p
+            deduped[semantic_key] = _project_with_semantic_models(p, pid)
             continue
         cur_ts = str(current.get("updated_at") or current.get("created_at") or "")
         new_ts = str(p.get("updated_at") or p.get("created_at") or "")
         if new_ts >= cur_ts:
-            deduped[pid] = p
+            deduped[semantic_key] = _project_with_semantic_models(p, pid)
 
-    return list(deduped.values())
+    return [_project_with_semantic_models(project, str(project.get("id") or project.get("project_id") or "")) for project in deduped.values()]
 
 
 async def create_project_compat(request: dict):
@@ -409,12 +536,30 @@ async def create_project_compat(request: dict):
     requested_id = str(payload.get("id") or payload.get("project_id") or default_id).strip()
     project_id = requested_id or default_id
     _compat_deleted_project_ids.discard(project_id)
-    if _project_id_exists_anywhere(project_id):
-        # Avoid reusing an existing project's mapping cache/state when the user
-        # creates another project with the same semantic model/name or a stale
-        # modular YAML file still exists for that id.
-        project_id = f"{project_id}-{int(_time.time() * 1000)}"
-    project = _compat_project_payload(project_id, payload)
+    requested_semantic_name = _project_semantic_name({"semantic_name": payload_name, "name": payload_name}, payload_name)
+
+    existing_project_id = None
+    existing_project = None
+    for candidate_id, candidate in _compat_projects.items():
+        if _project_semantic_key(candidate, candidate_id) == requested_semantic_name.strip().casefold():
+            existing_project_id = candidate_id
+            existing_project = candidate
+            break
+
+    if existing_project_id:
+        project_id = existing_project_id
+        project = dict(existing_project or {})
+        project.update(_compat_project_payload(project_id, payload))
+        project["semantic_name"] = requested_semantic_name
+        project["name"] = requested_semantic_name
+        project["display_name"] = requested_semantic_name
+    else:
+        if _project_id_exists_anywhere(project_id):
+            # Avoid reusing an existing project's mapping cache/state when the user
+            # creates another project with the same semantic model/name or a stale
+            # modular YAML file still exists for that id.
+            project_id = f"{project_id}-{int(_time.time() * 1000)}"
+        project = _compat_project_payload(project_id, payload)
     _compat_projects[project_id] = project
     await asyncio.to_thread(_upsert_project_in_orm, project_id, project, payload)
 
@@ -478,6 +623,8 @@ async def patch_project_compat(project_id: str, payload: dict):
         project["name"] = payload.get("name")
     elif payload.get("display_name") and not payload.get("name"):
         project["name"] = payload.get("display_name")
+
+    project["semantic_name"] = _project_semantic_name(project, project_id)
 
     if isinstance(payload.get("source"), dict):
         project["source"] = payload["source"].get("type") or project.get("source")
@@ -605,6 +752,7 @@ async def save_project_config_compat(project_id: str, payload: dict):
         project.get("owner_user_id"),
     )
     _compat_project_configs[project_id] = yaml_text
+    project["semantic_name"] = _project_semantic_name(project, project_id)
     try:
         await asyncio.to_thread(_compat_save_project_yaml_text, project_id, yaml_text)
         _clear_project_mapping_cache(project_id)
@@ -927,7 +1075,6 @@ async def graph_snapshots_compat(model_name: str):
                 "duration_ms": s.duration_ms or 0,
                 "model_name": model_name,
                 "run_id": s.run_id,
-                "initiated_by": s.initiated_by,
                 "connectors": _extract_snapshot_connectors(s),
             }
             for s in snapshots
