@@ -17,9 +17,12 @@ except ``register`` and ``login`` which are public.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from collections import defaultdict, deque
+from threading import Lock
+from time import monotonic
+from typing import Deque, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
@@ -49,6 +52,52 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 _REFRESH_COOKIE = "semabridge_refresh_token"
+
+_RATE_LIMIT_LOCK = Lock()
+_RATE_LIMIT_BUCKETS: dict[Tuple[str, str], Deque[float]] = defaultdict(deque)
+
+
+def _client_ip(request: Request) -> str:
+    client = request.client
+    if client and client.host:
+        return client.host
+    return "unknown"
+
+
+def _enforce_rate_limit(bucket_name: str, key: str, limit: int, window_seconds: int) -> None:
+    now = monotonic()
+    bucket_key = (bucket_name, key)
+
+    with _RATE_LIMIT_LOCK:
+        # Periodic cleanup of all buckets when size grows to prevent memory leak
+        if len(_RATE_LIMIT_BUCKETS) > 500:
+            for k, deq in list(_RATE_LIMIT_BUCKETS.items()):
+                # Clean up elements older than 900s (max window used is 900s)
+                cutoff_all = now - 900
+                while deq and deq[0] < cutoff_all:
+                    deq.popleft()
+                if not deq:
+                    _RATE_LIMIT_BUCKETS.pop(k, None)
+
+        attempts = _RATE_LIMIT_BUCKETS[bucket_key]
+        cutoff = now - window_seconds
+        while attempts and attempts[0] < cutoff:
+            attempts.popleft()
+
+        if len(attempts) >= limit:
+            retry_after = max(1, int(window_seconds - (now - attempts[0])))
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many requests, please try again later",
+                headers={"Retry-After": str(retry_after)},
+            )
+
+        attempts.append(now)
+
+
+def _register_attempt(bucket_name: str, key: str) -> None:
+    with _RATE_LIMIT_LOCK:
+        _RATE_LIMIT_BUCKETS[(bucket_name, key)].append(monotonic())
 
 
 # ── Auto-login (development) ────────────────────────────────────────────
@@ -115,11 +164,23 @@ def auto_login(
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def register(body: RegisterRequest, db: Session = Depends(get_db)) -> UserResponse:
+def register(
+    body: RegisterRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> UserResponse:
     """Create a new user account.
 
     The first user registered is automatically promoted to ``admin``.
     """
+    ip = _client_ip(request)
+    username_key = body.username.strip().lower()
+    email_key = body.email.strip().lower()
+
+    _enforce_rate_limit("auth-register-ip", ip, limit=5, window_seconds=900)
+    _enforce_rate_limit("auth-register-user", username_key, limit=3, window_seconds=900)
+    _enforce_rate_limit("auth-register-email", email_key, limit=3, window_seconds=900)
+
     # Check for duplicate username / email
     existing = db.execute(
         select(User).where(
@@ -147,6 +208,12 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)) -> UserRespon
     db.commit()
     db.refresh(user)
 
+    # Successful register: reset limits
+    with _RATE_LIMIT_LOCK:
+        _RATE_LIMIT_BUCKETS.pop(("auth-register-ip", ip), None)
+        _RATE_LIMIT_BUCKETS.pop(("auth-register-user", username_key), None)
+        _RATE_LIMIT_BUCKETS.pop(("auth-register-email", email_key), None)
+
     logger.info("User registered: %s (role=%s)", user.username, user.role)
     return UserResponse.model_validate(user)
 
@@ -155,6 +222,7 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)) -> UserRespon
 def login(
     body: LoginRequest,
     response: Response,
+    request: Request,
     db: Session = Depends(get_db),
 ) -> TokenResponse:
     """Authenticate with username + password and receive a JWT.
@@ -162,11 +230,19 @@ def login(
     Returns an access token in the response body and sets a
     refresh token as an HttpOnly cookie for session renewal.
     """
+    ip = _client_ip(request)
+    username_key = body.username.strip().lower()
+
+    _enforce_rate_limit("auth-login-ip", ip, limit=10, window_seconds=300)
+    _enforce_rate_limit("auth-login-user", username_key, limit=5, window_seconds=300)
+
     user = db.execute(
         select(User).where(User.username == body.username)
     ).scalar_one_or_none()
 
     if user is None or not verify_password(body.password, user.password_hash):
+        _register_attempt("auth-login-ip-fail", ip)
+        _register_attempt("auth-login-user-fail", username_key)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -178,6 +254,13 @@ def login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account deactivated",
         )
+
+    # Successful login: reset both generic limits and failed attempts to reset behavior correctly
+    with _RATE_LIMIT_LOCK:
+        _RATE_LIMIT_BUCKETS.pop(("auth-login-ip", ip), None)
+        _RATE_LIMIT_BUCKETS.pop(("auth-login-user", username_key), None)
+        _RATE_LIMIT_BUCKETS.pop(("auth-login-ip-fail", ip), None)
+        _RATE_LIMIT_BUCKETS.pop(("auth-login-user-fail", username_key), None)
 
     # Create access + refresh token pair
     access_token, raw_refresh = create_token_pair(user.id, user.username, user.role)

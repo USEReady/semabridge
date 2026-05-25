@@ -274,8 +274,7 @@ def discover_repository():
     from sqlalchemy import select, func
 
     try:
-        session = db_manager._session()
-        try:
+        with db_manager.get_session() as session:
             subq = (
                 select(
                     ModelVersion.model_id,
@@ -307,8 +306,6 @@ def discover_repository():
                     "versioned": count_map.get(row.model_id, 0) > 0,
                 })
             return sorted(results, key=lambda x: x["name"])
-        finally:
-            session.close()
     except HTTPException:
         raise
     except Exception as e:

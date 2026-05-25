@@ -229,8 +229,7 @@ def _compat_sync_mode_for_restore_snapshot(project_id: str, snapshot_id: str, pa
         from semabridge.repository.orm.models import Run, SnapshotRow
         from semabridge.repository.orm.session_factory import db_manager
 
-        session = db_manager._session()
-        try:
+        with db_manager.get_session() as session:
             snapshot = session.get(SnapshotRow, snapshot_id)
             if snapshot is not None:
                 stored = _compat_normalize_sync_mode(getattr(snapshot, "sync_mode", None))
@@ -258,8 +257,6 @@ def _compat_sync_mode_for_restore_snapshot(project_id: str, snapshot_id: str, pa
                         stored = _compat_normalize_sync_mode(getattr(run, "sync_mode", None))
                         if stored:
                             return stored
-        finally:
-            session.close()
     except Exception as exc:
         logger.debug("Could not infer restore sync_mode for %s/%s: %s", project_id, snapshot_id, exc)
 
@@ -640,8 +637,7 @@ async def get_project_runs_compat(project_id: str):
         from sqlalchemy import select
         from semabridge.repository.orm.session_factory import db_manager
 
-        session = db_manager._session()
-        try:
+        with db_manager.get_session() as session:
             stmt = (
                 select(Run)
                 .where(Run.project_id == pid)
@@ -683,8 +679,6 @@ async def get_project_runs_compat(project_id: str):
                 _compat_project_runs[pid] = results
 
             return results
-        finally:
-            session.close()
     except Exception as exc:
         logger.error("Failed to retrieve runs from ORM: %s", exc)
         return []
@@ -699,8 +693,7 @@ async def delete_project_snapshots_compat(project_id: str, snapshot_ids: List[st
     from sqlalchemy import select, update, or_
     from semabridge.repository.orm.session_factory import db_manager
 
-    session = db_manager._session()
-    try:
+    with db_manager.get_session() as session:
         stmt = (
             select(Run)
             .where(Run.project_id == project_id)
@@ -735,8 +728,6 @@ async def delete_project_snapshots_compat(project_id: str, snapshot_ids: List[st
             "blocked_ids": list(set(blocked_ids)),
             "status": "success" if not blocked_ids else "partial",
         }
-    finally:
-        session.close()
 
 
 def _create_project_run(
@@ -2276,18 +2267,12 @@ async def clear_job_runs_compat():
         from sqlalchemy import delete
         from semabridge.repository.orm.session_factory import db_manager
         
-        session = db_manager._session()
-        try:
+        with db_manager.get_session() as session:
             from sqlalchemy import select
             runs = session.execute(select(Run)).scalars().all()
             for r in runs:
                 session.delete(r)
             session.commit()
-        except Exception as e:
-            session.rollback()
-            logger.error("Failed to clear runs from ORM: %s", e)
-        finally:
-            session.close()
     except Exception as exc:
         logger.error("Failed to connect to ORM to clear runs: %s", exc)
 

@@ -570,13 +570,10 @@ def _compat_bootstrap_projects_from_orm() -> None:
         from semabridge.repository.orm.models import Project
         from sqlalchemy import select
 
-        session = db_manager._session()
-        try:
+        with db_manager.get_session() as session:
             rows = session.execute(
                 select(Project).order_by(Project.last_updated.desc().nullslast()).limit(500)
             ).scalars().all()
-        finally:
-            session.close()
 
         for row in rows:
             pid = str(row.project_id or "").strip()

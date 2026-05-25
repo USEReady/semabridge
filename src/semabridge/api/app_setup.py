@@ -54,6 +54,7 @@ def _apply_schema_compatibility_fixes() -> None:
     from sqlalchemy import inspect, text
 
     from semabridge.repository.orm.session_factory import get_engine
+    from semabridge.repository.schema_compat import widen_project_id_columns
 
     engine = get_engine()
     inspector = inspect(engine)
@@ -123,9 +124,6 @@ def _apply_schema_compatibility_fixes() -> None:
         if "after_target_snapshot_ids" not in run_columns:
             pending_alters.append("ALTER TABLE runs ADD COLUMN after_target_snapshot_ids TEXT")
 
-    if not pending_alters and dialect != "postgresql":
-        return
-
     # In PostgreSQL, we must gracefully migrate the unique constraint from `tag` to `(owner_id, tag)`
     # This prevents the "Account with tag 'su' already exists" bug for multi-tenant accounts
     if dialect == "postgresql":
@@ -143,10 +141,10 @@ def _apply_schema_compatibility_fixes() -> None:
         except Exception as e:
             logger.warning("Could not inspect constraints on accounts table: %s", e)
 
-    if not pending_alters:
-        return
-
     with engine.begin() as conn:
+        widened = widen_project_id_columns(conn)
+        if not pending_alters and not widened:
+            return
         for ddl in pending_alters:
             conn.execute(text(ddl))
         # Backfill ORM canonical column from legacy column when both exist.

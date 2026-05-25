@@ -1488,40 +1488,44 @@ export const api = {
         return setCachedApiValue(cacheKey, data);
     },
 
-    async discoverSnowflakeWarehouses() {
-        const cacheKey = 'discovery:snowflake:warehouses';
+    async discoverSnowflakeWarehouses(connectionId = '') {
+        const cacheKey = `discovery:snowflake:warehouses:${connectionId}`;
         const cached = getCachedApiValue(cacheKey);
         if (cached) return cached;
-        const res = await authFetch(`${API_BASE_URL}/discovery/snowflake/warehouses`);
+        const query = connectionId ? `?identity_id=${encodeURIComponent(connectionId)}` : '';
+        const res = await authFetch(`${API_BASE_URL}/discovery/snowflake/warehouses${query}`);
         const data = await handleResponse(res);
         return setCachedApiValue(cacheKey, data);
     },
 
-    async discoverSnowflakeDatabases() {
-        const cacheKey = 'discovery:snowflake:databases';
+    async discoverSnowflakeDatabases(connectionId = '') {
+        const cacheKey = `discovery:snowflake:databases:${connectionId}`;
         const cached = getCachedApiValue(cacheKey);
         if (cached) return cached;
-        const res = await authFetch(`${API_BASE_URL}/discovery/snowflake/databases`);
+        const query = connectionId ? `?identity_id=${encodeURIComponent(connectionId)}` : '';
+        const res = await authFetch(`${API_BASE_URL}/discovery/snowflake/databases${query}`);
         const data = await handleResponse(res);
         return setCachedApiValue(cacheKey, data);
     },
 
-    async discoverSnowflakeSchemas(database) {
-        const cacheKey = `discovery:snowflake:schemas:${String(database || '').trim().toUpperCase()}`;
+    async discoverSnowflakeSchemas(database, connectionId = '') {
+        const cacheKey = `discovery:snowflake:schemas:${String(database || '').trim().toUpperCase()}:${connectionId}`;
         const cached = getCachedApiValue(cacheKey);
         if (cached) return cached;
+        const query = connectionId ? `?identity_id=${encodeURIComponent(connectionId)}` : '';
         const res = await authFetch(
-            `${API_BASE_URL}/discovery/snowflake/databases/${encodeURIComponent(database)}/schemas`
+            `${API_BASE_URL}/discovery/snowflake/databases/${encodeURIComponent(database)}/schemas${query}`
         );
         const data = await handleResponse(res);
         return setCachedApiValue(cacheKey, data);
     },
 
-    async discoverSnowflakeModels() {
-        const cacheKey = 'discovery:snowflake:models';
+    async discoverSnowflakeModels(connectionId = '') {
+        const cacheKey = `discovery:snowflake:models:${connectionId}`;
         const cached = getCachedApiValue(cacheKey);
         if (cached) return cached;
-        const res = await authFetch(`${API_BASE_URL}/discovery/snowflake`);
+        const query = connectionId ? `?identity_id=${encodeURIComponent(connectionId)}` : '';
+        const res = await authFetch(`${API_BASE_URL}/discovery/snowflake${query}`);
         const data = await handleResponse(res);
         return setCachedApiValue(cacheKey, data);
     },

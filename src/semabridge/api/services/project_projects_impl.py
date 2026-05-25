@@ -82,17 +82,11 @@ def _delete_project_from_orm(project_id: str) -> None:
     try:
         from semabridge.repository.orm.models import Project
 
-        session = db_manager._session()
-        try:
+        with db_manager.get_session() as session:
             project = session.get(Project, pid)
             if project is not None:
                 session.delete(project)
                 session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
     except Exception as exc:
         logger.warning("Failed to delete ORM project %s: %s", pid, exc)
 

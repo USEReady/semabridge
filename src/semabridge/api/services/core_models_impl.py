@@ -2,8 +2,7 @@ from semabridge.api.services.core_shared import *
 
 
 async def get_model(model_id: str):
-    session = db_manager._session()
-    try:
+    with db_manager.get_session() as session:
         from semabridge.repository.orm.models import ModelVersion
         from sqlalchemy import select
 
@@ -33,8 +32,6 @@ async def get_model(model_id: str):
             "content": content,
             "path": f"duckdb://{model_id}",
         }
-    finally:
-        session.close()
 
 
 async def save_model(model_id: str, payload: Dict[str, Any]):
