@@ -50,6 +50,11 @@ function getRunSortTimestamp(run) {
   return 0;
 }
 
+function isTransientPreviewProjectId(projectId) {
+  const normalized = String(projectId || '').trim().toLowerCase();
+  return normalized === 'preview' || normalized.startsWith('preview-');
+}
+
 export function SyncStatusProvider({ children }) {
   const [runs, setRuns] = useState([]);
   const [projectStatusById, setProjectStatusById] = useState({});
@@ -214,7 +219,7 @@ export function SyncStatusProvider({ children }) {
         }
 
         try {
-          if (pid) {
+          if (pid && !isTransientPreviewProjectId(pid)) {
             const project = await api.getProject(pid, { noCache: true });
             if (!disposed && project?.id) {
               setProjectStatusById((prev) => {

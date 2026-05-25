@@ -24,9 +24,9 @@ router.post('/api/semantic/refresh', response_model=None)(semantic_refresh)
 async def trigger_sync(request: Request, payload: Dict[str, Any]) -> Any:
     """Trigger a full sync with user-scoped credential isolation.
 
-    When ``AUTH_ENABLED=true``, injects the authenticated ``user_id``
-    from the JWT into the sync payload so that ``core_sync_impl`` can
-    validate account ownership before executing.
+    When ``AUTH_ENABLED=true``, inject the authenticated ``user_id``
+    from the JWT into the sync payload so downstream project-scoped
+    sync flows can enforce direct project ownership.
     """
     if os.environ.get("AUTH_ENABLED", "").lower() == "true":
         user_id = getattr(request.state, "user_id", None)

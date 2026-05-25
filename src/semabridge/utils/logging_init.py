@@ -21,6 +21,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 
 from semabridge.utils.logger import console as default_console
+from semabridge.utils.logger import _configure_utf8_stdio
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,7 @@ def setup_logging_with_config(
     global _logging_initialized
     
     log_level = getattr(logging, level.upper(), logging.INFO)
+    _configure_utf8_stdio()
     
     # Clear existing handlers
     root = logging.getLogger()
@@ -93,7 +95,7 @@ def setup_logging_with_config(
         handler.setFormatter(JsonFormatter())
     elif rich_output and format_type == "text":
         # Rich formatted output
-        console = Console()
+        console = default_console
         handler = RichHandler(
             console=console,
             show_time=True,

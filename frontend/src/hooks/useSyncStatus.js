@@ -25,6 +25,11 @@ function deriveProgressFromRun(run) {
   return 0;
 }
 
+function isTransientPreviewProjectId(projectId) {
+  const normalized = String(projectId || '').trim().toLowerCase();
+  return normalized === 'preview' || normalized.startsWith('preview-');
+}
+
 export default function useSyncStatus(projectId, initialStatus = 'draft') {
   const [status, setStatus] = useState(normalizeStatus(initialStatus));
   const [progress, setProgress] = useState(0);
@@ -79,12 +84,14 @@ export default function useSyncStatus(projectId, initialStatus = 'draft') {
     const poll = async () => {
       try {
         const [project, runs] = await Promise.all([
-          api.getProject(projectId, { noCache: true }),
+          isTransientPreviewProjectId(projectId)
+            ? Promise.resolve(null)
+            : api.getProject(projectId, { noCache: true }),
           api.getProjectRuns(projectId),
         ]);
         if (disposed) return;
 
-        const nextStatus = normalizeStatus(project?.status);
+        const nextStatus = project ? normalizeStatus(project?.status) : normalizeStatus(statusRef.current);
         updateStatus(nextStatus);
 
         const runList = Array.isArray(runs) ? runs : [];

@@ -453,9 +453,37 @@ def _compat_bootstrap_projects_from_modular_configs() -> None:
             assembled = bundle["assembled"]
             source_cfg = assembled.get("source") if isinstance(assembled.get("source"), dict) else {}
             target_cfg = assembled.get("target") if isinstance(assembled.get("target"), dict) else {}
+            targets_cfg = assembled.get("targets") if isinstance(assembled.get("targets"), list) else []
+            first_target_cfg = targets_cfg[0] if targets_cfg and isinstance(targets_cfg[0], dict) else {}
             metadata = assembled.get("project_metadata") if isinstance(assembled.get("project_metadata"), dict) else {}
-
             existing = _compat_projects.get(project_id) if isinstance(_compat_projects.get(project_id), dict) else {}
+            owner_user_id = str(
+                assembled.get("owner_user_id")
+                or metadata.get("owner_user_id")
+                or existing.get("owner_user_id")
+                or existing.get("user_id")
+                or ""
+            ).strip() or None
+            source_account_id = str(
+                source_cfg.get("identity_id")
+                or source_cfg.get("account_id")
+                or existing.get("source_account_id")
+                or ""
+            ).strip() or None
+            target_account_id = str(
+                target_cfg.get("identity_id")
+                or target_cfg.get("account_id")
+                or first_target_cfg.get("identity_id")
+                or first_target_cfg.get("account_id")
+                or existing.get("target_account_id")
+                or ""
+            ).strip() or None
+            account_id = str(
+                existing.get("account_id")
+                or source_account_id
+                or target_account_id
+                or ""
+            ).strip() or None
             project = {
                 "id": project_id,
                 "project_id": project_id,
@@ -464,6 +492,11 @@ def _compat_bootstrap_projects_from_modular_configs() -> None:
                 "source": source_cfg.get("type") or existing.get("source") or "fabric",
                 "adapter": source_cfg.get("type") or existing.get("adapter") or "fabric",
                 "workspace_id": str(source_cfg.get("workspace_id") or existing.get("workspace_id") or ""),
+                "account_id": account_id,
+                "source_account_id": source_account_id,
+                "target_account_id": target_account_id,
+                "owner_user_id": owner_user_id,
+                "user_id": owner_user_id,
                 "target_type": target_cfg.get("type") or existing.get("target_type") or "snowflake",
                 "folder_id": existing.get("folder_id"),
                 "status": existing.get("status") or "draft",
@@ -726,6 +759,16 @@ def _compat_project_payload(project_id: str, payload: dict) -> Dict[str, Any]:
     targets_list = payload.get("targets") if isinstance(payload.get("targets"), list) else []
     first_target_obj = targets_list[0] if targets_list and isinstance(targets_list[0], dict) else {}
     project_name = _compat_clean_project_name(payload.get("display_name") or payload.get("name"), f"Project {project_id[-6:]}")
+    source_account_id = str(source_obj.get("identity_id") or source_obj.get("account_id") or "").strip() or None
+    target_account_id = str(
+        target_obj.get("identity_id")
+        or target_obj.get("account_id")
+        or first_target_obj.get("identity_id")
+        or first_target_obj.get("account_id")
+        or ""
+    ).strip() or None
+    account_id = str(payload.get("account_id") or source_account_id or target_account_id or "").strip() or None
+    owner_user_id = str(payload.get("user_id") or payload.get("owner_user_id") or "").strip() or None
     return {
         "id": project_id,
         "project_id": project_id,
@@ -733,9 +776,17 @@ def _compat_project_payload(project_id: str, payload: dict) -> Dict[str, Any]:
         "name": project_name,
         "description": payload.get("description") or "",
         "source": source_obj.get("type") or payload.get("source_type") or "fabric",
+        "source_config": source_obj,
         "adapter": source_obj.get("type") or payload.get("source_type") or "fabric",
         "workspace_id": source_obj.get("workspace_id") or "",
+        "account_id": account_id,
+        "source_account_id": source_account_id,
+        "target_account_id": target_account_id,
+        "owner_user_id": owner_user_id,
+        "user_id": owner_user_id,
         "connection_tag": str(payload.get("connection_tag") or source_obj.get("connection_tag") or target_obj.get("connection_tag") or "").strip() or None,
+        "target": target_obj if target_obj else first_target_obj,
+        "targets": targets_list,
         "target_type": target_obj.get("type") or first_target_obj.get("type") or payload.get("target_type") or "snowflake",
         "folder_id": payload.get("folder_id"),
         "status": "draft",
@@ -747,6 +798,7 @@ def _compat_project_payload(project_id: str, payload: dict) -> Dict[str, Any]:
 def _compat_default_project_yaml(project: Dict[str, Any]) -> str:
     name = _compat_clean_project_name(project.get("display_name") or project.get("name"), "Untitled Project").replace('"', '\\"')
     project_id = str(project.get("project_id") or project.get("id") or f"proj-{int(_time.time() * 1000)}").strip()
+    owner_user_id = str(project.get("owner_user_id") or project.get("user_id") or "").strip()
     src = project.get("source") or "fabric"
     target = project.get("target_type") or "snowflake"
     lines = [
@@ -767,6 +819,13 @@ def _compat_default_project_yaml(project: Dict[str, Any]) -> str:
         "ui:",
         '  output_format: "osi"',
     ])
+    if owner_user_id:
+        owner_escaped = owner_user_id.replace('"', '\\"')
+        lines.extend([
+            f'owner_user_id: "{owner_escaped}"',
+            "project_metadata:",
+            f'  owner_user_id: "{owner_escaped}"',
+        ])
     return "\n".join(lines)
 
 

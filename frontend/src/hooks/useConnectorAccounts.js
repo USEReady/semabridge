@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../utils/api';
 
 /**
@@ -21,20 +21,43 @@ export function useConnectorAccounts({
   setAllWorkspacesFromApi,
   setWorkspaces,
 }) {
+  const resolveAccountId = useCallback((account) => (
+    String(account?.id || account?.identity_id || account?.account_id || '')
+  ), []);
+
   const [fabricAccounts, setFabricAccounts]       = useState([]);
   const [snowflakeAccounts, setSnowflakeAccounts] = useState([]);
   const [databricksAccounts, setDatabricksAccounts] = useState([]);
   const [isRefreshingWorkspaces, setIsRefreshingWorkspaces] = useState(false);
+  const [workspaceDiscoveryError, setWorkspaceDiscoveryError] = useState('');
+  const workspaceFetchSeqRef = useRef(0);
 
   const fetchFabricWorkspaces = useCallback(async (accountId) => {
-    if (!accountId) {
+    const resolvedAccountId = String(accountId || '').trim();
+    const requestSeq = ++workspaceFetchSeqRef.current;
+
+    if (!resolvedAccountId) {
       setAllWorkspacesFromApi([]);
       setWorkspaces([]);
+      setWorkspaceDiscoveryError('');
+      console.warn('[SemaBridge][FabricDiscovery] hook:skip-empty-account', { requestSeq });
       return;
     }
+
+    setWorkspaceDiscoveryError('');
     setIsRefreshingWorkspaces(true);
     try {
-      const listData = await api.fabricListWorkspaces(accountId);
+      const listData = await api.fabricListWorkspaces(resolvedAccountId);
+
+      if (requestSeq !== workspaceFetchSeqRef.current) {
+        console.info('[SemaBridge][FabricDiscovery] hook:stale-response-ignored', {
+          accountId: resolvedAccountId,
+          requestSeq,
+          latestSeq: workspaceFetchSeqRef.current,
+        });
+        return;
+      }
+
       const discovered = Array.isArray(listData?.workspaces) ? listData.workspaces : [];
       const apiWorkspaces = discovered
         .map(ws => ({
@@ -52,12 +75,38 @@ export function useConnectorAccounts({
         seen.add(ws.id);
         deduped.push(ws);
       }
-      console.log('[SemaBridge] Resolved workspace list:', deduped);
+      console.info('[SemaBridge][FabricDiscovery] hook:success', {
+        accountId: resolvedAccountId,
+        requestSeq,
+        discoveredCount: discovered.length,
+        resolvedCount: deduped.length,
+      });
+      setWorkspaceDiscoveryError('');
       setAllWorkspacesFromApi(deduped);
-    } catch {
+    } catch (err) {
+      if (requestSeq !== workspaceFetchSeqRef.current) {
+        console.info('[SemaBridge][FabricDiscovery] hook:stale-error-ignored', {
+          accountId: resolvedAccountId,
+          requestSeq,
+          latestSeq: workspaceFetchSeqRef.current,
+          error: err?.message || String(err),
+        });
+        return;
+      }
+
+      console.error('[SemaBridge][FabricDiscovery] hook:error', {
+        accountId: resolvedAccountId,
+        requestSeq,
+        message: err?.message || 'Unknown error',
+        status: err?.status,
+        payload: err?.payload,
+      });
+      setWorkspaceDiscoveryError(err?.message || 'Failed to discover Fabric workspaces for the selected account.');
       setAllWorkspacesFromApi([]);
     } finally {
-      setIsRefreshingWorkspaces(false);
+      if (requestSeq === workspaceFetchSeqRef.current) {
+        setIsRefreshingWorkspaces(false);
+      }
     }
   }, [setAllWorkspacesFromApi, setWorkspaces]);
 
@@ -74,8 +123,8 @@ export function useConnectorAccounts({
         const list = Array.isArray(res) ? res : (res?.accounts || []);
         setFabricAccounts(list);
         if (!list.length) { setSelectedConnectionId(''); setFabricAccountId(''); return; }
-        const hasSelection = list.some(acc => String(acc?.id || '') === String(selectedConnectionId || ''));
-        const nextId = hasSelection ? selectedConnectionId : String(list[0]?.id || '');
+        const hasSelection = list.some(acc => resolveAccountId(acc) === String(selectedConnectionId || ''));
+        const nextId = hasSelection ? selectedConnectionId : resolveAccountId(list[0]);
         if (nextId) { setSelectedConnectionId(nextId); setFabricAccountId(nextId); }
       }).catch(e => console.warn('[SemaBridge] Failed to fetch Fabric Accounts', e));
     }
@@ -84,7 +133,9 @@ export function useConnectorAccounts({
       api.getAccounts('SNOWFLAKE').then(res => {
         const list = Array.isArray(res) ? res : (res?.accounts || []);
         setSnowflakeAccounts(list);
-        if (list.length > 0 && !snowflakeAccountId) setSnowflakeAccountId(String(list[0]?.id || ''));
+        if (!list.length) { setSnowflakeAccountId(''); return; }
+        const hasSelection = list.some(acc => resolveAccountId(acc) === String(snowflakeAccountId || ''));
+        if (!hasSelection) setSnowflakeAccountId(resolveAccountId(list[0]));
       }).catch(e => console.warn('[SemaBridge] Failed to fetch Snowflake Accounts', e));
     }
 
@@ -92,10 +143,20 @@ export function useConnectorAccounts({
       api.getAccounts('DATABRICKS').then(res => {
         const list = Array.isArray(res) ? res : (res?.accounts || []);
         setDatabricksAccounts(list);
-        if (list.length > 0 && !databricksAccountId) setDatabricksAccountId(String(list[0]?.id || ''));
+        if (!list.length) { setDatabricksAccountId(''); return; }
+        const hasSelection = list.some(acc => resolveAccountId(acc) === String(databricksAccountId || ''));
+        if (!hasSelection) setDatabricksAccountId(resolveAccountId(list[0]));
       }).catch(e => console.warn('[SemaBridge] Failed to fetch Databricks Accounts', e));
     }
-  }, [step, sourceConnector, targetConnectors, selectedConnectionId]);  // eslint-disable-line
+  }, [
+    step,
+    sourceConnector,
+    targetConnectors,
+    selectedConnectionId,
+    snowflakeAccountId,
+    databricksAccountId,
+    resolveAccountId,
+  ]);  // eslint-disable-line
 
   // Re-fetch workspaces when connection account changes
   useEffect(() => {
@@ -117,5 +178,6 @@ export function useConnectorAccounts({
     databricksAccounts,
     isRefreshingWorkspaces,
     fetchFabricWorkspaces,
+    workspaceDiscoveryError,
   };
 }

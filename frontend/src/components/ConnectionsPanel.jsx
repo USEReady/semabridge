@@ -80,11 +80,6 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
     const flowIdRef = useRef(null);
     const { addLog } = useLogs();
 
-    // Workspace discovery state
-    const [workspaces, setWorkspaces] = useState([]);
-    const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('');
-    const [savedWorkspaceName, setSavedWorkspaceName] = useState('');
-    const [loadingWorkspaces, setLoadingWorkspaces] = useState(false);
     const [workspaceSaving, setWorkspaceSaving] = useState(false);
     const [connectionId, setConnectionId] = useState('');
 
@@ -106,21 +101,6 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
             .then(result => { prefetchedCode.current = result; })
             .catch(() => { /* silent — will fetch fresh on click */ })
             .finally(() => { prefetchInFlight.current = false; });
-    };
-
-    const fetchWorkspaces = async () => {
-        setLoadingWorkspaces(true);
-        try {
-            const result = await api.fabricListWorkspaces();
-            const nextWorkspaces = result.workspaces || [];
-            setWorkspaces(nextWorkspaces);
-            setSelectedWorkspaceId((current) => current || nextWorkspaces[0]?.id || '');
-            addLog('info', 'Fabric', `Discovered ${nextWorkspaces.length || 0} workspaces`);
-        } catch (err) {
-            addLog('warning', 'Fabric', `Could not fetch workspaces: ${err.message}`);
-        } finally {
-            setLoadingWorkspaces(false);
-        }
     };
 
     const handleLogin = async () => {
@@ -189,7 +169,6 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
                         token_valid: true,
                     });
                     addLog('info', 'Fabric Auth', `Signed in successfully as ${result.username}`);
-                    fetchWorkspaces();
                 } else if (result.status === 'pending') {
                     startPolling();
                 } else {
@@ -209,28 +188,9 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
             setAuthStatus(null);
             setLoginPhase('idle');
             setDeviceCode(null);
-            setWorkspaces([]);
-            setSelectedWorkspaceId('');
-            setSavedWorkspaceName('');
             addLog('info', 'Fabric Auth', 'Logged out');
         } catch (err) {
             addLog('error', 'Fabric Auth', err.message);
-        }
-    };
-
-    const handleSaveWorkspace = async () => {
-        if (!selectedWorkspaceId) return;
-        setWorkspaceSaving(true);
-        const ws = workspaces.find(w => w.id === selectedWorkspaceId);
-        const name = ws?.displayName || '';
-        try {
-            await api.fabricSelectWorkspace(selectedWorkspaceId, name);
-            setSavedWorkspaceName(name);
-            addLog('info', 'Fabric', `Workspace set: ${name} (${selectedWorkspaceId})`);
-        } catch (err) {
-            addLog('error', 'Fabric', err.message);
-        } finally {
-            setWorkspaceSaving(false);
         }
     };
 
@@ -243,25 +203,15 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
     };
 
     const handleSaveIdentity = async () => {
-        if (!selectedWorkspaceId) {
-            setError('Choose a Fabric workspace before saving this identity.');
-            return;
-        }
-
         try {
             setWorkspaceSaving(true);
             const effectiveConnectionId = connectionId || authStatus?.connection_id || generateConnectionId();
-            const selectedWorkspace = workspaces.find((w) => w.id === selectedWorkspaceId);
-            const workspaceName = selectedWorkspace?.displayName || savedWorkspaceName || '';
-
-            await api.fabricSelectWorkspace(selectedWorkspaceId, workspaceName);
-            setSavedWorkspaceName(workspaceName);
 
             const vaultAccounts = await api.createAccount({
                 connection_id: effectiveConnectionId,
                 connector_type: 'FABRIC',
                 tag: initialTag,
-                identity_email: authStatus?.username || workspaceName || 'N/A',
+                identity_email: authStatus?.username || 'N/A',
                 encrypted_token: authStatus?.access_token || null,
             });
 
@@ -269,7 +219,7 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
             const newConnection = {
                 id: effectiveConnectionId,
                 tag: initialTag,
-                identity_email: authStatus?.username || workspaceName || 'N/A',
+                identity_email: authStatus?.username || 'N/A',
                 connector_type: 'FABRIC',
                 status: 'Active',
             };
@@ -327,41 +277,9 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
                             </div>
                         </div>
 
-                        <div className="space-y-2">
-                            <div className="flex items-center justify-between gap-2">
-                                <label className="block text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
-                                    Fabric Workspace
-                                </label>
-                                <button
-                                    onClick={fetchWorkspaces}
-                                    disabled={loadingWorkspaces}
-                                    className="text-[11px] font-medium"
-                                    style={{ color: loadingWorkspaces ? 'var(--text-tertiary)' : 'var(--accent-blue)' }}
-                                >
-                                    {loadingWorkspaces ? 'Loading...' : 'Refresh'}
-                                </button>
-                            </div>
-                            <select
-                                value={selectedWorkspaceId}
-                                onChange={(e) => setSelectedWorkspaceId(e.target.value)}
-                                className="w-full px-3 py-2 rounded-lg text-xs border"
-                                style={{
-                                    background: 'var(--bg-input)',
-                                    borderColor: 'var(--border-main)',
-                                    color: 'var(--text-primary)',
-                                }}
-                            >
-                                <option value="">Select a workspace</option>
-                                {workspaces.map((workspace) => (
-                                    <option key={workspace.id} value={workspace.id}>
-                                        {workspace.displayName || workspace.name || workspace.id}
-                                    </option>
-                                ))}
-                            </select>
-                            <p className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
-                                Saving the identity also stores the selected Fabric workspace for connector status and syncs.
-                            </p>
-                        </div>
+                        <p className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                            Sign in and save the Fabric identity only. Workspace selection is handled in the project wizard.
+                        </p>
                     </div>
                 )}
 
@@ -447,7 +365,7 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
                 <div className="pt-4 flex justify-end gap-2 border-t" style={{ borderColor: 'var(--border-main)' }}>
                     <button
                         onClick={handleSaveIdentity}
-                        disabled={workspaceSaving || loadingWorkspaces || !selectedWorkspaceId}
+                        disabled={workspaceSaving}
                         className="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold rounded-lg transition-colors disabled:opacity-60"
                     >
                         Save Identity

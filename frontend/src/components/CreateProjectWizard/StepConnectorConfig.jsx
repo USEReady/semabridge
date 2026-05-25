@@ -12,7 +12,7 @@ const SECTION_CARD = {
   background: 'var(--bg-surface)',
   boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
   position: 'relative',
-  overflow: 'hidden'
+  overflow: 'visible'
 };
 
 function getAccountLabel(account) {
@@ -53,8 +53,6 @@ export function StepConnectorConfig({
   setTargetAccount,
   targetWarehouse,
   setTargetWarehouse,
-  domainHint,
-  setDomainHint,
   pbixFile,
   setPbixFile,
   pbixUploadPath,
@@ -71,6 +69,7 @@ export function StepConnectorConfig({
   workspacesLoading,
   isRefreshingWorkspaces,
   fetchFabricWorkspaces,
+  workspaceDiscoveryError,
   runWarning,
 }) {
   const [pbixDragOver, setPbixDragOver] = useState(false);
@@ -436,6 +435,7 @@ export function StepConnectorConfig({
                 </button>
               </div>
               <SearchableSelect
+                key={`fabric-source-${fabricAccountId || 'none'}-${workspaces.length}-${isRefreshingWorkspaces ? 'loading' : 'ready'}`}
                 items={workspaces}
                 displayKey="name"
                 valueKey="id"
@@ -445,10 +445,16 @@ export function StepConnectorConfig({
                 onChange={item => setFabricWorkspaceId(item?.id || '')}
                 loading={workspacesLoading || isRefreshingWorkspaces}
                 clearable={false}
+                defaultOpen={sourceConnector === 'fabric' && workspaces.length > 0}
               />
               <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
                 Select the workspace containing the semantic models you want to migrate.
               </p>
+              {workspaceDiscoveryError && (
+                <p style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 6 }}>
+                  {workspaceDiscoveryError}
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -738,6 +744,7 @@ export function StepConnectorConfig({
                         </div>
 
                         <SearchableSelect
+                          key={`fabric-target-${fabricAccountId || 'none'}-${workspaces.length}-${isRefreshingWorkspaces ? 'loading' : 'ready'}`}
                           items={workspaces}
                           displayKey="name"
                           valueKey="id"
@@ -750,11 +757,17 @@ export function StepConnectorConfig({
                           }}
                           loading={workspacesLoading || isRefreshingWorkspaces}
                           clearable={false}
+                          defaultOpen={targetConnectors.has('fabric') && workspaces.length > 0}
                         />
 
                         <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
                           Choose the destination Fabric workspace for this target sync.
                         </p>
+                        {workspaceDiscoveryError && (
+                          <p style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 6 }}>
+                            {workspaceDiscoveryError}
+                          </p>
+                        )}
                       </div>
                     </div>
                   )}
@@ -800,20 +813,6 @@ export function StepConnectorConfig({
         </div>
       </div>
 
-      <div style={SECTION_CARD}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>Optional Metadata</div>
-        <label style={LABEL}>Domain Hint (optional)</label>
-        <input
-          type="text" value={domainHint} onChange={e => setDomainHint(e.target.value)}
-          placeholder="e.g. finance, sales, hr — helps AI generate better names"
-          style={INPUT}
-          onFocus={e => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-          onBlur={e => { e.target.style.borderColor = 'var(--border-main)'; }}
-        />
-        <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
-          A domain hint improves generated labels and descriptions. It does not change connector behavior.
-        </p>
-      </div>
     </div>
   );
 }

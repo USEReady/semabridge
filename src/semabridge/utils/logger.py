@@ -17,6 +17,7 @@ import logging.handlers
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -52,6 +53,21 @@ _THROTTLED_WARNING_PATTERNS: list[tuple[re.Pattern[str], int]] = [
     (re.compile(r"^Skipping metric '\S+", re.IGNORECASE), 6),
     (re.compile(r"^LLM translation low confidence", re.IGNORECASE), 3),
 ]
+
+
+def _configure_utf8_stdio() -> None:
+    """Best-effort UTF-8 stdio setup so Rich logging does not fail on Windows consoles."""
+    if os.name != "nt":
+        return
+
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="backslashreplace")
+            except Exception:
+                pass
 
 
 class WindowsRotatingFileHandler(logging.handlers.RotatingFileHandler):
@@ -219,6 +235,7 @@ def setup_logging(
     """
     effective_level = level or resolve_log_level()
     log_level = getattr(logging, effective_level.upper(), logging.DEBUG)
+    _configure_utf8_stdio()
 
     global _logging_initialized
     if _logging_initialized:

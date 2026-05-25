@@ -64,10 +64,6 @@ export function footerBtn(variant) {
   };
 }
 
-export function escapeYamlString(value) {
-  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
-
 export function FlowCard({ label, model }) {
   const connector = getConnectorPresentation(model.type);
   return (

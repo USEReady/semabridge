@@ -4,8 +4,8 @@ import { useProjectWizardStore } from '../store/projectWizardStore';
 import { buildDryRunPayload } from '../utils/dryRunPayload';
 import { validateTargetName } from '../utils/validateTargetName';
 import { normalizeRows } from '../utils/projectHelpers';
+import { escapeYamlString } from '../utils/yaml';
 import { isBlockingRow as isDryRunBlockingRow } from '../components/DryRunMappingTable';
-import { escapeYamlString } from '../components/WizardUIComponents';
 
 /**
  * useProjectMappings
@@ -205,7 +205,7 @@ export function useProjectMappings({
  */
 export function useProjectBuilder({
   name, description, sourceConnector, targetConnectors, intermediateFormat,
-  tags, domainHint, configMode, autoRelationships, generateDescriptions,
+  tags, configMode, autoRelationships, generateDescriptions,
   fabricAccountId, fabricWorkspaceId, selectedWorkspace, selectedModelNames,
   snowflakeAccountId, snowflakeDatabase, snowflakeSchema,
   targetAccount, targetWarehouse, targetDatabase, targetSchema,
@@ -321,7 +321,6 @@ export function useProjectBuilder({
     lines.push('ui:');
     lines.push(`  intermediate_format: "${escapeYamlString(intermediateFormat)}"`);
     lines.push(`  editor_mode: "${escapeYamlString(configMode)}"`);
-    if (domainHint.trim()) lines.push(`  domain_hint: "${escapeYamlString(domainHint.trim())}"`);
 
     if (selectedModels.size) {
       lines.push('selection:');
@@ -349,7 +348,7 @@ export function useProjectBuilder({
     } catch { /* ignore */ }
 
     return lines.join('\n');
-  }, [name, description, intermediateFormat, configMode, domainHint, autoRelationships, generateDescriptions, detectedMappings, selectedModels, fabricWorkspaceId, wsModels]);
+  }, [name, description, intermediateFormat, configMode, autoRelationships, generateDescriptions, detectedMappings, selectedModels, fabricWorkspaceId, wsModels]);
 
   const handleFinish = useCallback(async () => {
     setCreateError('');

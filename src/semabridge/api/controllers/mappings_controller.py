@@ -1,15 +1,23 @@
 import os
 import uuid
 import yaml
+import logging
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, Request, Depends, HTTPException, BackgroundTasks
+from fastapi.responses import JSONResponse
 
 from semabridge.api.services.mappings_service import (
     MappingService,
     get_mapping_service,
     list_mappings_compat,
     delete_mappings_compat,
+)
+from semabridge.api.services.project_ownership_service import (
+    auth_is_enabled,
+    is_project_owned_by_user,
+    require_request_user_id,
+    validate_project_connector_accounts_belong_to_user,
 )
 
 # --- Request Models ---
@@ -35,11 +43,33 @@ class DeployRequest(BaseModel):
 # --- Router ---
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
-router.get('/api/mappings')(list_mappings_compat)
-router.delete('/api/mappings')(delete_mappings_compat)
+def _assert_project_access(project_id: str, user_id: str | None) -> None:
+    if auth_is_enabled() and not is_project_owned_by_user(project_id, user_id, log_prefix="ProjectMappingAuth"):
+        raise HTTPException(status_code=403, detail="Forbidden: project access denied")
 
-from fastapi.responses import JSONResponse
+
+@router.get('/api/mappings')
+async def list_mappings(request: Request, project_id: Optional[str] = None):
+    user_id = require_request_user_id(request)
+    pid = str(project_id or "").strip()
+    if auth_is_enabled():
+        if not pid:
+            raise HTTPException(status_code=400, detail="project_id is required")
+        _assert_project_access(pid, user_id)
+    return await list_mappings_compat(pid or None)
+
+
+@router.delete('/api/mappings')
+async def delete_mappings(request: Request, project_id: Optional[str] = None):
+    user_id = require_request_user_id(request)
+    pid = str(project_id or "").strip()
+    if auth_is_enabled():
+        if not pid:
+            raise HTTPException(status_code=400, detail="project_id is required")
+        _assert_project_access(pid, user_id)
+    return await delete_mappings_compat(pid or None)
 
 
 def _build_config_yaml_from_request(
@@ -96,6 +126,7 @@ def _build_config_yaml_from_request(
 @router.post("/api/projects/{project_id}/dry-run")
 async def dry_run_mapping(
     project_id: str,
+    http_request: Request,
     request: DryRunRequest,
     service: MappingService = Depends(get_mapping_service)
 ):
@@ -113,21 +144,72 @@ async def dry_run_mapping(
     from semabridge.api.services.project_mapping_engine import sanitize_identifier
 
     try:
+        request_user_id = require_request_user_id(http_request)
+        validate_project_connector_accounts_belong_to_user(
+            request_user_id,
+            {
+                "source": request.source_config,
+                "target": request.target_config,
+                "targets": [request.target_config],
+            },
+        )
+        if project_id not in ("preview", ""):
+            _assert_project_access(project_id, request_user_id)
+        source_account_id = str(
+            request.source_config.get("identity_id")
+            or request.source_config.get("account_id")
+            or ""
+        ).strip() or None
+        target_account_id = str(
+            request.target_config.get("identity_id")
+            or request.target_config.get("account_id")
+            or ""
+        ).strip() or None
         # ── 1. Resolve or create a stable preview project in the compat store ──
         # Use a deterministic project id based on source+models so repeated dry
         # runs for the same wizard session reuse the same project slot.
-        seed = f"{request.source_config.get('type','')}-{request.source_config.get('workspace_id','')}-{'|'.join(sorted(request.selected_sources))}"
+        user_seed = str(request_user_id or "").strip()
+        seed = (
+            f"{user_seed}-"
+            f"{request.source_config.get('type','')}-"
+            f"{request.source_config.get('workspace_id','')}-"
+            f"{'|'.join(sorted(request.selected_sources))}"
+        )
         preview_project_id = f"preview-{uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex[:12]}"
 
         project_shared._compat_ensure_loaded()
-        if preview_project_id not in project_shared._compat_projects:
-            project_shared._compat_projects[preview_project_id] = {
+        preview_project = project_shared._compat_projects.get(preview_project_id)
+        if not isinstance(preview_project, dict):
+            preview_project = {
                 "id": preview_project_id,
                 "project_id": preview_project_id,
-                "name": "dry-run-preview",
                 "created_at": project_shared._compat_now_iso(),
             }
-            project_shared._compat_save_store()
+        preview_project.update({
+            "name": "dry-run-preview",
+            "updated_at": project_shared._compat_now_iso(),
+            "status": "preview",
+            "is_transient_preview": True,
+            "preview_kind": "dry-run",
+            "owner_user_id": str(request_user_id).strip() if request_user_id is not None else None,
+            "user_id": str(request_user_id).strip() if request_user_id is not None else None,
+            "account_id": source_account_id or target_account_id,
+            "source_account_id": source_account_id,
+            "target_account_id": target_account_id,
+            "source": dict(request.source_config),
+            "target": dict(request.target_config),
+            "targets": [dict(request.target_config)],
+        })
+        project_shared._compat_projects[preview_project_id] = preview_project
+        project_shared._compat_save_store()
+        logger.info(
+            "[PreviewProject] prepared preview_project_id=%s user_id=%s source_account_id=%s target_account_id=%s selected_sources=%s",
+            preview_project_id,
+            request_user_id,
+            source_account_id,
+            target_account_id,
+            request.selected_sources,
+        )
 
         # ── 2. Build a real config YAML from the wizard's source/target config ─
         config_yaml = _build_config_yaml_from_request(
@@ -319,6 +401,7 @@ async def dry_run_mapping(
 async def update_mapping(
     project_id: str,
     mapping_id: str,
+    http_request: Request,
     request: UpdateMappingRequest,
     service: MappingService = Depends(get_mapping_service)
 ):
@@ -326,6 +409,8 @@ async def update_mapping(
     Update a single field mapping (used when user edits target field).
     Sets status to "manual" automatically.
     """
+    request_user_id = require_request_user_id(http_request)
+    _assert_project_access(project_id, request_user_id)
     result = await service.update_mapping_compat(
         mapping_id=mapping_id,
         target_name=request.target_name or "",
@@ -337,12 +422,23 @@ async def update_mapping(
 @router.post("/api/projects/{project_id}/auto-map")
 async def rerun_auto_map(
     project_id: str,
+    http_request: Request,
     request: AutoMapRequest,
     service: MappingService = Depends(get_mapping_service)
 ):
     """
     Re-run auto-mapping algorithm on demand.
     """
+    request_user_id = require_request_user_id(http_request)
+    validate_project_connector_accounts_belong_to_user(
+        request_user_id,
+        {
+            "source": request.source_config,
+            "target": request.target_config,
+            "targets": [request.target_config],
+        },
+    )
+    _assert_project_access(project_id, request_user_id)
     result = await service.auto_map_compat(
         source_config=request.source_config,
         target_config=request.target_config,
@@ -362,6 +458,7 @@ async def rerun_auto_map(
 @router.post("/api/projects/{project_id}/deploy")
 async def deploy_mappings(
     project_id: str,
+    http_request: Request,
     request: DeployRequest,
     background_tasks: BackgroundTasks,
     service: MappingService = Depends(get_mapping_service)
@@ -375,7 +472,9 @@ async def deploy_mappings(
         create_project_compat,
         run_project_now_compat,
     )
+    from semabridge.api.services.project_mapping_engine import sanitize_identifier
     import semabridge.api.services.project_shared as project_shared
+    request_user_id = require_request_user_id(http_request)
 
     # ── 1. Resolve / create the project ──────────────────────────────────────
     actual_project_id = project_id
@@ -386,6 +485,7 @@ async def deploy_mappings(
             "source": {"type": "fabric"},
             "targets": [{"type": "snowflake"}],
             "preferred_interface": "ui",
+            "user_id": request_user_id,
         }
         if preview_cfg:
             new_project_payload["config_yaml"] = preview_cfg
@@ -393,6 +493,8 @@ async def deploy_mappings(
         actual_project_id = str(created.get("id") or created.get("project_id") or "").strip()
         if not actual_project_id:
             raise HTTPException(status_code=500, detail="Failed to create actual project for deploy.")
+    else:
+        _assert_project_access(project_id, request_user_id)
 
     # ── 2. Persist the user-edited field mappings into the compat store ───────
     target_connector_type = ""
@@ -443,6 +545,7 @@ async def deploy_mappings(
             payload={
                 "run_type": "SYNC",
                 "field_mappings": request.field_mappings,
+                "user_id": request_user_id,
             },
         )
         return {
@@ -472,8 +575,8 @@ async def deploy_mappings(
 async def auto_map_with_user_context(request: Request, payload: Dict[str, Any]):
     from semabridge.api.services.project_domain_service import auto_map_compat
     body = dict(payload or {})
-    if os.environ.get("AUTH_ENABLED", "").lower() == "true":
-        user_id = getattr(request.state, "user_id", None)
-        if user_id:
-            body["user_id"] = user_id
+    user_id = require_request_user_id(request)
+    if user_id:
+        body["user_id"] = user_id
+        validate_project_connector_accounts_belong_to_user(user_id, body)
     return await auto_map_compat(body)

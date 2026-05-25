@@ -426,6 +426,7 @@ export default function ProjectConfigPage() {
   const [projectMappings, setProjectMappings] = useState([]);
   const [projectMappingsLoading, setProjectMappingsLoading] = useState(false);
   const [projectMappingsError, setProjectMappingsError] = useState('');
+  const initialLoadRequestRef = useRef(0);
 
   const [viewMode, setViewMode] = usePageCache(`project_${id}_viewMode`, 'form'); // form | yaml
   const [yamlText, setYamlText] = useState('');
@@ -579,6 +580,12 @@ export default function ProjectConfigPage() {
       return;
     }
 
+    let cancelled = false;
+    const requestId = initialLoadRequestRef.current + 1;
+    initialLoadRequestRef.current = requestId;
+
+    console.debug('[ProjectConfigPage] load:start', { projectId: id, requestId });
+
     (async () => {
       try {
         const [p, cfg, all] = await Promise.all([
@@ -586,6 +593,7 @@ export default function ProjectConfigPage() {
           api.getProjectConfig(id),
           api.listProjects(),
         ]);
+        if (cancelled || initialLoadRequestRef.current !== requestId) return;
         setProject(p);
         setYamlText(cfg?.config_yaml || '');
         setYamlPath(cfg?.yaml_path || '');
@@ -606,8 +614,14 @@ export default function ProjectConfigPage() {
         }
         setAllProjects(all.filter(x => String(x.id) !== String(id)));
         setActiveProjectId(p?.id || p?.project_id || id);
+        console.debug('[ProjectConfigPage] load:success', {
+          projectId: id,
+          requestId,
+          resolvedProjectId: p?.id || p?.project_id || id,
+        });
         try {
           const schedule = await api.getProjectSchedule(id);
+          if (cancelled || initialLoadRequestRef.current !== requestId) return;
           const nextScheduleType = String(schedule?.schedule_type || 'manual').toLowerCase();
           if (nextScheduleType === 'cron' || nextScheduleType === 'time' || nextScheduleType === 'manual') {
             setScheduleType(nextScheduleType);
@@ -658,11 +672,17 @@ export default function ProjectConfigPage() {
           }));
         }
       } catch {
+        if (cancelled || initialLoadRequestRef.current !== requestId) return;
+        console.warn('[ProjectConfigPage] load:failed', { projectId: id, requestId });
         setProject(null);
       } finally {
+        if (cancelled || initialLoadRequestRef.current !== requestId) return;
         setLoading(false);
       }
     })();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasHydrated, id, isInvalidProjectId, navigate, setActiveProjectId]);
 

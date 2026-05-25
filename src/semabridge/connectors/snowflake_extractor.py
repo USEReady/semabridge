@@ -235,6 +235,53 @@ class SnowflakeExtractor:
 
         return results
 
+    def get_warehouses(self) -> list[dict[str, Any]]:
+        """Get available Snowflake warehouses.
+
+        Returns:
+            List of dicts with keys: id, name.
+        """
+        logger.debug("Discovering Snowflake warehouses")
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SHOW WAREHOUSES")
+                results = [{"id": row[0], "name": row[0]} for row in cur.fetchall()]
+                logger.info("Discovered %d warehouses", len(results))
+                return results
+
+    def get_databases(self) -> list[dict[str, Any]]:
+        """Get available Snowflake databases.
+
+        Returns:
+            List of dicts with keys: id, name.
+        """
+        logger.debug("Discovering Snowflake databases")
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SHOW DATABASES")
+                results = [{"id": row[1], "name": row[1]} for row in cur.fetchall()]
+                logger.info("Discovered %d databases", len(results))
+                return results
+
+    def get_schemas(self, database: str) -> list[dict[str, Any]]:
+        """Get available schemas in a specific database.
+
+        Args:
+            database: The database name to list schemas for.
+
+        Returns:
+            List of dicts with keys: id, name.
+        """
+        logger.debug("Discovering schemas in database: %s", database)
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                # Quote-escape the database name to prevent injection
+                db_safe = database.replace('"', '""')
+                cur.execute(f'SHOW SCHEMAS IN DATABASE "{db_safe}"')
+                results = [{"id": row[1], "name": row[1]} for row in cur.fetchall()]
+                logger.info("Discovered %d schemas in database %s", len(results), database)
+                return results
+
     def extract_semantic_view_ddl(self, view_name: str) -> str:
         """
         Retrieve the DDL of a Snowflake semantic view.

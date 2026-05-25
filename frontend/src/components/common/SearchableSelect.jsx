@@ -38,9 +38,10 @@ export default function SearchableSelect({
   maxHeight = 280,
   loading = false,
   clearable = true,
+  defaultOpen = false,
 }) {
   const fields = searchFields ?? [displayKey];
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(Boolean(defaultOpen));
   const containerRef = useRef(null);
 
   // Normalise items so every entry has a usable `id` field for MiniSearch

@@ -435,7 +435,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if auth_enabled:
         logger.info(
             "AUTH_ENABLED=true — multi-tenant credential isolation ENFORCED. "
-            "Account ownership checks active on all sync and CRUD endpoints."
+            "Direct project ownership checks active on all project-scoped sync and CRUD endpoints."
         )
     else:
         logger.info(

@@ -23,7 +23,6 @@ const DEFAULT_WIZARD_STATE = {
   targetSchema: '',
   targetAccount: '',
   targetWarehouse: '',
-  domainHint: '',
   modelQueryRegex: false,
   pbixSourceMode: 'TAG',
   selectedLocalFolderId: '',

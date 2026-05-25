@@ -894,6 +894,11 @@ def _resolve_fabric_access_token(
         if not encrypted_token and not credential_token_data:
             raise HTTPException(status_code=401, detail={"error": "reauth_required"})
 
+    if identity_id:
+        logger.warning(
+            "_resolve_fabric_access_token: no accessible Fabric account/token found for identity_id='%s'",
+            identity_id,
+        )
     logger.warning("No valid Fabric access token available")
     raise HTTPException(
         status_code=401,
@@ -1037,6 +1042,12 @@ async def fabric_list_workspaces(
 
     import anyio
     resolved_identity_id = (identity_id or connection_id or "").strip() or None
+    logger.info(
+        "fabric_list_workspaces: request (identity_id=%s, connectionId=%s, has_bearer=%s)",
+        identity_id,
+        connection_id,
+        bool(bearer_token),
+    )
     if not resolved_identity_id and not bearer_token:
         raise HTTPException(status_code=400, detail="account_id is required")
     access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token, resolved_identity_id)
@@ -1073,7 +1084,11 @@ async def fabric_list_workspaces(
             for ws in workspaces
         ]
 
-        logger.info(f"Discovered {len(result)} Fabric workspaces")
+        logger.info(
+            "fabric_list_workspaces: discovered %s workspaces for identity '%s'",
+            len(result),
+            resolved_identity_id,
+        )
         return {"workspaces": result}
 
     except httpx.RequestError as exc:

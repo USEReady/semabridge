@@ -37,6 +37,144 @@ from semabridge.api.services.project_shared import (
     logger,
 )
 
+
+def _resolve_project_account_id(payload: dict) -> str | None:
+    source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
+    target = payload.get("target") if isinstance(payload.get("target"), dict) else {}
+    targets = payload.get("targets") if isinstance(payload.get("targets"), list) else []
+    first_target = targets[0] if targets and isinstance(targets[0], dict) else {}
+    account_id = (
+        payload.get("account_id")
+        or source.get("identity_id")
+        or source.get("account_id")
+        or target.get("identity_id")
+        or target.get("account_id")
+        or first_target.get("identity_id")
+        or first_target.get("account_id")
+    )
+    token = str(account_id or "").strip()
+    return token or None
+
+
+def _upsert_project_in_orm(project_id: str, project: Dict[str, Any], payload: dict) -> None:
+    pid = str(project_id or "").strip()
+    if not pid:
+        return
+
+    try:
+        from datetime import datetime
+        from semabridge.repository.orm.models import Project
+        from semabridge.repository.orm.session_factory import db_manager as orm_db_manager
+
+        source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
+        project_name = str(project.get("name") or pid).strip() or pid
+        workspace_id = str(
+            source.get("workspace_id")
+            or payload.get("workspace_id")
+            or project.get("workspace_id")
+            or ""
+        ).strip() or None
+        adapter = str(project.get("adapter") or source.get("type") or "fabric").strip() or "fabric"
+        connection_tag = str(project.get("connection_tag") or "").strip() or None
+        account_id = _resolve_project_account_id(payload)
+
+        with orm_db_manager.get_session() as session:
+            existing = session.get(Project, pid)
+            if existing is None:
+                existing = Project(
+                    project_id=pid,
+                    name=project_name,
+                )
+                session.add(existing)
+
+            existing.name = project_name
+            existing.workspace_id = workspace_id
+            existing.adapter = adapter
+            existing.account_id = account_id
+            existing.connection_tag = connection_tag
+            existing.last_updated = datetime.utcnow()
+            session.commit()
+    except Exception as exc:
+        logger.warning("Failed to upsert ORM project %s: %s", pid, exc)
+
+
+def _backfill_project_metadata(project_id: str, project: Dict[str, Any]) -> None:
+    pid = str(project_id or "").strip()
+    if not pid or not isinstance(project, dict):
+        return
+
+    raw_yaml = str(_compat_project_configs.get(pid) or _compat_load_project_yaml_text(pid) or "").strip()
+    parsed = {}
+    if raw_yaml:
+        try:
+            parsed = yaml.safe_load(raw_yaml) or {}
+        except Exception:
+            parsed = {}
+
+    source_cfg = parsed.get("source") if isinstance(parsed, dict) and isinstance(parsed.get("source"), dict) else {}
+    target_cfg = parsed.get("target") if isinstance(parsed, dict) and isinstance(parsed.get("target"), dict) else {}
+    targets_cfg = parsed.get("targets") if isinstance(parsed, dict) and isinstance(parsed.get("targets"), list) else []
+    first_target_cfg = targets_cfg[0] if targets_cfg and isinstance(targets_cfg[0], dict) else {}
+
+    changed = False
+
+    if source_cfg and not isinstance(project.get("source_config"), dict):
+        project["source_config"] = source_cfg
+        changed = True
+    if target_cfg and not isinstance(project.get("target"), dict):
+        project["target"] = target_cfg
+        changed = True
+    if targets_cfg and not isinstance(project.get("targets"), list):
+        project["targets"] = targets_cfg
+        changed = True
+
+    source_account_id = str(
+        project.get("source_account_id")
+        or source_cfg.get("identity_id")
+        or source_cfg.get("account_id")
+        or ""
+    ).strip() or None
+    target_account_id = str(
+        project.get("target_account_id")
+        or target_cfg.get("identity_id")
+        or target_cfg.get("account_id")
+        or first_target_cfg.get("identity_id")
+        or first_target_cfg.get("account_id")
+        or ""
+    ).strip() or None
+    account_id = str(
+        project.get("account_id")
+        or source_account_id
+        or target_account_id
+        or ""
+    ).strip() or None
+
+    for key, value in (
+        ("source_account_id", source_account_id),
+        ("target_account_id", target_account_id),
+        ("account_id", account_id),
+    ):
+        if project.get(key) != value and value:
+            project[key] = value
+            changed = True
+
+    if not project.get("workspace_id") and source_cfg.get("workspace_id"):
+        project["workspace_id"] = str(source_cfg.get("workspace_id"))
+        changed = True
+
+    if changed:
+        _compat_projects[pid] = project
+        _compat_save_store()
+
+    orm_payload = {
+        "account_id": account_id,
+        "workspace_id": project.get("workspace_id"),
+        "source": source_cfg or project.get("source_config") or {},
+        "target": target_cfg or project.get("target") or {},
+        "targets": targets_cfg or project.get("targets") or [],
+    }
+    _upsert_project_in_orm(pid, project, orm_payload)
+
 def _clear_project_mapping_cache(project_id: str) -> None:
     """Clear compat mapping cache entries for a project after config creation/save."""
     pid = str(project_id or "").strip()
@@ -81,8 +219,9 @@ def _delete_project_from_orm(project_id: str) -> None:
 
     try:
         from semabridge.repository.orm.models import Project
+        from semabridge.repository.orm.session_factory import db_manager as orm_db_manager
 
-        with db_manager.get_session() as session:
+        with orm_db_manager.get_session() as session:
             project = session.get(Project, pid)
             if project is not None:
                 session.delete(project)
@@ -101,7 +240,12 @@ def _project_display_name_from_cfg(project_cfg: Dict[str, Any], fallback: str) -
     )
 
 
-def _normalize_project_config_yaml(project_id: str, yaml_text: str, default_name: str) -> str:
+def _normalize_project_config_yaml(
+    project_id: str,
+    yaml_text: str,
+    default_name: str,
+    owner_user_id: str | None = None,
+) -> str:
     try:
         parsed = yaml.safe_load(yaml_text) or {}
     except Exception as exc:
@@ -118,6 +262,12 @@ def _normalize_project_config_yaml(project_id: str, yaml_text: str, default_name
     parsed["display_name"] = display_name
     if not str(parsed.get("project_name") or "").strip():
         parsed["project_name"] = display_name or default_name
+    normalized_owner = str(owner_user_id or parsed.get("owner_user_id") or "").strip()
+    if normalized_owner:
+        parsed["owner_user_id"] = normalized_owner
+        metadata = parsed.get("project_metadata") if isinstance(parsed.get("project_metadata"), dict) else {}
+        metadata["owner_user_id"] = normalized_owner
+        parsed["project_metadata"] = metadata
     return yaml.safe_dump(parsed, sort_keys=False, allow_unicode=False)
 
 
@@ -143,6 +293,17 @@ def _project_discovery_entry(project_id: str, file_path: Path, project_cfg: Dict
     }
 
 
+def _project_id_exists_anywhere(project_id: str) -> bool:
+    pid = str(project_id or "").strip()
+    if not pid:
+        return False
+    if pid in _compat_projects or pid in _compat_project_configs:
+        return True
+    if str(_compat_load_project_yaml_text(pid) or "").strip():
+        return True
+    return any(path.exists() for path in _compat_project_yaml_paths(pid))
+
+
 async def list_project_discovery_compat():
     await asyncio.to_thread(_compat_ensure_loaded)
     entries: List[Dict[str, Any]] = []
@@ -153,7 +314,13 @@ async def list_project_discovery_compat():
 
         for file_path in sorted(projects_dir.glob("*.y*ml")):
             project_id = file_path.stem.strip()
-            if not project_id or project_id in seen or project_id in _compat_deleted_project_ids:
+            if (
+                not project_id
+                or project_id in seen
+                or project_id in _compat_deleted_project_ids
+                or project_id == "preview"
+                or project_id.startswith("preview-")
+            ):
                 continue
             try:
                 file_text = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
@@ -178,7 +345,13 @@ async def list_projects_compat():
             continue
         for file_path in sorted(projects_dir.glob("*.y*ml")):
             pid = file_path.stem.strip()
-            if not pid or pid in deduped or pid in _compat_deleted_project_ids:
+            if (
+                not pid
+                or pid in deduped
+                or pid in _compat_deleted_project_ids
+                or pid == "preview"
+                or pid.startswith("preview-")
+            ):
                 continue
             try:
                 file_text = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
@@ -192,6 +365,8 @@ async def list_projects_compat():
     for p in _compat_projects.values():
         pid = str(p.get("id") or p.get("project_id") or "").strip()
         if not pid or pid in deduped:
+            continue
+        if p.get("is_transient_preview") or pid == "preview" or pid.startswith("preview-"):
             continue
         
         # Filter out auto-generated test projects
@@ -234,16 +409,23 @@ async def create_project_compat(request: dict):
     requested_id = str(payload.get("id") or payload.get("project_id") or default_id).strip()
     project_id = requested_id or default_id
     _compat_deleted_project_ids.discard(project_id)
-    if project_id in _compat_projects:
+    if _project_id_exists_anywhere(project_id):
         # Avoid reusing an existing project's mapping cache/state when the user
-        # creates another project with the same semantic model/name.
+        # creates another project with the same semantic model/name or a stale
+        # modular YAML file still exists for that id.
         project_id = f"{project_id}-{int(_time.time() * 1000)}"
     project = _compat_project_payload(project_id, payload)
     _compat_projects[project_id] = project
+    await asyncio.to_thread(_upsert_project_in_orm, project_id, project, payload)
 
     config_yaml = payload.get("config_yaml")
     if isinstance(config_yaml, str) and config_yaml.strip():
-        normalized_yaml = _normalize_project_config_yaml(project_id, config_yaml, project.get("name") or project_id)
+        normalized_yaml = _normalize_project_config_yaml(
+            project_id,
+            config_yaml,
+            project.get("name") or project_id,
+            project.get("owner_user_id"),
+        )
         _compat_project_configs[project_id] = normalized_yaml
         try:
             await asyncio.to_thread(_compat_save_project_yaml_text, project_id, normalized_yaml)
@@ -254,7 +436,12 @@ async def create_project_compat(request: dict):
         project_yaml = await asyncio.to_thread(_compat_load_project_yaml_text, project_id)
         repo_yaml = await asyncio.to_thread(_compat_load_repo_yaml_text)
         selected_yaml = project_yaml or repo_yaml or _compat_default_project_yaml(project)
-        normalized_yaml = _normalize_project_config_yaml(project_id, selected_yaml, project.get("name") or project_id)
+        normalized_yaml = _normalize_project_config_yaml(
+            project_id,
+            selected_yaml,
+            project.get("name") or project_id,
+            project.get("owner_user_id"),
+        )
         _compat_project_configs.setdefault(project_id, normalized_yaml)
         try:
             await asyncio.to_thread(_compat_save_project_yaml_text, project_id, normalized_yaml)
@@ -272,6 +459,7 @@ async def get_project_compat(project_id: str):
     project = _compat_projects.get(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    await asyncio.to_thread(_backfill_project_metadata, project_id, project)
     return project
 
 
@@ -293,27 +481,55 @@ async def patch_project_compat(project_id: str, payload: dict):
 
     if isinstance(payload.get("source"), dict):
         project["source"] = payload["source"].get("type") or project.get("source")
+        project["source_config"] = payload["source"]
         project["adapter"] = project["source"]
         if "workspace_id" in payload["source"]:
             project["workspace_id"] = payload["source"].get("workspace_id")
         if "connection_tag" in payload["source"]:
             project["connection_tag"] = payload["source"].get("connection_tag")
+        source_account_id = str(
+            payload["source"].get("identity_id") or payload["source"].get("account_id") or ""
+        ).strip() or None
+        project["source_account_id"] = source_account_id
+        if source_account_id:
+            project["account_id"] = source_account_id
 
     if isinstance(payload.get("target"), dict):
+        project["target"] = payload["target"]
         project["target_type"] = payload["target"].get("type") or project.get("target_type")
+        target_account_id = str(
+            payload["target"].get("identity_id") or payload["target"].get("account_id") or ""
+        ).strip() or None
+        project["target_account_id"] = target_account_id
+        if not project.get("account_id") and target_account_id:
+            project["account_id"] = target_account_id
 
     if isinstance(payload.get("targets"), list) and payload.get("targets"):
+        project["targets"] = payload["targets"]
         first_target = payload["targets"][0] if isinstance(payload["targets"][0], dict) else {}
         if first_target.get("type"):
             project["target_type"] = first_target.get("type")
         if first_target.get("connection_tag"):
             project["connection_tag"] = first_target.get("connection_tag")
+        target_account_id = str(
+            first_target.get("identity_id") or first_target.get("account_id") or ""
+        ).strip() or None
+        project["target_account_id"] = target_account_id
+        if not project.get("account_id") and target_account_id:
+            project["account_id"] = target_account_id
 
     if payload.get("connection_tag"):
         project["connection_tag"] = payload.get("connection_tag")
+    if payload.get("account_id"):
+        project["account_id"] = str(payload.get("account_id")).strip() or project.get("account_id")
+    if payload.get("user_id"):
+        owner_user_id = str(payload.get("user_id")).strip() or project.get("owner_user_id")
+        project["owner_user_id"] = owner_user_id
+        project["user_id"] = owner_user_id
 
     project["updated_at"] = _compat_now_iso()
     _compat_projects[project_id] = project
+    await asyncio.to_thread(_upsert_project_in_orm, project_id, project, payload)
     await asyncio.to_thread(_compat_save_store)
     return project
 
@@ -342,6 +558,7 @@ async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(d
     project = _compat_projects.get(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    await asyncio.to_thread(_backfill_project_metadata, project_id, project)
     # IMPORTANT: default behavior prefers per-project config so "Copy Presets"
     # can load different YAMLs for different projects. Some UI flows (for
     # example Model Mapping) can opt into prefer_repo=True to reflect the
@@ -354,7 +571,12 @@ async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(d
         _compat_project_configs[project_id] = repo_yaml
     else:
         yaml_text = project_yaml or _compat_project_configs.get(project_id) or repo_yaml or _compat_default_project_yaml(project)
-        yaml_text = _normalize_project_config_yaml(project_id, yaml_text, project.get("name") or project_id)
+        yaml_text = _normalize_project_config_yaml(
+            project_id,
+            yaml_text,
+            project.get("name") or project_id,
+            project.get("owner_user_id"),
+        )
         if not project_yaml and yaml_text:
             try:
                 await asyncio.to_thread(_compat_save_project_yaml_text, project_id, yaml_text)
@@ -376,7 +598,12 @@ async def save_project_config_compat(project_id: str, payload: dict):
     yaml_text = str((payload or {}).get("config_yaml") or "").strip()
     if not yaml_text:
         raise HTTPException(status_code=400, detail="config_yaml is required")
-    yaml_text = _normalize_project_config_yaml(project_id, yaml_text, project.get("name") or project_id)
+    yaml_text = _normalize_project_config_yaml(
+        project_id,
+        yaml_text,
+        project.get("name") or project_id,
+        project.get("owner_user_id"),
+    )
     _compat_project_configs[project_id] = yaml_text
     try:
         await asyncio.to_thread(_compat_save_project_yaml_text, project_id, yaml_text)

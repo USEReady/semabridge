@@ -890,7 +890,7 @@ async def restore_project_version_compat(project_id: str, payload: Dict[str, Any
         restore_snapshot_id=snapshot_id,
         sync_mode=sync_mode,
     )
-    background_tasks.add_task(_perform_project_run, restore_run, restore_cfg, restore_started)
+    background_tasks.add_task(_run_project_background, restore_run, restore_cfg, restore_started)
     _compat_save_store()
     return {"status": "restored", "project_id": project_id, "snapshot_id": snapshot_id, "run_id": restore_run.get("id"), "run_type": "RESTORE", "intermediate_format": snapshot_row.get("intermediate_format") or "sml", "message": "Project configuration restored and restore run started.", "config_yaml": config_yaml}
 
@@ -946,7 +946,7 @@ async def run_project_now_compat(project_id: str, background_tasks: BackgroundTa
     if user_id is not None and str(user_id).strip():
         run["user_id"] = user_id
     run["force"] = force
-    background_tasks.add_task(_perform_project_run, run, project_cfg, started)
+    background_tasks.add_task(_run_project_background, run, project_cfg, started)
     return {"run_id": run["id"], "status": "running", "run_type": run_type, "message": "Sync started in background"}
 
 

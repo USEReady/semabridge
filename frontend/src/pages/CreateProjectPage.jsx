@@ -19,11 +19,9 @@ import {
 } from 'lucide-react';
 import { api } from '../utils/api';
 import { useHPSearch } from '../hooks/useHPSearch';
-import SearchableSelect from '../components/common/SearchableSelect';
 import SmartSearchBar, { matchesSmartQuery } from '../components/common/SmartSearchBar';
 import SourceIcon from '../components/common/SourceIcon';
 import StatusBadge from '../components/common/StatusBadge';
-import { useWorkspace } from '../context/WorkspaceContext';
 import Modal from '../components/common/Modal';
 import { useLogs } from '../context/LogsContext';
 import { useUIStore } from '../store/uiStore';
@@ -33,6 +31,7 @@ import DraftBanner from '../components/common/DraftBanner';
 import ErrorBoundary from '../components/ErrorBoundary';
 import DryRunMappingTable, { isBlockingRow as isDryRunBlockingRow } from '../components/DryRunMappingTable';
 import { buildDryRunPayload } from '../utils/dryRunPayload';
+import { escapeYamlString } from '../utils/yaml';
 import { StepBasicInfo } from '../components/CreateProjectWizard/StepBasicInfo';
 import { StepConnectorConfig } from '../components/CreateProjectWizard/StepConnectorConfig';
 import { StepSourceBrowser } from '../components/CreateProjectWizard/StepSourceBrowser';
@@ -40,6 +39,7 @@ import { StepMappingOptions } from '../components/CreateProjectWizard/StepMappin
 import { StepFinish } from '../components/CreateProjectWizard/StepFinish';
 import { WizardHeader } from '../components/CreateProjectWizard/WizardHeader';
 import { WizardFooter } from '../components/CreateProjectWizard/WizardFooter';
+import { useConnectorAccounts } from '../hooks/useConnectorAccounts';
 
 const STEPS = [
   { id: 1, label: 'Basic Info' },
@@ -528,20 +528,13 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     fabricAccountId, selectedConnectionId, snowflakeAccountId, databricksAccountId,
     fabricWorkspaceId, snowflakeDatabase, snowflakeSchema,
     targetDatabase, targetSchema, targetAccount, targetWarehouse,
-    domainHint, modelQueryRegex, pbixSourceMode,
+    modelQueryRegex, pbixSourceMode,
     selectedLocalFolderId, selectedPbixFilePath,
     expandedWs, selectedModels: selectedModelsRaw, selectedModelNameByKey,
     selectedDatabricksTables: selectedDatabricksTablesRaw, databricksQuery,
     autoRelationships, generateDescriptions,
     currentStepIndex: step,
   } = useProjectWizardStore(state => state.wizard);
-  const {
-    workspaces: availableWorkspaces,
-    activeWorkspaceId,
-    activeWorkspace,
-    isLoading: workspacesLoading,
-  } = useWorkspace();
-
   const [showStep1Validation, setShowStep1Validation] = useState(false);
   const [saving, setSaving] = useState(false);
   const [createError, setCreateError] = useState('');
@@ -628,16 +621,12 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const setTargetSchema = (val) => setWizardState({ targetSchema: val });
   const setTargetAccount = (val) => setWizardState({ targetAccount: val });
   const setTargetWarehouse = (val) => setWizardState({ targetWarehouse: val });
-  const setDomainHint = (val) => setWizardState({ domainHint: val });
   const setModelQueryRegex = (val) => setWizardState({ modelQueryRegex: !!val });
   const setPbixSourceMode = (val) => setWizardState({ pbixSourceMode: val });
 
   const [pbixFile, setPbixFile] = useState(null);
   const [pbixUploadPath, setPbixUploadPath] = useState('');
   const [pbixUploading, setPbixUploading] = useState(false);
-  const [fabricAccounts, setFabricAccounts] = useState([]);
-  const [snowflakeAccounts, setSnowflakeAccounts] = useState([]);
-  const [databricksAccounts, setDatabricksAccounts] = useState([]);
 
   const [localFolders, setLocalFolders] = useState([]);
   const [localFoldersLoading, setLocalFoldersLoading] = useState(false);
@@ -793,15 +782,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   );
 
   const liveFabricWorkspaces = useMemo(() => {
-    // If we have accounts at all, and source is Fabric, we should prioritize
-    // the list fetched explicitly for the selected account in Step 2.
-    // Fallback to availableWorkspaces (global default) only if we haven't
-    // fetched the account-specific list yet.
-    const baseList = allWorkspacesFromApi.length > 0
-      ? allWorkspacesFromApi
-      : (fabricAccountId ? [] : availableWorkspaces);
-
-    const normalized = (baseList || [])
+    const normalized = (allWorkspacesFromApi || [])
       .filter(Boolean)
       .map((ws) => ({
         ...ws,
@@ -819,7 +800,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       deduped.push(ws);
     }
     return deduped;
-  }, [availableWorkspaces, allWorkspacesFromApi, fabricAccountId]);
+  }, [allWorkspacesFromApi]);
 
   const selectedWorkspace = useMemo(() => {
     if (!fabricWorkspaceId) return null;
@@ -830,7 +811,28 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     .map(modelKey => selectedModelNameByKey[modelKey])
     .filter(Boolean);
 
-  const [isRefreshingWorkspaces, setIsRefreshingWorkspaces] = useState(false);
+  const {
+    fabricAccounts,
+    snowflakeAccounts,
+    databricksAccounts,
+    isRefreshingWorkspaces,
+    fetchFabricWorkspaces,
+    workspaceDiscoveryError,
+  } = useConnectorAccounts({
+    step,
+    sourceConnector,
+    targetConnectors,
+    selectedConnectionId,
+    snowflakeAccountId,
+    databricksAccountId,
+    setSelectedConnectionId,
+    setFabricAccountId,
+    setSnowflakeAccountId,
+    setDatabricksAccountId,
+    setFabricWorkspaceId,
+    setAllWorkspacesFromApi,
+    setWorkspaces,
+  });
 
   const selectedLocalFolder = useMemo(() => (
     localFolders.find(folder => String(folder.id) === String(selectedLocalFolderId)) || null
@@ -931,125 +933,6 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     };
   }, [pbixSourceMode, selectedLocalFolderTag, sourceConnector, step]);
 
-  const fetchFabricWorkspaces = useCallback(async (accountId) => {
-    if (!accountId) {
-      setAllWorkspacesFromApi([]);
-      setWorkspaces([]);
-      return;
-    }
-    setIsRefreshingWorkspaces(true);
-    try {
-      const listData = await api.fabricListWorkspaces(accountId);
-
-      const discovered = Array.isArray(listData?.workspaces) ? listData.workspaces : [];
-
-      const apiWorkspaces = discovered.map(ws => ({
-        id: ws.id || ws.workspace_id,
-        name: ws.name || ws.displayName || ws.workspace_name || ws.id || ws.workspace_id,
-        displayName: ws.name || ws.displayName || ws.workspace_name,
-        type: ws.type,
-      })).filter(ws => ws.id);
-
-      const deduped = [];
-      const seen = new Set();
-      for (const ws of apiWorkspaces) {
-        if (seen.has(ws.id)) continue;
-        seen.add(ws.id);
-        deduped.push(ws);
-      }
-
-      console.log('[SemaBridge] Resolved workspace list:', deduped);
-      setAllWorkspacesFromApi(deduped);
-    } catch {
-      setAllWorkspacesFromApi([]);
-    } finally {
-      setIsRefreshingWorkspaces(false);
-    }
-  }, []);
-
-  // Fetch Fabric accounts when step 2 opens
-  useEffect(() => {
-    const needsFabricWorkspaceConfig = sourceConnector === 'fabric' || targetConnectors.has('fabric');
-    if (step === 2 && needsFabricWorkspaceConfig) {
-      const fetchAccounts = async () => {
-        try {
-          const res = await api.getAccounts('FABRIC');
-          const list = Array.isArray(res) ? res : (res?.accounts || []);
-          setFabricAccounts(list);
-          if (list.length === 0) {
-            setSelectedConnectionId('');
-            setFabricAccountId('');
-            return;
-          }
-
-          const hasSelection = list.some(acc => String(acc?.id || '') === String(selectedConnectionId || ''));
-          const nextConnectionId = hasSelection
-            ? selectedConnectionId
-            : String(list[0]?.id || '');
-
-          if (nextConnectionId) {
-            setSelectedConnectionId(nextConnectionId);
-            setFabricAccountId(nextConnectionId);
-          }
-        } catch (e) {
-          console.warn("[SemaBridge] Failed to fetch Fabric Accounts", e);
-        }
-      };
-      fetchAccounts();
-    }
-
-    // Fetch Snowflake accounts when step 2 opens with a Snowflake source
-    const needsSnowflakeAccounts = sourceConnector === 'snowflake' || targetConnectors.has('snowflake');
-    if (step === 2 && needsSnowflakeAccounts) {
-      const fetchSnowflakeAccounts = async () => {
-        try {
-          const res = await api.getAccounts('SNOWFLAKE');
-          const list = Array.isArray(res) ? res : (res?.accounts || []);
-          setSnowflakeAccounts(list);
-          if (list.length > 0 && !snowflakeAccountId) {
-            setSnowflakeAccountId(String(list[0]?.id || ''));
-          }
-        } catch (e) {
-          console.warn('[SemaBridge] Failed to fetch Snowflake Accounts', e);
-        }
-      };
-      fetchSnowflakeAccounts();
-    }
-
-    // Fetch Databricks accounts when step 2 opens with a Databricks target
-    const needsDatabricksAccounts = targetConnectors.has('databricks') || sourceConnector === 'databricks';
-    if (step === 2 && needsDatabricksAccounts) {
-      const fetchDatabricksAccounts = async () => {
-        try {
-          const res = await api.getAccounts('DATABRICKS');
-          const list = Array.isArray(res) ? res : (res?.accounts || []);
-          setDatabricksAccounts(list);
-          if (list.length > 0 && !databricksAccountId) {
-            setDatabricksAccountId(String(list[0]?.id || ''));
-          }
-        } catch (e) {
-          console.warn('[SemaBridge] Failed to fetch Databricks Accounts', e);
-        }
-      };
-      fetchDatabricksAccounts();
-    }
-  }, [step, sourceConnector, targetConnectors, selectedConnectionId, fetchFabricWorkspaces]);
-
-  // Account switch is the source of truth for workspace discovery.
-  useEffect(() => {
-    const needsFabricWorkspaceConfig = sourceConnector === 'fabric' || targetConnectors.has('fabric');
-    if (step !== 2 || !needsFabricWorkspaceConfig) return;
-
-    setAllWorkspacesFromApi([]);
-    setWorkspaces([]);
-    setFabricWorkspaceId('');
-
-    if (!selectedConnectionId) return;
-
-    setFabricAccountId(selectedConnectionId);
-    fetchFabricWorkspaces(selectedConnectionId);
-  }, [step, sourceConnector, targetConnectors, selectedConnectionId, fetchFabricWorkspaces]);
-
   // Ghost-purge: if the current selection no longer exists in the live list, force-clear it
   // so the auto-select above can immediately re-run and pick the correct workspace.
   // This eliminates the "Primary Workspace" zombie that was persisted in localStorage.
@@ -1061,9 +944,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     if (!stillExists) {
       console.warn('[SemaBridge] Ghost workspace detected — force-clearing:', fabricWorkspaceId);
       setFabricWorkspaceId('');
-      localStorage.removeItem('semabridge_workspace_id');
     }
-  }, [fabricWorkspaceId, availableWorkspaces, allWorkspacesFromApi]);
+  }, [fabricWorkspaceId, liveFabricWorkspaces]);
 
 
   useEffect(() => {
@@ -1113,7 +995,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         setFabricWorkspaceId(liveList[0].id);
       }
     }
-  }, [step, sourceConnector, fabricWorkspaceId, wsLoading, availableWorkspaces, allWorkspacesFromApi]);
+  }, [step, sourceConnector, fabricWorkspaceId, wsLoading, liveFabricWorkspaces]);
 
   /* ─── Load selected Fabric workspace models on step 3 ─── */
   useEffect(() => {
@@ -1559,7 +1441,6 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     lines.push('ui:');
     lines.push(`  intermediate_format: "${escapeYamlString(intermediateFormat)}"`);
     lines.push(`  editor_mode: "${escapeYamlString(configMode)}"`);
-    if (domainHint.trim()) lines.push(`  domain_hint: "${escapeYamlString(domainHint.trim())}"`);
 
     if (selectedModels.size) {
       lines.push('selection:');
@@ -2041,7 +1922,6 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               targetSchema={targetSchema} setTargetSchema={setTargetSchema}
               targetAccount={targetAccount} setTargetAccount={setTargetAccount}
               targetWarehouse={targetWarehouse} setTargetWarehouse={setTargetWarehouse}
-              domainHint={domainHint} setDomainHint={setDomainHint}
               pbixFile={pbixFile}
               setPbixFile={setPbixFile}
               pbixUploadPath={pbixUploadPath}
@@ -2058,9 +1938,10 @@ export default function CreateProjectPage({ editMode = false, initialData = null
                 setPbixUploadPath(String(path || '').trim());
               }}
               workspaces={liveFabricWorkspaces}
-              workspacesLoading={workspacesLoading}
+              workspacesLoading={isRefreshingWorkspaces}
               isRefreshingWorkspaces={isRefreshingWorkspaces}
-              fetchFabricWorkspaces={() => fetchFabricWorkspaces(selectedConnectionId)}
+              fetchFabricWorkspaces={fetchFabricWorkspaces}
+              workspaceDiscoveryError={workspaceDiscoveryError}
               runWarning={runWarning}
             />
           )}

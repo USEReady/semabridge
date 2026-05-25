@@ -32,6 +32,57 @@ function extractSnapshotList(payload) {
     return [];
 }
 
+function normalizeProjectSnapshotCompareRequest(projectId, arg1, arg2, arg3 = {}) {
+    const safeProjectId = String(projectId ?? '').trim();
+    const input =
+        arg1 && typeof arg1 === 'object' && !Array.isArray(arg1)
+            ? arg1
+            : {
+                from_snapshot_id: arg1,
+                to_snapshot_id: arg2,
+                ...(arg3 && typeof arg3 === 'object' ? arg3 : {}),
+            };
+
+    const resolvedFromSnapshotId = String(
+        input?.from_snapshot_id
+        ?? input?.base_id
+        ?? input?.s1
+        ?? ''
+    ).trim();
+    const resolvedToSnapshotId = String(
+        input?.to_snapshot_id
+        ?? input?.target_id
+        ?? input?.s2
+        ?? ''
+    ).trim();
+
+    if (!safeProjectId) {
+        throw new Error('Snapshot compare requires a valid projectId.');
+    }
+    if (!resolvedFromSnapshotId || !resolvedToSnapshotId) {
+        throw new Error(
+            'Snapshot compare requires both from/to snapshot IDs. Accepted keys: from_snapshot_id, to_snapshot_id, base_id, target_id, s1, s2.'
+        );
+    }
+
+    const params = new URLSearchParams();
+    params.set('from_snapshot_id', resolvedFromSnapshotId);
+    params.set('to_snapshot_id', resolvedToSnapshotId);
+    if (input?.max_changes != null && String(input.max_changes).trim()) {
+        params.set('max_changes', String(input.max_changes).trim());
+    }
+    if (input?.include_states === true) {
+        params.set('include_states', 'true');
+    }
+
+    return {
+        projectId: safeProjectId,
+        fromSnapshotId: resolvedFromSnapshotId,
+        toSnapshotId: resolvedToSnapshotId,
+        query: params.toString(),
+    };
+}
+
 export function formatDate(dateString) {
     if (!dateString) return '—';
     const d = new Date(dateString);
@@ -282,14 +333,24 @@ async function handleResponse(res) {
 async function authFetch(url, options = {}) {
     // Inject X-Fabric-Context header if workspace ID is available
     let workspaceId = null;
+    let tokenPresent = false;
     try {
         workspaceId = localStorage.getItem('FABRIC_WORKSPACE_ID');
+        tokenPresent = Boolean(localStorage.getItem(TOKEN_KEY));
     } catch (e) { }
     const headers = { ...getAuthHeaders(), ...options.headers };
     if (workspaceId) {
         headers['X-Fabric-Context'] = workspaceId;
     }
     const res = await fetch(url, { ...options, headers, credentials: 'include' });
+    if (res.status === 403 && /\/projects\/[^/]+(?:\/config)?(?:\?|$)/.test(String(url))) {
+        console.warn('[authFetch] Project request forbidden', {
+            url,
+            method: options.method || 'GET',
+            tokenPresent,
+            hasFabricContext: Boolean(workspaceId),
+        });
+    }
 
     // Attach retry info so handleResponse can retry on 401 with a fresh token
     res._retryFn = (newToken) => {
@@ -751,12 +812,34 @@ export const api = {
         if (!resolvedConnectionId && !hasValidFabricToken()) {
             return { workspaces: [] };
         }
+
         const query = resolvedConnectionId
             ? `?identity_id=${encodeURIComponent(resolvedConnectionId)}&connectionId=${encodeURIComponent(resolvedConnectionId)}`
             : '';
-        const res = await fetch(`${API_BASE_URL}/connections/fabric/workspaces${query}`, {
-            headers: { ...getAuthHeaders(), ...getFabricAuthHeaders() },
+
+        // Avoid clobbering app JWT with Fabric token when account-scoped lookup is requested.
+        // Account-scoped discovery should resolve Fabric token server-side via identity_id.
+        const headers = resolvedConnectionId
+            ? { ...getAuthHeaders() }
+            : { ...getAuthHeaders(), ...getFabricAuthHeaders() };
+
+        console.info('[SemaBridge][FabricDiscovery] api:request', {
+            accountId: resolvedConnectionId || '(none)',
+            hasAppAuth: Boolean(headers.Authorization),
+            hasFabricToken: Boolean(getFabricAuthHeaders().Authorization),
         });
+
+        const res = await fetch(`${API_BASE_URL}/connections/fabric/workspaces${query}`, {
+            headers,
+            credentials: 'include',
+        });
+
+        console.info('[SemaBridge][FabricDiscovery] api:response', {
+            accountId: resolvedConnectionId || '(none)',
+            status: res.status,
+            ok: res.ok,
+        });
+
         return handleResponse(res);
     },
 
@@ -901,11 +984,6 @@ export const api = {
         return handleResponse(res);
     },
 
-    async compareProjectSnapshots(projectId, s1, s2) {
-        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots/compare?s1=${s1}&s2=${s2}`);
-        return handleResponse(res);
-    },
-
     async getSnapshotContent(projectId, snapshot_id) {
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots/${snapshot_id}/content`);
         return handleResponse(res);
@@ -1005,15 +1083,6 @@ export const api = {
         return handleResponse(res);
     },
 
-    async compareProjectSnapshots(projectId, fromSnapshotId, toSnapshotId) {
-        const params = new URLSearchParams();
-        params.set('from_snapshot_id', fromSnapshotId);
-        params.set('to_snapshot_id', toSnapshotId);
-        params.set('include_states', 'false');
-
-        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots/compare?${params.toString()}`);
-        return handleResponse(res);
-    },
 
     // ── Job Runs ───────────────────────────────────────────────────────────
     async listJobRuns(filters = {}) {
@@ -1327,13 +1396,14 @@ export const api = {
     },
 
 
-    async compareProjectSnapshots(projectId, fromSnapshotId, toSnapshotId, options = {}) {
-        const params = new URLSearchParams();
-        params.set('from_snapshot_id', String(fromSnapshotId || ''));
-        params.set('to_snapshot_id', String(toSnapshotId || ''));
-        if (options.max_changes) params.set('max_changes', String(options.max_changes));
-        if (options.include_states) params.set('include_states', 'true');
-        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/snapshots/compare?${params.toString()}`);
+    async compareProjectSnapshots(projectId, compareArg1, compareArg2, compareArg3 = {}) {
+        const request = normalizeProjectSnapshotCompareRequest(
+            projectId,
+            compareArg1,
+            compareArg2,
+            compareArg3,
+        );
+        const res = await authFetch(`${API_BASE_URL}/projects/${request.projectId}/snapshots/compare?${request.query}`);
         return handleResponse(res);
     },
 

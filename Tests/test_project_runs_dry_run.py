@@ -157,7 +157,13 @@ async def test_run_project_now_starts_run_when_dry_run_has_no_blockers(monkeypat
     monkeypatch.setattr(pri, "_compat_ensure_loaded", lambda: None)
     monkeypatch.setattr(pri, "auto_map_compat", fake_auto_map)
     monkeypatch.setattr(pri, "_create_project_run", fake_create_run)
-    monkeypatch.setattr(pri, "_run_project_background", lambda *args, **kwargs: None)
+    scheduled = {}
+
+    def fake_run_project_background(*args, **kwargs):
+        scheduled["args"] = args
+        scheduled["kwargs"] = kwargs
+
+    monkeypatch.setattr(pri, "_run_project_background", fake_run_project_background)
     monkeypatch.setattr(pri, "_compat_load_modular_project", lambda project_id: None)
     monkeypatch.setattr(pri, "_compat_load_repo_yaml_text", lambda: "")
     monkeypatch.setattr(pri, "_compat_apply_manual_mapping_overrides_to_cfg", lambda cfg, project_id: cfg)
@@ -170,6 +176,63 @@ async def test_run_project_now_starts_run_when_dry_run_has_no_blockers(monkeypat
     assert result["status"] == "running"
     assert result["run_id"] == "run-1"
     assert len(background_tasks.calls) == 1
+    assert background_tasks.calls[0][0] is fake_run_project_background
+
+
+@pytest.mark.asyncio
+async def test_restore_project_version_schedules_detached_background_runner(monkeypatch):
+    class DummyBackgroundTasks:
+        def __init__(self):
+            self.calls = []
+
+        def add_task(self, func, *args, **kwargs):
+            self.calls.append((func, args, kwargs))
+
+    monkeypatch.setattr(pri, "_compat_ensure_loaded", lambda: None)
+    monkeypatch.setattr(pri, "_compat_save_store", lambda: None)
+    monkeypatch.setattr(pri, "_compat_now_iso", lambda: "2026-05-25T00:00:00Z")
+    monkeypatch.setattr(pri, "_compat_project_configs", {"project-1": "project_name: p1"})
+    monkeypatch.setattr(pri, "_compat_projects", {"project-1": {"id": "project-1", "name": "p1", "updated_at": None}})
+    monkeypatch.setattr(
+        pri,
+        "_compat_project_snapshots",
+        {
+            "project-1": [
+                {
+                    "snapshot_id": "snap-1",
+                    "project_config_yaml": "project_name: restored",
+                    "intermediate_format": "sml",
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(pri, "_compat_default_project_yaml", lambda project: "project_name: default")
+    monkeypatch.setattr(pri, "_compat_sync_mode_for_restore_snapshot", lambda *args, **kwargs: "copy")
+
+    def fake_create_project_run(*args, **kwargs):
+        return (
+            {"id": "run-restore-1", "run_id": "run-restore-1"},
+            "restored_cfg",
+            0.0,
+        )
+
+    monkeypatch.setattr(pri, "_create_project_run", fake_create_project_run)
+
+    def fake_run_project_background(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(pri, "_run_project_background", fake_run_project_background)
+
+    background_tasks = DummyBackgroundTasks()
+    result = await pri.restore_project_version_compat(
+        "project-1",
+        {"snapshot_id": "snap-1"},
+        background_tasks,
+    )
+
+    assert result["status"] == "restored"
+    assert len(background_tasks.calls) == 1
+    assert background_tasks.calls[0][0] is fake_run_project_background
 
 
 @pytest.mark.asyncio

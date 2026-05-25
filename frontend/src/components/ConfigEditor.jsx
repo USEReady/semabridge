@@ -188,7 +188,6 @@ export default function ConfigEditor() {
            <div>
               <h3 style={{ fontSize: 14, marginBottom: 16 }}>Source Definition</h3>
               {renderInput('Source Type', 'source.type')}
-              {renderInput('Workspace', 'source.workspace')}
               {renderInput('Model Pattern', 'source.model')}
            </div>
            <div>

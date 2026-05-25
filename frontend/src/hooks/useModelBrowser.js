@@ -45,7 +45,6 @@ export function useModelBrowser({
     if (!liveFabricWorkspaces.some(ws => ws.id === fabricWorkspaceId)) {
       console.warn('[SemaBridge] Ghost workspace detected — force-clearing:', fabricWorkspaceId);
       setWizardState({ fabricWorkspaceId: '' });
-      localStorage.removeItem('semabridge_workspace_id');
     }
   }, [fabricWorkspaceId, liveFabricWorkspaces, setWizardState]);
 

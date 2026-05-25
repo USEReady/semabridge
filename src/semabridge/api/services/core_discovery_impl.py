@@ -241,31 +241,89 @@ def _get_snowflake_extractor(identity_id: Optional[str] = None):
             )
         return SnowflakeExtractor(snowflake_config)
 
+def _execute_in_snowflake_context(func_name: str, identity_id: Optional[str] = None, *args, **kwargs):
+    from pydantic import ValidationError
+    from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
+    from semabridge.repository.orm.models import Account
+    from semabridge.repository.orm.session_factory import db_manager
+    from semabridge.auth.account_credential_resolver import scoped_account_env
+    from fastapi import HTTPException
+    from sqlalchemy import select
+
+    logger.info("Starting Snowflake discovery context for action: %s, identity_id: %s", func_name, identity_id)
+
+    if identity_id:
+        with db_manager.get_session() as session:
+            account = session.execute(
+                select(Account).where(
+                    Account.connector_type == "SNOWFLAKE",
+                    Account.id == identity_id,
+                )
+            ).scalars().first()
+
+            if not account:
+                logger.error("No Snowflake account found for identity_id '%s'", identity_id)
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"No Snowflake account found for identity_id '{identity_id}'. "
+                        "Link this account in Settings -> Connections or POST to /api/accounts with connector_type 'SNOWFLAKE'."
+                    ),
+                )
+                
+            logger.info("Initializing SnowflakeExtractor inside scoped_account_env for account tag: %s", account.tag)
+            with scoped_account_env(account, session):
+                from semabridge.core.settings import reload_settings
+                scoped_settings = reload_settings()
+                extractor = SnowflakeExtractor(scoped_settings.snowflake)
+                func = getattr(extractor, func_name)
+                return func(*args, **kwargs)
+    else:
+        logger.info("No identity_id provided, using default system settings for SnowflakeExtractor")
+        settings = get_settings()
+        try:
+            snowflake_config = settings.snowflake
+        except ValidationError as ve:
+            logger.error("Snowflake config validation failed: %s", ve)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Snowflake is not configured. "
+                    "Set SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, and SNOWFLAKE_PASSWORD in .env or environment variables."
+                ),
+            )
+        extractor = SnowflakeExtractor(snowflake_config)
+        func = getattr(extractor, func_name)
+        return func(*args, **kwargs)
+
+
 def discover_snowflake_warehouses(identity_id: Optional[str] = Query(None)):
     try:
-        extractor = _get_snowflake_extractor(identity_id)
-        return extractor.get_warehouses()
+        return _execute_in_snowflake_context("get_warehouses", identity_id)
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Snowflake warehouse discovery failed: %s", e)
         raise HTTPException(status_code=500, detail=f"Snowflake warehouse discovery failed: {e}")
+
 
 def discover_snowflake_databases(identity_id: Optional[str] = Query(None)):
     try:
-        extractor = _get_snowflake_extractor(identity_id)
-        return extractor.get_databases()
+        return _execute_in_snowflake_context("get_databases", identity_id)
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Snowflake database discovery failed: %s", e)
         raise HTTPException(status_code=500, detail=f"Snowflake database discovery failed: {e}")
+
 
 def discover_snowflake_schemas(database: str, identity_id: Optional[str] = Query(None)):
     try:
-        extractor = _get_snowflake_extractor(identity_id)
-        return extractor.get_schemas(database)
+        return _execute_in_snowflake_context("get_schemas", identity_id, database)
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Snowflake schema discovery failed for database %s: %s", database, e)
         raise HTTPException(status_code=500, detail=f"Snowflake schema discovery failed: {e}")
 
 
