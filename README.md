@@ -158,44 +158,6 @@ SNOWFLAKE_PASSWORD=mypassword       ✅
 SNOWFLAKE_PASSWORD="mypassword"     ❌
 ```
 
-### Usage
-
-**1. Launch the Web UI (Recommended)**
-```bash
-semabridge --ui
-```
-*Alternatively, run the frontend directly via `cd frontend && npm run dev`.*
-
-**2. CLI Initialization & Syncing**
-```bash
-# Initialize Semabridge DuckDB repository
-semabridge init
-
-# Validate connections to Snowflake and Fabric
-semabridge validate
-
-# Show current configuration profile
-semabridge config
-
-# Forward Sync (Snowflake → Fabric) or Reverse Sync 
-# (Fabric → Snowflake) based on semabridge.yaml
-semabridge semantic sync
-
-# Compare different models or state histories
-semabridge diff compare -d <id> --from <v1> --to <v2>
-
-# List Fabric models for easy reverse-sync discovery
-semabridge list-fabric-models
-
-# Sync complex DAX measures from Fabric to Snowflake
-semabridge sync-measures --dataset-id <ID>
-
-# View execution logs
-semabridge logs list
-```
-
-*(Note: Granular commands like `extract`, `build`, `emit`, `publish` are also available for step-by-step processing pipelines.)*
-
 ---
 
 ## Project Structure
