@@ -1,17 +1,17 @@
-# OSI-Centered Model
+# OSI/SML-Centered Model
 
-Semabridge enforces an OSI-first architecture. All transformations must pass
+Semabridge enforces an OSI/SML-first architecture. All transformations must pass
 through the OSI/SML intermediate model, and direct source-to-target shortcuts
 are not allowed.
 
 ## Canonical Flow
 
 ```
-Source -> OSI validation -> Transformation -> OSI validation -> Target
+Source -> OSI/SML validation -> Transformation -> OSI/SML validation -> Target
 ```
 
 ## Responsibilities
-- Define the OSI model shape and contracts.
+- Define the OSI/SML model shape and contracts.
 - Validate intermediate data before and after transformation.
 - Provide deterministic transformation behavior across connectors.
 
@@ -22,6 +22,6 @@ Source -> OSI validation -> Transformation -> OSI validation -> Target
 - Format validation: src/semabridge/formats/
 
 ## Operational Guidance
-- Validate OSI objects on input and output.
+- Validate OSI/SML objects on input and output.
 - Keep transformations deterministic and traceable in logs.
-- Update OSI docs when model shape or validation changes.
+- Update OSI/SML docs when model shape or validation changes.

@@ -16,7 +16,7 @@ function Show-Help {
     Write-Host "USAGE: .\dev.ps1 [command] [args]" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "Setup:" -ForegroundColor Yellow
-    Write-Host "  install              Install dependencies (pip + npm)"
+    Write-Host "  install              Install dependencies (uv first, pip fallback)"
     Write-Host "  venv                 Show venv activation instructions"
     Write-Host ""
     Write-Host "Database:" -ForegroundColor Yellow
@@ -48,15 +48,40 @@ function Check-Venv {
     }
 }
 
+function Install-PipDependencies {
+    Write-Host "Installing Python dependencies with pip..." -ForegroundColor Yellow
+    pip install -e .
+    pip install -r requirements.txt
+}
+
+function Install-UvDependencies {
+    Write-Host "Installing Python dependencies with uv..." -ForegroundColor Yellow
+    & uv sync
+    return ($LASTEXITCODE -eq 0)
+}
+
 switch ($Command.ToLower()) {
     "help" {
         Show-Help
     }
     
     "install" {
-        Write-Host "Installing Python dependencies..." -ForegroundColor Yellow
-        pip install -e .
-        pip install -r requirements.txt
+        $uvInstalled = $false
+
+        if (Get-Command uv -ErrorAction SilentlyContinue) {
+            $uvInstalled = Install-UvDependencies
+        }
+
+        if (-not $uvInstalled) {
+            if (Get-Command uv -ErrorAction SilentlyContinue) {
+                Write-Host "uv install failed, falling back to pip..." -ForegroundColor Yellow
+            } else {
+                Write-Host "uv not found, falling back to pip..." -ForegroundColor Yellow
+            }
+
+            Install-PipDependencies
+        }
+
         Write-Host "Installing npm dependencies..." -ForegroundColor Yellow
         Set-Location frontend
         npm install
