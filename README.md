@@ -2,18 +2,13 @@
 
 <br/>
 
-```
-███████╗███████╗███╗   ███╗ █████╗ ██████╗ ██████╗ ██╗██████╗  ██████╗ ███████╗
-██╔════╝██╔════╝████╗ ████║██╔══██╗██╔══██╗██╔══██╗██║██╔══██╗██╔════╝ ██╔════╝
-███████╗█████╗  ██╔████╔██║███████║██████╔╝██████╔╝██║██║  ██║██║  ███╗█████╗
-╚════██║██╔══╝  ██║╚██╔╝██║██╔══██║██╔══██╗██╔══██╗██║██║  ██║██║   ██║██╔══╝
-███████║███████╗██║ ╚═╝ ██║██║  ██║██████╔╝██║  ██║██║██████╔╝╚██████╔╝███████╗
-╚══════╝╚══════╝╚═╝     ╚═╝╚═╝  ╚═╝╚═════╝ ╚═╝  ╚═╝╚═╝╚═════╝  ╚═════╝ ╚══════╝
-```
+<p align="center">
 
-<p align="center"><strong>Snowflake ↔ OSI ↔ Microsoft Fabric — Semantic Model Synchronization Pipeline</strong></p>
+<img src="semabridge_banner.svg" alt="SemaBridge banner" />
 
-<br/>
+</p>
+
+
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%20|%203.11%20|%203.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Node.js 18+](https://img.shields.io/badge/Node.js-18+-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
