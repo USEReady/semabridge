@@ -199,7 +199,12 @@ class MetricsClauseBuilder:
         else:
             metrics_lines = deduplicate_metrics_lines(metrics_lines)
             
-        return metrics_lines
+        final_metrics_lines = []
+        for i, line in enumerate(metrics_lines):
+            comma = "," if i < len(metrics_lines) - 1 else ""
+            final_metrics_lines.append(f"{line}{comma}")
+
+        return final_metrics_lines
 
     def _remap_virtual_measures_table_refs(
         self,

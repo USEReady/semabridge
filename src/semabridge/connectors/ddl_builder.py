@@ -235,7 +235,7 @@ class SemanticViewBuilder:
         if dims_lines and metrics_lines and dimensions_block_idx is not None:
             metrics_lines, definitions[dimensions_block_idx] = self._deduplicate_cross_clause(metrics_lines, dims_lines, definitions[dimensions_block_idx])
 
-        if metrics_lines: definitions.append("METRICS (\n" + ",\n".join(metrics_lines) + "\n)")
+        if metrics_lines: definitions.append("METRICS (\n" + "\n".join(metrics_lines) + "\n)")
 
         final_ddl = lines[0] + "\n" + "\n".join(definitions) + ";"
         return fix_global_sums(final_ddl, self.translator)
@@ -287,7 +287,7 @@ class SemanticViewBuilder:
         if dims_lines and metrics_lines and dimensions_block_idx is not None:
             metrics_lines, definitions[dimensions_block_idx] = self._deduplicate_cross_clause(metrics_lines, dims_lines, definitions[dimensions_block_idx])
 
-        if metrics_lines: definitions.append("METRICS (\n" + ",\n".join(metrics_lines) + "\n)")
+        if metrics_lines: definitions.append("METRICS (\n" + "\n".join(metrics_lines) + "\n)")
 
         final_ddl = lines[0] + "\n" + "\n".join(definitions) + ";"
         return fix_global_sums(final_ddl, self.translator)
