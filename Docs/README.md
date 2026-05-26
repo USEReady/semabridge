@@ -5,7 +5,7 @@ This folder contains human-facing documentation for the Semabridge project, orga
 ## Architecture
 High-level system design and core concepts:
 - [System Overview](architecture/overview.md)
-- [OSI-Centered Model](architecture/osi.md)
+- [OSI/SML-Centered Model](architecture/osi.md)
 
 ## Development
 Setup, configuration, and contribution workflows:

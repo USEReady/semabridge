@@ -1,7 +1,7 @@
 # System Overview
 
 Semabridge automates semantic model synchronization between Snowflake and Microsoft Fabric.
-It uses an OSI-centered pipeline to extract, transform, and emit models across platforms.
+It uses an OSI/SML-centered pipeline to extract, transform, and emit models across platforms.
 
 ## Stack
 

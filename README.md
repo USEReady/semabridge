@@ -1,106 +1,137 @@
-# 🌉 Semabridge
+<div align="center">
 
-> *Snowflake ↔ OSI ↔ Fabric Semantic Model Pipeline*
+<br/>
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+<p align="center">
+<img src="assets/images/semabridge_banner.svg" alt="SemaBridge banner" />
+</p>
+
+
+
+**Automated semantic model synchronization between Snowflake and Microsoft Fabric Power BI**
+
+<br/>
+
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%20|%203.11%20|%203.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![Node.js 18+](https://img.shields.io/badge/Node.js-18+-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-F7DF1E?style=for-the-badge)](https://opensource.org/licenses/MIT)
+[![React](https://img.shields.io/badge/Frontend-React%20%2F%20Vite-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
+[![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+
+<br/>
+
+</div>
 
 ---
 
-## ✨ Overview
+## Overview
 
-**Semabridge** automates the creation and synchronization of Microsoft Fabric Power BI semantic models from Snowflake metadata, and vice versa. It follows a clean pipeline architecture using the Open Semantic Intermediate (OSI) format:
+SemaBridge automates the creation and synchronization of Microsoft Fabric Power BI semantic models from Snowflake metadata — and vice versa — through a clean, versioned pipeline built around a human-readable intermediate format.
 
-```text
-Source (Snowflake/Fabric) → Extract → OSI (YAML) → Transform → Emit → Target (Fabric/Snowflake)
+All conversions flow through the **Open Semantic Intermediate (OSI)** format and `SML` where applicable — human-readable semantic formats. Direct point-to-point conversions between sources are never permitted.
+
+```
+Source (Snowflake / Fabric)  →  Extract  →  OSI/SML (YAML)  →  Transform  →  Emit  →  Target (Fabric / Snowflake)
 ```
 
-### Key Features
+---
 
-- 🔄 **Fully Automated**: No manual modeling required. Synchronize semantic models between platforms.
-- 📊 **Complete Metadata**: Tables, columns, relationships, measures, hierarchies, and complex DAX.
-- 📝 **OSI Intermediate Format**: Human-readable YAML semantic layer (Open Semantic Intermediate).
-- 🗄️ **DuckDB Version Control**: State and history tracking powered by DuckDB.
-- 🎨 **Modern Web UI**: Built-in React/Vite dashboard for configuration, logs, and synchronization control.
-- 🚀 **REST API Integration**: No XMLA endpoint required for Fabric emission.
-- ⚡ **Incremental Processing**: Only process changed tables with local caching.
-- 🔍 **Auto-Detection**: Foreign keys, date/geo patterns, and numeric measures.
+## Features
+
+| | Feature | Description |
+|---|---|---|
+| 🔄 | **Fully Automated** | End-to-end sync with no manual modeling required |
+| 📊 | **Complete Metadata** | Tables, columns, relationships, measures, hierarchies, and DAX expressions |
+| 📝 | **OSI/SML Intermediate Formats** | Human-readable YAML semantic layer(s) as the universal translation layer |
+| 🗄️ | **Repository Versioning** | Full state and history tracking via local persistence |
+| 🎨 | **Web Dashboard** | React/Vite interface for configuration, logs, and sync control |
+| 🚀 | **REST API Integration** | No XMLA endpoint required for Fabric emission |
+| ⚡ | **Incremental Processing** | Local caching ensures only changed tables are reprocessed |
+| 🔍 | **Auto-Detection** | Automatically detects foreign keys, date/geo patterns, and numeric measures |
 
 ---
 
-## 🚀 Quick Start
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Project Structure](#project-structure)
+- [Development & Testing](#development--testing)
+- [Contribution Guidelines](#contribution-guidelines)
+- [FAQ & Troubleshooting](#faq--troubleshooting)
+- [Roadmap](#roadmap)
+- [License](#license)
+
+---
+
+## Quick Start
 
 ### Prerequisites
 - Python 3.10, 3.11, or 3.12
 - Node.js (v18+) and npm (for the web UI)
 
-### Installation
+- **Python** 3.10, 3.11, or 3.12
+- **Node.js** v18+ and npm
 
-We use [`uv`](https://github.com/astral-sh/uv) for fast, structured dependency management.
+### 1. Clone the repository
 
 ```bash
 # Clone the repository
 git clone https://github.com/inarva-solutions-pvt-ltd/semabridge.git
 cd semabridge
-
-# Install Python dependencies natively
-uv sync
-# (Fallback: pip install -e ".[dev]")
-
-# Install Frontend dependencies
-cd frontend
-npm install
-cd ..
 ```
 
-### Development Setup
+### 2. Install dependencies
 
-We provide **convenient commands** for common development tasks on all platforms:
-
-**Linux/macOS with Make:**
+**Linux / macOS**
 ```bash
-make help              # Show all available commands
-make install           # Install all dependencies
-make migrate           # Apply database migrations
-make run               # Start backend
-make run-frontend      # Start frontend
+make install
 ```
 
-**Windows (PowerShell) — No Make Required:**
+**Windows**
 ```powershell
-.\dev.ps1 help         # Show all available commands
-.\dev.ps1 install      # Install all dependencies
-.\dev.ps1 migrate      # Apply database migrations
-.\dev.ps1 run          # Start backend
-.\dev.ps1 run-frontend # Start frontend
+.\dev.ps1 install
 ```
 
-These provide a **uniform interface** across Windows, macOS, and Linux. All backend + database tasks are abstracted away from OS-level complexity.
-
-**Key Development Commands:**
+If the above commands fail, install manually:
 
 ```bash
-# macOS/Linux
-make migrate      # Apply latest database migrations
-make run          # Start Uvicorn backend (http://127.0.0.1:8001)
-make run-frontend # Start Vite frontend dev server
+# Python dependencies
+uv sync
+# or
+pip install -e ".[dev]"
 
-# Windows (PowerShell)
-.\dev.ps1 migrate
-.\dev.ps1 run
-.\dev.ps1 run-frontend
+# Frontend dependencies
+cd frontend && npm install && cd ..
 ```
 
-**Database Migrations:**
-- Migrations are version-controlled in `src/semabridge/migrations/versions/`
-- Always run `make migrate` (or `.\dev.ps1 migrate` on Windows) after pulling new changes
-- For production deployments, the CI/CD pipeline automatically applies migrations
-- Cross-platform scripts: `scripts/migrate.sh` (Unix/Mac) and `scripts/migrate.ps1` (Windows)
-- Full guide: See [docs/development/setup.md](docs/development/setup.md)
+### 3. Run the application
 
-### Configuration
+**Linux / macOS**
 
-1. **Environment Variables**: Create a `.env` file (copy from `.env.example`):
+```bash
+make run            # Start backend  →  http://127.0.0.1:8001
+make run-frontend   # Start the web interface
+make migrate        # Prepare the database
+make help           # Show all available commands
+```
+
+**Windows**
+
+```powershell
+.\dev.ps1 run            # Start backend  →  http://127.0.0.1:8001
+.\dev.ps1 run-frontend   # Start the web interface
+.\dev.ps1 migrate        # Prepare the database
+.\dev.ps1 help           # Show all available commands
+```
+
+> ⚠️ **Always run `migrate` after pulling new changes.** Migrations are version-controlled in `src/semabridge/migrations/versions/` and are applied automatically on production deployments.
+
+---
+
+## Configuration
+
+Copy `.env.example` to `.env` and populate your credentials:
 
 ```env
 # Snowflake Configuration
@@ -117,23 +148,14 @@ FABRIC_CLIENT_ID=your-client-id
 FABRIC_CLIENT_SECRET=your-client-secret
 FABRIC_WORKSPACE_ID=your-workspace-id
 
-# Model
-MODEL_NAME=MySemanticModel
 ```
 
-2. **Pipeline Settings**: Create or modify `semabridge.yaml` to define source and targets:
+> 🔒 **Never hard-code secrets.** All credentials must be supplied via environment variables.
 
-```yaml
-source:
-  type: fabric
-  dataset_id: "example-dataset-id"
-  workspace_id: "example-workspace-id"
-  
-target:
-  type: snowflake
-  deploy: true
-
-model_name: "Customer Profitability"
+Note: values must be set **without surrounding quotes**:
+```env
+SNOWFLAKE_PASSWORD=mypassword       ✅
+SNOWFLAKE_PASSWORD="mypassword"     ❌
 ```
 
 ### Usage
@@ -176,9 +198,7 @@ semabridge logs list
 
 ---
 
-## 🏗️ Architecture & Structure
-
-Semabridge enforces a strictly typed "Plugin-First" architectural pattern centering around the **OSI** representation:
+## Project Structure
 
 ```text
 semabridge/
@@ -197,9 +217,13 @@ semabridge/
 └── docs/                # Extended documentation and development guides
 ```
 
+The architecture follows a **Plugin-First** pattern. All logic is strongly typed and flows through the OSI/SML intermediate representation. Connectors never communicate with each other directly.
+
 ---
 
-## 🔧 Development & Testing
+## Development & Testing
+
+### Code Quality
 
 ```bash
 # Formatting
@@ -209,39 +233,60 @@ ruff check src/semabridge/
 # Type Checking
 mypy src/semabridge/
 
-# Run tests with coverage
+### Tests
+
+```bash
+# Run full test suite with coverage report
 pytest tests/ -v --cov=src/semabridge --cov-report=term-missing
 ```
 
----
-
-## 🤝 Contribution Guidelines
-
-1. **Intermediate Model First**: All conversions are strictly `Source → OSI` or `OSI → Target`. Direct point-to-point conversions are strictly forbidden.
-2. **Fail Fast**: Assert configuration validity at initiation (missing files, bad credentials).
-3. **No Secrets in Code**: Secrets must route dynamically from environment variables, never hard-coded arguments.
-4. **Test Coverage**: All code additions must meet or exceed ≥ 80% test coverage. 
-
-Refer to [docs/development/setup.md](docs/development/setup.md) and [docs/architecture/overview.md](docs/architecture/overview.md) for deeper internal technical mechanics.
+> All contributions must maintain **≥ 80% test coverage**.
 
 ---
 
-## ❓ FAQ & Troubleshooting
+## Contribution Guidelines
 
-- **"Missing Credentials" Error**: Ensure the `.env` file exists in your working directory and correctly populates required variables without quotes (`SNOWFLAKE_PASSWORD`, `FABRIC_CLIENT_SECRET`, etc.).
-- **Failed to launch UI (`semabridge --ui`)**: Ensure Python Streamlit is installed (`pip install streamlit`). For the React interface, ensure NodeJS dependencies are loaded (`cd frontend && npm install`).
-- **Database Locked (`semabridge.db`)**: Wait for the other CLI process to terminate. DuckDB enforces file locks.
+Before contributing, please review [`docs/development/setup.md`](docs/development/setup.md) and [`docs/architecture/overview.md`](docs/architecture/overview.md).
+
+**Core principles:**
+
+1. **OSI/SML-First** — All conversions must flow `Source → OSI/SML` or `OSI/SML → Target`. Direct source-to-target conversion is strictly forbidden.
+2. **Fail Fast** — Validate configuration at startup. Surface missing files or invalid credentials immediately.
+3. **No Secrets in Code** — Credentials are always injected via environment variables, never hard-coded.
+4. **Test Coverage** — All additions must meet or exceed the 80% coverage threshold.
 
 ---
 
-## 🗺️ Roadmap / Future Extensions
+## FAQ & Troubleshooting
+
+<details>
+<summary><b>Missing Credentials error</b></summary>
+
+Ensure `.env` exists in your working directory and all required variables are set without surrounding quotes.
+</details>
+
+<details>
+<summary><b>Failed to launch the web UI</b></summary>
+
+Run `cd frontend && npm install` before starting the frontend dev server. If you are using the legacy Streamlit interface, ensure Streamlit is installed in your Python environment.
+</details>
+
+<details>
+<summary><b>Database locked (<code>semabridge.db</code>)</b></summary>
+
+The local repository enforces file locks. Wait for any other running SemaBridge process to terminate, then retry.
+</details>
+
+---
+
+## Roadmap
 
 - **Expand Connectors**: Integrations leveraging plugin endpoints for systems beyond Snowflake into GCP BigQuery or proprietary models.
 - **Enhanced Data Transformation**: Real-time evaluation of intermediate variables during sync.
 
 ---
 
-## 📜 License
+## License
 
 [MIT License](LICENSE)
 

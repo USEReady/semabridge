@@ -10,7 +10,7 @@ help:
 	@echo "$(CYAN)Semabridge Development Commands$(NC)"
 	@echo ""
 	@echo "$(YELLOW)Setup:$(NC)"
-	@echo "  make install          Install dependencies (pip and npm)"
+	@echo "  make install          Install dependencies (uv first, pip fallback)"
 	@echo "  make dev              Activate venv and display dev environment setup"
 	@echo ""
 	@echo "$(YELLOW)Database:$(NC)"
@@ -36,8 +36,7 @@ help:
 
 install:
 	@echo "$(YELLOW)Installing Python dependencies...$(NC)"
-	pip install -e .
-	pip install -r requirements.txt
+	@uv sync || (echo "$(YELLOW)uv install failed, falling back to pip...$(NC)" && pip install -e . && pip install -r requirements.txt)
 	@echo "$(YELLOW)Installing npm dependencies...$(NC)"
 	cd frontend && npm install && cd ..
 	@echo "$(GREEN)✓ Dependencies installed$(NC)"
