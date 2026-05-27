@@ -8,7 +8,7 @@ Architecture
 ------------
 Tier 1-2 (simple aggregations and arithmetic)  → fast-path regex in DAXTranslator (unchanged).
 Tier 3   (time intelligence)                   → AST parse → SQL window function rendering.
-Tier 4   (CALCULATE / FILTER / ALL / ALLEXCEPT) → AST parse → SQL subquery / WHERE rendering.
+Tier 4   (CALCULATE / FILTER / ALL / ALLEXCEPT) → AST parse → CASE-based scalar expression.
 
 The Snowflake SQL renderer is deterministic; no LLM calls occur at runtime.
 
@@ -761,15 +761,30 @@ class DaxSqlRenderer:
         else_clause = f"ELSE {self._render_node(args[-1])}" if len(args) % 2 == 0 else "ELSE NULL"
         return "CASE " + " ".join(cases) + f" {else_clause} END"
 
+    # Matches a top-level simple aggregate so the inner column can be wrapped in CASE.
+    # E.g.  SUM(fact."AMOUNT")  →  group(1)="SUM"  group(2)=`fact."AMOUNT"`
+    _SIMPLE_AGG_RE = re.compile(
+        r'^(SUM|AVG|MIN|MAX|COUNT)\((.+)\)$', re.IGNORECASE | re.DOTALL
+    )
+
     def _render_calculate(self, args: List[DaxNode]) -> str:
         """
-        Translate CALCULATE(agg_expr, filter1, filter2, ...) to a subquery.
+        Translate CALCULATE(agg_expr, filter1, filter2, ...) to a Snowflake-compatible
+        scalar expression.
 
         Supported filter modifiers:
-          - ALL(table)          → ignore all filters for that table
+          - ALL(table)          → ignore all filters for that table → window OVER ()
           - ALLEXCEPT(t, col)   → OVER (PARTITION BY col)
-          - FILTER(tbl, pred)   → WHERE pred
-          - simple comparisons  → WHERE comparison
+          - FILTER(tbl, pred)   → rewrite as CASE-based filtered aggregate
+          - simple comparisons  → rewrite as CASE-based filtered aggregate
+
+        Note: full SELECT subqueries are **not** emitted because Snowflake's METRICS
+        clause only accepts scalar expressions.  For simple aggregations the filter
+        is pushed inside the aggregate via a CASE expression:
+            CALCULATE(SUM([Amount]), [Year] = 2024)
+            → SUM(CASE WHEN year_col = 2024 THEN amount_col END)
+        When the aggregation is too complex to rewrite this way, a DaxRenderError is
+        raised so the caller can skip the metric gracefully.
         """
         if not args:
             raise self.DaxRenderError("CALCULATE requires at least 1 argument")
@@ -820,7 +835,22 @@ class DaxSqlRenderer:
                 return f"{agg_expr} OVER ()"
         elif filter_clauses:
             where = " AND ".join(filter_clauses)
-            return f"(SELECT {agg_expr} WHERE {where})"
+            # Snowflake METRICS clause does not allow SELECT subqueries.
+            # Rewrite as a CASE-based filtered aggregate when the base aggregation
+            # is a simple SUM/AVG/MIN/MAX/COUNT so the filter can be pushed inside:
+            #   SUM(CASE WHEN <where> THEN <col> END)
+            m = self._SIMPLE_AGG_RE.match(agg_expr.strip())
+            if m:
+                func, inner = m.group(1).upper(), m.group(2)
+                return f"{func}(CASE WHEN {where} THEN {inner} END)"
+            # The aggregation is too complex to safely rewrite (e.g. it already
+            # contains a window function or a measure reference chain).  Raise so
+            # the caller skips this metric and surfaces a clear sync_failure_reason.
+            raise self.DaxRenderError(
+                f"CALCULATE+FILTER: base aggregation '{agg_expr}' is too complex to "
+                "rewrite as a Snowflake scalar expression.  Only simple SUM/AVG/MIN/"
+                "MAX/COUNT aggregations are supported in the METRICS clause."
+            )
         else:
             return agg_expr
 
@@ -866,15 +896,53 @@ class DaxSqlRenderer:
         self, args: List[DaxNode], interval: str, amount: int
     ) -> str:
         """
-        Translate SAMEPERIODLASTYEAR / PREVIOUSxxx to DATEADD-based subquery.
+        Translate SAMEPERIODLASTYEAR / PREVIOUSxxx to a Snowflake LAG window function.
+
+        Snowflake's METRICS clause does not allow SELECT subqueries, so we use a
+        window-based LAG expression instead:
+
+          SAMEPERIODLASTYEAR / PREVIOUSYEAR  (interval="year")
+            →  LAG(agg) OVER (PARTITION BY <date>."MONTH" ORDER BY <date>."YEAR")
+               Semantics: for each month, return the same aggregate from the
+               previous calendar year.
+
+          PREVIOUSMONTH  (interval="month")
+            →  LAG(agg) OVER (ORDER BY <date>."DATE")
+
+          PREVIOUSQUARTER  (interval="quarter")
+            →  LAG(agg) OVER (PARTITION BY <date>."YEAR" ORDER BY <date>."QUARTER")
+
+        If the interval is not recognised a DaxRenderError is raised so the caller
+        can skip the metric with a clear sync_failure_reason.
         """
         if not args:
             raise self.DaxRenderError("Period function requires arguments")
         agg_sql = self._render_node(args[0])
         d = self.date_alias
-        return (
-            f"(SELECT {agg_sql} "
-            f"WHERE {d}.\"DATE\" >= DATEADD({interval}, {amount}, {d}.\"DATE\"))"
+
+        if interval == "year":
+            return (
+                f"LAG({agg_sql}) OVER (\n"
+                f"    PARTITION BY {d}.\"MONTH\"\n"
+                f"    ORDER BY {d}.\"YEAR\"\n"
+                f")"
+            )
+        if interval == "month":
+            return (
+                f"LAG({agg_sql}) OVER (\n"
+                f"    ORDER BY {d}.\"DATE\"\n"
+                f")"
+            )
+        if interval == "quarter":
+            return (
+                f"LAG({agg_sql}) OVER (\n"
+                f"    PARTITION BY {d}.\"YEAR\"\n"
+                f"    ORDER BY {d}.\"QUARTER\"\n"
+                f")"
+            )
+        raise self.DaxRenderError(
+            f"Period shift interval '{interval}' cannot be expressed as a Snowflake "
+            "scalar expression in the METRICS clause."
         )
 
     def _render_dateadd(self, args: List[DaxNode]) -> str:

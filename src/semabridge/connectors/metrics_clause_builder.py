@@ -372,6 +372,22 @@ class MetricsClauseBuilder:
         
         # If we have SQL expression, use it directly
         if sql_expr:
+            # Guard: Snowflake's METRICS clause only accepts scalar expressions.
+            # Subqueries (SELECT …) and CTEs (WITH …) are illegal and cause
+            # "unexpected 'SELECT'" DDL compilation errors.  This can happen when
+            # an older translation stored a subquery-based expression, or if a new
+            # translation path regresses.  Skip the metric rather than emitting
+            # invalid DDL; the caller will surface a sync_failure_reason.
+            if "SELECT" in sql_expr.upper():
+                logger.warning(
+                    "Metric '%s': sql_expression contains a subquery (SELECT) which is "
+                    "not allowed in Snowflake METRICS clause. Skipping to prevent DDL "
+                    "failure. Expression (first 120 chars): %s",
+                    metric.unique_name,
+                    sql_expr[:120],
+                )
+                return None
+
             # If the metric's dataset is a virtual measures table, try to remap
             # column references to the actual fact table that owns those columns.
             if self._is_virtual_measures_table(metric.dataset, dataset_col_lookup):
