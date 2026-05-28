@@ -7,6 +7,7 @@ This is the intermediate format between raw source data and canonical SML.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
@@ -62,8 +63,8 @@ class SourceFormat(BaseModel):
     extraction_timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     
     # Execution context
-    project_id: str
-    run_id: str
+    project_id: str = ""
+    run_id: str = ""
     
     # For Snowflake source
     database: str = ""
@@ -76,10 +77,14 @@ class SourceFormat(BaseModel):
     semantic_view_ddl: Optional[str] = None
     
     # For Fabric source
-    tmsl_definition: Optional[Dict[str, Any]] = None
+    tmdl_files: Dict[str, str] = Field(default_factory=dict)
     workspace_id: Optional[str] = None
     dataset_id: Optional[str] = None
     dataset_name: Optional[str] = None
+    
+    # Extraction metadata
+    extracted_at: datetime = Field(default_factory=datetime.utcnow)
+    format_used: Literal["TMDL"] = "TMDL"
     
     # For PBIX source
     pbix_path: Optional[str] = None
@@ -87,12 +92,30 @@ class SourceFormat(BaseModel):
     # Row counts for classification
     row_counts: Dict[str, int] = Field(default_factory=dict)
     
-    def validate_format(self) -> List[ValidationIssue]:
+    @property
+    def tmsl_definition(self) -> Optional[Dict[str, Any]]:
+        """Deprecated/backward-compatible property returning parsed TMSL model.bim if stored in tmdl_files."""
+        if not self.tmdl_files:
+            return None
+        content = self.tmdl_files.get("model.bim") or self.tmdl_files.get("tmsl")
+        if content:
+            try:
+                return json.loads(content)
+            except Exception:
+                pass
+        return None
+
+    def validate_format(self) -> bool:
         """
-        Apply format definition validation (Step 5).
-        
-        Returns a list of validation issues. Empty list means valid.
+        Validate extracted semantic model structure.
         """
+        if self.source_type == "fabric":
+            if not self.tmdl_files:
+                raise ValueError("fabric source requires tmdl_files")
+            if "definition/model.tmdl" not in self.tmdl_files:
+                raise ValueError("TMDL missing definition/model.tmdl")
+            return True
+
         issues: List[ValidationIssue] = []
         
         # Required field validation
@@ -113,12 +136,15 @@ class SourceFormat(BaseModel):
         # Source-specific validation
         if self.source_type == "snowflake":
             issues.extend(self._validate_snowflake_source())
-        elif self.source_type == "fabric":
-            issues.extend(self._validate_fabric_source())
         elif self.source_type == "pbix":
             issues.extend(self._validate_pbix_source())
         
-        return issues
+        if issues:
+            # If there are error issues, raise ValueError for backward compatibility
+            # in simplified contexts, but for engine pipeline return the issues list.
+            if any(i.severity == "error" for i in issues):
+                return issues
+        return True
     
     def _validate_snowflake_source(self) -> List[ValidationIssue]:
         """Validate Snowflake-specific source format."""
@@ -286,33 +312,30 @@ def from_snowflake_metadata(
     )
 
 
-def from_fabric_tmsl(
-    project_id: str,
-    run_id: str,
-    tmsl: Dict[str, Any],
+def from_fabric_tmdl(
     workspace_id: str,
     dataset_id: str,
-    row_counts: Optional[Dict[str, int]] = None,
+    dataset_name: str,
+    tmdl_files: Dict[str, str],
+    row_counts: Dict[str, int] = None
 ) -> SourceFormat:
     """
-    Create SourceFormat from Fabric TMSL extraction.
-    
-    This is the parsing instruction for Fabric source format.
+    Create SourceFormat from TMDL extraction results.
     """
-    # Extract dataset name from TMSL
-    model = tmsl.get("model", {})
-    dataset_name = model.get("name", "")
-    
     return SourceFormat(
         source_type="fabric",
-        project_id=project_id,
-        run_id=run_id,
-        tmsl_definition=tmsl,
+        tmdl_files=tmdl_files,
         workspace_id=workspace_id,
         dataset_id=dataset_id,
         dataset_name=dataset_name,
         row_counts=row_counts or {},
+        format_used="TMDL"
     )
+
+
+def from_fabric_tmsl(*args, **kwargs) -> Any:
+    """Deprecated: TMSL extraction is removed."""
+    raise NotImplementedError("TMSL extraction has been completely replaced by TMDL extraction.")
 
 
 def from_pbix_tmsl(
@@ -340,7 +363,7 @@ def from_pbix_tmsl(
         source_type="pbix",
         project_id=project_id,
         run_id=run_id,
-        tmsl_definition=tmsl,
+        tmdl_files={"model.bim": json.dumps(tmsl)},
         dataset_name=dataset_name,
         pbix_path=pbix_path,
     )

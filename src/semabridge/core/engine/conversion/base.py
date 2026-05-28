@@ -26,7 +26,7 @@ from semabridge.core.run_summary import (
 )
 from semabridge.core.source_format import (
     SourceFormat,
-    from_fabric_tmsl,
+    from_fabric_tmdl,
     from_pbix_tmsl,
     from_snowflake_metadata,
 )
@@ -64,8 +64,12 @@ def _step5_validate_source(self, context: RunContext) -> None:
         raise SourceFormatError("No source format artifact available")
 
     issues = context.source_format.validate_format()
-    errors = [i for i in issues if i.severity == "error"]
-    warnings = [i for i in issues if i.severity == "warning"]
+    if isinstance(issues, bool):
+        errors = []
+        warnings = []
+    else:
+        errors = [i for i in issues if i.severity == "error"]
+        warnings = [i for i in issues if i.severity == "warning"]
 
     if errors:
         msg = context.source_format.get_diagnostic_message()

@@ -25,7 +25,7 @@ from semabridge.core.run_summary import (
 )
 from semabridge.core.source_format import (
     SourceFormat,
-    from_fabric_tmsl,
+    from_fabric_tmdl,
     from_pbix_tmsl,
     from_snowflake_metadata,
 )
@@ -53,7 +53,7 @@ def _extract_fabric(
     dataset_id: Optional[str],
     workspace_id: Optional[str],
 ) -> SourceFormat:
-    """Extract from Fabric."""
+    """Extract from Fabric using TMDL."""
     from semabridge.connectors.fabric_extractor import FabricExtractor
 
     config = context.config
@@ -77,26 +77,21 @@ def _extract_fabric(
         )
 
         with open(offline_path, "r", encoding="utf-8") as f:
-            tmsl = json.load(f)
-
-        # Accept both full TMSL and flattened model payloads.
-        if isinstance(tmsl, dict) and "model" not in tmsl and "tables" in tmsl:
-            tmsl = {"model": tmsl}
+            tmdl_files = json.load(f)
 
         resolved_dataset_id = dataset_id or context.project_id
         row_counts: dict[str, int] = {}
 
-        source_format = from_fabric_tmsl(
-            project_id=context.project_id,
-            run_id=context.run_id,
-            tmsl=tmsl,
+        source_format = from_fabric_tmdl(
             workspace_id=ws_id,
             dataset_id=resolved_dataset_id,
+            dataset_name=context.project_id,
+            tmdl_files=tmdl_files,
             row_counts=row_counts,
         )
 
-        table_count = len(tmsl.get("model", {}).get("tables", []))
-        self._record_step(4, StepStatus.SUCCESS, f"OFFLINE extract loaded {table_count} tables")
+        table_count = len(tmdl_files)
+        self._record_step(4, StepStatus.SUCCESS, f"OFFLINE extract loaded {table_count} TMDL files")
         return source_format
 
     try:
@@ -128,7 +123,6 @@ def _extract_fabric(
 
         if not interactive_token and not identity_id:
             # Only fall back to global credential store when NO identity_id is specified.
-            # This prevents cross-account contamination in multi-account scenarios.
             token_data = cm.get_msal_token()
             if cm.get_fabric_auth_method() == "interactive" and cm.has_valid_token() and token_data:
                 interactive_token = token_data.get("access_token")
@@ -150,8 +144,6 @@ def _extract_fabric(
     configured_ws = str(fabric_cfg.workspace_id or "").strip()
     stored_ws = str(stored_workspace_id or "").strip()
 
-    # UI aliases (for example, semabridge-local) are not accepted by Fabric API.
-    # Prefer known GUIDs from credentials or environment-backed config.
     if requested_ws and not _is_guid(requested_ws):
         if _is_guid(stored_ws):
             logger.info(
@@ -173,12 +165,6 @@ def _extract_fabric(
     if ws_id and fabric_cfg.workspace_id != ws_id:
         fabric_cfg.workspace_id = ws_id
 
-
-    # Refresh token just-in-time at Stage 4 for the source identity.
-    # context.scoped_fabric_token was resolved at Stage 3. In long-queued
-    # batch runs (e.g. scheduled jobs) that token may have expired by the
-    # time Stage 4 executes. Re-resolving here mirrors the Stage 9 pattern
-    # and guarantees freshness for the Fabric extraction API call.
     if identity_id:
         try:
             from semabridge.api.services.connection_domain_service import _resolve_fabric_access_token
@@ -209,23 +195,56 @@ def _extract_fabric(
         extractor._access_token = interactive_token
         extractor._token_expires_at = time.time() + 1800
 
-    resolved_dataset_id = extractor.resolve_model_id(dataset_id)
+    resolved_model_id = extractor.resolve_model_id(dataset_id)
 
-    tmsl = extractor.get_model_definition(resolved_dataset_id)
-    row_counts = extractor.get_table_row_counts(resolved_dataset_id)
+    logger.info(f"Extracting model {resolved_model_id} using TMDL format")
 
-    source_format = from_fabric_tmsl(
-        project_id=context.project_id,
-        run_id=context.run_id,
-        tmsl=tmsl,
+    tmdl_files = extractor.get_model_definition(resolved_model_id)
+
+    logger.info(f"Extracted {len(tmdl_files)} TMDL files")
+
+    # Count measures for verification
+    measure_count = self._count_measures_in_tmdl(tmdl_files)
+
+    logger.info(f"Found {measure_count} measures in TMDL")
+
+    row_counts = extractor.get_table_row_counts(resolved_model_id)
+
+    source_format = from_fabric_tmdl(
         workspace_id=ws_id,
-        dataset_id=resolved_dataset_id,
+        dataset_id=resolved_model_id,
+        dataset_name=extractor.get_model_display_name(resolved_model_id),
+        tmdl_files=tmdl_files,
         row_counts=row_counts,
     )
     
-    # Ensure display name is explicitly resolved and stored for naming resolution
-    source_format.dataset_name = extractor.get_model_display_name(resolved_dataset_id)
+    source_format.validate_format()
 
-    self._record_step(4, StepStatus.SUCCESS, f"Extracted TMSL definition for '{source_format.dataset_name}'")
+    self._record_step(4, StepStatus.SUCCESS, f"Extracted TMDL definition for '{source_format.dataset_name}'")
+    logger.info(f"Extraction complete: {source_format.dataset_name}")
 
     return source_format
+
+def _count_measures_in_tmdl(
+    self,
+    tmdl_files: Dict[str, str]
+) -> int:
+    """
+    Count measures across table TMDL files.
+    """
+    import re
+
+    count = 0
+
+    for path, content in tmdl_files.items():
+        if (
+            path.startswith("definition/tables/")
+            and path.endswith(".tmdl")
+        ):
+            matches = re.findall(
+                r"measure\s+'([^']+)'",
+                content
+            )
+            count += len(matches)
+
+    return count

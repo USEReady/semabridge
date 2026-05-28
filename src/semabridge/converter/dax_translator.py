@@ -144,6 +144,15 @@ class DAXTranslator:
         
         clean_dax = dax.strip()
         
+        if metrics_context:
+            try:
+                sql = self.translate_expr(clean_dax, metrics_context, table_alias)
+                if sql and "[" not in sql and "]" not in sql and not any(f in sql.upper() for f in ["SUMX(", "FILTER(", "CALCULATE(", "DIVIDE("]):
+                    return DAXTranslationResult(sql, 2, clean_dax)
+            except Exception as e:
+                logger.warning(f"Error in translate_expr fallback: {e}")
+
+        
         # **NEW PRIMARY FLOW: Try deterministic translator first**
         # This enforces pipeline as single source of truth
         try:
@@ -523,20 +532,29 @@ class DAXTranslator:
 
             base_sql = self._strip_outer_parens(base_sql)
             parsed_agg = self._parse_sql_aggregation(base_sql)
+            
+            date_col_ref = args[1].strip()
+            date_match = re.match(r"^(?:'([^']+)'|([a-zA-Z0-9_#@ -]+))\[([^\]]+)\]$", date_col_ref)
+            if date_match:
+                table_name = date_match.group(1) or date_match.group(2)
+                cal_tbl = sanitize_column(table_name, force_uppercase=True)
+            else:
+                cal_tbl = "CALENDAR"
+
             if parsed_agg:
                 agg_func, value_expr = parsed_agg
                 sql_agg = "COUNT(DISTINCT" if agg_func == "COUNT_DISTINCT" else agg_func
                 if agg_func == "COUNT_DISTINCT":
                     return (
                         f"COUNT(DISTINCT {value_expr}) OVER "
-                        "(PARTITION BY CALENDAR.YEAR ORDER BY CALENDAR.PERIOD)"
+                        f"(PARTITION BY {cal_tbl}.YEAR ORDER BY {cal_tbl}.PERIOD)"
                     )
                 return (
                     f"{sql_agg}({value_expr}) OVER "
-                    "(PARTITION BY CALENDAR.YEAR ORDER BY CALENDAR.PERIOD)"
+                    f"(PARTITION BY {cal_tbl}.YEAR ORDER BY {cal_tbl}.PERIOD)"
                 )
 
-            return f"SUM({base_sql}) OVER (PARTITION BY CALENDAR.YEAR ORDER BY CALENDAR.PERIOD)"
+            return f"SUM({base_sql}) OVER (PARTITION BY {cal_tbl}.YEAR ORDER BY {cal_tbl}.PERIOD)"
 
         if upper_dax.startswith("CALCULATE(") and clean_dax.endswith(")"):
             args = self._split_dax_arguments(clean_dax[len("CALCULATE("):-1])
@@ -1398,7 +1416,20 @@ class DAXTranslator:
         # Time Intelligence always needs date context
         for func in self.TIME_INTEL_FUNCTIONS:
             if func in upper_dax:
-                dimensions.append("'Calendar'[Date]")
+                found = False
+                for full_call, args_text in self._extract_function_call(dax or "", func):
+                    args = self._split_dax_arguments(args_text)
+                    if len(args) >= 2:
+                        date_ref = args[1].strip()
+                        date_match = re.match(r"^(?:'([^']+)'|([a-zA-Z0-9_#@ -]+))\[([^\]]+)\]$", date_ref)
+                        if date_match:
+                            tbl = date_match.group(1) or date_match.group(2)
+                            col = date_match.group(3)
+                            dimensions.append(f"'{tbl}'[{col}]")
+                            found = True
+                            break
+                if not found:
+                    dimensions.append("'Calendar'[Date]")
                 break
         
         # Extract explicit table[column] references that might indicate required dimensions
@@ -1413,3 +1444,493 @@ class DAXTranslator:
                     dimensions.append(dim_ref)
         
         return dimensions
+
+    def build_dependency_graph(self, metrics: List[Any]) -> Dict[str, List[str]]:
+        """
+        Build a dependency graph where each measure maps to a list of other measures it depends on.
+        Detects [MeasureName] references.
+        """
+        metric_names = {str(m.unique_name).casefold() for m in metrics}
+        graph = {}
+        for m in metrics:
+            name = m.unique_name
+            expr = m.expression or ""
+            # Find all [Ref]
+            refs = []
+            for match in re.finditer(r"\[([^\]]+)\]", expr):
+                ref_name = match.group(1).strip()
+                if ref_name.casefold() in metric_names:
+                    refs.append(ref_name)
+            # Also find 'Table'[Ref]
+            for match in re.finditer(r"'?([\w\s/]+)'?\[([^\]]+)\]", expr):
+                ref_name = match.group(2).strip()
+                if ref_name.casefold() in metric_names:
+                    refs.append(ref_name)
+            
+            # De-duplicate refs
+            unique_refs = []
+            seen = set()
+            for r in refs:
+                rc = r.casefold()
+                if rc not in seen and rc != name.casefold():
+                    seen.add(rc)
+                    unique_refs.append(r)
+            graph[name] = unique_refs
+        return graph
+
+    def get_translation_order(self, graph: Dict[str, List[str]]) -> List[str]:
+        # Topological sort using DFS
+        visited = {}  # 0 = unvisited, 1 = visiting, 2 = visited
+        order = []
+        cycles = []
+        
+        def dfs(node: str):
+            node_key = node.casefold()
+            actual_node = None
+            for k in graph:
+                if k.casefold() == node_key:
+                    actual_node = k
+                    break
+            
+            if not actual_node:
+                return
+                
+            state = visited.get(actual_node.casefold(), 0)
+            if state == 1:
+                cycles.append(actual_node)
+                return
+            if state == 2:
+                return
+                
+            visited[actual_node.casefold()] = 1
+            for dep in graph.get(actual_node, []):
+                dfs(dep)
+            visited[actual_node.casefold()] = 2
+            order.append(actual_node)
+
+        for node in graph:
+            if visited.get(node.casefold(), 0) == 0:
+                dfs(node)
+                
+        if cycles:
+            logger.warning(f"Circular dependency detected involving: {', '.join(set(cycles))}")
+            
+        order_set = {n.casefold() for n in order}
+        for node in graph:
+            if node.casefold() not in order_set:
+                order.append(node)
+                
+        return order
+
+    def translate_with_dependencies(self, metrics: List[Any], table_alias: str, dataset_name: str) -> List[Any]:
+        logger.info(f"Building dependency graph for {len(metrics)} measures")
+        graph = self.build_dependency_graph(metrics)
+        order = self.get_translation_order(graph)
+        logger.info(f"Translation order: {', '.join(order)}")
+        
+        metric_map = {m.unique_name.casefold(): m for m in metrics}
+        
+        for name in order:
+            metric = metric_map.get(name.casefold())
+            if not metric or not metric.expression:
+                continue
+                
+            try:
+                translated_sql = self.translate_expr(metric.expression, metrics, table_alias)
+                if translated_sql and "[" not in translated_sql and "]" not in translated_sql and not any(f in translated_sql.upper() for f in ["SUMX(", "FILTER(", "CALCULATE(", "DIVIDE("]):
+                    metric.sql_expression = translated_sql
+                    metric.sync_enabled = True
+                    metric.complexity_tier = 2
+                    logger.info(f"Translated {metric.unique_name}: {translated_sql}")
+                else:
+                    logger.warning(f"Could not translate metric '{metric.unique_name}'")
+            except Exception as e:
+                logger.warning(f"Failed to translate metric '{metric.unique_name}': {e}")
+                
+        return metrics
+
+    def translate_expr(self, expr: str, metrics: List[Any], table_alias: str) -> str:
+        clean = " ".join((expr or "").split()).strip()
+        
+        # 1. Try direct tier 1 first (e.g. SUM([Value]))
+        tier1 = self._try_tier1(clean, table_alias)
+        if tier1:
+            return tier1
+            
+        # 2. Resolve TOTALYTD/MTD/QTD calls using parenthesis matching
+        for func in ["TOTALYTD", "TOTALMTD", "TOTALQTD"]:
+            for full_call, args_text in self._extract_function_call(clean, func):
+                args = self._split_dax_arguments(args_text)
+                if len(args) >= 2:
+                    base_expr = args[0].strip()
+                    date_col_ref = args[1].strip()
+                    date_match = re.match(r"^(?:'([^']+)'|([a-zA-Z0-9_#@ -]+))\[([^\]]+)\]$", date_col_ref)
+                    if date_match:
+                        table_name = date_match.group(1) or date_match.group(2)
+                        cal_tbl = sanitize_column(table_name, force_uppercase=True)
+                    else:
+                        cal_tbl = "CALENDAR"
+
+                    base_sql = self.translate_expr(base_expr, metrics, table_alias)
+                    agg = self._parse_sql_aggregation(base_sql)
+                    if agg:
+                        agg_func, value_expr = agg
+                        if agg_func == "COUNT_DISTINCT":
+                            repl_sql = f"COUNT(DISTINCT {value_expr}) OVER (PARTITION BY {cal_tbl}.YEAR ORDER BY {cal_tbl}.PERIOD)"
+                        else:
+                            repl_sql = f"{agg_func}({value_expr}) OVER (PARTITION BY {cal_tbl}.YEAR ORDER BY {cal_tbl}.PERIOD)"
+                    else:
+                        repl_sql = f"SUM({base_sql}) OVER (PARTITION BY {cal_tbl}.YEAR ORDER BY {cal_tbl}.PERIOD)"
+                    clean = clean.replace(full_call, f"({repl_sql})")
+
+        # 3. Try CALCULATE
+        for full_call, args_text in self._extract_function_call(clean, "CALCULATE"):
+            calc_sql = self._translate_calculate(full_call, metrics, table_alias)
+            if calc_sql:
+                clean = clean.replace(full_call, f"({calc_sql})")
+
+        # 4. Try DIVIDE
+        for full_call, args_text in self._extract_function_call(clean, "DIVIDE"):
+            div_sql = self._translate_divide(full_call, metrics, table_alias)
+            if div_sql:
+                clean = clean.replace(full_call, f"({div_sql})")
+
+        # 5. Try measure reference resolution on arithmetic chains / nested expressions
+        res = self._translate_measure_reference(clean, metrics, table_alias)
+        
+        # 6. Resolve remaining columns
+        def table_col_repl(match):
+            tbl = match.group(1).strip()
+            col = match.group(2).strip()
+            san_tbl = sanitize_column(tbl, force_uppercase=True)
+            return f'{san_tbl}."{col}"'
+            
+        res = re.sub(r"'?([\w\s/]+)'?\[([^\]]+)\]", table_col_repl, res)
+        
+        def col_repl(match):
+            col = match.group(1).strip()
+            return f'{table_alias}."{col}"'
+            
+        res = re.sub(r"\[([^\]]+)\]", col_repl, res)
+        
+        res = " ".join(res.split())
+        return res
+
+    def _translate_measure_reference(self, ref_name: str, metrics: List[Any], table_alias: str) -> Optional[str]:
+        """
+        Resolve all bracketed measure references in the given expression.
+        If a reference matches a metric name in metrics, it is replaced by its SQL expression.
+        """
+        if not ref_name:
+            return ref_name
+            
+        # If it's a single measure reference like "[Amount]"
+        stripped = ref_name.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            name = stripped[1:-1].strip()
+            resolved = self._resolve_measure_sql(name, metrics, table_alias)
+            if resolved:
+                return resolved
+                
+        # Find all occurrences of [MeasureName]
+        replaced = ref_name
+        
+        # Find all [Measure] pattern matches
+        # Skip table-qualified columns like Table[Column] by checking if there's a word/quote character right before '['
+        pattern = re.compile(r"(?<!['\w])\[([^\]]+)\]")
+        
+        # We need to find matches and replace them
+        matches = pattern.findall(ref_name)
+        for ref in matches:
+            resolved_val = self._resolve_measure_sql(ref, metrics, table_alias)
+            if resolved_val:
+                # Replace [ref] with (resolved_val)
+                token_pattern = re.compile(rf"(?<!['\w])\[{re.escape(ref)}\]")
+                replaced = token_pattern.sub(f"({resolved_val})", replaced)
+                
+        return replaced
+
+    def _resolve_measure_sql(self, name: str, metrics: List[Any], table_alias: str) -> Optional[str]:
+        """
+        Look up a measure by name (case-insensitive) in the metrics list and resolve its SQL.
+        """
+        if not name:
+            return None
+            
+        metrics = metrics or []
+        logger.debug(
+            f"Resolving measure '{name}' "
+            f"against {len(metrics)} metrics"
+        )
+            
+        metric_map = {m.unique_name.casefold(): m for m in metrics if getattr(m, "unique_name", None)}
+        metric = metric_map.get(name.casefold())
+        if not metric:
+            return None
+            
+        # If already has SQL expression, return it
+        if getattr(metric, "sql_expression", None):
+            return metric.sql_expression
+        if getattr(metric, "_sql_expression", None):
+            return metric._sql_expression
+            
+        # Otherwise, translate it recursively
+        if getattr(metric, "expression", None):
+            try:
+                resolved = self.translate_expr(metric.expression, metrics, table_alias)
+                if resolved and "[" not in resolved and "]" not in resolved:
+                    if hasattr(metric, "sql_expression"):
+                        try:
+                            metric.sql_expression = resolved
+                        except Exception:
+                            pass
+                    try:
+                        object.__setattr__(metric, "_sql_expression", resolved)
+                    except Exception:
+                        pass
+                    return resolved
+            except Exception as e:
+                logger.warning(f"Error resolving nested measure '{name}': {e}")
+                
+        return None
+
+    def _strip_outer_parens(self, sql: str) -> str:
+        """Strip outer parenthesis from a SQL expression if they are balanced."""
+        if not sql:
+            return sql
+        sql_str = sql.strip()
+        while sql_str.startswith("(") and sql_str.endswith(")"):
+            # Check if these outer parens are actually matching/balanced
+            depth = 0
+            balanced = True
+            for i, ch in enumerate(sql_str[:-1]):
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        # Balanced matched paren closed early, so the outer parens are NOT a matching pair
+                        balanced = False
+                        break
+            if balanced:
+                sql_str = sql_str[1:-1].strip()
+            else:
+                break
+        return sql_str
+
+    def _extract_calculate_components(self, expr: str) -> Tuple[str, List[str]]:
+        """Extract the base expression and filter arguments from a CALCULATE call."""
+        clean = expr.strip()
+        if not (clean.upper().startswith("CALCULATE(") and clean.endswith(")")):
+            return clean, []
+        args_text = clean[len("CALCULATE("):-1]
+        args = self._split_dax_arguments(args_text)
+        if not args:
+            return clean, []
+        base_expr = args[0].strip()
+        filter_exprs = [arg.strip() for arg in args[1:]]
+        return base_expr, filter_exprs
+
+    def _filter_to_sql(self, filter_expr: str) -> Optional[str]:
+        """Convert a DAX filter expression to Snowflake SQL."""
+        clean = filter_expr.strip()
+        
+        # Check for FILTER(...)
+        if clean.upper().startswith("FILTER(") and clean.endswith(")"):
+            args_text = clean[len("FILTER("):-1]
+            args = self._split_dax_arguments(args_text)
+            if len(args) == 2:
+                return self._filter_to_sql(args[1])
+                
+        # Check for ALL(...)
+        if clean.upper().startswith("ALL(") and clean.endswith(")"):
+            return "1=1"
+            
+        # Support string/numeric equality: Table[Column] = Value
+        eq_match = re.match(
+            r"^(?:'(?P<table_quoted>[^']+)'|(?P<table>[A-Za-z0-9_#@ -]+))\[(?P<column>[^\]]+)\]\s*=\s*(?P<value>.+)$",
+            clean,
+            re.IGNORECASE
+        )
+        if eq_match:
+            table_name = eq_match.group("table_quoted") or eq_match.group("table")
+            column_name = eq_match.group("column")
+            value_text = eq_match.group("value").strip()
+            
+            san_tbl = sanitize_column(table_name, force_uppercase=True)
+            san_col = sanitize_column(column_name, force_uppercase=True)
+            
+            if re.fullmatch(r'"(?:[^"\\]|\\.)*"', value_text):
+                literal = "'" + value_text[1:-1].replace("'", "''") + "'"
+            elif re.fullmatch(r"'(?:[^'\\]|\\.)*'", value_text):
+                literal = value_text
+            elif re.fullmatch(r"-?\d+(?:\.\d+)?", value_text):
+                literal = value_text
+            else:
+                literal = f"'{value_text.strip()}'"
+                
+            return f"{san_tbl}.{san_col} = {literal}"
+            
+        return None
+
+    def _translate_calculate(self, expr: str, metrics: List[Any], table_alias: str) -> Optional[str]:
+        clean = expr.strip()
+        if not (clean.upper().startswith("CALCULATE(") and clean.endswith(")")):
+            return None
+            
+        base_expr, filter_exprs = self._extract_calculate_components(clean)
+        
+        # Translate the base measure
+        translated_base = None
+        if base_expr.startswith("[") and base_expr.endswith("]"):
+            translated_base = self._translate_measure_reference(base_expr, metrics, table_alias)
+        if not translated_base:
+            translated_base = self.translate_expr(base_expr, metrics, table_alias)
+            
+        if not translated_base:
+            return None
+            
+        # Parse filter conditions
+        conditions = []
+        for filter_expr in filter_exprs:
+            if any(keyword in filter_expr.upper() for keyword in ["USERELATIONSHIP", "CROSSFILTER", "ALLSELECTED", "REMOVEFILTERS"]):
+                logger.warning(f"CALCULATE filter contains unsupported construct: {filter_expr}")
+                continue
+                
+            cond_sql = self._filter_to_sql(filter_expr)
+            if cond_sql:
+                conditions.append(cond_sql)
+                
+        if not conditions:
+            return translated_base
+            
+        condition_sql = " AND ".join(conditions)
+        
+        # Wrap the translated base with the CASE WHEN clause
+        stripped_base = self._strip_outer_parens(translated_base)
+        return f"CASE WHEN {condition_sql} THEN {stripped_base} ELSE NULL END"
+
+    def _translate_divide(self, expr: str, metrics: List[Any], table_alias: str) -> Optional[str]:
+        clean = expr.strip()
+        if not (clean.upper().startswith("DIVIDE(") and clean.endswith(")")):
+            return None
+            
+        args_text = clean[len("DIVIDE("):-1]
+        args = self._split_dax_arguments(args_text)
+        if len(args) < 2:
+            return None
+            
+        num = self.translate_expr(args[0].strip(), metrics, table_alias)
+        den = self.translate_expr(args[1].strip(), metrics, table_alias)
+        
+        alt = "NULL"
+        if len(args) >= 3:
+            alt_raw = args[2].strip()
+            if alt_raw.upper() == "BLANK()":
+                alt = "NULL"
+            else:
+                alt = alt_raw
+                
+        return f"CASE WHEN {den} = 0 OR {den} IS NULL THEN {alt} ELSE {num} / {den} END"
+
+    def _extract_function_call(self, text: str, func_name: str) -> List[Tuple[str, str]]:
+        results = []
+        pattern = re.compile(rf"\b{re.escape(func_name)}\s*\(", re.IGNORECASE)
+        for match in pattern.finditer(text):
+            start_idx = match.start()
+            depth = 1
+            idx = match.end()
+            while idx < len(text) and depth > 0:
+                if text[idx] == "(":
+                    depth += 1
+                elif text[idx] == ")":
+                    depth -= 1
+                idx += 1
+            if depth == 0:
+                full_call = text[start_idx:idx]
+                args_text = text[match.end():idx-1]
+                results.append((full_call, args_text))
+        return results
+
+    def translate_measure(self, dax: str, measure_name: str, context: dict) -> dict:
+        """
+        Structured translation API for a single measure.
+        
+        Args:
+            dax: Original DAX expression string.
+            measure_name: Name of the measure.
+            context: Translation context dict containing keys:
+                     - 'table_alias': str
+                     - 'dataset_name': str
+                     - 'metrics_context': List[Any] (optional)
+                     
+        Returns:
+            dict with structured success/error information.
+        """
+        if not dax or not dax.strip():
+            return {
+                "success": False,
+                "sql": None,
+                "error": "Empty DAX expression",
+                "tier": "4"
+            }
+            
+        table_alias = context.get("table_alias") or "FACT"
+        dataset_name = context.get("dataset_name") or "Fact"
+        metrics_context = context.get("metrics_context") or []
+        
+        try:
+            res = self.translate(
+                dax=dax,
+                table_alias=table_alias,
+                dataset_name=dataset_name,
+                metric_name=measure_name,
+                metrics_context=metrics_context
+            )
+            
+            if res.is_success and res.sql and res.sql.strip():
+                # Perform basic validation: must not contain un-substituted bracket references or DAX keywords
+                dax_funcs = ["SUMX(", "FILTER(", "CALCULATE(", "DIVIDE(", "AVERAGEX(", "MAXX(", "MINX("]
+                if any(func in res.sql.upper() for func in dax_funcs):
+                    return {
+                        "success": False,
+                        "sql": None,
+                        "error": f"Translation output contains unsupported DAX functions: {res.sql}",
+                        "tier": str(res.tier)
+                    }
+                if "[" in res.sql or "]" in res.sql:
+                    return {
+                        "success": False,
+                        "sql": None,
+                        "error": f"Translation output contains unresolved references: {res.sql}",
+                        "tier": str(res.tier)
+                    }
+                # Must not just return the original DAX
+                if res.sql.strip() == dax.strip() and len(dax.strip()) > 10:
+                    return {
+                        "success": False,
+                        "sql": None,
+                        "error": "Translation fell back to original DAX expression",
+                        "tier": str(res.tier)
+                    }
+                return {
+                    "success": True,
+                    "sql": res.sql,
+                    "error": None,
+                    "tier": str(res.tier)
+                }
+            else:
+                return {
+                    "success": False,
+                    "sql": None,
+                    "error": f"Failed to translate DAX expression: tier logic exhausted (tier {res.tier})",
+                    "tier": str(res.tier)
+                }
+        except Exception as e:
+            logger.warning(f"Exception during translate_measure for '{measure_name}': {e}")
+            return {
+                "success": False,
+                "sql": None,
+                "error": f"Exception during translation: {str(e)}",
+                "tier": "4"
+            }

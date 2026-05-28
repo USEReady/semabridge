@@ -735,23 +735,23 @@ class SyncOrchestrator:
         """
         Extract a Fabric semantic model definition and convert to OSI.
 
-        Uses ``FabricExtractor.get_model_definition()`` (TMSL JSON) and
-        pipes it through the existing ``TMSLToOSIConverter``.
+        Uses ``FabricExtractor.get_model_definition()`` (TMDL files) and
+        pipes it through the new ``TMDLToOSIConverter``.
         """
         from semabridge.connectors.fabric_extractor import FabricExtractor
-        from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
+        from semabridge.converter.tmdl_to_osi import TMDLToOSIConverter
         from semabridge.core.settings import get_settings
 
         settings = get_settings()
         extractor = FabricExtractor(settings.fabric)
         # item.source_path holds the Fabric dataset GUID
         dataset_id: str = item.source_path or item.model_name
-        tmsl_data = extractor.get_model_definition(dataset_id)
+        tmdl_data = extractor.get_model_definition(dataset_id)
 
-        converter = TMSLToOSIConverter()
+        converter = TMDLToOSIConverter()
         osi_model = converter.to_osi(
             {
-                "tmsl": tmsl_data,
+                "tmdl_files": tmdl_data,
                 "workspace_id": settings.fabric.workspace_id,
                 "dataset_id": item.model_name,
             }

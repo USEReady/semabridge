@@ -344,6 +344,8 @@ class SMLRelationship(BaseModel):
     cardinality: Cardinality = Field(default=Cardinality.MANY_TO_ONE, description="Relationship cardinality")
     cross_filter: CrossFilterDirection = Field(default=CrossFilterDirection.SINGLE, description="Cross-filter direction")
     is_active: bool = Field(default=True, description="Whether relationship is active")
+    relationship_id: Optional[str] = Field(default=None, description="Optional relationship ID")
+    join_on_date_behavior: Optional[str] = Field(default=None, description="Optional join on date behavior")
     
     @property
     def from_column(self) -> str:

@@ -324,6 +324,125 @@ class SnowflakeEmitter(BaseEmitter):
         if getattr(self.sf_behavior, "generate_audit_yaml", False):
             logger.debug("generate_audit_yaml flagged but renderer not yet implemented; skipping.")
 
+    def deploy_relationships(self, model: Any) -> None:
+        """Deploy native TMDL relationships to Snowflake: metadata registry, FKs, and views."""
+        relationships = getattr(model, "relationships", []) or []
+        if not relationships:
+            logger.info("No relationships to deploy")
+            return
+
+        logger.info(f"Deploying {len(relationships)} relationships to Snowflake")
+
+        conn, owns_conn = self.connection_manager.get_connection()
+        try:
+            cur = conn.cursor()
+            
+            # Create the registry table idempotently
+            registry_table = f'"{self.config.database}"."{self.config.schema_name}"."_RELATIONSHIP_REGISTRY"'
+            create_table_sql = f"""
+            CREATE TABLE IF NOT EXISTS {registry_table} (
+                relationship_id VARCHAR,
+                from_table VARCHAR,
+                from_column VARCHAR,
+                to_table VARCHAR,
+                to_column VARCHAR,
+                cardinality VARCHAR,
+                cross_filtering VARCHAR,
+                is_active BOOLEAN,
+                join_on_date_behavior VARCHAR,
+                deployed_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+            )
+            """
+            cur.execute(create_table_sql)
+
+            deployed_count = 0
+            for rel in relationships:
+                from_col = rel.from_columns[0] if rel.from_columns else ""
+                to_col = rel.to_columns[0] if rel.to_columns else ""
+                
+                # Format exactly as: Fact.Date → Date.Date
+                logger.info(f"{rel.from_dataset}.{from_col} → {rel.to_dataset}.{to_col}")
+
+                try:
+                    rel_id = getattr(rel, "relationship_id", None) or rel.unique_name
+                    
+                    # A. Register Semantic Metadata (Idempotent DELETE + INSERT)
+                    delete_sql = f"DELETE FROM {registry_table} WHERE relationship_id = %s"
+                    cur.execute(delete_sql, (rel_id,))
+                    
+                    insert_sql = f"""
+                    INSERT INTO {registry_table} (
+                        relationship_id, from_table, from_column, to_table, to_column,
+                        cardinality, cross_filtering, is_active, join_on_date_behavior
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """
+                    card_val = getattr(rel.cardinality, "value", str(rel.cardinality))
+                    filter_val = getattr(rel, "cross_filtering", None) or getattr(rel, "cross_filter_direction", None)
+                    filter_val = getattr(filter_val, "value", str(filter_val))
+                    join_on_date = getattr(rel, "join_on_date_behavior", None)
+
+                    cur.execute(insert_sql, (
+                        rel_id,
+                        rel.from_dataset,
+                        from_col,
+                        rel.to_dataset,
+                        to_col,
+                        card_val,
+                        filter_val,
+                        rel.is_active,
+                        join_on_date
+                    ))
+                    
+                    # B. Deploy Foreign Keys (Informational RELY constraint, failures must NOT fail sync)
+                    try:
+                        san_from_table = f'"{self.config.database}"."{self.config.schema_name}"."{self._id.sanitize_table_name(rel.from_dataset)}"'
+                        san_to_table = f'"{self.config.database}"."{self.config.schema_name}"."{self._id.sanitize_table_name(rel.to_dataset)}"'
+                        san_from_col = f'"{self._id.sanitize_column(from_col)}"'
+                        san_to_col = f'"{self._id.sanitize_column(to_col)}"'
+                        san_constraint_name = f'"{self._id.sanitize_alias(rel_id)}"'
+                        
+                        try:
+                            drop_fk = f"ALTER TABLE {san_from_table} DROP CONSTRAINT IF EXISTS {san_constraint_name}"
+                            cur.execute(drop_fk)
+                        except Exception:
+                            pass
+                            
+                        add_fk = f"""
+                        ALTER TABLE {san_from_table} 
+                        ADD CONSTRAINT {san_constraint_name} 
+                        FOREIGN KEY ({san_from_col}) 
+                        REFERENCES {san_to_table} ({san_to_col}) 
+                        RELY
+                        """
+                        cur.execute(add_fk)
+                    except Exception as fk_err:
+                        logger.debug(f"Non-fatal FK constraint deployment failed for {rel_id}: {fk_err}")
+
+                    # C. Create Relationship Helper Views (v_rel_<relationship_id>)
+                    try:
+                        san_view_name = f'"{self.config.database}"."{self.config.schema_name}"."V_REL_{self._id.sanitize_alias(rel_id)}"'
+                        create_view_sql = f"""
+                        CREATE OR REPLACE VIEW {san_view_name} AS
+                        SELECT f.*, t.*
+                        FROM {san_from_table} f
+                        LEFT JOIN {san_to_table} t ON f.{san_from_col} = t.{san_to_col}
+                        """
+                        cur.execute(create_view_sql)
+                    except Exception as view_err:
+                        logger.debug(f"Non-fatal view creation failed for {rel_id}: {view_err}")
+
+                    deployed_count += 1
+                except Exception as rel_err:
+                    logger.warning(f"Failed to deploy relationship {rel.unique_name}: {rel_err}")
+
+            conn.commit()
+            logger.info(f"Deployed {deployed_count}/{len(relationships)} relationships")
+        except Exception as e:
+            logger.warning(f"Relationship deployment failed: {e}")
+        finally:
+            if owns_conn:
+                conn.close()
+
     # =========================================================================
     # BASE EMITTER INTERFACE (Abstract Method Implementations)
     # =========================================================================
@@ -356,6 +475,10 @@ class SnowflakeEmitter(BaseEmitter):
 
     def generate_ddls(self, sml: SMLModel) -> list[str]:
         return self.semantic_view_builder.generate_ddls(sml)
+
+    def build_semantic_view_with_metrics(self, sml: SMLModel) -> str:
+        """Generate the complete semantic view DDL with METRICS clause included."""
+        return self.semantic_view_builder.build_semantic_view_with_metrics(sml)
 
     def generate_ddls_from_osi(self, osi: OSIModel) -> list[str]:
         return self.semantic_view_builder.generate_ddls_from_osi(osi)
@@ -970,8 +1093,8 @@ class SnowflakeEmitter(BaseEmitter):
             
             # Check if this is a CREATE TABLE statement
             if ddl_upper.startswith('CREATE TABLE') or 'CREATE OR REPLACE TABLE' in ddl_upper:
-                # Extract the table name from the DDL using regex (handles quoted identifiers)
-                match = re.search(r'(?:CREATE\s+(?:OR\s+REPLACE\s+)?TABLE)\s+(?:[^.\s]+\.)?["\']?([^"\'\s]+)["\']?', ddl, re.IGNORECASE)
+                # Extract the table name from the DDL using regex (handles quoted identifiers and IF NOT EXISTS)
+                match = re.search(r'(?:CREATE\s+(?:OR\s+REPLACE\s+)?TABLE(?:\s+IF\s+NOT\s+EXISTS)?)\s+(?:[^.\s]+\.)*["\']?([^"\'\s]+)["\']?', ddl, re.IGNORECASE)
                 ddl_table_name = match.group(1).upper() if match else None
                 
                 skip = False

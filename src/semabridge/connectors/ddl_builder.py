@@ -156,6 +156,10 @@ class SemanticViewBuilder:
 
         return [*all_ddls, semantic_ddl]
 
+    def build_semantic_view_with_metrics(self, sml: SMLModel) -> str:
+        """Generate the complete semantic view DDL with METRICS clause included."""
+        return self.sanitizer.sanitize_structure(self._generate_semantic_view(sml))
+
     def generate_ddls_from_osi(self, osi: OSIModel) -> list[str]:
         if not osi.datasets:
             return []

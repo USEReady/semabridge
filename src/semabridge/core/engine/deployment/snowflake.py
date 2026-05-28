@@ -116,6 +116,13 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
 
     # DDL path
     if deployment_method in ("ddl", "both"):
+        if context.sml_model:
+            self._deploy_measures(context, sf_cfg)
+            logger.info(f"Deploying {len(context.sml_model.datasets)} user tables")
+            translated_count = sum(1 for m in context.sml_model.metrics if m.sql_expression)
+            logger.info(f"Translated {translated_count}/{len(context.sml_model.metrics)} measures")
+            logger.info(f"Deploying {len(context.sml_model.relationships)} relationships")
+
         deployed = emitter.deploy(
             context.sml_model,
             sync_mode=getattr(context, "sync_mode", "copy"),
@@ -138,6 +145,15 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
 
             raise DeploymentError(
                 f"Snowflake DDL deployment returned unsuccessful status: {error_msg}"
+            )
+        if context.sml_model:
+            emitter.deploy_relationships(context.sml_model)
+            view_name_upper = str(context.sml_model.unique_name).upper()
+            logger.info(f"Created semantic view {view_name_upper} with {len(context.sml_model.metrics)} metrics")
+            logger.info(
+                f"✅ Sync complete: {len(context.sml_model.datasets)} tables, "
+                f"{len(context.sml_model.relationships)} relationships, "
+                f"{translated_count} measures deployed"
             )
         self._export_inferred_osi_artifacts(context)
 
@@ -214,17 +230,8 @@ def _should_sync_measures(self, context: RunContext) -> bool:
     """
     Determine if measure sync should be performed.
 
-    Checks configuration and model for syncable measures.
+    For native TMDL and semantic deployments, we bypass data pre-computation and execution.
     """
-    # Check if any measures need sync (those that couldn't be translated)
-    if not context.sml_model:
-        return False
-
-    # Check for measures that are sync-enabled but lack SQL expression
-    for metric in context.sml_model.metrics:
-        if metric.sync_enabled and not metric.sql_expression:
-            return True
-
     return False
 
 def _sync_fabric_measures(self, context: RunContext, emitter) -> None:
@@ -299,3 +306,112 @@ def _sync_fabric_measures(self, context: RunContext, emitter) -> None:
         logger.error(f"Measure sync failed: {e}")
         # Don't fail the deployment, just log warning
         logger.warning("Continuing despite measure sync failure")
+
+def _deploy_measures(self, context: RunContext, sf_cfg) -> None:
+    """Translate and filter measures, only keeping successfully translated ones."""
+    if not context.sml_model or not context.sml_model.metrics:
+        return
+
+    from semabridge.converter.dax_translator import DAXTranslator
+    from semabridge.utils.naming import to_alias
+    from datetime import datetime
+
+    translator = DAXTranslator()
+    successful_metrics = []
+    failed_measures = []
+
+    # First, let's run the topological dependency resolution using translate_with_dependencies
+    # to build the cache and try solving nested references.
+    try:
+        from semabridge.utils.naming import to_alias
+        safe_alias = to_alias(context.sml_model.metrics[0].dataset) if context.sml_model.metrics else "FACT"
+        dataset_name = context.sml_model.metrics[0].dataset if context.sml_model.metrics else "Fact"
+        # We trigger dependency translation
+        translator.translate_with_dependencies(context.sml_model.metrics, safe_alias, dataset_name)
+    except Exception as exc:
+        logger.warning(f"Dependency-aware pre-translation skipped or encountered issue: {exc}")
+
+    for metric in context.sml_model.metrics:
+        if not metric.expression or not metric.expression.strip():
+            # Standard metric aggregation without complex DAX expression (direct column agg)
+            successful_metrics.append(metric)
+            continue
+
+        # DAX Expression path - execute structured translation API
+        safe_alias = to_alias(metric.dataset) if metric.dataset else "FACT"
+        translation_ctx = {
+            "table_alias": safe_alias,
+            "dataset_name": metric.dataset or "Fact",
+            "metrics_context": context.sml_model.metrics
+        }
+
+        res = translator.translate_measure(metric.expression, metric.unique_name, translation_ctx)
+        if res["success"] and res["sql"]:
+            metric.sql_expression = res["sql"]
+            metric.sync_enabled = True
+            metric.complexity_tier = int(res.get("tier") or 2)
+            successful_metrics.append(metric)
+            logger.info(f"Translated {metric.unique_name} successfully")
+        else:
+            err_msg = res.get("error") or "Unknown translation failure"
+            failed_measures.append({
+                "measure_name": metric.unique_name,
+                "dax_expression": metric.expression,
+                "error_message": err_msg,
+                "captured_at": datetime.utcnow().isoformat()
+            })
+            logger.warning(f"Translation failed for {metric.unique_name}: {err_msg}")
+
+    # Check Abort Condition
+    if not successful_metrics:
+        raise DeploymentError("No measures successfully translated")
+
+    # Override SML metrics with only successfully translated ones
+    context.sml_model.metrics = successful_metrics
+
+    # Store diagnostics for failed measures
+    if failed_measures:
+        self._store_failed_measures(failed_measures, sf_cfg)
+
+def _store_failed_measures(self, failed_measures: list[dict], sf_cfg) -> None:
+    """Store failed measure diagnostics in _FAILED_MEASURES table in Snowflake."""
+    from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+    emitter = SnowflakeEmitter(sf_cfg)
+    conn, owns_conn = emitter.connection_manager.get_connection()
+    try:
+        cur = conn.cursor()
+        
+        db = sf_cfg.database
+        schema = sf_cfg.schema_name
+        
+        # Create diagnostics table
+        create_sql = f"""
+        CREATE TABLE IF NOT EXISTS "{db}"."{schema}"."_FAILED_MEASURES" (
+            "measure_name" VARCHAR,
+            "dax_expression" VARCHAR,
+            "error_message" VARCHAR,
+            "captured_at" VARCHAR
+        );
+        """
+        cur.execute(create_sql)
+        
+        # Insert each failed measure diagnostics entry
+        insert_sql = f"""
+        INSERT INTO "{db}"."{schema}"."_FAILED_MEASURES" 
+        ("measure_name", "dax_expression", "error_message", "captured_at")
+        VALUES (%s, %s, %s, %s);
+        """
+        for fm in failed_measures:
+            cur.execute(insert_sql, (
+                fm["measure_name"],
+                fm["dax_expression"],
+                fm["error_message"],
+                fm["captured_at"]
+            ))
+            
+        logger.info(f"Stored {len(failed_measures)} failed measures in _FAILED_MEASURES")
+    except Exception as exc:
+        logger.warning(f"Failed to persist translation diagnostics to _FAILED_MEASURES: {exc}")
+    finally:
+        if owns_conn:
+            conn.close()

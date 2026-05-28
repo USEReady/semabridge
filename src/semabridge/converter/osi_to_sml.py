@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from semabridge.core.interfaces import BaseConverter
 from semabridge.core.exceptions import ConversionError
+from semabridge.core.engine.exceptions import SemanticValidationError
 from semabridge.intermediate.models import (
     OSIModel,
     OSIDataset,
@@ -91,6 +92,38 @@ class OSIToSMLConverter(BaseConverter):
             SMLModel object
         """
         try:
+            # Runtime Diagnostics
+            logger.debug(
+                "OSI model state - "
+                f"metrics={type(osi_model.metrics)} "
+                f"tables={type(osi_model.tables)} "
+                f"relationships={type(osi_model.relationships)}"
+            )
+            
+            if osi_model.metrics is None:
+                logger.error("OSI model metrics is None (expected empty list at minimum)")
+            if osi_model.datasets is None:
+                logger.error("OSI model datasets is None (expected empty list at minimum)")
+            if osi_model.relationships is None:
+                logger.error("OSI model relationships is None (expected empty list at minimum)")
+            if osi_model.dimensions is None:
+                logger.error("OSI model dimensions is None (expected empty list at minimum)")
+
+            # Validate the OSI model using our semantic validation guard
+            self._validate_osi_model(osi_model)
+
+            # Conversion Summary Logging
+            metric_count = len(osi_model.metrics) if osi_model.metrics else 0
+            table_count = len(osi_model.datasets) if osi_model.datasets else 0
+            relationship_count = len(osi_model.relationships) if osi_model.relationships else 0
+            
+            logger.info(
+                f"Converting OSI to SML with:\n"
+                f"- {metric_count} metrics\n"
+                f"- {table_count} tables\n"
+                f"- {relationship_count} relationships"
+            )
+
             sml = SMLModel(
                 unique_name=osi_model.unique_name,
                 label=osi_model.label,
@@ -101,18 +134,18 @@ class OSIToSMLConverter(BaseConverter):
             )
 
             # 1. Convert Datasets
-            for osi_ds in osi_model.datasets:
+            for osi_ds in (osi_model.datasets or []):
                 sml.datasets.append(self._convert_dataset(osi_ds))
 
             # 2. Convert Dimensions
-            for osi_dim in osi_model.dimensions:
+            for osi_dim in (osi_model.dimensions or []):
                 sml.dimensions.append(self._convert_dimension(osi_dim))
 
             # 3. Convert Metrics with automated translation pipeline
             # Step 3a: Convert all metrics individually for Tier 1-4 translations
             
-            for osi_metric in osi_model.metrics:
-                sml_metric = self._convert_metric(osi_metric)
+            for osi_metric in (osi_model.metrics or []):
+                sml_metric = self._convert_metric(osi_metric, osi_model.metrics)
                 sml.metrics.append(sml_metric)
 
             # Step 3b: Resolve inter-measure dependencies now that all metrics are loaded.
@@ -149,7 +182,7 @@ class OSIToSMLConverter(BaseConverter):
                             logger.debug(f"✓ Applied batch translation for '{metric.unique_name}'")
 
             # 4. Convert Relationships
-            for osi_rel in osi_model.relationships:
+            for osi_rel in (osi_model.relationships or []):
                 sml_rel = self._convert_relationship(osi_rel)
                 if sml_rel:
                     sml.relationships.append(sml_rel)
@@ -164,8 +197,10 @@ class OSIToSMLConverter(BaseConverter):
 
             return sml
 
+        except SemanticValidationError:
+            raise
         except Exception as e:
-            logger.error(f"OSI to SML conversion failed: {e}")
+            logger.exception("OSI to SML conversion failed with full traceback")
             raise ConversionError(
                 f"Failed to convert OSI to SML: {e}",
                 source_format="osi",
@@ -227,7 +262,7 @@ class OSIToSMLConverter(BaseConverter):
             is_hidden=osi_dim.is_hidden
         )
 
-    def _convert_metric(self, osi_metric: OSIMetric) -> SMLMetric:
+    def _convert_metric(self, osi_metric: OSIMetric, metrics_context: List[OSIMetric] = None) -> SMLMetric:
         # DAX Translation Logic
         expression = osi_metric.expression or ""
 
@@ -259,11 +294,19 @@ class OSIToSMLConverter(BaseConverter):
         if expression:
             from semabridge.utils.naming import to_alias
             safe_alias = to_alias(osi_metric.dataset)
+            
+            logger.debug(
+                f"Translating metric '{osi_metric.unique_name}' "
+                f"with metrics_context="
+                f"{len(metrics_context or [])} metrics"
+            )
+            
             translation = self.dax_translator.translate(
                 expression,
                 safe_alias,
                 osi_metric.dataset,
-                metric_name=metric.unique_name
+                metric_name=metric.unique_name,
+                metrics_context=metrics_context
             )
             
             if translation.is_success:
@@ -280,43 +323,14 @@ class OSIToSMLConverter(BaseConverter):
         return metric
 
     def _resolve_metric_dependencies(self, sml: SMLModel, max_passes: int = 3) -> None:
-        """Resolve unresolved metrics using full metric context in deterministic passes.
-
-        This performs lightweight topological convergence: each pass can unlock
-        downstream expressions once upstream measures receive SQL.
-        """
+        """Resolve unresolved metrics using full metric context in topological dependency order."""
         if not sml.metrics:
             return
 
-        for pass_idx in range(max_passes):
-            resolved_this_pass = 0
-            for metric in sml.metrics:
-                if metric.sql_expression or not (metric.expression or "").strip():
-                    continue
-
-                safe_alias = to_alias(metric.dataset)
-                translation = self.dax_translator.translate(
-                    metric.expression,
-                    safe_alias,
-                    metric.dataset,
-                    metric_name=metric.unique_name,
-                    metrics_context=sml.metrics,
-                )
-                if translation.is_success and translation.sql:
-                    metric.sql_expression = translation.sql
-                    metric.complexity_tier = translation.tier
-                    metric.sync_enabled = True
-                    metric.sync_failure_reason = None
-                    resolved_this_pass += 1
-
-            if resolved_this_pass == 0:
-                break
-
-            logger.info(
-                "OSI->SML dependency resolution pass %d resolved %d metrics",
-                pass_idx + 1,
-                resolved_this_pass,
-            )
+        from semabridge.utils.naming import to_alias
+        safe_alias = to_alias(sml.metrics[0].dataset) if sml.metrics else "FACT"
+        dataset_name = sml.metrics[0].dataset if sml.metrics else "Fact"
+        self.dax_translator.translate_with_dependencies(sml.metrics, safe_alias, dataset_name)
 
     def _convert_relationship(self, osi_rel: OSIRelationship) -> Optional[SMLRelationship]:
         try:
@@ -331,7 +345,9 @@ class OSIToSMLConverter(BaseConverter):
                  to_columns=osi_rel.to_columns,
                  cardinality=sml_card,
                  cross_filter=sml_cf,
-                 is_active=osi_rel.is_active
+                 is_active=osi_rel.is_active,
+                 relationship_id=osi_rel.relationship_id,
+                 join_on_date_behavior=osi_rel.join_on_date_behavior,
              )
         except Exception as e:
             logger.warning(f"Failed to convert relationship {osi_rel.unique_name}: {e}")
@@ -452,3 +468,39 @@ class OSIToSMLConverter(BaseConverter):
 
         if added:
             logger.info("Auto-detected %d simple metrics because OSI contained no explicit measures", added)
+
+    def _validate_osi_model(self, osi_model: OSIModel) -> None:
+        """Perform semantic validation before conversion, raising explicit SemanticValidationError if invalid."""
+        if osi_model.metrics is None:
+            raise SemanticValidationError("OSI model metrics collection is None")
+        if osi_model.datasets is None:
+            raise SemanticValidationError("OSI model datasets collection is None")
+        if osi_model.relationships is None:
+            raise SemanticValidationError("OSI model relationships collection is None")
+        if osi_model.dimensions is None:
+            raise SemanticValidationError("OSI model dimensions collection is None")
+            
+        # Check for iterability
+        try:
+            iter(osi_model.metrics)
+        except TypeError:
+            raise SemanticValidationError("OSI model metrics is not iterable")
+            
+        try:
+            iter(osi_model.datasets)
+        except TypeError:
+            raise SemanticValidationError("OSI model datasets is not iterable")
+            
+        try:
+            iter(osi_model.relationships)
+        except TypeError:
+            raise SemanticValidationError("OSI model relationships is not iterable")
+            
+        try:
+            iter(osi_model.dimensions)
+        except TypeError:
+            raise SemanticValidationError("OSI model dimensions is not iterable")
+            
+        # Validate exact architectural boundaries defined in the PRD
+        if len(osi_model.datasets) > 75:
+            raise SemanticValidationError(f"OSI model datasets collection exceeds limit of 75 (has {len(osi_model.datasets)})")

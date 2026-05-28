@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import time
 import pytest
 
 from semabridge.connectors.fabric_extractor import FabricExtractionError, FabricExtractor
@@ -99,7 +101,7 @@ def test_poll_operation_falls_back_from_regional_operation_url(monkeypatch):
     extractor = _extractor()
     calls: list[str] = []
 
-    model_payload = base64_model_payload({"model": {"name": "Fallback Model", "tables": []}})
+    tmdl_part = base64_tmdl_payload("model 'Fallback Model'")
 
     def fake_request(method: str, url: str, **kwargs):
         del method, kwargs
@@ -109,7 +111,7 @@ def test_poll_operation_falls_back_from_regional_operation_url(monkeypatch):
 
             raise requests.ConnectTimeout("regional operation endpoint timed out")
         if url.endswith("/result"):
-            return _FakeResponse(200, {"definition": {"parts": [model_payload]}})
+            return _FakeResponse(200, {"definition": {"parts": [tmdl_part]}})
         return _FakeResponse(200, {"status": "Succeeded"})
 
     monkeypatch.setattr("semabridge.connectors.fabric_extractor.requests.request", fake_request)
@@ -120,7 +122,9 @@ def test_poll_operation_falls_back_from_regional_operation_url(monkeypatch):
         1,
     )
 
-    assert result["model"]["name"] == "Fallback Model"
+    assert "definition" in result
+    parts = result["definition"]["parts"]
+    assert parts[0]["path"] == "definition/model.tmdl"
     assert calls[0].startswith("https://wabi-india-central")
     assert "https://api.fabric.microsoft.com/v1/operations/op-3" in calls
 
@@ -128,7 +132,7 @@ def test_poll_operation_falls_back_from_regional_operation_url(monkeypatch):
 def test_get_model_definition_retries_transient_initiate_timeout(monkeypatch):
     extractor = _extractor()
     calls: list[str] = []
-    model_payload = base64_model_payload({"model": {"name": "Retry Model", "tables": []}})
+    tmdl_part = base64_tmdl_payload("model 'Retry Model'")
 
     monkeypatch.setattr(extractor, "resolve_workspace_id", lambda workspace_id: workspace_id)
     monkeypatch.setattr(extractor, "resolve_model_id", lambda dataset_id: dataset_id)
@@ -141,13 +145,14 @@ def test_get_model_definition_retries_transient_initiate_timeout(monkeypatch):
             import requests
 
             raise requests.ConnectTimeout("api.fabric.microsoft.com timed out")
-        return _FakeResponse(200, {"definition": {"parts": [model_payload]}})
+        return _FakeResponse(200, {"definition": {"parts": [tmdl_part]}})
 
     monkeypatch.setattr("semabridge.connectors.fabric_extractor.requests.request", fake_request)
 
     result = extractor.get_model_definition("model-1")
 
-    assert result["model"]["name"] == "Retry Model"
+    assert "definition/model.tmdl" in result
+    assert result["definition/model.tmdl"] == "model 'Retry Model'"
     assert len(calls) == 3
     assert all(call.startswith("POST ") for call in calls)
 
@@ -180,13 +185,12 @@ def test_list_semantic_models_retries_transient_timeout(monkeypatch):
     assert all(call.startswith("GET ") for call in calls)
 
 
-def base64_model_payload(payload: dict) -> dict:
+def base64_tmdl_payload(content: str) -> dict:
     import base64
-    import json
 
-    encoded = base64.b64encode(json.dumps(payload).encode()).decode()
+    encoded = base64.b64encode(content.encode("utf-8")).decode()
     return {
-        "path": "model.bim",
+        "path": "definition/model.tmdl",
         "payload": encoded,
         "payloadType": "InlineBase64",
     }

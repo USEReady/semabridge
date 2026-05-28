@@ -66,7 +66,7 @@ def test_fabric_model_name_propagated_to_osi():
 
 def test_fabric_model_name_fallback_without_display_name():
     """
-    Without display_name in source_data, the converter falls back to model_obj['name'].
+    Without display_name in source_data, the converter falls back to dataset_id.
     This test documents the existing fallback behaviour.
     """
     from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
@@ -76,19 +76,19 @@ def test_fabric_model_name_fallback_without_display_name():
         "tmsl": tmsl,
         "workspace_id": "ws-1",
         "dataset_id": "abc-123",
-        # No display_name — relies on model_obj["name"]
+        # No display_name — relies on dataset_id
     }
 
     osi = TMSLToOSIConverter().to_osi(source_data)
 
-    # model_obj["name"] = "continent" so this still works
-    assert osi.unique_name == "continent"
+    # dataset_id = "abc-123" so it is used
+    assert osi.unique_name == "abc-123"
 
 
 def test_fabric_model_name_fallback_when_tmsl_name_empty():
     """
     When TMSL model.name is empty AND display_name is absent, the fallback
-    'FabricModel' is used. The fix ensures display_name is always passed so
+    dataset_id 'abc-123' is used. The fix ensures display_name is always passed so
     this fallback is never reached in the normal pipeline.
     """
     from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
@@ -100,8 +100,8 @@ def test_fabric_model_name_fallback_when_tmsl_name_empty():
         "dataset_id": "abc-123",
     }
     osi_bad = TMSLToOSIConverter().to_osi(source_data_without_display)
-    assert osi_bad.unique_name == "FabricModel", (
-        "Without display_name and with empty TMSL name, fallback should be 'FabricModel'"
+    assert osi_bad.unique_name == "abc-123", (
+        "Without display_name and with empty TMSL name, fallback should be dataset_id 'abc-123'"
     )
 
     # With the fix: display_name from sf.dataset_name is passed explicitly

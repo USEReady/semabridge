@@ -863,16 +863,16 @@ def sync_measures(
         
         # Convert to SML (via OSI) to get measure metadata
         console.print("\n[bold cyan]Step 2/3: Analyzing measures (via OSI)...[/bold cyan]")
-        from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
+        from semabridge.converter.tmdl_to_osi import TMDLToOSIConverter
         from semabridge.converter.osi_to_sml import OSIToSMLConverter
         
-        tmsl_converter = TMSLToOSIConverter()
+        tmdl_converter = TMDLToOSIConverter()
         source_data = {
-            "tmsl": fabric_source,
+            "tmdl_files": fabric_source,
             "workspace_id": settings.fabric.workspace_id,
             "dataset_id": dataset_id
         }
-        osi_model = tmsl_converter.to_osi(source_data)
+        osi_model = tmdl_converter.to_osi(source_data)
         
         osi_sml_converter = OSIToSMLConverter()
         sml_model = osi_sml_converter.from_osi(osi_model)
@@ -1800,14 +1800,25 @@ def _run_fabric_to_snowflake(settings, dataset_id, workspace_id, tag, sync, para
         # Step 2: Transform
         console.print("\n[bold cyan]Step 2/4: Transforming to SML (via OSI)...[/bold cyan]")
         
-        # 2a. TMSL -> OSI
-        tmsl_converter = TMSLToOSIConverter()
-        source_data = {
-            "tmsl": tmsl,
-            "workspace_id": ws_id,
-            "dataset_id": dataset_id
-        }
-        osi_model = tmsl_converter.to_osi(source_data)
+        # 2a. TMDL / TMSL -> OSI
+        is_tmdl = isinstance(tmsl, dict) and ("definition/model.tmdl" in tmsl or any(k.endswith(".tmdl") for k in tmsl.keys()))
+        if is_tmdl:
+            from semabridge.converter.tmdl_to_osi import TMDLToOSIConverter
+            converter = TMDLToOSIConverter()
+            source_data = {
+                "tmdl_files": tmsl,
+                "workspace_id": ws_id,
+                "dataset_id": dataset_id
+            }
+        else:
+            from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
+            converter = TMSLToOSIConverter()
+            source_data = {
+                "tmsl": tmsl,
+                "workspace_id": ws_id,
+                "dataset_id": dataset_id
+            }
+        osi_model = converter.to_osi(source_data)
         console.print(f"  [dim]Converted to OSI ({len(osi_model.metrics)} metrics)[/dim]")
 
         # 2b. OSI -> SML

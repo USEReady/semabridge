@@ -27,3 +27,8 @@ class PersistenceError(Exception):
 class DeploymentError(Exception):
     """Raised when target deployment fails."""
     pass
+
+class SemanticValidationError(Exception):
+    """Raised when canonical intermediate semantic model validation fails."""
+    pass
+

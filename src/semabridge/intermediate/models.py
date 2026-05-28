@@ -101,6 +101,21 @@ class OSICrossFilterDirection(str, Enum):
     BOTH = "both"
 
 
+class RelationshipCardinality(str, Enum):
+    """Normalized relationship cardinality for TMDL parsing."""
+    MANY_TO_ONE = "MANY_TO_ONE"
+    ONE_TO_MANY = "ONE_TO_MANY"
+    ONE_TO_ONE = "ONE_TO_ONE"
+    MANY_TO_MANY = "MANY_TO_MANY"
+
+
+class RelationshipCrossFiltering(str, Enum):
+    """Normalized relationship cross filtering for TMDL parsing."""
+    oneDirection = "oneDirection"
+    bothDirections = "bothDirections"
+    automatic = "automatic"
+
+
 # =============================================================================
 # Base Model with Common Validation
 # =============================================================================
@@ -365,6 +380,34 @@ class OSIRelationship(OSIBaseModel):
         default=OSICrossFilterDirection.SINGLE, description="Cross-filter direction"
     )
     is_active: bool = Field(default=True, description="Active relationship indicator")
+    relationship_id: Optional[str] = Field(default=None, description="Fabric GUID")
+    join_on_date_behavior: Optional[str] = Field(default=None, description="Date join behavior")
+
+    def generate_semantic_join(self, from_alias: str, to_alias: str) -> str:
+        """Generate semantic join definition."""
+        from_col = self.from_columns[0] if self.from_columns else ""
+        to_col = self.to_columns[0] if self.to_columns else ""
+        return f'{from_alias}."{from_col}" = {to_alias}."{to_col}"'
+
+    def generate_sql_join(self, from_alias: str, to_alias: str, join_type: str = "LEFT") -> str:
+        """Generate SQL join clause."""
+        from_col = self.from_columns[0] if self.from_columns else ""
+        to_col = self.to_columns[0] if self.to_columns else ""
+        return f'{join_type} JOIN "{self.to_dataset}" {to_alias} ON {from_alias}."{from_col}" = {to_alias}."{to_col}"'
+
+    def render_metadata(self) -> Dict[str, Any]:
+        """Render relationship metadata for registries or views."""
+        return {
+            "relationship_id": self.relationship_id or self.unique_name,
+            "from_table": self.from_dataset,
+            "from_column": self.from_columns[0] if self.from_columns else "",
+            "to_table": self.to_dataset,
+            "to_column": self.to_columns[0] if self.to_columns else "",
+            "cardinality": self.cardinality.value,
+            "cross_filtering": self.cross_filter_direction.value,
+            "is_active": self.is_active,
+            "join_on_date_behavior": self.join_on_date_behavior,
+        }
 
     @field_validator("unique_name")
     @classmethod
@@ -544,6 +587,21 @@ class OSIModel(OSIBaseModel):
         "extra": "forbid",
     }
 
+    @property
+    def tables(self) -> List[OSIDataset]:
+        """Alias returning the datasets collection for diagnostic/validation parity."""
+        return self.datasets or []
+
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_null_collections(cls, data: Any) -> Any:
+        """Coerce None values for collection fields into empty lists before instantiation."""
+        if isinstance(data, dict):
+            for field_name in ["datasets", "metrics", "dimensions", "relationships"]:
+                if field_name in data and data[field_name] is None:
+                    data[field_name] = []
+        return data
+
     def model_post_init(self, __context: Any) -> None:
         """Set label from unique_name if not provided."""
         if not self.label:
@@ -595,6 +653,16 @@ class OSIModel(OSIBaseModel):
         """Get a relationship by unique_name."""
         for r in self.relationships:
             if r.unique_name == name:
+                return r
+        return None
+
+    def get_relationship_between(self, table1: str, table2: str) -> Optional[OSIRelationship]:
+        """Get relationship between two tables, traversing in either direction."""
+        t1_cf, t2_cf = table1.casefold(), table2.casefold()
+        for r in self.relationships:
+            r_from = r.from_dataset.casefold()
+            r_to = r.to_dataset.casefold()
+            if (r_from == t1_cf and r_to == t2_cf) or (r_from == t2_cf and r_to == t1_cf):
                 return r
         return None
 

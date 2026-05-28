@@ -19,7 +19,7 @@ def test_metric_filtering():
     # Read the snowflake_emitter file and check for the fix
     emitter_path = root_dir / "src" / "semabridge" / "connectors" / "snowflake_emitter.py"
     
-    with open(emitter_path, 'r') as f:
+    with open(emitter_path, 'r', encoding='utf-8') as f:
         content = f.read()
     
     # Check for the filtering fix
@@ -38,7 +38,7 @@ def test_relationship_validation():
     
     emitter_path = root_dir / "src" / "semabridge" / "connectors" / "snowflake_emitter.py"
     
-    with open(emitter_path, 'r') as f:
+    with open(emitter_path, 'r', encoding='utf-8') as f:
         content = f.read()
     
     # Check for the guard condition

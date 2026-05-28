@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from semabridge.core.execution_config import ExecutionConfig
-from semabridge.core.source_format import SourceFormat, from_snowflake_metadata, from_fabric_tmsl
+from semabridge.core.source_format import SourceFormat, from_snowflake_metadata, from_fabric_tmdl
 from semabridge.core.run_summary import (
     RunSummary, RunStatus, StepStatus, STEP_NAMES, create_run_summary
 )
@@ -531,17 +531,17 @@ class CLIExecutor:
         if not dataset_id:
             raise ExecutionError(4, "dataset_id is required for Fabric source")
         
-        tmsl = extractor.get_model_definition(dataset_id)
+        tmdl_files = extractor.get_model_definition(dataset_id)
         row_counts = extractor.get_table_row_counts(dataset_id)
         
         workspace_id = self.config.source.workspace_id or settings.fabric.workspace_id
+        dataset_name = extractor.get_model_display_name(dataset_id)
         
-        return from_fabric_tmsl(
-            project_id=self.project_id,
-            run_id=self.run_id,
-            tmsl=tmsl,
+        return from_fabric_tmdl(
             workspace_id=workspace_id,
             dataset_id=dataset_id,
+            dataset_name=dataset_name,
+            tmdl_files=tmdl_files,
             row_counts=row_counts,
         )
     
@@ -563,8 +563,12 @@ class CLIExecutor:
         issues = self._source_format.validate_format()
         
         # Check for errors
-        errors = [i for i in issues if i.severity == "error"]
-        warnings = [i for i in issues if i.severity == "warning"]
+        if isinstance(issues, bool):
+            errors = []
+            warnings = []
+        else:
+            errors = [i for i in issues if i.severity == "error"]
+            warnings = [i for i in issues if i.severity == "warning"]
         
         if errors:
             diagnostic = self._source_format.get_diagnostic_message()
@@ -749,7 +753,7 @@ class CLIExecutor:
         behavior = getattr(self.config, "behavior", None)
         transformer = TMSLTransformer()
         return transformer.transform(
-            self._source_format.tmsl_definition,
+            self._source_format.tmdl_files,
             self._source_format.workspace_id,
             self._source_format.dataset_id,
             row_counts=self._source_format.row_counts,

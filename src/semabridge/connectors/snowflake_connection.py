@@ -13,6 +13,7 @@ are *never* passed as function parameters.
 from __future__ import annotations
 
 import re
+import requests as _requests
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
@@ -138,8 +139,6 @@ def _acquire_oauth_token(config: SnowflakeConfig) -> str:
         ValueError: If required OAuth parameters are missing or the
             token request fails.
     """
-    import requests as _requests
-
     # Resolve oauth_token_endpoint (do NOT mutate config)
     oauth_token_endpoint = config.oauth_token_endpoint
     if not oauth_token_endpoint:

@@ -33,7 +33,10 @@ class FabricExtractionError(Exception):
 
 class FabricExtractor:
     """
-    Extracts semantic model definitions from Microsoft Fabric.
+    Low-level API client for Microsoft Fabric.
+
+    Extracts semantic models using TMDL format
+    for complete semantic model fidelity.
     """
     
     def __init__(self, config: FabricConfig, access_token: Optional[str] = None):
@@ -463,18 +466,18 @@ class FabricExtractor:
             "Accept": "application/json"
         }
     
-    def get_model_definition(self, dataset_id: str) -> dict[str, Any]:
+    def get_model_definition(self, dataset_id: str) -> dict[str, str]:
         """
-        Get the TMSL definition of a semantic model.
-        
-        This handles the long-running async operation:
-        1. POST /getDefinition
-        2. Poll operation status
-        3. GET result payload
-        4. Decode Base64 model.bim
-        
-        Args:
-            dataset_id: Model GUID or display name (will be resolved automatically)
+        Get model definition in TMDL format.
+
+        Returns:
+            Dict[str, str]:
+                Mapping of file paths to decoded TMDL content.
+                Example:
+                {
+                    "definition/model.tmdl": "...",
+                    "definition/tables/Sales.tmdl": "..."
+                }
         """
         workspace_id = self.resolve_workspace_id(self.config.workspace_id)
         
@@ -484,11 +487,11 @@ class FabricExtractor:
             logger.info(f"Resolved '{dataset_id}' -> '{resolved_id}'")
         
         # 1. Initiate Export
-        api_url = f"{self.config.api_base_url}/workspaces/{workspace_id}/semanticModels/{resolved_id}/getDefinition?format=TMSL"
+        api_url = f"{self.config.api_base_url}/workspaces/{workspace_id}/semanticModels/{resolved_id}/getDefinition?format=TMDL"
         
         result = {}
         try:
-            logger.info(f"Initiating extraction for model {dataset_id}...")
+            logger.info(f"Initiating TMDL extraction for model {dataset_id}...")
             response = self._request_with_auth_retry(
                 "POST",
                 api_url,
@@ -499,8 +502,7 @@ class FabricExtractor:
             
             # Handle sync completion (rare but possible)
             if response.status_code == 200:
-                payload = response.json()
-                result = self._parse_definition_response(payload)
+                result = response.json()
             
             # Handle async accepted
             elif response.status_code == 202:
@@ -519,6 +521,26 @@ class FabricExtractor:
             else:
                  response.raise_for_status()
                  
+            # Parse TMDL parts
+            tmdl_files = {}
+            definition = result.get("definition", result)
+            parts = definition.get("parts", [])
+            
+            for part in parts:
+                file_path = part.get("path")
+                payload = part.get("payload")
+                
+                if file_path and payload:
+                    try:
+                        decoded_bytes = base64.b64decode(payload)
+                        decoded_str = decoded_bytes.decode("utf-8")
+                        tmdl_files[file_path] = decoded_str
+                    except Exception as e:
+                        raise FabricExtractionError(f"Failed to decode TMDL file '{file_path}': {e}")
+            
+            if not tmdl_files:
+                raise FabricExtractionError("No TMDL files found in API response")
+                
             # DEBUG: Save raw definition
             try:
                 safe_dataset = re.sub(r"[^A-Za-z0-9_.-]", "_", str(dataset_id or resolved_id or "model"))
@@ -526,16 +548,16 @@ class FabricExtractor:
                 debug_path = Path("output/debug") / safe_dataset / "raw_fabric_model.json"
                 debug_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(debug_path, "w", encoding="utf-8") as f:
-                    json.dump(result, f, indent=2)
-                logger.info(f"Saved raw model definition to {debug_path}")
+                    json.dump(tmdl_files, f, indent=2)
+                logger.info(f"Saved raw TMDL model definition to {debug_path}")
             except Exception as e:
                 logger.warning(f"Failed to save debug artifact: {e}")
                 
-            return result
+            return tmdl_files
             
         except RequestException as e:
             raise FabricExtractionError(
-                f"Failed to initiate model extraction: {e}{self._network_failure_hint(e)}"
+                f"Failed to initiate TMDL model extraction: {e}{self._network_failure_hint(e)}"
             )
 
     def _network_failure_hint(self, exc: BaseException) -> str:
@@ -579,11 +601,11 @@ class FabricExtractor:
                 if status == "Succeeded":
                     # Case A: Definition is in the status body (rare for async)
                     if "definition" in data:
-                        return self._parse_definition_response(data)
+                        return data
                     
                     # Case B: Definition is in a nested result object
                     if "result" in data and "definition" in data["result"]:
-                         return self._parse_definition_response(data["result"])
+                         return data["result"]
                          
                     # Case C: Explicit /result endpoint (Common Fabric pattern)
                     # We assume operation_url is like .../operations/{id}
@@ -631,10 +653,10 @@ class FabricExtractor:
                 res_data = res_response.json()
 
                 if "definition" in res_data:
-                    return self._parse_definition_response(res_data)
+                    return res_data
 
                 if "definition" in res_data.get("result", {}):
-                    return self._parse_definition_response(res_data["result"])
+                    return res_data["result"]
 
                 result_error = self._format_operation_error(res_data)
                 if result_error:
@@ -730,32 +752,7 @@ class FabricExtractor:
 
         return ""
 
-    def _parse_definition_response(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """
-        Parse the definition response and extract model.bim.
-        
-        Response -> definition -> parts -> [path="model.bim", payload="base64...", payloadType="InlineBase64"]
-        """
-        definition = payload.get("definition", payload) # Handle if passed 'definition' sub-object or full payload
-        parts = definition.get("parts", [])
-        
-        for part in parts:
-            if part.get("path") == "model.bim":
-                encoded_payload = part.get("payload")
-                payload_type = part.get("payloadType")
-                
-                if payload_type == "InlineBase64":
-                    try:
-                        decoded_bytes = base64.b64decode(encoded_payload)
-                        # BOM handling: Microsoft often adds UTF-8 BOM
-                        decoded_str = decoded_bytes.decode("utf-8-sig")
-                        return json.loads(decoded_str)
-                    except Exception as e:
-                        raise FabricExtractionError(f"Failed to decode model.bim: {e}")
-                else:
-                    raise FabricExtractionError(f"Unsupported payload type: {payload_type}")
-        
-        raise FabricExtractionError("model.bim not found in definition parts")
+
 
     def execute_dax_query(self, dataset_id: str, dax_query: str, silent: bool = False) -> list[dict[str, Any]]:
         """

@@ -396,6 +396,7 @@ ExecutionEngine._resolve_snowflake_dataset_scope  = _ext_sf._resolve_snowflake_d
 ExecutionEngine._resolve_snowflake_include_tables = _ext_sf._resolve_snowflake_include_tables
 ExecutionEngine._resolve_snowflake_parallelism    = _ext_sf._resolve_snowflake_parallelism
 ExecutionEngine._extract_fabric                   = _ext_fab._extract_fabric
+ExecutionEngine._count_measures_in_tmdl           = _ext_fab._count_measures_in_tmdl
 ExecutionEngine._extract_pbix                     = _ext_pbix._extract_pbix
 
 from semabridge.core.engine.conversion import base as _conv_base
@@ -428,6 +429,8 @@ ExecutionEngine._step9_deploy                        = _dep_base._step9_deploy
 ExecutionEngine._deploy_to_fabric                    = _dep_fab._deploy_to_fabric
 ExecutionEngine._deploy_to_snowflake                 = _dep_sf._deploy_to_snowflake
 ExecutionEngine._do_snowflake_deploy                 = _dep_sf._do_snowflake_deploy
+ExecutionEngine._deploy_measures                      = _dep_sf._deploy_measures
+ExecutionEngine._store_failed_measures                 = _dep_sf._store_failed_measures
 ExecutionEngine._export_inferred_osi_artifacts       = _dep_sf._export_inferred_osi_artifacts
 ExecutionEngine._should_sync_measures                = _dep_sf._should_sync_measures
 ExecutionEngine._sync_fabric_measures                = _dep_sf._sync_fabric_measures
