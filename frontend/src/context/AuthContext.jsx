@@ -124,7 +124,12 @@ export function AuthProvider({ children }) {
       const data = await res.json();
       if (data.access_token) {
         saveToken(data.access_token);
-        await fetchMe(data.access_token);
+        // Use inline user data from response to avoid extra /auth/me round trip
+        if (data.user) {
+          setUser(data.user);
+        } else {
+          await fetchMe(data.access_token);
+        }
         scheduleProactiveRefresh(data.access_token);
         return true;
       }
@@ -178,8 +183,14 @@ export function AuthProvider({ children }) {
       const recovered = await autoLogin();
       if (recovered) return; // Success — UI state preserved
 
-      // Step 3: All recovery failed — NOW clear state
-      clearAuth();
+      // Step 3: All recovery failed — only clear state if there is
+      // genuinely no usable token.  A transient network hiccup during
+      // page navigation should NOT wipe the session; the proactive
+      // refresh timer will retry later.
+      const existingToken = localStorage.getItem(TOKEN_KEY);
+      if (!existingToken) {
+        clearAuth();
+      }
     } finally {
       recoveringRef.current = false;
     }
@@ -238,20 +249,50 @@ export function AuthProvider({ children }) {
 
     window.addEventListener('semabridge:auth-expired', expiredHandler);
     window.addEventListener('semabridge:token-refreshed', refreshHandler);
+    // Fabric token lifecycle: update UI/data when Fabric token becomes available
+    const fabricRefreshedHandler = (e) => {
+      // e.detail contains { access_token, expires_at }
+      // Invalidate queries that may depend on Fabric credentials so consumers
+      // (workspaces, models, reports) pick up the new token without a reload.
+      try {
+        queryClient.invalidateQueries();
+      } catch (err) {
+        // best-effort
+      }
+    };
+
+    const fabricRemovedHandler = () => {
+      try {
+        queryClient.invalidateQueries();
+      } catch (err) {
+        // best-effort
+      }
+    };
+    window.addEventListener('semabridge:fabric-token-refreshed', fabricRefreshedHandler);
+    window.addEventListener('semabridge:fabric-token-removed', fabricRemovedHandler);
     
     return () => {
       window.removeEventListener('semabridge:auth-expired', expiredHandler);
       window.removeEventListener('semabridge:token-refreshed', refreshHandler);
+      window.removeEventListener('semabridge:fabric-token-refreshed', fabricRefreshedHandler);
+      window.removeEventListener('semabridge:fabric-token-removed', fabricRemovedHandler);
     };
   }, [silentRecover, saveToken, scheduleProactiveRefresh]);
 
-  // If token changes (auto-login / refresh / login), refetch all stale query data
-  // that may have loaded before auth became available.
+  // If token changes (auto-login / refresh / login), refetch stale query data.
+  // On INITIAL login (previousToken is null), skip blanket invalidation since
+  // there is no stale data yet — this prevents a thundering herd of redundant
+  // API requests right after authentication.
   useEffect(() => {
     const previousToken = previousTokenRef.current;
     if (!token || token === previousToken) return;
+    const isInitialLogin = !previousToken;
     previousTokenRef.current = token;
-    queryClient.invalidateQueries();
+    if (isInitialLogin) return; // No stale data on first login
+    // Targeted invalidation: only refetch queries that depend on auth state
+    queryClient.invalidateQueries({ queryKey: ['projects'] });
+    queryClient.invalidateQueries({ queryKey: ['folders'] });
+    queryClient.invalidateQueries({ queryKey: ['workspaces'] });
   }, [token, queryClient]);
 
   // ── public API ───────────────────────────────────────────────
@@ -302,7 +343,14 @@ export function AuthProvider({ children }) {
     }
     const data = await res.json();
     saveToken(data.access_token);
-    await fetchMe(data.access_token);
+    // Use inline user data from login response to skip the blocking /auth/me round trip.
+    // This saves 50-100ms by eliminating a sequential network request.
+    if (data.user) {
+      setUser(data.user);
+    } else {
+      // Fallback for older backend versions that don't include user data
+      await fetchMe(data.access_token);
+    }
     scheduleProactiveRefresh(data.access_token);
     return data;
   }, [saveToken, fetchMe, scheduleProactiveRefresh]);

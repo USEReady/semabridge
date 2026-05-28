@@ -46,10 +46,13 @@ export const SyncProvider = ({ children }) => {
       }
     };
 
-    pollGlobalRuns();
+    // Delay the first poll to let higher-priority post-login API calls
+    // (projects, config) complete before this background polling begins.
+    const initialTimer = setTimeout(pollGlobalRuns, 1000);
     return () => {
       isMounted = false;
       clearTimeout(timerId);
+      clearTimeout(initialTimer);
     };
   }, [token]);
 
