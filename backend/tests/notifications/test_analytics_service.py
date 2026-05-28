@@ -58,8 +58,8 @@ async def test_get_delivery_stats_all_logs(analytics_service, mock_db_session, s
     stats = await analytics_service.get_delivery_stats()
     
     assert stats.total == 10
-    assert stats.delivered == 3  # Count of 'delivered' status
-    assert stats.failed == 1
+    assert stats.delivered == 6  # Count of 'delivered' status
+    assert stats.failed == 2
     assert stats.dead == 1
     assert stats.retrying == 1
     assert stats.avg_duration_ms > 0

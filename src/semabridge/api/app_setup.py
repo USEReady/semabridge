@@ -502,6 +502,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             except Exception as exc:
                 logger.error('Poll session cleanup error: %s', exc)
 
+    # Redis startup connectivity validation
+    try:
+        import redis
+        redis_url_env = os.getenv("REDIS_URL", "redis://localhost:6379")
+        client = redis.from_url(redis_url_env)
+        client.ping()
+        logger.info("SUCCESS: Redis connection established")
+    except Exception:
+        logger.error("FAILURE: Redis unavailable for notification streams")
+
     cleanup_task = asyncio.create_task(_cleanup_poll_sessions())
     logger.info('SemaBridge API startup complete; application is ready')
     yield

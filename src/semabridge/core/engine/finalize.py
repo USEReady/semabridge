@@ -162,6 +162,37 @@ def _step10_finalize(
 
     finalized = self._summary.finalize()
 
+    # Calculate duration
+    duration_sec = time.time() - context.start_time
+    if duration_sec >= 60:
+        duration_str = f"{int(duration_sec // 60)}m {int(duration_sec % 60)}s"
+    else:
+        duration_str = f"{duration_sec:.2f}s"
+
+    try:
+        # Emit final lifecycle status notifications
+        if status == RunStatus.SUCCESS:
+            logger.warning("SYNC_NOTIFICATION_TRACE: entered finalize success block")
+            logger.info("Model sync completed successfully. Skipping global success notification emission at model level.")
+        else:
+            logger.warning("SYNC_NOTIFICATION_TRACE: entered finalize failure block")
+            err_msg = "Sync job failed execution"
+            if self._summary and self._summary.errors:
+                err_msg = str(self._summary.errors[0].get("message", err_msg))
+            self._emit_notification_safe(
+                title="Sync Failed",
+                message=err_msg,
+                level=4,  # NotificationLevel.ERROR
+                context=context,
+                payload={
+                    "failed_stage": "execution",
+                    "run_id": context.run_id,
+                    "mode": getattr(context, "sync_mode", "copy"),
+                }
+            )
+    except Exception as notify_err:
+        logger.warning(f"Failed to emit sync completion notification: {notify_err}")
+
     # ── Telemetry: record run counter + flush spans ───────────────────────
     try:
         from semabridge.utils.telemetry import record_run, flush
@@ -187,3 +218,45 @@ def _step10_finalize(
         )
 
     return finalized
+
+def _emit_notification_safe(
+    self,
+    title: str,
+    message: str,
+    level: int,
+    context: RunContext,
+    payload: dict,
+) -> None:
+    """Emit a notification event safely, guaranteeing it never breaks the execution engine."""
+    logger.warning("SYNC_NOTIFICATION_TRACE: before emit_sync")
+    try:
+        import os
+        from semabridge.notifications.services.notification_service import NotificationService
+        from semabridge.notifications.models import NotificationEvent
+        
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+        notification_service = NotificationService(redis_url)
+        
+        project_id = context.project_id or "default_project"
+        
+        event = NotificationEvent(
+            level=level,
+            title=title,
+            message=message,
+            source="sync_engine",
+            project_id=project_id,
+            sync_job_id=context.run_id,
+            payload=payload,
+        )
+        
+        logger.warning({
+            "event": "notification_emit_trace",
+            "caller": "semabridge.core.engine.finalize._emit_notification_safe",
+            "run_id": context.run_id if context else "unknown_run",
+            "title": title,
+        })
+        notification_service.emit_sync(event)
+        logger.warning("SYNC_NOTIFICATION_TRACE: after emit_sync")
+        
+    except Exception as exc:
+        logger.exception("Notification emission failed")

@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set
 import redis
 
-from ...constants import DEFAULT_BATCH_WINDOW_SEC, NotificationLevel
+from ..constants import DEFAULT_BATCH_WINDOW_SEC, NotificationLevel
 from ..models import NotificationEvent
 
 logger = logging.getLogger(__name__)
@@ -53,7 +53,11 @@ class BatchingService:
         Returns:
             True if should batch, False if send immediately
         """
-        # CRITICAL bypasses batching
+        # Support manual bypass (e.g. for synthetic batched flushes)
+        if event.payload and event.payload.get("bypass_batching"):
+            return False
+            
+        # CRITICAL always bypasses batching
         if event.level & NotificationLevel.CRITICAL:
             return False
         
@@ -92,11 +96,30 @@ class BatchingService:
                 "added_at": datetime.utcnow().isoformat(),
             }
             
-            # Add to set (deduplicates by title within window)
+            # Check if batch is new
+            is_new_batch = not self.redis.exists(key)
+            
+            # Add to list
             self.redis.lpush(key, json.dumps(batch_item))
             
-            # Set expiry on first add
-            self.redis.expire(key, self.batch_window_sec)
+            # Set expiry
+            # Safety margin: twice the batch window + 60s to prevent premature key expiry before flushing
+            self.redis.expire(key, self.batch_window_sec * 2 + 60)
+            
+            if is_new_batch:
+                # Track in active batches set
+                self.redis.sadd("semabridge:active_batches", f"{event.sync_job_id}:{channel_id}")
+                
+                # Set metadata with flush target timestamp
+                meta_key = f"semabridge:batch_meta:{event.sync_job_id}:{channel_id}"
+                flush_at = datetime.utcnow() + timedelta(seconds=self.batch_window_sec)
+                meta_data = {
+                    "flush_at": flush_at.isoformat(),
+                    "sync_job_id": event.sync_job_id,
+                    "channel_id": channel_id,
+                    "project_id": event.project_id,
+                }
+                self.redis.setex(meta_key, self.batch_window_sec * 2 + 60, json.dumps(meta_data))
             
             logger.debug(f"Added event to batch for {event.sync_job_id}:{channel_id}")
             return True
@@ -135,8 +158,10 @@ class BatchingService:
             warning_count = sum(1 for item in items if item.get("level") & NotificationLevel.WARNING)
             error_count = sum(1 for item in items if item.get("level") & NotificationLevel.ERROR)
             
-            # Delete key
+            # Delete keys and remove from tracking set
             self.redis.delete(key)
+            self.redis.delete(f"semabridge:batch_meta:{sync_job_id}:{channel_id}")
+            self.redis.srem("semabridge:active_batches", f"{sync_job_id}:{channel_id}")
             
             return {
                 "sync_job_id": sync_job_id,

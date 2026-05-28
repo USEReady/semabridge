@@ -174,6 +174,8 @@ function hasValidFabricToken() {
 const AUTH_BASE = (import.meta.env.VITE_AUTH_BASE_URL || '/auth').replace(/\/$/, '');
 
 let _refreshPromise = null;
+let _refreshFailed = false;
+let _failedToken = null;
 
 /**
  * Attempt to refresh the JWT access token using the HttpOnly refresh cookie.
@@ -185,9 +187,32 @@ let _refreshPromise = null;
  * refresh/auto-login requests.
  */
 async function tryRefreshToken() {
-    if (_refreshPromise) return _refreshPromise;
+    const currentToken = localStorage.getItem(TOKEN_KEY);
+    if (!currentToken) {
+        console.warn("[api.js] No access token in localStorage. Skipping renewal.");
+        return null;
+    }
+
+    // Reset failure flag if the token has changed (e.g., user logged in with a new token)
+    if (_refreshFailed && currentToken !== _failedToken) {
+        console.log("[api.js] New access token detected. Resetting refresh failure flag.");
+        _refreshFailed = false;
+        _failedToken = null;
+    }
+
+    if (_refreshFailed) {
+        console.warn("[api.js] Token refresh previously failed for this token. Skipping to prevent loop.");
+        return null;
+    }
+
+    if (_refreshPromise) {
+        console.log("[api.js] Refresh already in progress. Coalescing request...");
+        return _refreshPromise;
+    }
+
     _refreshPromise = (async () => {
         try {
+            console.log("[api.js] Attempting token refresh via HttpOnly cookie...");
             // Step 1: Try refresh via HttpOnly cookie
             const res = await fetch(`${AUTH_BASE}/refresh`, {
                 method: 'POST',
@@ -196,13 +221,17 @@ async function tryRefreshToken() {
             if (res.ok) {
                 const data = await res.json();
                 if (data.access_token) {
+                    console.log("[api.js] Token refresh succeeded.");
                     localStorage.setItem(TOKEN_KEY, data.access_token);
+                    _refreshFailed = false;
+                    _failedToken = null;
                     window.dispatchEvent(new CustomEvent('semabridge:token-refreshed', { detail: data.access_token }));
                     return data.access_token;
                 }
             }
 
             // Step 2: Refresh cookie failed — try auto-login (dev mode)
+            console.log("[api.js] Cookie refresh failed. Trying silent auto-login...");
             const autoRes = await fetch(`${AUTH_BASE}/auto-login`, {
                 method: 'POST',
                 credentials: 'include',
@@ -210,14 +239,23 @@ async function tryRefreshToken() {
             if (autoRes.ok) {
                 const autoData = await autoRes.json();
                 if (autoData.access_token) {
+                    console.log("[api.js] Silent auto-login succeeded.");
                     localStorage.setItem(TOKEN_KEY, autoData.access_token);
+                    _refreshFailed = false;
+                    _failedToken = null;
                     window.dispatchEvent(new CustomEvent('semabridge:token-refreshed', { detail: autoData.access_token }));
                     return autoData.access_token;
                 }
             }
 
+            console.error("[api.js] All token recovery methods failed. Locking refresh.");
+            _refreshFailed = true;
+            _failedToken = currentToken;
             return null;
-        } catch {
+        } catch (err) {
+            console.error("[api.js] Exception during token recovery:", err);
+            _refreshFailed = true;
+            _failedToken = currentToken;
             return null;
         } finally {
             _refreshPromise = null;

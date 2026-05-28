@@ -37,6 +37,17 @@ class NotificationTemplate:
         self.body_template = body_template
         self.is_default = is_default
 
+    @property
+    def name(self) -> str:
+        return f"template-{self.id}"
+
+
+class TemplateServiceEnvironment(SandboxedEnvironment):
+    def is_safe_attribute(self, obj, attr, value):
+        if attr in ("__class__", "__mro__", "__subclasses__", "__globals__", "__builtins__"):
+            return False
+        return super().is_safe_attribute(obj, attr, value)
+
 
 class TemplateService:
     """
@@ -50,13 +61,11 @@ class TemplateService:
     def __init__(self):
         """Initialize template service with sandboxed Jinja2 environment."""
         # Create sandboxed environment
-        self.env = SandboxedEnvironment(
-            # Restrict access to dangerous attributes
-            restricted_access=["__class__", "__mro__", "__subclasses__", "__globals__", "__builtins__"],
-        )
+        self.env = TemplateServiceEnvironment()
     
     async def get_template(
         self,
+        db,
         channel_id: str,
         level: int,
     ) -> Optional[NotificationTemplate]:
@@ -69,21 +78,86 @@ class TemplateService:
         3. None (use formatter defaults)
         
         Args:
+            db: SQLAlchemy Session
             channel_id: Channel UUID
             level: Notification level
         
         Returns:
             NotificationTemplate or None
         """
-        # In production, would query DB:
-        # SELECT * FROM notification_templates
-        # WHERE channel_id = ? AND (level_mask & ? OR is_default)
-        # ORDER BY is_default ASC, level_mask DESC
-        # LIMIT 1
-        
-        # For now, return None (formatters use built-in defaults)
-        return None
+        try:
+            from uuid import UUID
+            from ..models import NotificationTemplate as DBTemplate
+            
+            # Query all templates for this channel
+            templates = db.query(DBTemplate).filter(
+                DBTemplate.channel_id == UUID(channel_id)
+            ).all()
+            
+            if not templates:
+                return None
+                
+            # Filter and prioritize matching templates
+            matching = []
+            for t in templates:
+                # Check if template level_mask contains the event level (bitwise AND matches)
+                if (t.level_mask & level) != 0:
+                    is_exact = (t.level_mask == level)
+                    is_default = t.is_default
+                    # Sort key: (match_priority, exact_priority, default_priority)
+                    # Lower values win:
+                    # - match_priority: 0 for level match, 1 for default fallback
+                    # - exact_priority: 0 for exact level mask match, 1 for subset range match
+                    # - default_priority: 0 for non-default template, 1 for default template
+                    priority = (0, 0 if is_exact else 1, 1 if is_default else 0)
+                    matching.append((t, priority))
+                elif t.is_default:
+                    matching.append((t, (1, 1, 1)))
+            
+            if not matching:
+                return None
+                
+            # Sort by priority tuple ascending
+            matching.sort(key=lambda x: x[1])
+            best_template = matching[0][0]
+            
+            # Convert DB model to TemplateService domain model
+            return NotificationTemplate(
+                id=str(best_template.id),
+                channel_id=str(best_template.channel_id),
+                level_mask=best_template.level_mask,
+                title_template=best_template.title_template,
+                body_template=best_template.body_template,
+                is_default=best_template.is_default
+            )
+        except Exception as exc:
+            logger.error(f"Failed to query notification template from DB: {exc}")
+            return None
     
+    def _verify_sandbox_safety(self, template_str: str) -> None:
+        """
+        Verify that a template string does not contain blocked/unsafe variables or attributes.
+        Raises SecurityError if a dangerous name or attribute is found.
+        """
+        from jinja2.nodes import Name, Getattr
+        from jinja2.sandbox import SecurityError
+        
+        try:
+            ast = self.env.parse(template_str)
+        except Exception:
+            # Syntax errors will be handled during template compilation/rendering
+            return
+            
+        blocked = {"__class__", "__mro__", "__subclasses__", "__globals__", "__builtins__"}
+        
+        for node in ast.find_all((Name, Getattr)):
+            if isinstance(node, Name):
+                if node.name in blocked or node.name.startswith("__"):
+                    raise SecurityError(f"Access to variable {node.name!r} is blocked for security reasons.")
+            elif isinstance(node, Getattr):
+                if node.attr in blocked or node.attr.startswith("__"):
+                    raise SecurityError(f"Access to attribute {node.attr!r} is blocked for security reasons.")
+
     def render(
         self,
         template: NotificationTemplate,
@@ -108,7 +182,13 @@ class TemplateService:
         Raises:
             TemplateRenderError on rendering failure
         """
+        from jinja2.sandbox import SecurityError
+
         try:
+            # Verify sandbox safety first
+            self._verify_sandbox_safety(template.title_template)
+            self._verify_sandbox_safety(template.body_template)
+
             # Prepare context
             context = self._build_context(event)
             
@@ -130,6 +210,14 @@ class TemplateService:
             
             return rendered_title, rendered_body
         
+        except TemplateSyntaxError as e:
+            error_msg = f"Template syntax error: {str(e)}"
+            logger.error(error_msg)
+            raise TemplateRenderError(error_msg) from e
+        except SecurityError as e:
+            error_msg = f"Security error: {str(e)}"
+            logger.error(error_msg)
+            raise TemplateRenderError(error_msg) from e
         except TemplateError as e:
             error_msg = f"Template render error: {str(e)}"
             logger.error(error_msg)

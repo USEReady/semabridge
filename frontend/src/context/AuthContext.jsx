@@ -37,6 +37,9 @@ export function AuthProvider({ children }) {
 
   const clearAuth = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem('semabridge-fabric-token');
+    localStorage.removeItem('semabridge-fabric-token-expires');
+    sessionStorage.clear();
     setToken(null);
     setUser(null);
   }, []);
@@ -148,12 +151,24 @@ export function AuthProvider({ children }) {
    * This prevents the "flash to Disconnected" problem.
    */
   const silentRecover = useCallback(async () => {
-    if (recoveringRef.current) return; // Already recovering
+    const existingToken = localStorage.getItem(TOKEN_KEY);
+    if (!existingToken) {
+      console.log("[AuthContext] No access token in localStorage. Skipping silent recovery.");
+      clearAuth();
+      return;
+    }
+
+    if (recoveringRef.current) {
+      console.log("[AuthContext] Recovery already in progress. Coalescing...");
+      return;
+    }
     recoveringRef.current = true;
 
     try {
+      console.log("[AuthContext] Initiating silent recovery...");
       // Step 1: Try refresh via HttpOnly cookie
       try {
+        console.log("[AuthContext] silentRecover: Attempting POST /auth/refresh");
         const res = await fetch(`${AUTH_BASE}/refresh`, {
           method: 'POST',
           credentials: 'include',
@@ -161,48 +176,72 @@ export function AuthProvider({ children }) {
         if (res.ok) {
           const data = await res.json();
           if (data.access_token) {
+            console.log("[AuthContext] silentRecover: refresh token renewal succeeded.");
             saveToken(data.access_token);
-            await fetchMe(data.access_token);
-            scheduleProactiveRefresh(data.access_token);
-            return; // Success — UI state preserved
+            const userFetched = await fetchMe(data.access_token);
+            if (userFetched) {
+              scheduleProactiveRefresh(data.access_token);
+              return; // Success — UI state preserved
+            }
           }
+        } else {
+          console.warn(`[AuthContext] silentRecover: refresh returned HTTP ${res.status}`);
         }
-      } catch {
-        // Network error on refresh
+      } catch (err) {
+        console.error("[AuthContext] silentRecover: refresh fetch exception:", err);
       }
 
       // Step 2: Try auto-login (dev mode fallback)
+      console.log("[AuthContext] silentRecover: refresh failed, attempting autoLogin fallback...");
       const recovered = await autoLogin();
-      if (recovered) return; // Success — UI state preserved
+      if (recovered) {
+        console.log("[AuthContext] silentRecover: dev autoLogin recovery succeeded.");
+        return; // Success — UI state preserved
+      }
 
       // Step 3: All recovery failed — NOW clear state
+      console.error("[AuthContext] silentRecover: All recovery attempts failed. Clearing authentication state completely.");
       clearAuth();
     } finally {
       recoveringRef.current = false;
     }
   }, [saveToken, fetchMe, clearAuth, autoLogin, scheduleProactiveRefresh]);
 
+  const initializedRef = useRef(false);
+
   // On mount: validate existing token, or auto-login if none
   useEffect(() => {
+    if (initializedRef.current) {
+      console.log("[AuthContext] AuthProvider mount triggered again (React StrictMode). Bypassing duplicate run.");
+      return;
+    }
+    initializedRef.current = true;
+
     (async () => {
       const existingToken = localStorage.getItem(TOKEN_KEY);
+      console.log("[AuthContext] Initializing session... Token present:", !!existingToken);
       
-      if (existingToken) {
-        // Try the existing token
-        const valid = await fetchMe(existingToken);
-        if (valid) {
-          scheduleProactiveRefresh(existingToken);
-          setLoading(false);
-          return;
+      try {
+        if (existingToken) {
+          console.log("[AuthContext] Found existing token. Validating user identity...");
+          const valid = await fetchMe(existingToken);
+          if (valid) {
+            console.log("[AuthContext] Token validated. Starting proactive refresh scheduler.");
+            scheduleProactiveRefresh(existingToken);
+            return;
+          }
+          console.warn("[AuthContext] Token validation failed. Attempting silent session recovery...");
+          await silentRecover();
+        } else {
+          console.log("[AuthContext] No session token. Attempting auto-login...");
+          await autoLogin();
         }
-        // Token invalid — try silent recovery (don't clear state yet)
-        await silentRecover();
-      } else {
-        // No token at all — auto-login
-        await autoLogin();
+      } catch (err) {
+        console.error("[AuthContext] Error during session initialization:", err);
+      } finally {
+        console.log("[AuthContext] Session initialization flow completed.");
+        setLoading(false);
       }
-
-      setLoading(false);
     })();
 
     return () => {
@@ -210,7 +249,7 @@ export function AuthProvider({ children }) {
         clearTimeout(refreshTimerRef.current);
       }
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fetchMe, silentRecover, autoLogin, scheduleProactiveRefresh]);
 
   // Listen for auth events from api.js 401 handler
   useEffect(() => {

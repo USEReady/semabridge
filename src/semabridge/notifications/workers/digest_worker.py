@@ -14,7 +14,7 @@ from collections import defaultdict
 import redis
 from sqlalchemy.orm import Session
 
-from ...constants import (
+from ..constants import (
     NotificationChannelType,
     NotificationStatus,
     RedisQueues,
@@ -185,17 +185,27 @@ class DigestWorker:
                 logger.warning(f"No adapter/formatter for {channel.channel_type}")
                 return
             
-            adapter = adapter_class(channel.config_json)
-            formatter = formatter_class()
-            
-            # Decrypt config if needed (in real implementation)
-            channel_config = json.loads(channel.config_json)
-            
-            # Format digest
-            payload = formatter.format(digest_event, channel_config)
-            
-            # Send
-            result = await adapter.send(payload, channel_config)
+            # Decrypt config_json at runtime
+            try:
+                from ..utils.crypto import NotificationCrypto
+                crypto = NotificationCrypto()
+                decrypted_str = crypto.decrypt(channel.config_json)
+                channel_config = json.loads(decrypted_str)
+            except Exception as decrypt_err:
+                logger.error(f"Failed to decrypt/parse config_json for channel {channel.id}: {decrypt_err}")
+                channel_config = {}
+
+            adapter = adapter_class(channel_config)
+            try:
+                formatter = formatter_class()
+                
+                # Format digest
+                payload = formatter.format(digest_event, channel_config)
+                
+                # Send
+                result = await adapter.send(payload, channel_config)
+            finally:
+                await adapter.close()
             
             # Log delivery
             await self.delivery_log.log_delivery(

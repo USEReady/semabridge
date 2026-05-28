@@ -75,7 +75,22 @@ export default function NotificationTemplatesPage() {
 
   const updatePreview = async () => {
     try {
-      const result = await api.previewNotificationTemplate(formData);
+      const payload = {
+        ...formData,
+        sample_context: {
+          title: "Fabric Sync Failed",
+          message: "Warehouse timeout occurred",
+          level: 40,
+          level_str: "ERROR",
+          project_id: "fabric-prod",
+          sync_job_id: "job-123",
+          source: "sync_engine",
+          payload: {
+            warehouse: "fabric-east"
+          }
+        }
+      };
+      const result = await api.previewNotificationTemplate(payload);
       setPreview(result);
     } catch (e) {
       setPreview({ error: e.message });

@@ -176,6 +176,7 @@ class ExecutionEngine:
         Returns:
             RunSummary with execution results
         """
+        logger.warning("SYNC_NOTIFICATION_TRACE: entered orchestrator.run")
         # ── Reset per-run state ───────────────────────────────────────────────
         # This engine is a singleton; mutable instance fields MUST be cleared
         # before every new run so that a second model's run never reads stale
@@ -207,6 +208,21 @@ class ExecutionEngine:
                 config, source, target, project_name, dataset_id, config_path, sync_mode=sync_mode
             )
             self._context = context
+            
+            # Emit SYNC STARTED notification
+            try:
+                self._emit_notification_safe(
+                    title="Sync Started",
+                    message=f"Synchronization started for project {context.project_id}",
+                    level=16,  # NotificationLevel.INFO
+                    context=context,
+                    payload={
+                        "mode": sync_mode,
+                        "run_id": context.run_id,
+                    }
+                )
+            except Exception as notify_err:
+                logger.warning(f"Failed to emit sync started notification: {notify_err}")
             self._summary = create_run_summary(
                 project_id=context.project_id,
                 run_id=context.run_id,
@@ -437,4 +453,5 @@ ExecutionEngine._raise_if_databricks_fallback_failed = _dep_db._raise_if_databri
 from semabridge.core.engine import finalize as _fin
 ExecutionEngine._step7_persist_artifacts = _fin._step7_persist_artifacts
 ExecutionEngine._step10_finalize         = _fin._step10_finalize
+ExecutionEngine._emit_notification_safe  = _fin._emit_notification_safe
 # ?? End method bindings ??????????????????????????????????????????????????????

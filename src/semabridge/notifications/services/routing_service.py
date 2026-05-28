@@ -10,7 +10,7 @@ import redis
 
 from sqlalchemy.orm import Session
 
-from ...constants import matches_level, ChannelStatus
+from ..constants import matches_level, ChannelStatus
 from ..models import NotificationChannel, NotificationEvent
 
 logger = logging.getLogger(__name__)
@@ -48,10 +48,8 @@ class RoutingService:
         """
         Get all channels that should receive this event.
         
-        Routing order:
-        1. Evaluate routing rules (if any enabled)
-        2. Fall back to level mask + project scope matching
-        3. Filter by channel status and enablement
+        Merges rule-based routing channels with legacy fallback channels,
+        preventing duplicate channel selection.
         
         Args:
             event: Notification event
@@ -60,17 +58,36 @@ class RoutingService:
             List of channel dicts with config
         """
         try:
-            # Try rule-based routing first
-            channel_ids = await self._evaluate_routing_rules(event)
+            # 1. Evaluate active routing rules
+            rule_channel_ids = await self._evaluate_routing_rules(event)
+            rule_channels = await self._get_channels_by_ids(rule_channel_ids)
             
-            # If rules matched, use those channels
-            if channel_ids:
-                logger.debug(f"Routing event {event.id} via rules to {len(channel_ids)} channels")
-                return await self._get_channels_by_ids(channel_ids)
+            # 2. Get legacy level-mask + project-scope routing channels
+            legacy_channels = await self._legacy_route(event)
             
-            # Fall back to legacy level-mask + project-scope routing
-            logger.debug(f"No routing rules matched for event {event.id}, using legacy routing")
-            return await self._legacy_route(event)
+            # 3. Merge them and prevent duplicate channel selection
+            merged_channels = []
+            seen_channel_ids = set()
+            
+            # Add rule-based channels first (they have priority)
+            for channel in rule_channels:
+                ch_id = channel.get("id")
+                if ch_id and ch_id not in seen_channel_ids:
+                    seen_channel_ids.add(ch_id)
+                    merged_channels.append(channel)
+            
+            # Add legacy fallback channels if not already matched
+            for channel in legacy_channels:
+                ch_id = channel.get("id")
+                if ch_id and ch_id not in seen_channel_ids:
+                    seen_channel_ids.add(ch_id)
+                    merged_channels.append(channel)
+            
+            logger.debug(
+                f"Routed event {event.id} to {len(merged_channels)} channels "
+                f"(rule-based: {len(rule_channels)}, legacy: {len(legacy_channels)})"
+            )
+            return merged_channels
         
         except Exception as e:
             logger.error(f"Failed to route event: {e}", exc_info=True)
@@ -86,13 +103,60 @@ class RoutingService:
         Returns:
             List of channel IDs (deduplicated)
         """
-        # In production, would query:
-        # SELECT * FROM notification_routing_rules WHERE enabled=true
-        # ORDER BY priority ASC
-        
-        # For now, return empty (legacy routing used)
-        # This will be populated once routing_rules table is created via migration
-        return []
+        try:
+            from ..models import NotificationRoutingRuleRow, NotificationRoutingRule, RoutingConditions
+            
+            # Query active rules ordered by priority ascending (lower is higher priority)
+            rules_rows = self.db.query(NotificationRoutingRuleRow).filter(
+                NotificationRoutingRuleRow.enabled == True
+            ).order_by(NotificationRoutingRuleRow.priority.asc()).all()
+            
+            if not rules_rows:
+                return []
+                
+            matched_channel_ids = []
+            
+            for rule_row in rules_rows:
+                cond_dict = rule_row.conditions or {}
+                conditions = RoutingConditions(
+                    level_mask=cond_dict.get("level_mask"),
+                    project_ids=cond_dict.get("project_ids", []),
+                    source_pattern=cond_dict.get("source_pattern"),
+                    title_contains=cond_dict.get("title_contains"),
+                    payload_key_exists=cond_dict.get("payload_key_exists"),
+                    payload_value_matches=cond_dict.get("payload_value_matches"),
+                )
+                
+                rule = NotificationRoutingRule(
+                    id=str(rule_row.id),
+                    name=rule_row.name,
+                    priority=rule_row.priority,
+                    conditions=conditions,
+                    channel_ids=rule_row.channel_ids or [],
+                    stop_on_match=rule_row.stop_on_match,
+                    enabled=rule_row.enabled,
+                )
+                
+                if rule.matches(event):
+                    matched_channel_ids.extend(rule.channel_ids)
+                    logger.debug(f"Event {event.id} matched routing rule '{rule.name}' targeting channels {rule.channel_ids}")
+                    if rule.stop_on_match:
+                        logger.debug(f"Rule '{rule.name}' has stop_on_match=True, stopping evaluation")
+                        break
+            
+            # Deduplicate matched channel IDs while preserving order
+            seen = set()
+            unique_channel_ids = []
+            for ch_id in matched_channel_ids:
+                if ch_id not in seen:
+                    seen.add(ch_id)
+                    unique_channel_ids.append(ch_id)
+                    
+            return unique_channel_ids
+            
+        except Exception as e:
+            logger.error(f"Failed to evaluate routing rules: {e}", exc_info=True)
+            return []
     
     async def _legacy_route(self, event: NotificationEvent) -> List[Dict[str, Any]]:
         """
@@ -155,7 +219,7 @@ class RoutingService:
         channels = []
         for ch_id in channel_ids:
             channel = await self.get_channel_by_id(ch_id)
-            if channel and channel.get("enabled") and channel.get("status") == ChannelStatus.ACTIVE.value:
+            if channel and channel.get("enabled") and channel.get("status") == ChannelStatus.ACTIVE:
                 channels.append(channel)
         
         return channels
@@ -171,8 +235,10 @@ class RoutingService:
             Channel dict or None
         """
         try:
+            from uuid import UUID as pyUUID
+            ch_uuid = pyUUID(str(channel_id)) if isinstance(channel_id, str) else channel_id
             channel = self.db.query(NotificationChannel).filter(
-                NotificationChannel.id == channel_id
+                NotificationChannel.id == ch_uuid
             ).first()
             
             if not channel:

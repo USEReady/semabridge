@@ -8,7 +8,7 @@ from typing import Optional
 
 import redis
 
-from ...constants import DEFAULT_DEDUPE_TTL_SEC
+from ..constants import DEFAULT_DEDUPE_TTL_SEC
 from ..models import NotificationEvent
 
 logger = logging.getLogger(__name__)

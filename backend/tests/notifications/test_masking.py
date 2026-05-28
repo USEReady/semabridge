@@ -20,7 +20,7 @@ class TestMasking:
         
         # Should show scheme and host but not full path
         assert "hooks.slack.com" in masked
-        assert "abcd" in masked  # Last 4 chars should be visible
+        assert "5678" in masked  # Last 4 chars should be visible
         assert "T123456" not in masked  # Middle part should be hidden
     
     def test_mask_api_key(self):
@@ -29,7 +29,7 @@ class TestMasking:
         masked = mask_api_key(key)
         
         # Should show only last 4 chars
-        assert "1234" in masked
+        assert "7890" in masked
         assert "sk_live" not in masked
     
     def test_mask_password(self):

@@ -63,24 +63,29 @@ async def test_teams_adapter_rate_limit_retry():
     ]
     call_count = 0
     
-    async def mock_post(*args, **kwargs):
+    def mock_post(*args, **kwargs):
         nonlocal call_count
         mock_response = AsyncMock()
         mock_response.status = responses[min(call_count, len(responses)-1)][0]
         mock_response.text = AsyncMock(return_value=responses[min(call_count, len(responses)-1)][1])
         mock_response.headers = responses[min(call_count, len(responses)-1)][2]
         call_count += 1
-        return mock_response
+        
+        # Return a context manager mock wrapper
+        context_manager = MagicMock()
+        context_manager.__aenter__ = AsyncMock(return_value=mock_response)
+        context_manager.__aexit__ = AsyncMock(return_value=None)
+        return context_manager
     
-    with patch('aiohttp.ClientSession.post', new_callable=AsyncMock) as mock:
+    with patch('aiohttp.ClientSession.post') as mock:
         mock.side_effect = mock_post
         
         result = await adapter.send(payload, config)
         
         # Should retry and succeed
         assert result["success"] is True or result["response_code"] == 429
-
-
+ 
+ 
 @pytest.mark.asyncio
 async def test_teams_adapter_fallback_on_card_failure():
     """Test fallback to plaintext when Adaptive Card fails."""
@@ -99,7 +104,7 @@ async def test_teams_adapter_fallback_on_card_failure():
     # Mock Adaptive Card failure, then plaintext success
     call_count = 0
     
-    async def mock_post(*args, **kwargs):
+    def mock_post(*args, **kwargs):
         nonlocal call_count
         mock_response = AsyncMock()
         
@@ -112,9 +117,14 @@ async def test_teams_adapter_fallback_on_card_failure():
             mock_response.status = 200
         
         mock_response.text = AsyncMock(return_value="OK")
-        return mock_response
+        
+        # Return a context manager mock wrapper
+        context_manager = MagicMock()
+        context_manager.__aenter__ = AsyncMock(return_value=mock_response)
+        context_manager.__aexit__ = AsyncMock(return_value=None)
+        return context_manager
     
-    with patch('aiohttp.ClientSession.post', new_callable=AsyncMock) as mock:
+    with patch('aiohttp.ClientSession.post') as mock:
         mock.side_effect = mock_post
         
         result = await adapter.send(payload, config)

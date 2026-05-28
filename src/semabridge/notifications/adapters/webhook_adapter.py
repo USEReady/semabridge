@@ -15,16 +15,7 @@ from .base import BaseAdapter
 
 logger = logging.getLogger(__name__)
 
-# Connection pool
-WEBHOOK_CONNECTOR = None
-
-
-async def get_webhook_connector() -> aiohttp.TCPConnector:
-    """Get or create a connection pool for webhooks."""
-    global WEBHOOK_CONNECTOR
-    if WEBHOOK_CONNECTOR is None:
-        WEBHOOK_CONNECTOR = aiohttp.TCPConnector(limit=20, limit_per_host=5)
-    return WEBHOOK_CONNECTOR
+# Connection pool functions removed to prevent stale global connector issues.
 
 
 class WebhookAdapter(BaseAdapter):
@@ -33,6 +24,19 @@ class WebhookAdapter(BaseAdapter):
     """
     
     TIMEOUT_SECONDS = 10
+
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+        self._session = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
+
+    async def close(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
     
     async def send(
         self,
@@ -67,33 +71,50 @@ class WebhookAdapter(BaseAdapter):
         start_time = time.time()
         
         try:
-            connector = await get_webhook_connector()
-            async with aiohttp.ClientSession(connector=connector) as session:
-                async with session.post(
-                    webhook_url,
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                    timeout=aiohttp.ClientTimeout(total=self.TIMEOUT_SECONDS)
-                ) as response:
-                    duration_ms = self._measure_duration(start_time)
-                    response_body = await response.text()
-                    
-                    # Accept 2xx responses
-                    if 200 <= response.status < 300:
-                        return {
-                            "success": True,
-                            "response_code": response.status,
-                            "response_body": response_body[:1000],  # Truncate
-                            "duration_ms": duration_ms,
-                        }
-                    else:
-                        return {
-                            "success": False,
-                            "response_code": response.status,
-                            "response_body": response_body[:1000],
-                            "duration_ms": duration_ms,
-                            "error": f"Webhook returned {response.status}",
-                        }
+            session = await self._get_session()
+            # Robust logging before request
+            logger.info(
+                "Sending Webhook notification",
+                extra={
+                    "session_closed": session.closed,
+                    "webhook_url_present": bool(webhook_url),
+                }
+            )
+            async with session.post(
+                webhook_url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=self.TIMEOUT_SECONDS)
+            ) as response:
+                duration_ms = self._measure_duration(start_time)
+                response_body = await response.text()
+                
+                # Robust logging after response
+                logger.info(
+                    "Webhook delivery response received",
+                    extra={
+                        "session_closed": session.closed,
+                        "webhook_url_present": bool(webhook_url),
+                        "response_status": response.status,
+                    }
+                )
+                
+                # Accept 2xx responses
+                if 200 <= response.status < 300:
+                    return {
+                        "success": True,
+                        "response_code": response.status,
+                        "response_body": response_body[:1000],  # Truncate
+                        "duration_ms": duration_ms,
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "response_code": response.status,
+                        "response_body": response_body[:1000],
+                        "duration_ms": duration_ms,
+                        "error": f"Webhook returned {response.status}",
+                    }
         
         except asyncio.TimeoutError:
             duration_ms = self._measure_duration(start_time)
@@ -156,16 +177,16 @@ class WebhookAdapter(BaseAdapter):
         }
         
         try:
-            connector = await get_webhook_connector()
-            async with aiohttp.ClientSession(connector=connector) as session:
-                async with session.post(
-                    webhook_url,
-                    json=test_payload,
-                    timeout=aiohttp.ClientTimeout(total=5)
-                ) as response:
-                    if 200 <= response.status < 300:
-                        return True, ""
-                    else:
-                        return False, f"Webhook returned {response.status}"
+            session = await self._get_session()
+            async with session.post(
+                webhook_url,
+                json=test_payload,
+                timeout=aiohttp.ClientTimeout(total=5)
+            ) as response:
+                if 200 <= response.status < 300:
+                    return True, ""
+                else:
+                    return False, f"Webhook returned {response.status}"
         except Exception as e:
             return False, str(e)
+

@@ -24,6 +24,7 @@ import GlobalConfigPage from './pages/GlobalConfigPage';
 import ProjectDetailPage from './pages/ProjectDetailPage';
 import ComparatorPage from './pages/ComparatorPage';
 import VersionControlPage from './pages/VersionControlPage';
+import LoginPage from './pages/LoginPage';
 
 // Notification Settings Pages
 import NotificationChannelsPage from './pages/settings/NotificationChannelsPage';
@@ -38,6 +39,7 @@ import NotificationAnalyticsPage from './pages/settings/NotificationAnalyticsPag
  */
 function ProtectedRoute({ children }) {
   const { isAuthenticated, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -61,9 +63,8 @@ function ProtectedRoute({ children }) {
     );
   }
 
-  // Temporary bypass: render app even when auth is unavailable.
   if (!isAuthenticated) {
-    return children;
+    return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
   return children;
@@ -109,8 +110,8 @@ export default function App() {
   return (
     <div style={{ minHeight: '100vh' }}>
       <Routes>
-        {/* Temporary: disable login page route */}
-        <Route path="/login" element={<Navigate to="/projects" replace />} />
+        {/* Route to the login page */}
+        <Route path="/login" element={<LoginPage />} />
 
         {/* Protected: All app routes — auto-login handles auth transparently */}
         <Route element={

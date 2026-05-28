@@ -3,9 +3,13 @@ Validators for notification configuration and SSRF protection.
 """
 
 import ipaddress
+import logging
 import re
 from typing import Tuple
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
+
 
 
 def is_private_ip(ip_str: str) -> bool:
@@ -143,35 +147,106 @@ def validate_teams_webhook(url: str) -> Tuple[bool, str]:
     """Validate Teams webhook URL format."""
     is_valid, error = validate_webhook_url(url)
     if not is_valid:
+        try:
+            parsed_url = urlparse(url)
+            logger.info({
+                "event": "teams_webhook_validation",
+                "hostname": parsed_url.hostname,
+                "accepted": False,
+            })
+        except Exception:
+            pass
         return False, error
     
-    # Teams webhooks should be from outlook.webhook.office.com or teams.microsoft.com
-    if not ("outlook.webhook.office.com" in url or "teams.microsoft.com" in url):
-        return False, "URL does not appear to be a Teams webhook"
-    
-    return True, ""
+    try:
+        parsed_url = urlparse(url)
+        hostname = parsed_url.hostname or ""
+        hostname_lower = hostname.lower()
+        
+        # Expanded allowed hostname patterns (STEP 1):
+        # Legacy: outlook.webhook.office.com, teams.microsoft.com, webhook.office.com
+        # Modern: logic.azure.com, *.logic.azure.com, prod-*.logic.azure.com, powerautomate.microsoft.com
+        is_accepted = False
+        if hostname_lower == "logic.azure.com" or hostname_lower.endswith(".logic.azure.com"):
+            is_accepted = True
+        elif hostname_lower == "powerautomate.microsoft.com" or hostname_lower.endswith(".powerautomate.microsoft.com"):
+            is_accepted = True
+        elif hostname_lower in ("outlook.webhook.office.com", "teams.microsoft.com", "webhook.office.com"):
+            is_accepted = True
+        elif hostname_lower.endswith(".webhook.office.com") or hostname_lower.endswith(".teams.microsoft.com") or hostname_lower.endswith(".webhook.office.com"):
+            is_accepted = True
+            
+        # STEP 2 — Structured validation logging
+        logger.info({
+            "event": "teams_webhook_validation",
+            "hostname": hostname,
+            "accepted": is_accepted,
+        })
+        
+        if not is_accepted:
+            return False, "URL does not appear to be a Teams webhook"
+            
+        return True, ""
+    except Exception as e:
+        logger.error(f"Error validating Teams webhook: {e}")
+        return False, f"Error validating Teams webhook: {e}"
 
 
 def validate_smtp_config(config: dict) -> Tuple[bool, str]:
     """Validate SMTP configuration."""
-    required = ["host", "port", "username", "password", "from_address"]
+    # Map legacy keys if present for backward compatibility
+    if "host" in config and "smtp_host" not in config:
+        config["smtp_host"] = config["host"]
+    if "port" in config and "smtp_port" not in config:
+        config["smtp_port"] = config["port"]
+    if "username" in config and "smtp_username" not in config:
+        config["smtp_username"] = config["username"]
+    if "password" in config and "smtp_password" not in config:
+        config["smtp_password"] = config["password"]
+    if "from_address" in config and "from_email" not in config:
+        config["from_email"] = config["from_address"]
+    if "to_addresses" in config and "to_emails" not in config:
+        to_addr = config["to_addresses"]
+        if isinstance(to_addr, list):
+            config["to_emails"] = ",".join(to_addr)
+        else:
+            config["to_emails"] = to_addr
+
+    required = ["smtp_host", "smtp_port", "smtp_username", "smtp_password", "from_email", "to_emails"]
     
     for field in required:
-        if field not in config or not config[field]:
+        if field not in config or config[field] is None or str(config[field]).strip() == "":
             return False, f"Missing required SMTP field: {field}"
     
     # Validate port
     try:
-        port = int(config["port"])
+        port = int(config["smtp_port"])
         if port < 1 or port > 65535:
             return False, "SMTP port must be between 1 and 65535"
     except (ValueError, TypeError):
         return False, "SMTP port must be an integer"
     
-    # Validate from_address
-    is_valid, error = validate_email_address(config["from_address"])
+    # Validate from_email
+    is_valid, error = validate_email_address(config["from_email"])
     if not is_valid:
-        return False, f"Invalid SMTP from_address: {error}"
+        return False, f"Invalid SMTP from_email: {error}"
+
+    # Validate to_emails (can be a comma-separated string or a list)
+    to_emails = config["to_emails"]
+    if isinstance(to_emails, str):
+        emails = [e.strip() for e in to_emails.split(",") if e.strip()]
+    elif isinstance(to_emails, list):
+        emails = [str(e).strip() for e in to_emails if str(e).strip()]
+    else:
+        return False, "SMTP to_emails must be a comma-separated string or a list of emails"
+    
+    if not emails:
+        return False, "SMTP to_emails must contain at least one recipient email address"
+        
+    for email in emails:
+        is_valid, error = validate_email_address(email)
+        if not is_valid:
+            return False, f"Invalid SMTP to_emails recipient: {error}"
     
     return True, ""
 

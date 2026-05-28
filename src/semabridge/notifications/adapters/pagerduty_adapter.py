@@ -14,16 +14,7 @@ from .base import BaseAdapter, AdapterSendError
 
 logger = logging.getLogger(__name__)
 
-# Connection pool for efficiency
-PAGERDUTY_CONNECTOR = None
-
-
-async def get_pagerduty_connector() -> aiohttp.TCPConnector:
-    """Get or create a connection pool for PagerDuty."""
-    global PAGERDUTY_CONNECTOR
-    if PAGERDUTY_CONNECTOR is None:
-        PAGERDUTY_CONNECTOR = aiohttp.TCPConnector(limit=10, limit_per_host=5)
-    return PAGERDUTY_CONNECTOR
+# Connection pool functions removed to prevent stale global connector issues.
 
 
 class PagerDutyAdapter(BaseAdapter):
@@ -35,6 +26,19 @@ class PagerDutyAdapter(BaseAdapter):
     
     PAGERDUTY_EVENTS_URL = "https://events.pagerduty.com/v2/enqueue"
     TIMEOUT_SECONDS = 10
+
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+        self._session = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
+
+    async def close(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
     
     async def send(
         self,
@@ -68,31 +72,48 @@ class PagerDutyAdapter(BaseAdapter):
         start_time = time.time()
         
         try:
-            connector = await get_pagerduty_connector()
-            async with aiohttp.ClientSession(connector=connector) as session:
-                async with session.post(
-                    self.PAGERDUTY_EVENTS_URL,
-                    json=payload_with_key,
-                    timeout=aiohttp.ClientTimeout(total=self.TIMEOUT_SECONDS)
-                ) as response:
-                    duration_ms = self._measure_duration(start_time)
-                    response_body = await response.text()
-                    
-                    if response.status in (200, 201, 202):
-                        return {
-                            "success": True,
-                            "response_code": response.status,
-                            "response_body": response_body[:1000],  # Truncate for logging
-                            "duration_ms": duration_ms,
-                        }
-                    else:
-                        return {
-                            "success": False,
-                            "response_code": response.status,
-                            "response_body": response_body[:1000],
-                            "duration_ms": duration_ms,
-                            "error": f"HTTP {response.status}",
-                        }
+            session = await self._get_session()
+            # Robust logging before request
+            logger.info(
+                "Sending PagerDuty notification",
+                extra={
+                    "session_closed": session.closed,
+                    "webhook_url_present": bool(routing_key),
+                }
+            )
+            async with session.post(
+                self.PAGERDUTY_EVENTS_URL,
+                json=payload_with_key,
+                timeout=aiohttp.ClientTimeout(total=self.TIMEOUT_SECONDS)
+            ) as response:
+                duration_ms = self._measure_duration(start_time)
+                response_body = await response.text()
+                
+                # Robust logging after response
+                logger.info(
+                    "PagerDuty delivery response received",
+                    extra={
+                        "session_closed": session.closed,
+                        "webhook_url_present": bool(routing_key),
+                        "response_status": response.status,
+                    }
+                )
+                
+                if response.status in (200, 201, 202):
+                    return {
+                        "success": True,
+                        "response_code": response.status,
+                        "response_body": response_body[:1000],  # Truncate for logging
+                        "duration_ms": duration_ms,
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "response_code": response.status,
+                        "response_body": response_body[:1000],
+                        "duration_ms": duration_ms,
+                        "error": f"HTTP {response.status}",
+                    }
         
         except asyncio.TimeoutError:
             duration_ms = self._measure_duration(start_time)
@@ -130,3 +151,49 @@ class PagerDutyAdapter(BaseAdapter):
             return False, "Invalid routing_key: too short"
         
         return True, ""
+
+    async def test_connection(self, config: Dict[str, Any] = None) -> tuple[bool, str]:
+        """
+        Test PagerDuty webhook connection.
+        
+        Args:
+            config: Configuration to test (uses self.config if None)
+        
+        Returns:
+            (is_connected, error_message)
+        """
+        if config is None:
+            config = self.config
+        
+        routing_key = config.get("routing_key", "")
+        if not routing_key:
+            return False, "routing_key is required"
+        
+        test_payload = {
+            "routing_key": routing_key,
+            "event_action": "trigger",
+            "payload": {
+                "summary": "🧪 SemaBridge PagerDuty Connectivity Test",
+                "source": "SemaBridge",
+                "severity": "info",
+                "custom_details": {
+                    "message": "This is a test notification to verify PagerDuty connectivity."
+                }
+            }
+        }
+        
+        try:
+            session = await self._get_session()
+            async with session.post(
+                self.PAGERDUTY_EVENTS_URL,
+                json=test_payload,
+                timeout=aiohttp.ClientTimeout(total=5)
+            ) as response:
+                if response.status in (200, 201, 202):
+                    return True, ""
+                else:
+                    response_body = await response.text()
+                    return False, f"PagerDuty returned {response.status}: {response_body[:200]}"
+        except Exception as e:
+            return False, str(e)
+

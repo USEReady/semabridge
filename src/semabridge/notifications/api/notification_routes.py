@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 
 from ...api.deps import get_db
@@ -30,6 +30,9 @@ from ..utils.masking import mask_config_json
 
 logger = logging.getLogger(__name__)
 
+from ..utils.crypto import NotificationCrypto
+crypto = NotificationCrypto()
+
 router = APIRouter(
     prefix="/api/settings",
     tags=["notifications"],
@@ -42,6 +45,15 @@ class NotificationTemplateRequest(BaseModel):
     title_template: str = Field(min_length=1, max_length=4000)
     body_template: str = Field(min_length=1, max_length=8000)
     is_default: bool = False
+
+
+class NotificationTemplatePreviewRequest(BaseModel):
+    channel_id: Optional[str] = ""
+    level_mask: Optional[int] = 0
+    title_template: Optional[str] = ""
+    body_template: Optional[str] = ""
+    is_default: Optional[bool] = False
+    sample_context: Optional[Dict[str, Any]] = None
 
 
 class NotificationRoutingRuleRequest(BaseModel):
@@ -66,12 +78,18 @@ def _load_config(config: Any) -> Dict[str, Any]:
 
 
 def _channel_response(channel: NotificationChannel) -> Dict[str, Any]:
+    try:
+        decrypted_config = crypto.decrypt(channel.config_json)
+    except Exception as e:
+        logger.error(f"Failed to decrypt channel config: {e}")
+        decrypted_config = channel.config_json
+
     return {
         "id": str(channel.id),
         "name": channel.name,
         "channel_type": _enum_value(channel.channel_type),
         "enabled": bool(channel.enabled),
-        "config_json": mask_config_json(_load_config(channel.config_json)),
+        "config_json": mask_config_json(_load_config(decrypted_config)),
         "level_mask": channel.level_mask,
         "project_scope": channel.project_scope,
         "quiet_hours_enabled": bool(channel.quiet_hours_enabled),
@@ -198,14 +216,66 @@ async def create_notification_channel(
     Configuration secrets must be provided and will be encrypted at rest.
     """
     try:
-        # TODO: Validate config based on channel type
-        # TODO: Encrypt config_json before storage
+        from ..utils.validators import (
+            validate_slack_webhook,
+            validate_teams_webhook,
+            validate_webhook_url,
+            validate_smtp_config,
+            validate_pagerduty_config,
+        )
+
+        channel_type = _enum_value(request.channel_type)
+        config_dict = request.config_json or {}
+
+        # Diagnostic: log raw incoming payload for troubleshooting schema mismatches
+        logger.warning({
+            "event": "create_channel_incoming_payload",
+            "channel_type": channel_type,
+            "config_keys": list(config_dict.keys()),
+        })
+
+        if channel_type == "slack":
+            is_valid, err = validate_slack_webhook(config_dict.get("webhook_url", ""))
+            if not is_valid:
+                logger.warning({"event": "channel_validation_failure", "channel_type": "slack", "error": err})
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err)
+        elif channel_type == "teams":
+            is_valid, err = validate_teams_webhook(config_dict.get("webhook_url", ""))
+            if not is_valid:
+                logger.warning({"event": "channel_validation_failure", "channel_type": "teams", "error": err})
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err)
+        elif channel_type == "webhook":
+            is_valid, err = validate_webhook_url(config_dict.get("webhook_url", ""))
+            if not is_valid:
+                logger.warning({"event": "channel_validation_failure", "channel_type": "webhook", "error": err})
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err)
+        elif channel_type == "email":
+            is_valid, err = validate_smtp_config(config_dict)
+            if not is_valid:
+                logger.warning({"event": "channel_validation_failure", "channel_type": "email", "error": err})
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err)
+        elif channel_type == "pagerduty":
+            is_valid, err = validate_pagerduty_config(config_dict)
+            if not is_valid:
+                logger.warning({"event": "channel_validation_failure", "channel_type": "pagerduty", "error": err})
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err)
+        elif channel_type == "snowflake":
+            required_keys = ["account", "user", "password", "warehouse", "database", "schema", "table"]
+            for key in required_keys:
+                if not config_dict.get(key):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Missing or empty '{key}' for Snowflake channel"
+                    )
+
+        encrypted_config = crypto.encrypt(json.dumps(request.config_json))
         
         channel = NotificationChannel(
             name=request.name,
             channel_type=request.channel_type,
-            config_json=json.dumps(request.config_json),
+            config_json=encrypted_config,
             level_mask=request.level_mask,
+            enabled=request.enabled,
             project_scope=request.project_scope,
             quiet_hours_enabled=request.quiet_hours_enabled,
             quiet_hours_start=request.quiet_hours_start,
@@ -221,9 +291,12 @@ async def create_notification_channel(
         logger.info(f"Created notification channel {channel.id}")
         return _channel_response(channel)
     
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Failed to create channel: {e}")
+        logger.error(f"Failed to create channel: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
@@ -253,7 +326,47 @@ async def update_notification_channel(
 
         updates = request.dict(exclude_unset=True)
         if "config_json" in updates and updates["config_json"] is not None:
-            updates["config_json"] = json.dumps(updates["config_json"])
+            from ..utils.validators import (
+                validate_slack_webhook,
+                validate_teams_webhook,
+                validate_webhook_url,
+                validate_smtp_config,
+                validate_pagerduty_config,
+            )
+
+            channel_type = _enum_value(channel.channel_type)
+            config_dict = updates["config_json"] or {}
+
+            if channel_type == "slack":
+                is_valid, err = validate_slack_webhook(config_dict.get("webhook_url", ""))
+                if not is_valid:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err)
+            elif channel_type == "teams":
+                is_valid, err = validate_teams_webhook(config_dict.get("webhook_url", ""))
+                if not is_valid:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err)
+            elif channel_type == "webhook":
+                is_valid, err = validate_webhook_url(config_dict.get("webhook_url", ""))
+                if not is_valid:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err)
+            elif channel_type == "email":
+                is_valid, err = validate_smtp_config(config_dict)
+                if not is_valid:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err)
+            elif channel_type == "pagerduty":
+                is_valid, err = validate_pagerduty_config(config_dict)
+                if not is_valid:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err)
+            elif channel_type == "snowflake":
+                required_keys = ["account", "user", "password", "warehouse", "database", "schema", "table"]
+                for key in required_keys:
+                    if not config_dict.get(key):
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Missing or empty '{key}' for Snowflake channel"
+                        )
+
+            updates["config_json"] = crypto.encrypt(json.dumps(updates["config_json"]))
 
         for key, value in updates.items():
             setattr(channel, key, value)
@@ -327,7 +440,7 @@ async def test_notification_channel(
     """
     Send a test notification to a channel.
     
-    Returns: {success: bool, message: str}
+    Returns: Real delivery results including latency and response info.
     """
     try:
         channel = db.query(NotificationChannel).filter(
@@ -340,13 +453,112 @@ async def test_notification_channel(
                 detail="Channel not found"
             )
         
-        # TODO: Implement test notification send
-        # - Create a test NotificationEvent
-        # - Get adapter and formatter for channel type
-        # - Send via adapter
-        # - Return result
+        # Get adapter and formatter classes
+        from ..adapters import SlackAdapter, EmailAdapter, WebhookAdapter, TeamsAdapter, PagerDutyAdapter, SnowflakeAdapter
+        from ..formatters import SlackFormatter, EmailFormatter, WebhookFormatter, TeamsFormatter, PagerDutyFormatter, SnowflakeFormatter
         
-        return {"success": True, "message": "Test notification sent (Phase 2 implementation)"}
+        ADAPTERS = {
+            "slack": SlackAdapter,
+            "email": EmailAdapter,
+            "webhook": WebhookAdapter,
+            "teams": TeamsAdapter,
+            "pagerduty": PagerDutyAdapter,
+            "snowflake": SnowflakeAdapter,
+        }
+        FORMATTERS = {
+            "slack": SlackFormatter,
+            "email": EmailFormatter,
+            "webhook": WebhookFormatter,
+            "teams": TeamsFormatter,
+            "pagerduty": PagerDutyFormatter,
+            "snowflake": SnowflakeFormatter,
+        }
+        
+        channel_type = _enum_value(channel.channel_type)
+        adapter_class = ADAPTERS.get(channel_type)
+        formatter_class = FORMATTERS.get(channel_type)
+        
+        if not adapter_class or not formatter_class:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported channel type: {channel_type}"
+            )
+            
+        # Decrypt config_json at runtime
+        try:
+            decrypted_config = crypto.decrypt(channel.config_json)
+            config_json = json.loads(decrypted_config)
+        except Exception as decrypt_err:
+            logger.error(f"Failed to decrypt/parse config for channel test: {decrypt_err}")
+            config_json = {}
+            
+        # Create a test NotificationEvent
+        from ..models import NotificationEvent
+        
+        test_event = NotificationEvent(
+            id=uuid4(),
+            correlation_id=f"test_{str(uuid4())[:8]}",
+            sync_job_id="test_job_123",
+            project_id=channel.project_scope or "test_project",
+            type="api_test",
+            level=16,  # INFO
+            title=f"SemaBridge Channel Test: {channel.name}",
+            message="This is a test notification generated from the SemaBridge Channel Configuration Management page. Your channel integration is configured correctly!",
+            payload={"test": True, "initiated_at": datetime.utcnow().isoformat()},
+            source="management_api",
+            created_at=datetime.utcnow()
+        )
+        
+        # Format the event
+        formatter = formatter_class()
+        formatted_payload = formatter.format(test_event, config_json)
+        
+        # Send using the adapter
+        adapter = adapter_class(config_json)
+        start_time = datetime.utcnow()
+        try:
+            result = await adapter.send(formatted_payload, config_json)
+        finally:
+            await adapter.close()
+            
+        end_time = datetime.utcnow()
+        latency_ms = int((end_time - start_time).total_seconds() * 1000)
+        
+        # Log this attempt to DB for auditing
+        from ..models import NotificationLog, DeliveryStatusEnum
+        try:
+            status_val = "delivered" if result.get("success") else "failed"
+            log_entry = NotificationLog(
+                id=uuid4(),
+                event_id=test_event.id,
+                channel_id=channel.id,
+                status=DeliveryStatusEnum(status_val),
+                attempt=1,
+                response_code=result.get("response_code"),
+                response_body=str(result.get("response_body", ""))[:1000] if result.get("response_body") else None,
+                duration_ms=latency_ms,
+                error_message=result.get("error")[:500] if result.get("error") else None,
+                created_at=datetime.utcnow()
+            )
+            db.add(log_entry)
+            db.commit()
+        except Exception as log_err:
+            logger.error(f"Failed to log test channel delivery: {log_err}")
+            db.rollback()
+            
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"{channel_type.capitalize()} delivery failed: {result.get('error')}"
+            )
+            
+        return {
+            "success": True,
+            "message": "Test notification sent successfully!",
+            "latency_ms": latency_ms,
+            "response_code": result.get("response_code"),
+            "response_body": result.get("response_body"),
+        }
     
     except ValueError:
         raise HTTPException(
@@ -368,46 +580,127 @@ async def list_notification_logs(
     event_id: Optional[str] = None,
     channel_id: Optional[str] = None,
     status: Optional[str] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     """
     List notification delivery logs.
     
-    Supports filtering by event, channel, and status.
+    Supports filtering by event, channel, status, since, and until dates.
     """
+    import traceback
+    from datetime import time as datetime_time
+    from fastapi import status as fastapi_status
+    
+    logger.info(
+        f"Querying notification logs: skip={skip}, limit={limit}, "
+        f"event_id={event_id}, channel_id={channel_id}, status={status}, "
+        f"since={since}, until={until}"
+    )
+    
     try:
         query = db.query(NotificationLog)
         
         if event_id:
-            query = query.filter(NotificationLog.event_id == UUID(event_id))
+            try:
+                query = query.filter(NotificationLog.event_id == UUID(event_id))
+            except ValueError as val_err:
+                logger.error(f"Invalid UUID for event_id '{event_id}': {val_err}")
+                raise HTTPException(
+                    status_code=fastapi_status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid event_id UUID: {event_id}"
+                )
+                
         if channel_id:
-            query = query.filter(NotificationLog.channel_id == UUID(channel_id))
+            try:
+                query = query.filter(NotificationLog.channel_id == UUID(channel_id))
+            except ValueError as val_err:
+                logger.error(f"Invalid UUID for channel_id '{channel_id}': {val_err}")
+                raise HTTPException(
+                    status_code=fastapi_status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid channel_id UUID: {channel_id}"
+                )
+                
         if status:
             query = query.filter(NotificationLog.status == status)
+            
+        if since:
+            try:
+                if len(since) == 10:
+                    since_dt = datetime.combine(datetime.fromisoformat(since).date(), datetime_time.min)
+                else:
+                    since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+                query = query.filter(NotificationLog.created_at >= since_dt)
+            except ValueError as e:
+                logger.error(f"Invalid date for since '{since}': {e}")
+                raise HTTPException(
+                    status_code=fastapi_status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid since date format (use YYYY-MM-DD or ISO 8601): {since}"
+                )
+                
+        if until:
+            try:
+                if len(until) == 10:
+                    until_dt = datetime.combine(datetime.fromisoformat(until).date(), datetime_time.max)
+                else:
+                    until_dt = datetime.fromisoformat(until.replace("Z", "+00:00"))
+                query = query.filter(NotificationLog.created_at <= until_dt)
+            except ValueError as e:
+                logger.error(f"Invalid date for until '{until}': {e}")
+                raise HTTPException(
+                    status_code=fastapi_status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid until date format (use YYYY-MM-DD or ISO 8601): {until}"
+                )
         
         total = query.count()
         logs = query.order_by(NotificationLog.created_at.desc()).offset(skip).limit(limit).all()
         
-        items = [NotificationLogResponse.from_orm(log).dict() for log in logs]
+        # Serialize manually to prevent ValidationError with UUIDs or Enums
+        items = []
+        for log in logs:
+            try:
+                items.append({
+                    "id": str(log.id),
+                    "event_id": str(log.event_id),
+                    "channel_id": str(log.channel_id),
+                    "status": _enum_value(log.status),
+                    "attempt": log.attempt,
+                    "response_code": log.response_code,
+                    "response_body": log.response_body,
+                    "duration_ms": log.duration_ms,
+                    "error_message": log.error_message,
+                    "created_at": log.created_at,
+                })
+            except Exception as ser_err:
+                logger.error(f"Failed to serialize log {getattr(log, 'id', 'unknown')}: {ser_err}")
+                logger.error(traceback.format_exc())
+                raise
         
         return PaginatedResponse(
             items=items,
             total=total,
-            page=skip // limit,
+            page=skip // limit if limit > 0 else 0,
             page_size=limit,
-            total_pages=(total + limit - 1) // limit,
+            total_pages=(total + limit - 1) // limit if limit > 0 else 1,
         )
     
+    except HTTPException:
+        raise
     except ValueError as e:
+        logger.error(f"ValueError in list_notification_logs: {e}")
+        logger.error(traceback.format_exc())
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=fastapi_status.HTTP_400_BAD_REQUEST,
             detail="Invalid filter parameters"
         )
     except Exception as e:
+        tb = traceback.format_exc()
         logger.error(f"Failed to list logs: {e}")
+        logger.error(tb)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to list logs"
+            status_code=fastapi_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list logs due to backend exception: {str(e)}\nTraceback:\n{tb}"
         )
 
 
@@ -432,17 +725,31 @@ async def retry_notification(
                 detail="Log entry not found"
             )
         
-        # TODO: Implement retry logic
-        # - Get the original event
-        # - Requeue for delivery
+        import os
+        from ..services.notification_service import NotificationService
+        from ..services.replay_service import ReplayService
         
-        return {"success": True, "message": "Retry queued (Phase 2 implementation)"}
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+        notification_service = NotificationService(redis_url)
+        replay_service = ReplayService(db, notification_service)
+        
+        replay_result = await replay_service.replay_event(str(log.id))
+        
+        if replay_result.enqueued_at:
+            return {
+                "success": True,
+                "message": f"Retry queued successfully (new event: {replay_result.new_event_id})"
+            }
+        else:
+            return {"success": False, "message": "Failed to queue retry"}
     
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid log ID"
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to retry notification: {e}")
         raise HTTPException(
@@ -534,25 +841,89 @@ async def validate_notification_template(request: NotificationTemplateRequest):
         return {"valid": False, "errors": [str(exc)]}
 
 
+FALLBACK_CONTEXT = {
+    "title": "Fabric Sync Failed",
+    "message": "Warehouse timeout occurred",
+    "level": 40,
+    "level_str": "ERROR",
+    "project_id": "fabric-prod",
+    "sync_job_id": "job-123",
+    "source": "sync_engine",
+    "payload": {
+        "warehouse": "fabric-east"
+    }
+}
+
+
 @router.post("/notification-templates/preview")
-async def preview_notification_template(request: NotificationTemplateRequest):
+async def preview_notification_template(request_data: Dict[str, Any]):
     """Render a template preview using representative notification data."""
+    logger.info("Template preview request received", extra={"payload": request_data})
+    
+    try:
+        request = NotificationTemplatePreviewRequest.model_validate(request_data)
+    except ValidationError as err:
+        errors = err.errors()
+        missing_fields = []
+        invalid_schema_paths = []
+        explanations = []
+        for e in errors:
+            loc_path = " -> ".join(str(l) for l in e["loc"])
+            invalid_schema_paths.append(loc_path)
+            if e["type"] == "missing":
+                missing_fields.append(str(e["loc"][-1]))
+            explanations.append(f"Field '{loc_path}': {e['msg']}")
+        
+        detail_msg = "; ".join(explanations)
+        logger.warning(
+            "Template preview validation failure",
+            extra={
+                "payload": request_data,
+                "missing_fields": missing_fields,
+                "invalid_schema_paths": invalid_schema_paths,
+                "errors": errors,
+            }
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": f"Validation failed: {detail_msg}",
+                "missing_fields": missing_fields,
+                "invalid_schema_paths": invalid_schema_paths,
+                "errors": errors
+            }
+        )
+
+    context = dict(FALLBACK_CONTEXT)
+    if request.sample_context:
+        context.update(request.sample_context)
+
+    title_tmpl = request.title_template or ""
+    body_tmpl = request.body_template or ""
+
     try:
         from jinja2 import Template
-        context = {
-            "level": "ERROR",
-            "title": "Sync failed",
-            "message": "A sample sync encountered an error.",
-            "project_id": "sample-project",
-            "source": "preview",
-            "payload": {"rows_processed": 1200, "errors": 1},
-        }
+        rendered_title = Template(title_tmpl).render(**context)
+        rendered_body = Template(body_tmpl).render(**context)
         return {
-            "title": Template(request.title_template).render(**context),
-            "body": Template(request.body_template).render(**context),
+            "title": rendered_title,
+            "body": rendered_body,
         }
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        logger.error(
+            "Template rendering exception",
+            extra={
+                "title_template": title_tmpl,
+                "body_template": body_tmpl,
+                "context": context,
+                "error": str(exc),
+            },
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Template rendering failed: {str(exc)}"
+        )
 
 
 @router.get("/notification-routing-rules", response_model=PaginatedResponse)

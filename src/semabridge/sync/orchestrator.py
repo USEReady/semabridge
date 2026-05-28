@@ -79,6 +79,16 @@ class SyncOrchestrator:
         self._extractor_factory = extractor_factory
         self._deployer_factory = deployer_factory
 
+        # Initialize NotificationService
+        import os
+        try:
+            from semabridge.notifications.services.notification_service import NotificationService
+            redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+            self._notification_service = NotificationService(redis_url)
+        except Exception as e:
+            logger.warning(f"Could not initialize NotificationService in orchestrator: {e}")
+            self._notification_service = None
+
     # -----------------------------------------------------------------
     # Public API
     # -----------------------------------------------------------------
@@ -104,6 +114,7 @@ class SyncOrchestrator:
             SyncError: If the sync cannot be started.
             ConflictError: If unresolved conflicts block progress.
         """
+        logger.warning("SYNC_NOTIFICATION_TRACE: entered orchestrator.run")
         start_time = time.time()
 
         # --- Resume or create job ---
@@ -120,6 +131,23 @@ class SyncOrchestrator:
             f"Starting sync job {job.job_id} "
             f"[{job.direction.value}] with {job.total_items} items"
         )
+
+        # Emit SYNC STARTED notification
+        try:
+            import os
+            project_name = job.target_workspace_id or (os.path.basename(job.source_folder) if job.source_folder else "Default Project")
+            self._emit_notification_safe(
+                title="Sync Started",
+                message=f"Synchronization started for project {project_name}",
+                level=16,  # NotificationLevel.INFO
+                job=job,
+                payload={
+                    "mode": job.direction.value if job.direction else "unknown",
+                    "run_id": job.job_id,
+                }
+            )
+        except Exception as notify_err:
+            logger.warning(f"Failed to emit sync started notification: {notify_err}")
 
         try:
             # --- Determine start index from checkpoint ---
@@ -169,6 +197,42 @@ class SyncOrchestrator:
             f"completed={job.completed_items}/{job.total_items} "
             f"failed={job.failed_items} duration={job.duration_ms}ms"
         )
+
+        # Emit final lifecycle status notifications
+        try:
+            duration_str = f"{job.duration_ms / 1000:.2f}s" if job.duration_ms else "0s"
+            sync_mode = job.direction.value if job.direction else "unknown"
+            
+            if job.status == SyncJobStatus.COMPLETED:
+                self._emit_notification_safe(
+                    title="Sync Completed Successfully",
+                    message=f"Synchronization completed successfully in {duration_str}",
+                    level=16,  # NotificationLevel.INFO
+                    job=job,
+                    payload={
+                        "duration": duration_str,
+                        "datasets": job.completed_items,
+                        "metrics": 0,
+                        "mode": sync_mode,
+                        "run_id": job.job_id,
+                    }
+                )
+            elif job.status in (SyncJobStatus.FAILED, SyncJobStatus.CONFLICT):
+                err_msg = job.error_message or "Unknown execution error"
+                self._emit_notification_safe(
+                    title="Sync Failed",
+                    message=err_msg,
+                    level=4,  # NotificationLevel.ERROR
+                    job=job,
+                    payload={
+                        "failed_stage": "execution" if job.status == SyncJobStatus.FAILED else "conflict_detection",
+                        "run_id": job.job_id,
+                        "mode": sync_mode,
+                    }
+                )
+        except Exception as notify_err:
+            logger.warning(f"Failed to emit sync completion notification: {notify_err}")
+
         return job
 
     def cancel(self, job_id: str) -> SyncJob:
@@ -1105,3 +1169,52 @@ class SyncOrchestrator:
             "ARRAY": OSIDataType.VARIANT,
         }
         return mapping.get(sf_upper, OSIDataType.UNKNOWN)
+
+    def _emit_notification_safe(
+        self,
+        title: str,
+        message: str,
+        level: int,
+        job: SyncJob,
+        payload: dict,
+    ) -> None:
+        """Emit a notification event safely, guaranteeing it never breaks the sync engine."""
+        if not getattr(self, "_notification_service", None):
+            return
+        try:
+            import os
+            from semabridge.notifications.models import NotificationEvent
+            
+            project_id = job.target_workspace_id or job.source_folder or "default_project"
+            project_name = job.target_workspace_id or (os.path.basename(job.source_folder) if job.source_folder else "Default Project")
+            
+            event = NotificationEvent(
+                level=level,
+                title=title,
+                message=message,
+                source="sync_engine",
+                project_id=project_id,
+                sync_job_id=job.job_id,
+                payload=payload,
+            )
+            logger.info({
+                "notification_emit_attempt": True,
+                "title": title,
+                "level": level,
+                "source": "sync_engine",
+                "project_id": project_id,
+                "sync_job_id": job.job_id,
+            })
+            logger.warning({
+                "event": "notification_emit_trace",
+                "caller": "semabridge.sync.orchestrator._emit_notification_safe",
+                "run_id": job.job_id,
+                "title": title,
+            })
+            self._notification_service.emit_sync(event)
+            logger.info({
+                "notification_emit_success": True,
+                "title": title,
+            })
+        except Exception as exc:
+            logger.exception("Notification emission failed")

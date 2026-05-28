@@ -98,3 +98,8 @@ class BaseAdapter(ABC):
     def _measure_duration(self, start_time: float) -> int:
         """Calculate elapsed time in milliseconds."""
         return int((time.time() - start_time) * 1000)
+    
+    async def close(self) -> None:
+        """Close any open resources (like aiohttp.ClientSession)."""
+        pass
+

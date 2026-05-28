@@ -17,6 +17,7 @@ class NotificationChannelCreateRequest(BaseModel):
     channel_type: str = Field(..., description="slack, teams, email, webhook, pagerduty")
     config_json: Dict[str, Any]
     level_mask: int = Field(default=63)
+    enabled: bool = True
     project_scope: Optional[str] = None
     quiet_hours_enabled: bool = False
     quiet_hours_start: Optional[time] = None

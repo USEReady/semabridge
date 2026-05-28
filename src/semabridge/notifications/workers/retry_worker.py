@@ -14,7 +14,7 @@ from uuid import UUID
 import redis
 from sqlalchemy.orm import Session
 
-from ...constants import RedisQueues, NotificationStatus
+from ..constants import RedisQueues, NotificationStatus
 from ..queue.redis_streams import RedisStreamsQueue
 from ..services.delivery_log_service import DeliveryLogService
 from ..utils.retry import RetryConfig, RetryMetadata, should_retry, is_ready_to_retry

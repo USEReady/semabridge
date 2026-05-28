@@ -17,7 +17,7 @@ from uuid import UUID
 import redis
 from sqlalchemy.orm import Session
 
-from ...constants import NotificationChannelType, NotificationStatus, ChannelStatus, RedisQueues
+from ..constants import NotificationChannelType, NotificationStatus, ChannelStatus, RedisQueues
 from ..models import NotificationEvent, NotificationChannel, NotificationLog
 from ..queue.redis_streams import RedisStreamsQueue
 from ..services.delivery_log_service import DeliveryLogService
@@ -249,60 +249,3 @@ class DeadLetterWorker:
         
         except Exception as e:
             logger.error(f"Error alerting other channels: {e}", exc_info=True)
-        
-        try:
-            await self._worker_loop()
-        except Exception as e:
-            logger.error(f"Dead-letter worker error: {e}")
-        finally:
-            self.running = False
-    
-    async def stop(self):
-        """Stop the dead-letter worker."""
-        self.running = False
-    
-    async def _worker_loop(self):
-        """Main worker loop."""
-        while self.running:
-            try:
-                messages = self.queue.consume(
-                    RedisQueues.DEAD_LETTERS,
-                    "dead-letter",
-                    self.consumer_name,
-                    count=5,
-                    timeout_ms=5000,
-                )
-                
-                for message_id, payload in messages:
-                    try:
-                        await self._handle_dead_letter(message_id, payload)
-                        self.queue.ack(RedisQueues.DEAD_LETTERS, "dead-letter", message_id)
-                    except Exception as e:
-                        logger.error(f"Dead-letter handling error: {e}")
-            
-            except Exception as e:
-                logger.error(f"Dead-letter worker loop error: {e}")
-    
-    async def _handle_dead_letter(self, message_id: str, payload: Dict[str, Any]):
-        """
-        Handle a dead-letter message.
-        
-        TODO in Phase 2:
-        - Store in persistent deadletter database table
-        - Check channel consecutive failure count
-        - Disable channel if threshold exceeded
-        - Alert operators
-        
-        Args:
-            message_id: Redis stream message ID
-            payload: Message payload
-        """
-        logger.warning(
-            f"Dead-letter message {message_id}: "
-            f"event_id={payload.get('id')}, "
-            f"channel_id={payload.get('channel_id')}, "
-            f"attempts={payload.get('attempt_count', 0)}"
-        )
-        
-        # Phase 1: Just log
-        # Phase 2: Implement persistence and alerting

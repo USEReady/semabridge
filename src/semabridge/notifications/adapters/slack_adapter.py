@@ -16,16 +16,7 @@ from .base import BaseAdapter, AdapterSendError
 
 logger = logging.getLogger(__name__)
 
-# Connection pool for efficiency
-SLACK_CONNECTOR = None
-
-
-async def get_slack_connector() -> aiohttp.TCPConnector:
-    """Get or create a connection pool for Slack."""
-    global SLACK_CONNECTOR
-    if SLACK_CONNECTOR is None:
-        SLACK_CONNECTOR = aiohttp.TCPConnector(limit=10, limit_per_host=5)
-    return SLACK_CONNECTOR
+# Connection pool functions removed to prevent stale global connector issues.
 
 
 class SlackAdapter(BaseAdapter):
@@ -35,6 +26,19 @@ class SlackAdapter(BaseAdapter):
     
     TIMEOUT_SECONDS = 10
     MAX_RETRIES_FOR_429 = 3
+
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+        self._session = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
+
+    async def close(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
     
     async def send(
         self,
@@ -64,57 +68,93 @@ class SlackAdapter(BaseAdapter):
         
         while attempt < self.MAX_RETRIES_FOR_429:
             try:
-                connector = await get_slack_connector()
-                async with aiohttp.ClientSession(connector=connector) as session:
-                    async with session.post(
-                        webhook_url,
-                        json=payload,
-                        timeout=aiohttp.ClientTimeout(total=self.TIMEOUT_SECONDS)
-                    ) as response:
-                        duration_ms = self._measure_duration(start_time)
-                        response_body = await response.text()
+                session = await self._get_session()
+                # Temporarily log rendered payload size and top-level structure (Step 4)
+                print(f"SLACK_VERIFY_PAYLOAD: keys={list(payload.keys())}, has_blocks={'blocks' in payload}")
+                logger.info({
+                    "payload_keys": list(payload.keys()),
+                    "has_blocks": "blocks" in payload,
+                })
+
+                # Robust logging before request
+                print(f"SLACK_VERIFY_SEND: sending Slack notification to {webhook_url[:30]}...")
+                logger.info(
+                    "Sending Slack notification",
+                    extra={
+                        "session_closed": session.closed,
+                        "webhook_url_present": bool(webhook_url),
+                    }
+                )
+                async with session.post(
+                    webhook_url,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=self.TIMEOUT_SECONDS)
+                ) as response:
+                    duration_ms = self._measure_duration(start_time)
+                    response_body = await response.text()
+                    
+                    # Robust logging after response (Step 1)
+                    from urllib.parse import urlparse
+                    parsed_url = urlparse(webhook_url)
+                    webhook_hostname = parsed_url.hostname or "unknown"
+                    
+                    print(f"SLACK_VERIFY_STATUS: status={response.status}, success={response.status == 200}, hostname={webhook_hostname}")
+                    print(f"SLACK_VERIFY_BODY: {response_body}")
+                    
+                    logger.info({
+                        "slack_delivery_status": response.status,
+                        "slack_delivery_success": response.status == 200,
+                        "slack_webhook_hostname": webhook_hostname,
+                    })
+                    
+                    logger.info({
+                        "slack_response_body": response_body,
+                    })
+                    
+                    if response.status == 429:
+                        # Rate limited
+                        retry_after = response.headers.get("Retry-After", str(retry_delay))
+                        try:
+                            retry_delay = int(retry_after)
+                        except ValueError:
+                            pass
                         
-                        if response.status == 429:
-                            # Rate limited
-                            retry_after = response.headers.get("Retry-After", str(retry_delay))
-                            try:
-                                retry_delay = int(retry_after)
-                            except ValueError:
-                                pass
-                            
-                            attempt += 1
-                            if attempt < self.MAX_RETRIES_FOR_429:
-                                logger.warning(f"Slack rate limited, retrying in {retry_delay}s")
-                                await asyncio.sleep(retry_delay)
-                                retry_delay = min(retry_delay * 2, 60)  # Exponential backoff up to 60s
-                                continue
-                            
-                            return {
-                                "success": False,
-                                "response_code": 429,
-                                "response_body": response_body,
-                                "duration_ms": duration_ms,
-                                "error": f"Rate limited after {attempt} retries",
-                            }
+                        attempt += 1
+                        if attempt < self.MAX_RETRIES_FOR_429:
+                            logger.warning(f"Slack rate limited, retrying in {retry_delay}s")
+                            await asyncio.sleep(retry_delay)
+                            retry_delay = min(retry_delay * 2, 60)  # Exponential backoff up to 60s
+                            continue
                         
-                        elif response.status == 200:
-                            return {
-                                "success": True,
-                                "response_code": response.status,
-                                "response_body": response_body,
-                                "duration_ms": duration_ms,
-                            }
-                        else:
-                            return {
-                                "success": False,
-                                "response_code": response.status,
-                                "response_body": response_body,
-                                "duration_ms": duration_ms,
-                                "error": f"Slack returned {response.status}",
-                            }
+                        return {
+                            "success": False,
+                            "response_code": 429,
+                            "response_body": response_body,
+                            "duration_ms": duration_ms,
+                            "error": f"Rate limited after {attempt} retries",
+                        }
+                    
+                    elif response.status == 200:
+                        print("SLACK_VERIFY_SUCCESS: Slack notification delivered successfully")
+                        logger.info("Slack notification delivered successfully")
+                        return {
+                            "success": True,
+                            "response_code": response.status,
+                            "response_body": response_body,
+                            "duration_ms": duration_ms,
+                        }
+                    else:
+                        return {
+                            "success": False,
+                            "response_code": response.status,
+                            "response_body": response_body,
+                            "duration_ms": duration_ms,
+                            "error": f"Slack returned {response.status}",
+                        }
             
             except asyncio.TimeoutError:
                 duration_ms = self._measure_duration(start_time)
+                print("SLACK_VERIFY_ERROR: Request timeout")
                 return {
                     "success": False,
                     "duration_ms": duration_ms,
@@ -123,7 +163,8 @@ class SlackAdapter(BaseAdapter):
             
             except Exception as e:
                 duration_ms = self._measure_duration(start_time)
-                logger.error(f"Failed to send Slack notification: {e}")
+                print(f"SLACK_VERIFY_ERROR: exception={e}")
+                logger.exception("Slack delivery failure")
                 return {
                     "success": False,
                     "duration_ms": duration_ms,
@@ -187,16 +228,16 @@ class SlackAdapter(BaseAdapter):
         }
         
         try:
-            connector = await get_slack_connector()
-            async with aiohttp.ClientSession(connector=connector) as session:
-                async with session.post(
-                    webhook_url,
-                    json=test_payload,
-                    timeout=aiohttp.ClientTimeout(total=5)
-                ) as response:
-                    if response.status == 200:
-                        return True, ""
-                    else:
-                        return False, f"Slack returned {response.status}"
+            session = await self._get_session()
+            async with session.post(
+                webhook_url,
+                json=test_payload,
+                timeout=aiohttp.ClientTimeout(total=5)
+            ) as response:
+                if response.status == 200:
+                    return True, ""
+                else:
+                    return False, f"Slack returned {response.status}"
         except Exception as e:
             return False, str(e)
+

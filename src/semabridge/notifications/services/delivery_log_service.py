@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from ..models import NotificationLog, NotificationChannel, DeliveryStatusEnum
-from ...constants import NotificationStatus
+from ..constants import NotificationStatus
 
 logger = logging.getLogger(__name__)
 

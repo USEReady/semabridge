@@ -32,22 +32,36 @@ def mask_secret(secret: str, visible_chars: int = 4, redaction_style: str = "ell
 
 def mask_url(url: str) -> str:
     """
-    Mask webhook URLs, showing only last 4 characters.
+    Mask webhook URLs, showing only scheme, host, and last 4 characters of the path.
     
     Example:
-        https://hooks.slack.com/services/ABCD/EFGH/ijklmnop -> https://hooks.slack.com/...ijkl
+        https://hooks.slack.com/services/ABCD/EFGH/ijklmnop -> https://hooks.slack.com/services/...mnop
     """
     if not url:
         return url
     
     try:
-        # Extract everything after the last slash
-        parts = url.rsplit("/", 1)
-        if len(parts) == 2:
-            base, path = parts
-            if len(path) > 4:
-                return f"{base}/...{path[-4:]}"
-        return url
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        if not parsed.hostname:
+            return url
+            
+        path = parsed.path
+        if not path:
+            return f"{parsed.scheme}://{parsed.netloc}"
+            
+        # Get last 4 characters of path
+        clean_path = path.rstrip("/")
+        if len(clean_path) > 4:
+            visible_suffix = clean_path[-4:]
+        else:
+            visible_suffix = clean_path
+            
+        # Slack webhook URLs usually contain /services/
+        if "/services/" in path:
+            return f"{parsed.scheme}://{parsed.hostname}/services/...{visible_suffix}"
+        else:
+            return f"{parsed.scheme}://{parsed.hostname}/...{visible_suffix}"
     except Exception:
         return url
 

@@ -5,6 +5,7 @@ Tests for Quiet Hours service with timezone and DST handling.
 import pytest
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
+from unittest.mock import patch
 
 from semabridge.notifications.services.quiet_hours_service import QuietHoursService
 from semabridge.notifications.models import NotificationChannel, ChannelStatusEnum, ChannelTypeEnum
@@ -50,7 +51,7 @@ def test_quiet_hours_same_day_in_window(quiet_hours_service):
     channel = create_channel(start_time=time(9, 0), end_time=time(17, 0))
     
     # Mock current time in quiet window
-    with pytest.mock.patch('datetime.datetime') as mock_datetime:
+    with patch('datetime.datetime') as mock_datetime:
         # 12:00 (noon) is in quiet hours
         tz = ZoneInfo("America/New_York")
         mock_now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=tz)

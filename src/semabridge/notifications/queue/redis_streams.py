@@ -53,7 +53,21 @@ class RedisStreamsQueue:
             logger.debug(f"Enqueued message {entry_id} to {queue_name}")
             return entry_id if isinstance(entry_id, str) else entry_id.decode() if entry_id else None
         except RedisError as e:
-            logger.error(f"Failed to enqueue message: {e}")
+            try:
+                conn_kwargs = self.redis.connection_pool.connection_kwargs
+                host = conn_kwargs.get("host", "localhost")
+                port = conn_kwargs.get("port", 6379)
+                db = conn_kwargs.get("db", 0)
+                timeout = conn_kwargs.get("socket_timeout", "default")
+                redis_info = f"redis://{host}:{port}/{db} (timeout: {timeout}s)"
+            except Exception:
+                import os
+                redis_info = os.getenv("REDIS_URL", "redis://localhost:6379")
+            
+            logger.error(
+                f"Failed to enqueue message to stream '{queue_name}': "
+                f"Exception={type(e).__name__}, Message={e}, RedisURL={redis_info}"
+            )
             raise
     
     def create_consumer_group(
@@ -256,24 +270,54 @@ class RedisStreamsQueue:
         count: int = 10,
     ) -> List[Dict]:
         """
-        Get list of pending messages.
+        Get list of pending messages with per-message detail.
+        
+        Uses XPENDING with range args (xpending_range) to return individual
+        message info including message_id, consumer, time_since_delivered,
+        and times_delivered.
         
         Args:
             queue_name: Stream name
             group_name: Consumer group name
-            start: Start ID
-            end: End ID
+            start: Start ID (default "-" = earliest)
+            end: End ID (default "+" = latest)
             count: Maximum to return
         
         Returns:
-            List of pending message info dicts
+            List of pending message info dicts with keys:
+            message_id, consumer, time_since_delivered, times_delivered
         """
         try:
-            pending = self.redis.xpending(queue_name, group_name, start, end, count)
+            pending = self.redis.xpending_range(
+                queue_name, group_name, min=start, max=end, count=count,
+            )
             return pending if pending else []
         except RedisError as e:
             logger.warning(f"Failed to get pending messages: {e}")
             return []
+
+    def get_pending_summary(
+        self,
+        queue_name: str,
+        group_name: str,
+    ) -> Dict:
+        """
+        Get aggregate pending summary (total pending, min/max IDs, consumers).
+        
+        Uses the XPENDING summary form.
+        
+        Args:
+            queue_name: Stream name
+            group_name: Consumer group name
+        
+        Returns:
+            Dict with pending count, min, max, and consumers info
+        """
+        try:
+            return self.redis.xpending(queue_name, group_name) or {}
+        except RedisError as e:
+            logger.warning(f"Failed to get pending summary: {e}")
+            return {}
     
     def cleanup_stream(self, queue_name: str, max_len: int = 10000) -> bool:
         """

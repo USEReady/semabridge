@@ -52,6 +52,7 @@ export default function NotificationChannelsPage() {
   const [editingId, setEditingId] = useState(null);
   const [formData, setFormData] = useState({ ...DEFAULT_FORM });
   const [configErrors, setConfigErrors] = useState({});
+  const [saveError, setSaveError] = useState(null);
   const [testing, setTesting] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const [error, setError] = useState(null);
@@ -77,6 +78,7 @@ export default function NotificationChannelsPage() {
     setFormData({ ...DEFAULT_FORM });
     setEditingId(null);
     setConfigErrors({});
+    setSaveError(null);
     setModalOpen(true);
   };
 
@@ -90,10 +92,12 @@ export default function NotificationChannelsPage() {
     });
     setEditingId(channel.id);
     setConfigErrors({});
+    setSaveError(null);
     setModalOpen(true);
   };
 
   const saveChannel = async () => {
+    setSaveError(null);
     try {
       const payload = {
         ...formData,
@@ -110,7 +114,12 @@ export default function NotificationChannelsPage() {
       setModalOpen(false);
       setError(null);
     } catch (e) {
-      setError(e.message || 'Failed to save channel');
+      // Extract the most readable error: API returns `detail` from backend validators
+      const detail =
+        e?.payload?.detail ||
+        (typeof e?.message === 'string' ? e.message.replace(/^API Error \d+:\s*/, '') : null) ||
+        'Failed to save channel';
+      setSaveError(detail);
     }
   };
 
@@ -472,52 +481,151 @@ export default function NotificationChannelsPage() {
           )}
 
           {formData.channel_type === 'email' && (
-            <>
-              <input
-                type="text"
-                value={formData.config_json?.smtp_host || ''}
-                onChange={(e) => setFormData({
-                  ...formData,
-                  config_json: { ...formData.config_json, smtp_host: e.target.value },
-                })}
-                placeholder="SMTP Host"
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  borderRadius: 6,
-                  border: '1px solid var(--border-main)',
-                  background: 'var(--bg-surface-raised)',
-                  color: 'var(--text-primary)',
-                  fontSize: 13,
-                }}
-              />
-              <input
-                type="number"
-                value={formData.config_json?.smtp_port || 587}
-                onChange={(e) => setFormData({
-                  ...formData,
-                  config_json: { ...formData.config_json, smtp_port: parseInt(e.target.value) },
-                })}
-                placeholder="SMTP Port"
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  borderRadius: 6,
-                  border: '1px solid var(--border-main)',
-                  background: 'var(--bg-surface-raised)',
-                  color: 'var(--text-primary)',
-                  fontSize: 13,
-                }}
-              />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4, color: 'var(--text-secondary)' }}>
+                  SMTP Host *
+                </label>
+                <input
+                  type="text"
+                  value={formData.config_json?.smtp_host || ''}
+                  onChange={(e) => setFormData({
+                    ...formData,
+                    config_json: { ...formData.config_json, smtp_host: e.target.value },
+                  })}
+                  placeholder="smtp.gmail.com"
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: 6,
+                    border: '1px solid var(--border-main)',
+                    background: 'var(--bg-surface-raised)',
+                    color: 'var(--text-primary)',
+                    fontSize: 13,
+                    fontFamily: 'inherit',
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4, color: 'var(--text-secondary)' }}>
+                  SMTP Port *
+                </label>
+                <input
+                  type="number"
+                  value={formData.config_json?.smtp_port ?? 587}
+                  onChange={(e) => setFormData({
+                    ...formData,
+                    config_json: { ...formData.config_json, smtp_port: parseInt(e.target.value) || '' },
+                  })}
+                  placeholder="587"
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: 6,
+                    border: '1px solid var(--border-main)',
+                    background: 'var(--bg-surface-raised)',
+                    color: 'var(--text-primary)',
+                    fontSize: 13,
+                    fontFamily: 'inherit',
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4, color: 'var(--text-secondary)' }}>
+                  SMTP Username *
+                </label>
+                <input
+                  type="text"
+                  value={formData.config_json?.smtp_username || ''}
+                  onChange={(e) => setFormData({
+                    ...formData,
+                    config_json: { ...formData.config_json, smtp_username: e.target.value },
+                  })}
+                  placeholder="user@example.com"
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: 6,
+                    border: '1px solid var(--border-main)',
+                    background: 'var(--bg-surface-raised)',
+                    color: 'var(--text-primary)',
+                    fontSize: 13,
+                    fontFamily: 'inherit',
+                  }}
+                />
+              </div>
               <SecretField
-                label="SMTP Password"
+                label="SMTP Password *"
                 maskedValue={formData.config_json?.smtp_password ? '•'.repeat(8) : undefined}
                 onUpdate={(val) => setFormData({
                   ...formData,
                   config_json: { ...formData.config_json, smtp_password: val },
                 })}
               />
-            </>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4, color: 'var(--text-secondary)' }}>
+                  From Email *
+                </label>
+                <input
+                  type="text"
+                  value={formData.config_json?.from_email || ''}
+                  onChange={(e) => setFormData({
+                    ...formData,
+                    config_json: { ...formData.config_json, from_email: e.target.value },
+                  })}
+                  placeholder="noreply@company.com"
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: 6,
+                    border: '1px solid var(--border-main)',
+                    background: 'var(--bg-surface-raised)',
+                    color: 'var(--text-primary)',
+                    fontSize: 13,
+                    fontFamily: 'inherit',
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4, color: 'var(--text-secondary)' }}>
+                  To Emails (comma-separated) *
+                </label>
+                <input
+                  type="text"
+                  value={formData.config_json?.to_emails || ''}
+                  onChange={(e) => setFormData({
+                    ...formData,
+                    config_json: { ...formData.config_json, to_emails: e.target.value },
+                  })}
+                  placeholder="alerts@company.com, admin@company.com"
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: 6,
+                    border: '1px solid var(--border-main)',
+                    background: 'var(--bg-surface-raised)',
+                    color: 'var(--text-primary)',
+                    fontSize: 13,
+                    fontFamily: 'inherit',
+                  }}
+                />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                <input
+                  type="checkbox"
+                  id="tls_enabled"
+                  checked={formData.config_json?.tls_enabled ?? true}
+                  onChange={(e) => setFormData({
+                    ...formData,
+                    config_json: { ...formData.config_json, tls_enabled: e.target.checked },
+                  })}
+                  style={{ cursor: 'pointer' }}
+                />
+                <label htmlFor="tls_enabled" style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                  TLS Enabled (STARTTLS or SSL/TLS)
+                </label>
+              </div>
+            </div>
           )}
 
           {formData.channel_type === 'webhook' && (
@@ -553,6 +661,25 @@ export default function NotificationChannelsPage() {
             />
           )}
         </div>
+
+        {/* Save error shown INSIDE modal so it persists */}
+          {saveError && (
+            <div style={{
+              margin: '0 20px 12px',
+              padding: '10px 14px',
+              borderRadius: 6,
+              background: 'rgba(214, 48, 49, 0.10)',
+              border: '1px solid rgba(214, 48, 49, 0.35)',
+              color: '#d63031',
+              fontSize: 13,
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 8,
+            }}>
+              <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span>{saveError}</span>
+            </div>
+          )}
 
         <div style={{
           display: 'flex',

@@ -56,19 +56,25 @@ class AnalyticsService:
         until = until or datetime.utcnow()
         since = since or (until - timedelta(hours=24))
         
-        # Build query
-        query = self.db_session.query(NotificationLog).filter(
+        # Build query conditions
+        conditions = [
             NotificationLog.created_at >= since,
             NotificationLog.created_at <= until,
-        )
+        ]
         
         # Apply filters
         if channel_id:
-            query = query.filter(NotificationLog.channel_id == channel_id)
+            from uuid import UUID
+            try:
+                ch_uuid = UUID(channel_id) if isinstance(channel_id, str) else channel_id
+                conditions.append(NotificationLog.channel_id == ch_uuid)
+            except ValueError:
+                conditions.append(NotificationLog.channel_id == channel_id)
         
         # Note: project_id is not directly on notification_log, would need join to notification_event
         # For now, we'll skip project filtering in this version
         
+        query = self.db_session.query(NotificationLog).filter(*conditions)
         logs = query.all()
         
         # Aggregate statistics
@@ -131,9 +137,15 @@ class AnalyticsService:
         Returns:
             ChannelHealth object with metrics
         """
+        from uuid import UUID
+        try:
+            ch_uuid = UUID(channel_id) if isinstance(channel_id, str) else channel_id
+        except ValueError:
+            ch_uuid = channel_id
+
         # Get channel info
         channel = self.db_session.query(NotificationChannel).filter(
-            NotificationChannel.id == channel_id
+            NotificationChannel.id == ch_uuid
         ).first()
         
         channel_name = channel.name if channel else "Unknown"
@@ -141,7 +153,7 @@ class AnalyticsService:
         # Get recent logs (last 7 days)
         since = datetime.utcnow() - timedelta(days=7)
         logs = self.db_session.query(NotificationLog).filter(
-            NotificationLog.channel_id == channel_id,
+            NotificationLog.channel_id == ch_uuid,
             NotificationLog.created_at >= since,
         ).all()
         

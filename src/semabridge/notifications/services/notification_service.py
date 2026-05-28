@@ -10,7 +10,7 @@ from typing import Optional
 
 import redis
 
-from ...constants import RedisQueues
+from ..constants import RedisQueues
 from ..models import NotificationEvent
 from ..queue.redis_streams import RedisStreamsQueue
 
@@ -54,6 +54,7 @@ class NotificationService:
             payload = event.to_dict()
             
             # Enqueue to main notification queue
+            logger.warning("SYNC_NOTIFICATION_TRACE: redis xadd invoked")
             message_id = self.queue.enqueue(RedisQueues.NOTIFICATIONS, payload)
             
             logger.info(f"Emitted event {event.id} (correlation: {event.correlation_id})")
@@ -61,6 +62,38 @@ class NotificationService:
         
         except Exception as e:
             logger.error(f"Failed to emit notification: {e}")
+            # Fail gracefully - do not raise, do not block sync engine
+            return False
+            
+    def emit_sync(self, event: NotificationEvent) -> bool:
+        """
+        Emit a notification event synchronously.
+        
+        Args:
+            event: NotificationEvent to emit
+        
+        Returns:
+            True if queued successfully, False if queue is unavailable
+        """
+        try:
+            # Serialize event
+            payload = event.to_dict()
+            
+            # Enqueue to main notification queue
+            logger.warning("SYNC_NOTIFICATION_TRACE: redis xadd invoked")
+            message_id = self.queue.enqueue(RedisQueues.NOTIFICATIONS, payload)
+            
+            logger.info({
+                "redis_notification_publish": True,
+                "stream": RedisQueues.NOTIFICATIONS,
+                "event_title": event.title,
+            })
+            
+            logger.info(f"Emitted event {event.id} (correlation: {event.correlation_id}) synchronously")
+            return message_id is not None
+        
+        except Exception as e:
+            logger.error(f"Failed to emit notification synchronously: {e}")
             # Fail gracefully - do not raise, do not block sync engine
             return False
     

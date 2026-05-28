@@ -74,8 +74,8 @@ async def test_is_open_returns_false_when_closed(circuit_breaker, mock_redis):
 async def test_is_open_returns_true_when_open(circuit_breaker, mock_redis):
     """Test is_open returns True while in cooldown."""
     channel_id = "channel_123"
-    future_timestamp = (datetime.utcnow() + timedelta(seconds=30)).timestamp()
-    mock_redis.get.return_value = str(int(future_timestamp)).encode()
+    future_timestamp = datetime.now().timestamp() + 30
+    mock_redis.get.side_effect = [str(int(future_timestamp)).encode(), None]
     
     result = await circuit_breaker.is_open(channel_id)
     
@@ -88,7 +88,7 @@ async def test_half_open_state_allows_probe(circuit_breaker, mock_redis):
     channel_id = "channel_123"
     
     # Set cooldown in the past (expired)
-    past_timestamp = (datetime.utcnow() - timedelta(seconds=30)).timestamp()
+    past_timestamp = datetime.now().timestamp() - 30
     mock_redis.get.side_effect = [
         str(int(past_timestamp)).encode(),  # cooldown_until
         None,  # half_open flag not set yet
@@ -117,8 +117,8 @@ async def test_get_status_closed(circuit_breaker, mock_redis):
 async def test_get_status_open(circuit_breaker, mock_redis):
     """Test get_status returns OPEN while in cooldown."""
     channel_id = "channel_123"
-    future_timestamp = (datetime.utcnow() + timedelta(seconds=30)).timestamp()
-    mock_redis.get.return_value = str(int(future_timestamp)).encode()
+    future_timestamp = datetime.now().timestamp() + 30
+    mock_redis.get.side_effect = [str(int(future_timestamp)).encode(), None]
     
     status = await circuit_breaker.get_status(channel_id)
     
@@ -131,7 +131,7 @@ async def test_get_status_half_open(circuit_breaker, mock_redis):
     channel_id = "channel_123"
     
     # Expired cooldown
-    past_timestamp = (datetime.utcnow() - timedelta(seconds=30)).timestamp()
+    past_timestamp = datetime.now().timestamp() - 30
     mock_redis.get.side_effect = [
         str(int(past_timestamp)).encode(),  # cooldown_until
         "true",  # half_open flag is set
