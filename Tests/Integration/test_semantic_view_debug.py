@@ -19,15 +19,19 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 def test_semantic_view_debug():
     try:
-        from src.semabridge.formats.sml.loader import SMLLoader
-        from src.semabridge.connectors.snowflake_emitter import SnowflakeEmitter
-        from src.semabridge.core.settings import SnowflakeConfig
-        from src.semabridge.core.behavior import ConnectorBehavior, SnowflakeBehavior
-        from src.semabridge.utils.identifiers import IdentifierSanitizer
+        class SMLLoader:
+            def load(self, path: str):
+                from semabridge.sml.serializer import SMLSerializer
+                return SMLSerializer.load(path)
+
+        from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+        from semabridge.core.settings import SnowflakeConfig
+        from semabridge.core.behavior import ConnectorBehavior, SnowflakeBehavior
+        from semabridge.utils.identifiers import IdentifierSanitizer
         
         # Load the SML model
         logger.error("Loading SML model...")

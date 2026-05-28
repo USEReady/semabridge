@@ -250,6 +250,38 @@ def ensure_project_owner(project_id: str) -> Dict[str, Any]:
     }
 
 
+def _is_admin_user(user_id: str | None) -> bool:
+    """Return True if the given user_id belongs to an admin role user."""
+    from semabridge.repository.orm.models import User
+    normalized = _normalize_owner_user_id(user_id)
+    if not normalized:
+        return False
+    try:
+        with db_manager.get_session() as session:
+            user = session.execute(
+                select(User).where(User.id == int(normalized))
+            ).scalar_one_or_none()
+            return bool(user and user.role == "admin")
+    except Exception:
+        return False
+
+
+def _user_exists(user_id: str | None) -> bool:
+    """Return True if the given user_id still exists in the users table."""
+    from semabridge.repository.orm.models import User
+    normalized = _normalize_owner_user_id(user_id)
+    if not normalized:
+        return False
+    try:
+        with db_manager.get_session() as session:
+            user = session.execute(
+                select(User).where(User.id == int(normalized))
+            ).scalar_one_or_none()
+            return user is not None
+    except Exception:
+        return False
+
+
 def is_project_owned_by_user(project_id: str, user_id: str | None, *, log_denied: bool = True, log_prefix: str = "ProjectAuth") -> bool:
     if not auth_is_enabled():
         return True
@@ -260,11 +292,16 @@ def is_project_owned_by_user(project_id: str, user_id: str | None, *, log_denied
             logger.warning("[%s] deny project_id=%s reason=missing_authenticated_user", log_prefix, project_id)
         return False
 
+    # Admin users can access all projects (single-admin / superuser scenario)
+    if _is_admin_user(normalized_user_id):
+        return True
+
     context = ensure_project_owner(project_id)
     owner_user_id = context["owner_user_id"]
     if owner_user_id and owner_user_id == normalized_user_id:
         return True
 
+    # Backfill: unowned or default-sentinel projects → claim for the current user
     if context["project"] and (not owner_user_id or owner_user_id == "1"):
         logger.info(
             "[ProjectOwnership] dynamically backfilling owner_user_id=%s for unowned or default project_id=%s",
@@ -272,6 +309,19 @@ def is_project_owned_by_user(project_id: str, user_id: str | None, *, log_denied
             project_id,
         )
         _persist_project_owner(project_id, context["project"], normalized_user_id, "dynamic_backfill")
+        return True
+
+    # Backfill: stored owner no longer exists in DB (e.g. after re-registration)
+    # Re-assign to the current user so they're not permanently locked out.
+    if context["project"] and owner_user_id and not _user_exists(owner_user_id):
+        logger.info(
+            "[ProjectOwnership] stored owner_user_id=%s no longer exists in DB; "
+            "re-assigning project_id=%s to current user_id=%s",
+            owner_user_id,
+            project_id,
+            normalized_user_id,
+        )
+        _persist_project_owner(project_id, context["project"], normalized_user_id, "stale_owner_reassign")
         return True
 
     if log_denied:

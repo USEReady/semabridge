@@ -26,6 +26,8 @@ from semabridge.connectors.history_snapshot_orchestrator import HistorySnapshotO
 from semabridge.connectors.relationships_clause_builder import RelationshipsClauseBuilder
 from semabridge.connectors.dimensions_clause_builder import DimensionsClauseBuilder
 from semabridge.connectors.metrics_clause_builder import MetricsClauseBuilder
+from semabridge.connectors.ddl_validator import validate_semantic_ddl
+from semabridge.core.exceptions import ConnectorError
 
 logger = get_logger(__name__)
 
@@ -72,46 +74,82 @@ class SemanticViewBuilder:
         This runs automatically and tells you what columns to add to fact table.
         NO HARDCODING!
         """
-        suggestions = {}
-        
+        suggestions: dict[str, list[str]] = {}
+        details: list[dict[str, str]] = []
+        dataset_names = {
+            str(getattr(ds, "unique_name", "")).strip().casefold(): str(getattr(ds, "unique_name", "")).strip()
+            for ds in getattr(model, "datasets", []) or []
+            if getattr(ds, "unique_name", None)
+        }
+
+        def resolve_dataset(name: str) -> str:
+            clean = str(name or "").strip().strip("'\"")
+            return dataset_names.get(clean.casefold(), clean)
+
+        def precomputed_name(source_table: str, column: str) -> str:
+            return self.identifier_sanitizer.sanitize_column(f"{source_table}_{column}")
+
+        def add_suggestion(target_dataset: str, source_table: str, column: str) -> None:
+            target_dataset = resolve_dataset(target_dataset)
+            source_table = resolve_dataset(source_table)
+            column = str(column or "").strip()
+            if not target_dataset or not source_table or not column:
+                return
+            if target_dataset.casefold() == source_table.casefold():
+                return
+            col_alias = precomputed_name(source_table, column)
+            suggestions.setdefault(target_dataset, [])
+            if col_alias not in suggestions[target_dataset]:
+                suggestions[target_dataset].append(col_alias)
+            key = (target_dataset.casefold(), source_table.casefold(), column.casefold())
+            existing = {
+                (d["target_dataset"].casefold(), d["source_dataset"].casefold(), d["source_column"].casefold())
+                for d in details
+            }
+            if key not in existing:
+                details.append(
+                    {
+                        "target_dataset": target_dataset,
+                        "source_dataset": source_table,
+                        "source_column": column,
+                        "precomputed_column": col_alias,
+                    }
+                )
+
         for metric in model.metrics:
             dax = getattr(metric, 'expression', '') or ''
-            
-            # Detect RELATED('Table'[Column]) patterns
-            related_pattern = r'RELATED\([\'"](\w+)[\'"]\[(\w+)\]\)'
-            matches = re.findall(related_pattern, dax, re.IGNORECASE)
-            
-            for table, column in matches:
-                if table not in suggestions:
-                    suggestions[table] = []
-                if column not in suggestions[table]:
-                    suggestions[table].append(column)
-            
-            # Detect direct 'Table'[Column] references (cross-table)
-            direct_pattern = r"'(\w+)'\[(\w+)\]"
-            matches = re.findall(direct_pattern, dax, re.IGNORECASE)
-            
-            for table, column in matches:
-                # Skip if it's the same as metric's dataset
-                if table == metric.dataset:
+            metric_dataset = getattr(metric, "dataset", "") or ""
+
+            # Detect RELATED('Table'[Column]) and RELATED(Table[Column]) patterns.
+            related_pattern = r'RELATED\(\s*[\'"]?([^\'"\[\]]+)[\'"]?\s*\[\s*([^\]]+?)\s*\]\s*\)'
+            for table, column in re.findall(related_pattern, dax, re.IGNORECASE):
+                add_suggestion(metric_dataset, table, column)
+
+            # Detect direct 'Table'[Column] references (cross-table).
+            direct_pattern = r'[\'"]?([^\'"\[\]\(\),]+)[\'"]?\s*\[\s*([^\]]+?)\s*\]'
+            for table, column in re.findall(direct_pattern, dax, re.IGNORECASE):
+                table = str(table or "").strip()
+                if not table:
                     continue
-                if table not in suggestions:
-                    suggestions[table] = []
-                if column not in suggestions[table]:
-                    suggestions[table].append(column)
+                add_suggestion(metric_dataset, table, column)
+
+        self._precompute_details = details
         
         if suggestions:
             logger.warning("=" * 70)
             logger.warning("🔍 PRE-COMPUTE SUGGESTIONS FOR CROSS-TABLE REFERENCES")
             logger.warning("=" * 70)
             for table, cols in suggestions.items():
-                logger.warning(f"  Table: {table}")
-                logger.warning(f"  Columns to add: {', '.join(cols)}")
-                logger.warning(f"  SQL: ALTER TABLE {table} ADD COLUMN {', '.join(cols)} VARCHAR;")
+                logger.warning(f"  Target dataset: {table}")
+                logger.warning(f"  Columns to project: {', '.join(cols)}")
                 logger.warning("-" * 70)
             logger.warning("=" * 70)
         
         return suggestions
+
+    def get_precompute_details(self) -> list[dict[str, str]]:
+        """Return rich precompute suggestions from the latest analysis run."""
+        return list(getattr(self, "_precompute_details", []) or [])
 
     def generate_ddls(self, sml: SMLModel) -> list[str]:
         if not sml.datasets:
@@ -134,7 +172,18 @@ class SemanticViewBuilder:
                     original_sources[dataset.unique_name] = dataset.source_table
                     dataset.source_table = source_overrides[dataset.unique_name]
 
-            semantic_ddl = self.sanitizer.sanitize_structure(self._generate_semantic_view(sml))
+            semantic_ddl = self._generate_semantic_view(sml)
+            
+            try:
+                debug_file = Path("output/debug/debug_generated_sql.sql")
+                debug_file.parent.mkdir(parents=True, exist_ok=True)
+                debug_file.write_text(semantic_ddl, encoding="utf-8")
+            except Exception as exc:
+                logger.warning("Failed to persist debug DDL: %s", exc)
+
+            errors = validate_semantic_ddl(semantic_ddl)
+            if errors:
+                raise ConnectorError("Invalid semantic DDL: " + "; ".join(errors))
 
             self._guard_relationship_clause(
                 model_name=sml.unique_name or sml.label or "model",
@@ -142,13 +191,6 @@ class SemanticViewBuilder:
                 semantic_ddl=semantic_ddl,
                 fail_on_missing=bool(getattr(self.behavior.snowflake, "fail_on_missing_relationships", True)),
             )
-
-            try:
-                debug_file = Path("output/debug/debug_generated_sql.sql")
-                debug_file.parent.mkdir(parents=True, exist_ok=True)
-                debug_file.write_text(semantic_ddl, encoding="utf-8")
-            except Exception as exc:
-                logger.warning("Failed to persist debug DDL: %s", exc)
         finally:
             for dataset in sml.datasets:
                 if dataset.unique_name in original_sources:
@@ -170,7 +212,18 @@ class SemanticViewBuilder:
                     original_sources[dataset.unique_name] = dataset.source_table
                     dataset.source_table = source_overrides[dataset.unique_name]
 
-            semantic_ddl = self.sanitizer.sanitize_structure(self._generate_semantic_view_from_osi(osi))
+            semantic_ddl = self._generate_semantic_view_from_osi(osi)
+            
+            try:
+                debug_file = Path("output/debug/debug_generated_sql.sql")
+                debug_file.parent.mkdir(parents=True, exist_ok=True)
+                debug_file.write_text(semantic_ddl, encoding="utf-8")
+            except Exception as exc:
+                logger.warning("Failed to persist debug DDL: %s", exc)
+
+            errors = validate_semantic_ddl(semantic_ddl)
+            if errors:
+                raise ConnectorError("Invalid semantic DDL: " + "; ".join(errors))
 
             self._guard_relationship_clause(
                 model_name=osi.unique_name or osi.label or "model",
@@ -227,7 +280,7 @@ class SemanticViewBuilder:
         from semabridge.utils.identifier_normalizer import IdentifierNormalizer
         alias_by_raw = IdentifierNormalizer(self.identifier_sanitizer).build_alias_lookup(sml.datasets, registry.dataset_aliases)
         all_phys = {c for cols in ds_lookup.values() for c in cols}
-        emittable = {self.identifier_sanitizer.sanitize_alias(m.unique_name) for m in sml.metrics if (m.source_column and m.aggregation) or m.sql_expression}
+        emittable = {self.identifier_sanitizer.sanitize_alias(m.unique_name) for m in sml.metrics if (m.source_column and m.aggregation) or m.sql_expression or getattr(m, "expression", None)}
         
         metrics_lines = self.metrics_builder.build_for_sml(sml, registry.dataset_aliases, ds_by_name, ds_lookup, alias_by_raw, all_phys, emittable)
         
@@ -280,7 +333,7 @@ class SemanticViewBuilder:
         from semabridge.utils.identifier_normalizer import IdentifierNormalizer
         alias_by_raw = IdentifierNormalizer(self.identifier_sanitizer).build_alias_lookup(osi.datasets, registry.dataset_aliases)
         all_phys = {c for cols in ds_lookup.values() for c in cols}
-        emittable = {self.identifier_sanitizer.sanitize_alias(m.unique_name) for m in osi.metrics if (m.source_column and m.aggregation) or getattr(m, "expression", None)}
+        emittable = {self.identifier_sanitizer.sanitize_alias(m.unique_name) for m in osi.metrics if (m.source_column and m.aggregation) or getattr(m, "expression", None) or getattr(m, "sql_expression", None)}
         
         metrics_lines = self.metrics_builder.build_for_osi(osi, registry.dataset_aliases, ds_by_name, ds_lookup, alias_by_raw, all_phys, emittable)
         

@@ -231,6 +231,8 @@ class DaxTranslationEngine:
         date_alias: str = "calendar",
         measure_map: Optional[Dict[str, str]] = None,
         metric_name: str = "",
+        *args,
+        **kwargs,
     ) -> Tuple[Optional[str], TranslationMetrics]:
         """
         Translate a DAX expression to Snowflake SQL.
@@ -407,15 +409,33 @@ class DaxTranslationEngine:
             "by_strategy": by_strategy,
             "by_capability": by_capability,
         }
+    
+    def analyze_complexity(self, dax: str) -> dict:
+        """
+        Analyze DAX expression complexity and return metadata for sync decisions.
+        Delegates to the standard DAXTranslator to keep logic consistent.
+        """
+        from semabridge.converter.dax_translator import DAXTranslator
+        translator = DAXTranslator()
+        return translator.analyze_complexity(dax)
+
+    def get_required_dimensions(self, dax: str) -> list:
+        """
+        Extract dimension columns that should be included in GROUP BY.
+        Delegates to the standard DAXTranslator to keep logic consistent.
+        """
+        from semabridge.converter.dax_translator import DAXTranslator
+        translator = DAXTranslator()
+        return translator.get_required_dimensions(dax)
 
 
 # Singleton instance
 _engine = None
 
 
-def get_translation_engine() -> DaxTranslationEngine:
+def get_translation_engine(cache_enabled: bool = True, target_dialect: str = "snowflake", *args, **kwargs) -> DaxTranslationEngine:
     """Get singleton translation engine."""
     global _engine
     if _engine is None:
-        _engine = DaxTranslationEngine(cache_enabled=True)
+        _engine = DaxTranslationEngine(cache_enabled=cache_enabled)
     return _engine

@@ -223,7 +223,12 @@ def _get_msal_http_client():
         from urllib3.util.retry import Retry
         from semabridge.core.settings import get_settings
 
-        session = requests.Session()
+        class TimeoutSession(requests.Session):
+            def request(self, *args, **kwargs):
+                kwargs.setdefault('timeout', 5.0)
+                return super().request(*args, **kwargs)
+
+        session = TimeoutSession()
         
         # Inject explicit proxy settings if configured
         proxies = get_settings().network.proxies
@@ -232,10 +237,10 @@ def _get_msal_http_client():
             logger.info("MSAL session initialized with explicit proxies: %s", list(proxies.keys()))
 
         retry = Retry(
-            total=5,
-            read=5,
-            connect=5,
-            backoff_factor=0.75,
+            total=2,
+            read=2,
+            connect=2,
+            backoff_factor=0.3,
             status_forcelist=(429, 500, 502, 503, 504),
             # MSAL token requests are POST calls; allow retries for all methods.
             allowed_methods=None,
@@ -399,7 +404,7 @@ async def fabric_device_code_login(request: Request, payload: Dict[str, Any] = N
         return app_msal, flow
 
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         app_msal, flow = await loop.run_in_executor(None, _initiate_flow)
 
         if "user_code" not in flow:
@@ -595,14 +600,14 @@ async def fabric_logout():
         cm.delete_credentials("fabric")
         _fabric_session_token = None
         _fabric_session_token_expires_at = 0.0
-        _clear_fabric_from_config()
+        await _clear_fabric_from_config()
         logger.info("Fabric interactive session and workspace config cleared")
         return {"status": "logged_out"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _clear_fabric_from_config() -> None:
+async def _clear_fabric_from_config() -> None:
     """Remove the fabric section from config.yaml on logout."""
     import yaml
     from pathlib import Path
@@ -630,13 +635,19 @@ def _clear_fabric_from_config() -> None:
         return
 
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            config_data = yaml.safe_load(f) or {}
+        def _read_config() -> dict:
+            with open(config_path, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+
+        config_data = await asyncio.to_thread(_read_config)
 
         if "fabric" in config_data:
             del config_data["fabric"]
-            with open(config_path, "w", encoding="utf-8") as f:
-                yaml.dump(config_data, f, default_flow_style=False, sort_keys=False)
+            def _write_config() -> None:
+                with open(config_path, "w", encoding="utf-8") as f:
+                    yaml.dump(config_data, f, default_flow_style=False, sort_keys=False)
+
+            await asyncio.to_thread(_write_config)
             logger.info(f"Cleared fabric config from {config_path}")
     except Exception as exc:
         logger.error(f"Failed to clear fabric from config: {exc}")
@@ -745,22 +756,6 @@ def _resolve_fabric_access_token(
     # ── Phase 0: Header token (no DB needed) ─────────────────────────────
     if identity_id:
         header_bearer_token = None
-
-    # Skip validation if the header bearer token is actually our backend's JWT
-    if header_bearer_token:
-        try:
-            import base64
-            import json
-            parts = header_bearer_token.split(".")
-            if len(parts) == 3:
-                payload_b64 = parts[1]
-                payload_b64 += "=" * ((4 - len(payload_b64) % 4) % 4)
-                payload = json.loads(base64.urlsafe_b64decode(payload_b64).decode("utf-8"))
-                if "username" in payload or (payload.get("type") == "access"):
-                    logger.info("Bearer token is our backend's JWT, not a Fabric token. Skipping Phase 0.")
-                    header_bearer_token = None
-        except Exception:
-            pass
 
     if header_bearer_token:
         try:
@@ -887,21 +882,20 @@ def _resolve_fabric_access_token(
                 try:
                     fabric_validator.validate_msal_token(access_token)
                 except HTTPException:
-                    logger.info("Stored Fabric access token expired — attempting silent refresh for account '%s'...", account_tag)
+                    logger.warning("Decrypted Fabric token from DB is expired.")
                     if is_json_payload and refresh_token and matched_account_id:
+                        logger.info(f"Attempting isolated silent refresh for account {account_tag}...")
                         refreshed_access_token = _refresh_account_token(
                             matched_account_id, account_tag, refresh_token, tenant_id, payload_dict
                         )
                         if refreshed_access_token:
-                            logger.info("Silent token refresh succeeded for account '%s' — using refreshed token.", account_tag)
                             return refreshed_access_token
                     
-                    logger.warning("Silent refresh failed for account '%s'. Re-authentication required.", account_tag)
+                    logger.warning("Silent refresh failed. Forcing reauthentication.")
                     raise HTTPException(status_code=401, detail={"error": "reauth_required"})
 
                 logger.info(f"Using access token from default Fabric account: {account_tag}")
                 return access_token
-
             except HTTPException:
                 raise
             except Exception as e:
@@ -911,11 +905,6 @@ def _resolve_fabric_access_token(
         if not encrypted_token and not credential_token_data:
             raise HTTPException(status_code=401, detail={"error": "reauth_required"})
 
-    if identity_id:
-        logger.warning(
-            "_resolve_fabric_access_token: no accessible Fabric account/token found for identity_id='%s'",
-            identity_id,
-        )
     logger.warning("No valid Fabric access token available")
     raise HTTPException(
         status_code=401,
@@ -1059,12 +1048,6 @@ async def fabric_list_workspaces(
 
     import anyio
     resolved_identity_id = (identity_id or connection_id or "").strip() or None
-    logger.info(
-        "fabric_list_workspaces: request (identity_id=%s, connectionId=%s, has_bearer=%s)",
-        identity_id,
-        connection_id,
-        bool(bearer_token),
-    )
     if not resolved_identity_id and not bearer_token:
         raise HTTPException(status_code=400, detail="account_id is required")
     access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token, resolved_identity_id)
@@ -1101,11 +1084,7 @@ async def fabric_list_workspaces(
             for ws in workspaces
         ]
 
-        logger.info(
-            "fabric_list_workspaces: discovered %s workspaces for identity '%s'",
-            len(result),
-            resolved_identity_id,
-        )
+        logger.info(f"Discovered {len(result)} Fabric workspaces")
         return {"workspaces": result}
 
     except httpx.RequestError as exc:
@@ -1240,7 +1219,7 @@ async def fabric_select_workspace(payload: Dict[str, str]):
     })
 
     # Sync to config.yaml for CLI/offline compatibility
-    _sync_workspace_to_config(workspace_id, workspace_name)
+    await _sync_workspace_to_config(workspace_id, workspace_name)
 
     # Inject into live process environment so FabricConfig picks it up
     # without requiring a server restart. This is safe because env vars
@@ -1260,7 +1239,7 @@ async def fabric_select_workspace(payload: Dict[str, str]):
     }
 
 
-def _sync_workspace_to_config(workspace_id: str, workspace_name: str) -> None:
+async def _sync_workspace_to_config(workspace_id: str, workspace_name: str) -> None:
     """Update the local config.yaml with the selected Fabric workspace.
 
     Uses PyYAML to modify and rewrite the file, preserving existing content.
@@ -1295,8 +1274,11 @@ def _sync_workspace_to_config(workspace_id: str, workspace_name: str) -> None:
         return
 
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            config_data = yaml.safe_load(f) or {}
+        def _read_config() -> dict:
+            with open(config_path, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+
+        config_data = await asyncio.to_thread(_read_config)
 
         # Ensure the fabric section exists
         if "fabric" not in config_data:
@@ -1306,8 +1288,11 @@ def _sync_workspace_to_config(workspace_id: str, workspace_name: str) -> None:
         if workspace_name:
             config_data["fabric"]["workspace_name"] = workspace_name
 
-        with open(config_path, "w", encoding="utf-8") as f:
-            yaml.dump(config_data, f, default_flow_style=False, sort_keys=False)
+        def _write_config() -> None:
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.dump(config_data, f, default_flow_style=False, sort_keys=False)
+
+        await asyncio.to_thread(_write_config)
 
         logger.info(f"Config file updated: {config_path}")
     except Exception as exc:

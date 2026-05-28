@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple, Set, Optional
 
+from semabridge.converter.date_resolution import DateResolutionConfig
+
 
 class TablesClauseBuilder:
     def __init__(
@@ -26,31 +28,12 @@ class TablesClauseBuilder:
         Returns (table_name, date_column, fiscal_period_column) or None.
         No hardcoding!
         """
-        date_keywords = ['date', 'calendar', 'cal', 'dim_date', 'dates']
-        fiscal_keywords = ['fiscal_yr_period', 'fiscal_period', 'fiscal_year_period']
-        
-        for dataset in model.datasets:
-            dataset_name = dataset.unique_name.lower()
-            
-            # Check if this looks like a date table
-            is_date_table = any(kw in dataset_name for kw in date_keywords)
-            
-            if is_date_table:
-                # Find date column
-                date_col = None
-                fiscal_col = None
-                
-                for col in dataset.columns:
-                    col_name = col.unique_name.lower()
-                    if col_name in ['cal_dt', 'date', 'calendar_date', 'cal_date']:
-                        date_col = col.unique_name
-                    if any(fk in col_name for fk in fiscal_keywords):
-                        fiscal_col = col.unique_name
-                
-                if date_col and fiscal_col:
-                    return (dataset.unique_name, date_col, fiscal_col)
-        
-        return None
+        resolution = DateResolutionConfig().resolve(model)
+        if not resolution:
+            return None
+
+        # Use fiscal period column if it exists; otherwise fall back to date column
+        return (resolution.table, resolution.date_col, resolution.monthindex_col or resolution.date_col)
 
     def _build_source_query_with_anchors(self, source_fq: str, fact_table: str, model: Any) -> str:
         """
@@ -61,13 +44,34 @@ class TablesClauseBuilder:
         
         if not date_info:
             return source_fq
-        
+
         date_table, date_col, fiscal_col = date_info
-        
+        source_table_mapping = getattr(self.behavior.snowflake, "source_table_mapping", {}) or {}
+
+        date_dataset = next(
+            (d for d in getattr(model, "datasets", []) or [] if d.unique_name == date_table),
+            None,
+        )
+
+        if date_dataset:
+            resolved_source_table = source_table_mapping.get(
+                date_dataset.unique_name,
+                date_dataset.source_table or date_dataset.unique_name,
+            )
+            safe_table = self.identifier_sanitizer.sanitize_table_name(resolved_source_table)
+            date_table_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
+            resolved_date_col = self.schema_manager._resolve_physical_column_name(date_dataset, date_col)
+            resolved_fiscal_col = self.schema_manager._resolve_physical_column_name(date_dataset, fiscal_col)
+        else:
+            safe_table = self.identifier_sanitizer.sanitize_table_name(date_table)
+            date_table_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
+            resolved_date_col = self.identifier_sanitizer.sanitize_column(date_col)
+            resolved_fiscal_col = self.identifier_sanitizer.sanitize_column(fiscal_col)
+
         return f"""(
     SELECT 
         f.*,
-        (SELECT MAX("{fiscal_col}") FROM "{date_table}" WHERE "{date_col}" = CURRENT_DATE()) AS "_CURRENT_FISCAL_PERIOD"
+        (SELECT MAX("{resolved_fiscal_col}") FROM {date_table_ref} WHERE "{resolved_date_col}" = CURRENT_DATE()) AS "_CURRENT_FISCAL_PERIOD"
     FROM {source_fq} f
 )"""
 
@@ -115,19 +119,20 @@ class TablesClauseBuilder:
 
         dataset_col_lookup: dict[str, set[str]] = {}
         dataset_by_name: dict[str, Any] = {d.unique_name: d for d in datasets}
+        source_table_mapping = getattr(self.behavior.snowflake, "source_table_mapping", {}) or {}
         for dataset in datasets:
             if is_osi:
                 modeled_cols = {self.identifier_sanitizer.sanitize_column(c.unique_name) for c in dataset.columns}
             else:
                 modeled_cols = set(self.schema_manager._collect_physical_source_columns(dataset).keys())
             
-            source_table = dataset.source_table or dataset.unique_name
+            source_table = source_table_mapping.get(dataset.unique_name, dataset.source_table or dataset.unique_name)
             source_key = self.identifier_sanitizer.sanitize_table_name(source_table).upper()
             live_cols = self.live_schema_metadata.get(source_key, set())
             dataset_col_lookup[dataset.unique_name] = set(live_cols) if live_cols else modeled_cols
 
         for dataset in datasets:
-            source_table = dataset.source_table or dataset.unique_name
+            source_table = source_table_mapping.get(dataset.unique_name, dataset.source_table or dataset.unique_name)
             safe_table = self.identifier_sanitizer.sanitize_table_name(source_table)
             full_table = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
 

@@ -170,7 +170,19 @@ class SchedulerService:
 
         schedule_label = "Scheduled" if schedule_type == "time" else "Cron"
         try:
-            await self._run_project_callback(project_id, schedule_label)
+            # Project sync performs blocking connector/LLM/warehouse work. Keep it
+            # off the Uvicorn event loop so lightweight API requests stay responsive.
+            import asyncio
+
+            def _run_callback_in_thread() -> None:
+                loop = asyncio.new_event_loop()
+                try:
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(self._run_project_callback(project_id, schedule_label))
+                finally:
+                    loop.close()
+
+            await asyncio.to_thread(_run_callback_in_thread)
         finally:
             if schedule_type == "time":
                 self.delete_project_schedule(project_id)

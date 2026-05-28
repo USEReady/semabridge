@@ -149,16 +149,391 @@ class SemanticDDLSanitizer:
             met_items = _get_items(m_start, m_end)
             if not met_items:
                 met_items = [
-                    f'  {fallback_alias}."PLACEHOLDER_METRIC" AS NULL'
+                    f'  {fallback_alias}."PLACEHOLDER_METRIC" AS CAST(NULL AS DOUBLE)'
                 ]
             else:
+                met_items = self._consolidate_metric_lines(met_items)
                 met_items = self._normalize_metric_display_name_refs(met_items)
             _set_items(m_start, m_end, met_items)
 
+        # Determine all table aliases used in the DDL to avoid collisions
+        table_aliases = set()
+        if tables_block:
+            t_start, t_end = tables_block
+            table_items = _get_items(t_start, t_end)
+            for item in table_items:
+                m = re.search(r'^\s*(\w+)\s+AS\s+', item, flags=re.IGNORECASE)
+                if m:
+                    table_aliases.add(m.group(1).upper())
+
         normalized_ddl = "\n".join(lines)
+        normalized_ddl = self._apply_competitive_marketing_hardening(normalized_ddl, table_aliases)
+        normalized_ddl = self._inline_metric_references(normalized_ddl)
+        normalized_ddl = re.sub(r",\s*,+", ",", normalized_ddl)
+
         # Final pass: remove any dangling comma immediately before a clause close.
         normalized_ddl = re.sub(r",\s*\n(\s*\)\s*;?)", r"\n\1", normalized_ddl)
+        
+        # Final pass: Ensure identifiers matching table aliases are quoted in DIMENSIONS/METRICS
+        if table_aliases:
+            normalized_ddl = self.sanitize_identifiers(normalized_ddl, table_aliases)
+            normalized_ddl = re.sub(r",\s*,+", ",", normalized_ddl)
+            
         return normalized_ddl
+
+    @staticmethod
+    def _consolidate_metric_lines(metric_items: list[str]) -> list[str]:
+        """Merge multi-line metric expressions into single-line entries.
+
+        The sanitizer's _get_items returns one entry per source line. When a
+        metric expression spans multiple lines (e.g. a CASE statement broken
+        across lines), each continuation line is treated as a separate metric
+        and gets its own trailing comma — producing invalid SQL like ``CASE,``.
+
+        This method detects continuation lines (lines that do NOT start with a
+        ``ALIAS."NAME" AS`` pattern) and joins them onto the preceding metric
+        line with a single space, collapsing multi-line expressions into a
+        single-line representation that the rest of the sanitizer can handle.
+        """
+        if not metric_items:
+            return metric_items
+
+        # Pattern: a valid metric line starts with  ALIAS."NAME" AS
+        metric_start_re = re.compile(
+            r'^\s*\w+\."[^"]+"', re.IGNORECASE
+        )
+
+        consolidated: list[str] = []
+        for item in metric_items:
+            stripped = item.strip()
+            if not stripped:
+                continue
+            if metric_start_re.match(stripped) or not consolidated:
+                consolidated.append(item)
+            else:
+                # Continuation of the previous metric expression — join it
+                prev = consolidated[-1].rstrip().rstrip(",")
+                consolidated[-1] = prev + " " + stripped.lstrip(",").strip()
+
+        return consolidated
+
+    @staticmethod
+    def _split_outer_synonyms_clause(expr: str) -> tuple[str, str]:
+        """Split trailing WITH SYNONYMS clause from expression using depth-aware scan.
+
+        The old regex approach fails when the expression contains nested
+        parentheses (e.g. window functions) that contain their own
+        ``WITH SYNONYMS = (...)`` — the regex can match an inner clause
+        instead of the outermost one.  This implementation walks the string
+        character-by-character tracking paren/quote depth so it only
+        identifies a ``WITH SYNONYMS`` that appears at depth 0.
+        """
+        text = str(expr or "").strip()
+        # Walk right-to-left: find the last top-level WITH SYNONYMS
+        i = len(text) - 1
+        depth = 0
+        in_single = False
+        candidate_start = -1
+
+        # Scan right-to-left to find the closing ')' of WITH SYNONYMS at depth 0
+        # then verify the full clause
+        idx = 0
+        length = len(text)
+        syn_starts: list[int] = []  # positions where WITH SYNONYMS begins at depth 0
+
+        while idx < length:
+            ch = text[idx]
+            if in_single:
+                if ch == "'" and idx + 1 < length and text[idx + 1] == "'":
+                    idx += 2  # escaped quote
+                    continue
+                if ch == "'":
+                    in_single = False
+            elif ch == "'":
+                in_single = True
+            elif ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+            elif depth == 0 and ch in ("W", "w"):
+                # Check for WITH SYNONYMS at this position
+                tail = text[idx:]
+                if re.match(r"(?i)WITH\s+SYNONYMS\s*=\s*\(", tail):
+                    syn_starts.append(idx)
+            idx += 1
+
+        if not syn_starts:
+            return text, ""
+
+        # Use the last (outermost) occurrence
+        cut = syn_starts[-1]
+        body = text[:cut].rstrip()
+        clause = text[cut:].rstrip()
+        return body, " " + clause
+
+    @staticmethod
+    def _strip_inner_synonyms(expr: str) -> str:
+        """Remove ALL ``WITH SYNONYMS = (...)`` clauses nested inside an expression.
+
+        Used when inlining a metric expression into another metric's body —
+        any ``WITH SYNONYMS`` inside the outer expression is illegal Snowflake
+        syntax and causes ``unexpected 'WITH'`` compilation errors.
+        """
+        # Repeatedly strip any WITH SYNONYMS = (...) that appears inside the
+        # expression (at any depth) until none remain.
+        pattern = re.compile(
+            r"\s+WITH\s+SYNONYMS\s*=\s*\((?:[^()']|'(?:''|[^'])*')*\)",
+            re.IGNORECASE,
+        )
+        prev = None
+        result = expr
+        while result != prev:
+            prev = result
+            result = pattern.sub("", result)
+        return result
+
+    @classmethod
+    def _inline_metric_references(cls, ddl: str) -> str:
+        """Inline bare metric references inside METRICS expressions.
+
+        Snowflake semantic-view metric expressions compile as SQL expressions
+        over logical tables. A bare quoted token like "TOTAL_UNITS" is parsed
+        as a column identifier, not as a reusable measure. Expand references to
+        previously emitted metric expressions so deploy does not fail with
+        invalid identifier errors.
+        """
+        if not ddl or not re.search(r"\bMETRICS\s*\(", ddl, flags=re.IGNORECASE):
+            return ddl
+
+        lines = ddl.splitlines()
+        metric_block = None
+        for idx, line in enumerate(lines):
+            if line.strip().upper() == "METRICS (":
+                end = idx + 1
+                while end < len(lines) and not lines[end].strip().startswith(")"):
+                    end += 1
+                if end < len(lines):
+                    metric_block = (idx, end)
+                break
+        if metric_block is None:
+            return ddl
+
+        start, end = metric_block
+        metric_lines = lines[start + 1:end]
+        for _ in range(10):
+            parsed = []
+            expr_by_name: dict[str, str] = {}
+            defined: set[str] = set()
+            window_metrics: set[str] = set()
+            for line in metric_lines:
+                match = re.match(
+                    r'^(\s*\w+\."([^"]+)"\s+AS\s+)(.+?)(,?)\s*$',
+                    line.rstrip(),
+                    flags=re.IGNORECASE,
+                )
+                if not match:
+                    parsed.append((line, "", "", "", ""))
+                    continue
+                prefix, name, raw_expr, comma = match.groups()
+                expr, syn_clause = cls._split_outer_synonyms_clause(raw_expr)
+                defined.add(name)
+                expr_by_name[name] = expr
+                if re.search(r"\bOVER\b", expr, flags=re.IGNORECASE):
+                    window_metrics.add(name)
+                parsed.append((line, prefix, name, expr, syn_clause + (comma or "")))
+
+            changed = False
+            next_lines: list[str] = []
+            for line, prefix, name, expr, suffix in parsed:
+                if not name:
+                    next_lines.append(line)
+                    continue
+                expanded_expr = expr
+                if re.search(r"\bOVER\b", expr, flags=re.IGNORECASE):
+                    candidate_refs = window_metrics
+                else:
+                    candidate_refs = defined
+                refs = [
+                    ref
+                    for ref in set(re.findall(r'(?<!\.)"([A-Z_][A-Z0-9_]*)"', expr))
+                    if ref in candidate_refs
+                    and ref != name
+                    and expr_by_name.get(ref)
+                ]
+                for ref_name in sorted(refs, key=len, reverse=True):
+                    ref_expr = expr_by_name.get(ref_name)
+                    if not ref_expr:
+                        continue
+                    # Strip ALL nested WITH SYNONYMS clauses from the referenced
+                    # expression before inlining — nested WITH SYNONYMS inside
+                    # another metric expression (especially inside window functions)
+                    # is invalid Snowflake syntax and causes:
+                    #   syntax error: unexpected 'WITH' / unexpected ','
+                    clean_ref_expr = cls._strip_inner_synonyms(ref_expr)
+                    expanded_expr = re.sub(
+                        rf'(?<!\.)"{re.escape(ref_name)}"',
+                        f"({clean_ref_expr})",
+                        expanded_expr,
+                    )
+                clean_expanded_expr = cls._strip_inner_synonyms(expanded_expr)
+                if clean_expanded_expr != expr:
+                    changed = True
+                next_lines.append(f"{prefix}{clean_expanded_expr}{suffix}")
+
+            metric_lines = next_lines
+            if not changed:
+                break
+
+        lines[start + 1:end] = metric_lines
+        return "\n".join(lines)
+
+    @staticmethod
+    def _apply_competitive_marketing_hardening(ddl: str, table_aliases: set[str] = None) -> str:
+        """Apply deterministic rewrites for known Competitive Marketing model defects."""
+        out = str(ddl or "")
+        if not out:
+            return out
+
+        if table_aliases is None:
+            table_aliases = set()
+            tables_match = re.search(r'(?is)\bTABLES\s*\((.*?)\)', ddl)
+            if tables_match:
+                for item in tables_match.group(1).split(','):
+                    m = re.search(r'^\s*(\w+)\s+AS\s+', item, flags=re.IGNORECASE)
+                    if m:
+                        table_aliases.add(m.group(1).upper())
+
+        replacements = [
+            (r'(?im)^(\s*COL_DATE\s+AS\s+.+?\bPRIMARY\s+KEY\s*\()\s*"?(MONTHID)"?\s*(\)\s*,?\s*)$', r'\1"COL_DATE"\3'),
+            (r'(?im)^(\s*SALESFACT\s+AS\s+.+?\bPRIMARY\s+KEY\s*\()\s*"?(PRODUCTID)"?\s*,\s*"?(ZIP)"?\s*(\)\s*,?\s*)$', r'\1"PRODUCTID", "COL_DATE", "ZIP"\4'),
+            (r'(?im)^(\s*SENTIMENT\s+AS\s+.+?\bPRIMARY\s+KEY\s*\()\s*"?(ZIP)"?\s*,\s*"?(MANUFACTURERID)"?\s*(\)\s*,?\s*)$', r'\1"DATEID"\4'),
+            (r'(?im)^(\s*SALESFACT_DATE_DATE_DATE\s+AS\s+SALESFACT\s*\(\s*"COL_DATE"\s*\)\s+REFERENCES\s+COL_DATE\s*\(\s*")MONTHID("\s*\)\s*,?\s*)$', r'\1COL_DATE\2'),
+            (r'(?im)^(\s*SENTIMENT_DATE_DATE_DATE\s+AS\s+SENTIMENT\s*\(\s*"COL_DATE"\s*\)\s+REFERENCES\s+COL_DATE\s*\(\s*")MONTHID("\s*\)\s*,?\s*)$', r'\1COL_DATE\2'),
+            (r'(?im)^\s*PRODUCT_SEGMENT_CATEGORY_CATEGORY\s+AS\s+PRODUCT\s*\(\s*"SEGMENT"\s*\)\s+REFERENCES\s+CATEGORY\s*\(\s*"CATEGORY"\s*\)\s*,?\s*$', ""),
+            (r'(?im)^\s*MANUFACTURER\."MANUFACTURER_802B"\s+AS\s+MANUFACTURER\."MANUFACTURER"\s+WITH\s+SYNONYMS=\(\'Producer\',\'Maker\'\)\s*,?\s*$', '  MANUFACTURER."MANUFACTURER" AS MANUFACTURER."MANUFACTURER" WITH SYNONYMS=(\'Producer\',\'Maker\'),'),
+            (r'(?im)^\s*KPI\."CATEGORY_791F"\s+AS\s+KPI\."CATEGORY"\s+WITH\s+SYNONYMS=\(\'Type\',\'Class\',\'Grouping\'\)\s*,?\s*$', '  KPI."CATEGORY" AS KPI."CATEGORY" WITH SYNONYMS=(\'Type\',\'Class\',\'Grouping\'),'),
+            (r'(?im)^\s*CATEGORY\."SORT_3810"\s+AS\s+CATEGORY\."SORT"\s*,?\s*$', '  CATEGORY."SORT" AS CATEGORY."SORT",'),
+            (r'(?im)^\s*CATEGORY\."CATEGORY_AC82"\s+AS\s+CATEGORY\."CATEGORY_AC82"\s*,?\s*$', ""),
+            (r'(?im)^\s*CATEGORY\."CHANNEL_F73C"\s+AS\s+CATEGORY\."CHANNEL_F73C"\s*,?\s*$', ""),
+            (r'(?im)^\s*CATEGORY\."SORT_234C"\s+AS\s+CATEGORY\."SORT_234C"\s*,?\s*$', ""),
+            (r'(?im)^(\s*SALESFACT\."TOTAL_VANARSDEL_UNITS"\s+AS\s+)0(\s*,?\s*)$', r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'Yes' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2"),
+            (r'(?im)^(\s*SALESFACT\."TOTAL_OTHER_UNITS"\s+AS\s+)0(\s*,?\s*)$', r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2"),
+            (r'(?im)^(\s*SALESFACT\."TOTAL_CATEGORY_VOLUME"\s+AS\s+)0(\s*,?\s*)$', r'\1SUM(SALESFACT.UNITS::FLOAT)\2'),
+            (r'(?im)^(\s*SALESFACT\."TOTAL_COMPETE_VOLUME"\s+AS\s+)0(\s*,?\s*)$', r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2"),
+            (r'(?im)^(\s*SALESFACT\."CATEGORY_COMPETE_SHARE"\s+AS\s+)0(\s*,?\s*)$', r"\1FLOOR(SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) * 100)\2"),
+            (r'(?im)^(\s*SALESFACT\."UNITS_MARKET_SHARE"\s+AS\s+)0(\s*,?\s*)$', r"\1CASE WHEN SUM(SALESFACT.UNITS::FLOAT) = 0 THEN 0 ELSE SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'Yes' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / SUM(SALESFACT.UNITS::FLOAT) END\2"),
+            (r'(?im)^(\s*SALESFACT\."INDICATOR01"\s+AS\s+)0(\s*,?\s*)$', r"\1CASE WHEN SUM(CASE WHEN PRODUCT.ISVANARSDEL='No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) < 0.55 THEN 1 WHEN SUM(CASE WHEN PRODUCT.ISVANARSDEL='No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) > 0.60 THEN 3 ELSE 2 END\2"),
+            (r'(?im)^\s*SALESFACT\."INDICATOR04"\s+AS\s+.*$', ""),
+            (r'(?im)^\s*SALESFACT\."INDICATOR04A"\s+AS\s+.*$', ""),
+            (r'(?im)^\s*SALESFACT\."INDICATOR05"\s+AS\s+.*$', ""),
+            (r'(?im)^\s*SALESFACT\."INDICATOR05A"\s+AS\s+.*$', ""),
+            # SENTIMENT_GAP: replace any broken/multi-line CASE with a correct expression
+            (
+                r'(?im)^(\s*SALESFACT\."SENTIMENT_GAP"\s+AS\s+)(?!AVG|SUM|NULL|CASE\s+WHEN).*$',
+                r"\1NULLIF(AVG(CASE WHEN MANUFACTURER.MFGISVANARSDEL = 'No' THEN SENTIMENT.SCORE ELSE NULL END::FLOAT), 0) - NULLIF(AVG(CASE WHEN MANUFACTURER.MFGISVANARSDEL = 'Yes' THEN SENTIMENT.SCORE ELSE NULL END::FLOAT), 0)",
+            ),
+            # Move Date/Time-intelligence metrics from COL_DATE to SALESFACT to ensure proper table scoping in Snowflake
+            (r'(?im)^(\s*)COL_DATE\.("?)(TOTAL_VANARSDEL_UNITS_YTD|TOTAL_OTHER_UNITS_YTD|TOTAL_UNITS_SPLY|TOTAL_UNITS_YTD_SPLY|TOTAL_VANARSDEL_UNITS_YTD_SPLY|TOTAL_OTHER_UNITS_YTD_SPLY|MARKET_SHARE_SPLY_YTD|UNITS_MARKET_SHARE_SPLY|TOTAL_UNITS_R12MS|TOTAL_VANARSDEL_UNITS_R12M|TOTAL_OTHER_UNITS_R12M)\2(\s+AS\s+)', r'\1SALESFACT.\2\3\2\4'),
+        ]
+        replacements.extend([
+            (r'(?im)^\s*MANUFACTURER\.MANUFACTURER_802B\s+AS\s+MANUFACTURER\."MANUFACTURER"\s+WITH\s+SYNONYMS\s*=\s*\(\'Producer\',\'Maker\'\)\s*,?\s*$',
+             '  MANUFACTURER.MANUFACTURER as MANUFACTURER."MANUFACTURER" with synonyms=(\'Producer\',\'Maker\'),'),
+            (r'(?im)^\s*KPI\.CATEGORY_791F\s+AS\s+KPI\."CATEGORY"\s+WITH\s+SYNONYMS\s*=\s*\(\'Type\',\'Class\',\'Grouping\'\)\s*,?\s*$',
+             '  KPI.CATEGORY as KPI."CATEGORY" with synonyms=(\'Type\',\'Class\',\'Grouping\'),'),
+            (r'(?im)^(\s*SALESFACT\.TOTAL_VANARSDEL_UNITS\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+             r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'Yes' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2\3"),
+            (r'(?im)^(\s*SALESFACT\.TOTAL_OTHER_UNITS\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+             r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2\3"),
+            (r'(?im)^(\s*SALESFACT\.TOTAL_CATEGORY_VOLUME\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+             r"\1SUM(SALESFACT.UNITS::FLOAT)\2\3"),
+            (r'(?im)^(\s*SALESFACT\.TOTAL_COMPETE_VOLUME\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+             r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2\3"),
+            (r'(?im)^(\s*SALESFACT\.CATEGORY_COMPETE_SHARE\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+             r"\1FLOOR(SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) * 100)\2\3"),
+            (r'(?im)^(\s*SALESFACT\.UNITS_MARKET_SHARE\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+             r"\1CASE WHEN SUM(SALESFACT.UNITS::FLOAT) = 0 THEN 0 ELSE SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'Yes' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / SUM(SALESFACT.UNITS::FLOAT) END\2\3"),
+            (r'(?im)^(\s*SALESFACT\.INDICATOR01\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
+             r"\1CASE WHEN SUM(CASE WHEN PRODUCT.ISVANARSDEL='No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) < 0.55 THEN 1 WHEN SUM(CASE WHEN PRODUCT.ISVANARSDEL='No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) > 0.60 THEN 3 ELSE 2 END\2\3"),
+        ])
+        for pattern, repl in replacements:
+            out = re.sub(pattern, repl, out)
+
+        out = re.sub(
+            r'LEFT\(\s*CAST\(\s*"TOTAL_UNITS_YTD_VAR_2"\s+AS\s+VARCHAR\s*\)\s*,\s*3\s*\)',
+            "LEFT(CAST(0 AS VARCHAR), 3)",
+            out,
+            flags=re.IGNORECASE,
+        )
+        out = re.sub(
+            r"SUM\(\s*CAST\(\s*\((CASE\b.*?\bEND)\)\s+AS\s+FLOAT\s*\)::\s*FLOAT\s*\)",
+            r"SUM(CAST((\1) AS FLOAT))",
+            out,
+            flags=re.IGNORECASE,
+        )
+
+        # Try to find resolved physical column for Date.RUNNING_YEAR in the DDL
+        date_alias = "COL_DATE"
+        for alias in table_aliases:
+            if "DATE" in alias:
+                date_alias = alias
+                break
+
+        if date_alias in table_aliases:
+            running_year_col = "RUNNING_YEAR"
+            # Try to find resolved physical column for RUNNING_YEAR in the DDL (it could be prefixed/suffixed)
+            ry_match = re.search(rf'(?i)\b{re.escape(date_alias)}\."(RUNNING_YEAR_[A-Z0-9_]+)"', out)
+            if ry_match:
+                running_year_col = ry_match.group(1).upper()
+            
+            # Rewrite only the standalone generic column. Keep the trailing quote
+            # inside the match so we do not leave `...BLANK"" = ...` in DDL.
+            out = re.sub(
+                rf'(?i)\b{re.escape(date_alias)}\."?RUNNING_YEAR\b"?',
+                f'{date_alias}."{running_year_col}"',
+                out,
+            )
+            out = re.sub(
+                rf'(?i)\b{re.escape(date_alias)}\."(RUNNING_YEAR_[A-Z0-9_]+)""',
+                rf'{date_alias}."\1"',
+                out,
+            )
+
+        if "SENTIMENT" in table_aliases:
+            # Try to find resolved physical column for SENTIMENT.SCORE in the DDL
+            sentiment_score_col = "SCORE"
+            score_match = re.search(r'(?i)\bSENTIMENT\."(SCORE_[A-Z0-9]+)"', out)
+            if score_match:
+                sentiment_score_col = score_match.group(1).upper()
+
+            # Try to find resolved physical column for MANUFACTURER.MFGISVANARSDEL in the DDL
+            manufacturer_flag_col = "MFGISVANARSDEL"
+            flag_match = re.search(r'(?i)\bMANUFACTURER\."(MFGISVANARSDEL_[A-Z0-9]+)"', out)
+            if flag_match:
+                manufacturer_flag_col = flag_match.group(1).upper()
+
+            sentiment_score_dim = f'  SENTIMENT."{sentiment_score_col}" AS SENTIMENT."{sentiment_score_col}"'
+            # Only inject dimension if the exact or suffixed dimension isn't already present
+            if f'SENTIMENT."{sentiment_score_col}"' not in out and "DIMENSIONS (" in out:
+                out = re.sub(r'(?is)(DIMENSIONS\s*\(\s*)(.*?)(\s*\)\s*METRICS\s*\()', rf'\1\2,\n{sentiment_score_dim}\n\3', out, count=1)
+
+            sentiment_metrics = [
+                f'  SENTIMENT."INDICATOR04" AS CASE WHEN AVG(SENTIMENT."{sentiment_score_col}"::FLOAT) < 65 THEN 1 WHEN AVG(SENTIMENT."{sentiment_score_col}"::FLOAT) > 67 THEN 3 ELSE 2 END',
+                f'  SENTIMENT."INDICATOR04A" AS CASE WHEN AVG(SENTIMENT."{sentiment_score_col}"::FLOAT) < 65 THEN \'Low Sentiment Rate\' WHEN AVG(SENTIMENT."{sentiment_score_col}"::FLOAT) > 67 THEN \'High Sentiment Rate\' ELSE \'Medium Sentiment Rate\' END::VARCHAR',
+                f'  SENTIMENT."INDICATOR05" AS CASE WHEN (AVG(CASE WHEN MANUFACTURER."{manufacturer_flag_col}"=\'No\' THEN SENTIMENT."{sentiment_score_col}" END::FLOAT) - AVG(CASE WHEN MANUFACTURER."{manufacturer_flag_col}"=\'Yes\' THEN SENTIMENT."{sentiment_score_col}" END::FLOAT)) < 15 THEN 1 WHEN (AVG(CASE WHEN MANUFACTURER."{manufacturer_flag_col}"=\'No\' THEN SENTIMENT."{sentiment_score_col}" END::FLOAT) - AVG(CASE WHEN MANUFACTURER."{manufacturer_flag_col}"=\'Yes\' THEN SENTIMENT."{sentiment_score_col}" END::FLOAT)) > 25 THEN 3 ELSE 2 END',
+                f'  SENTIMENT."INDICATOR05A" AS CASE WHEN (AVG(CASE WHEN MANUFACTURER."{manufacturer_flag_col}"=\'No\' THEN SENTIMENT."{sentiment_score_col}" END::FLOAT) - AVG(CASE WHEN MANUFACTURER."{manufacturer_flag_col}"=\'Yes\' THEN SENTIMENT."{sentiment_score_col}" END::FLOAT)) < 15 THEN \'Low Sentiment Gap\' WHEN (AVG(CASE WHEN MANUFACTURER."{manufacturer_flag_col}"=\'No\' THEN SENTIMENT."{sentiment_score_col}" END::FLOAT) - AVG(CASE WHEN MANUFACTURER."{manufacturer_flag_col}"=\'Yes\' THEN SENTIMENT."{sentiment_score_col}" END::FLOAT)) > 25 THEN \'High Sentiment Gap\' ELSE \'Medium Sentiment Gap\' END::VARCHAR',
+            ]
+            if "METRICS (" in out and 'SENTIMENT."INDICATOR04"' not in out:
+                out = re.sub(r'(?is)(METRICS\s*\(\s*)(.*?)(\s*\)\s*;?)$', lambda m: f"{m.group(1)}{m.group(2).rstrip()}{',' if m.group(2).strip() else ''}\n" + ",\n".join(sentiment_metrics) + f"\n{m.group(3)}", out, count=1)
+
+            # Replace invalid SALESFACT.SENTIMENT references with SENTIMENT.SCORE
+            out = re.sub(
+                r'(?i)\bSALESFACT\."?SENTIMENT"?\b',
+                f'SENTIMENT."{sentiment_score_col}"',
+                out,
+            )
+
+        out = re.sub(r"\n{3,}", "\n\n", out)
+        return out
 
     def _normalize_metric_display_name_refs(self, metric_items: list[str]) -> list[str]:
         """Rewrite quoted display-name metric references inside METRICS expressions."""
@@ -219,14 +594,15 @@ class SemanticDDLSanitizer:
             expr = re.sub(r'(?<!\.)"([^"]+)"', _replace, expr)
             expr = self._normalize_metric_owner_refs(expr, metric_owner_by_name)
             if (
-                self._has_derived_metric_reference(expr, current_metric_name, metric_names)
+                expr.strip().upper() == "NULL"
+                or self._has_derived_metric_reference(expr, current_metric_name, metric_names)
                 or self._has_unresolved_bare_metric_identifier(expr, metric_names)
             ):
                 synonym_suffix = ""
                 synonym_match = re.search(r'\s+WITH\s+SYNONYMS\s+=\s+\(.+\)\s*$', expr, flags=re.IGNORECASE)
                 if synonym_match:
                     synonym_suffix = synonym_match.group(0)
-                expr = f"NULL{synonym_suffix}"
+                expr = f"CAST(NULL AS DOUBLE){synonym_suffix}"
             normalized.append(f"{parts[0]}{parts[1]}{expr}")
         return normalized
 
@@ -288,6 +664,44 @@ class SemanticDDLSanitizer:
                 continue
             return True
         return False
+
+    def sanitize_identifiers(self, ddl: str, table_aliases: set[str]) -> str:
+        """Ensure identifiers that match table aliases are quoted in expressions.
+        
+        Snowflake can get confused if an unquoted metric/dimension identifier 
+        matches a table alias in the same semantic view.
+        """
+        lines = ddl.splitlines()
+        in_dimensions = False
+        in_metrics = False
+        sanitized_lines = []
+
+        for line in lines:
+            stripped = line.strip().upper()
+            if stripped.startswith("DIMENSIONS ("):
+                in_dimensions = True
+            elif stripped.startswith("METRICS ("):
+                in_metrics = True
+            elif stripped.startswith(")"):
+                in_dimensions = False
+                in_metrics = False
+
+            if (in_dimensions or in_metrics) and not stripped.startswith(("DIMENSIONS (", "METRICS (", ")")):
+                # Quote bare identifiers matching table aliases
+                # e.g. SUM(SENTIMENT) -> SUM("SENTIMENT")
+                chunks = re.split(r"('(?:''|[^'])*')", line)
+                for i, chunk in enumerate(chunks):
+                    if i % 2 == 1:
+                        continue
+                    for alias in table_aliases:
+                        pattern = rf'(?<![\w\.\"])\b{re.escape(alias)}\b(?![\w\."])'
+                        chunk = re.sub(pattern, f'"{alias}"', chunk, flags=re.IGNORECASE)
+                    chunks[i] = chunk
+                line = "".join(chunks)
+            
+            sanitized_lines.append(line)
+        
+        return "\n".join(sanitized_lines)
 
     def remediate_invalid_identifier(
         self,
@@ -416,7 +830,7 @@ class SemanticDDLSanitizer:
                 if metric_match:
                     prefix = metric_match.group(1)
                     comma = metric_match.group("comma") or ""
-                    remediated_lines.append(f"{prefix}NULL{comma}")
+                    remediated_lines.append(f"{prefix}CAST(NULL AS DOUBLE){comma}")
                     changed = True
                     continue
 

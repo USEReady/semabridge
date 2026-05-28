@@ -738,11 +738,18 @@ def _compat_bootstrap_project_from_repo_yaml() -> None:
     _compat_snapshot_groups.setdefault(project_id, [])
 
 
+_compat_bootstrapped: bool = False
+
+
 def _compat_ensure_loaded() -> None:
+    global _compat_bootstrapped
+    if _compat_bootstrapped:
+        return
     _compat_load_store()
     _compat_bootstrap_projects_from_modular_configs()
     _compat_bootstrap_projects_from_orm()
     _compat_bootstrap_project_from_repo_yaml()
+    _compat_bootstrapped = True
 
 
 def _compat_repo_yaml_path() -> Path:

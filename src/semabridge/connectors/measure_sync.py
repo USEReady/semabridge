@@ -807,6 +807,20 @@ class MeasureSynchronizer:
         skipped_metric_names: set[str]
     ) -> Optional[str]:
         """Attempt LLM translation for a metric when deterministic handling fails."""
+        if self.translator and hasattr(self.translator, "_try_llm_metric_fallback_expression"):
+            return self.translator._try_llm_metric_fallback_expression(
+                metric=metric,
+                metric_name=metric_name,
+                table_alias=table_alias,
+                alias_by_raw=alias_by_raw,
+                dataset_col_lookup=dataset_col_lookup,
+                dataset_aliases=dataset_aliases,
+                metric_name_set=metric_name_set,
+                all_physical_col_names=all_physical_col_names,
+                emittable_metric_name_set=emittable_metric_name_set,
+                skipped_metric_names=skipped_metric_names,
+            )
+
         dax_expression = (getattr(metric, "expression", None) or "").strip()
         if not dax_expression:
             return None

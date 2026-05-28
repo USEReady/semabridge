@@ -110,7 +110,7 @@ def build_snowflake_config(
         # Structural — from semabridge.yaml (project config, not user-specific)
         warehouse=env_map.get("SNOWFLAKE_WAREHOUSE") or base_config.warehouse,
         database=env_map.get("SNOWFLAKE_DATABASE") or base_config.database,
-        schema_name=env_map.get("SNOWFLAKE_SCHEMA") or base_config.schema_name,
+        strict_osi_validation=env_map.get("SNOWFLAKE_STRICT_OSI_VALIDATION") == "true" or base_config.strict_osi_validation,
         role=env_map.get("SNOWFLAKE_ROLE") or base_config.role,
         # Passthrough — always from base config
         deployment_method=base_config.deployment_method,

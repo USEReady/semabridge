@@ -249,9 +249,9 @@ def test_metric_cross_table_reference_validation():
     print("[OK] Test passed: Cross-table metrics properly validated and included")
 
 
-def test_metric_wrong_column_in_target_table_skipped():
+def test_metric_wrong_column_in_target_table_healed():
     """
-    Test that metrics referencing a column that's in a different table are skipped.
+    Test that metrics referencing a column that's in a different table are healed.
     
     Example: SUM(d."REVENUE") where REVENUE is in salesfact, not date table.
     """
@@ -323,8 +323,9 @@ def test_metric_wrong_column_in_target_table_skipped():
     # Generate DDL
     ddl = emitter._generate_semantic_view(sml)
     
-    # Verify that invalid metric is skipped
-    assert "date_revenue" not in ddl.lower()
+    # Verify that the metric is healed and included under salesfact
+    assert "date_revenue" in ddl.lower()
+    assert 'salesfact."date_revenue"' in ddl.lower()
     
     print("✓ Test passed: Metric with column mismatch was skipped")
 

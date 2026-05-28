@@ -260,4 +260,4 @@ METRICS (
     assert 'SALESFACT."PCT_UNIT_MARKET_SHARE_YOY_CHANGE"' in normalized
     assert 'SALESFACT."SENTIMENT"' not in normalized
     assert 'SENTIMENT."SENTIMENT"' in normalized
-    assert 'SALESFACT."TOTAL_VANARSDEL_UNITS_YTD" AS NULL' in normalized
+    assert 'SALESFACT."TOTAL_VANARSDEL_UNITS_YTD" AS CAST(NULL AS DOUBLE)' in normalized

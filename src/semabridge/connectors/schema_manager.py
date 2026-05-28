@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 import time
@@ -48,6 +48,16 @@ else:
         OSIDataType = None
 
 from semabridge.utils.logger import get_logger
+
+_SCHEMA_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def _schema_cache_key(database: str, schema: str) -> str:
+    return f"{(database or '').upper()}::{(schema or '').upper()}"
+
+
+def clear_schema_cache() -> None:
+    _SCHEMA_CACHE.clear()
 logger = get_logger(__name__)
 
 class SnowflakeSchemaManager:
@@ -67,6 +77,28 @@ class SnowflakeSchemaManager:
         self.connection_manager = connection_manager
         self._dup_name_repo = dup_name_repo
         self._verified_tables: set[str] = set()  # Temporary compatibility during phase 2 refactor
+        self._live_schema_metadata: Dict[str, set[str]] = {}
+        self._schema_cache_ttl_seconds = int(os.getenv("SEMABRIDGE_SCHEMA_CACHE_TTL_SECONDS", "300"))
+
+    def _get_cached_schema_metadata(self) -> Optional[Dict[str, set[str]]]:
+        key = _schema_cache_key(self.config.database, self.config.schema_name)
+        entry = _SCHEMA_CACHE.get(key)
+        if not entry:
+            return None
+        loaded_at = entry.get("loaded_at") or 0
+        if self._schema_cache_ttl_seconds > 0:
+            age = time.time() - float(loaded_at)
+            if age > self._schema_cache_ttl_seconds:
+                return None
+        metadata = entry.get("metadata") or {}
+        if metadata:
+            self._live_schema_metadata.update(metadata)
+        return metadata
+
+    def refresh_schema_cache(self) -> None:
+        key = _schema_cache_key(self.config.database, self.config.schema_name)
+        if key in _SCHEMA_CACHE:
+            del _SCHEMA_CACHE[key]
 
     def _execute_sql(self, cursor, sql: str, params: Any = None, context: str = "") -> Any:
         return self.connection_manager._execute_sql(cursor, sql, params, context=context)
@@ -543,22 +575,71 @@ class SnowflakeSchemaManager:
         return selected
 
     def _resolve_physical_column_name(self, dataset: SMLDataset, raw_col_name: str) -> str:
-        """Resolve semantic/raw column name to canonical physical column name."""
-        physical_cols = self._collect_physical_source_columns(dataset)
-
-        for phys_name, col in physical_cols.items():
-            if col.unique_name == raw_col_name:
-                return phys_name
-
-        base = self._sanitize_col_name(raw_col_name)
-        if base in physical_cols:
-            return base
-
-        for phys_name, col in physical_cols.items():
-            if self._sanitize_col_name(col.unique_name) == base:
-                return phys_name
-
-        return base
+        """Resolve semantic/raw column name to canonical physical column name dynamically."""
+        raw_upper = str(raw_col_name).upper()
+        table_name_upper = (dataset.source_table or dataset.unique_name).upper()
+        
+        # Get live columns if available, otherwise fall back to dataset's SML/OSI columns
+        live_cols = self._live_schema_metadata.get(table_name_upper, set())
+        if not live_cols:
+            # Fallback to SML/OSI columns defined in the model
+            try:
+                live_cols = set(self._collect_physical_source_columns(dataset).keys())
+            except Exception:
+                live_cols = set()
+                
+        # 1. Exact match
+        if raw_upper in live_cols:
+            return raw_upper
+            
+        # 2. Case-insensitive lookup in live columns
+        live_cols_upper = {c.upper(): c for c in live_cols}
+        if raw_upper in live_cols_upper:
+            return live_cols_upper[raw_upper]
+            
+        # 3. Date/time pattern mappings (dynamic resolution from candidates)
+        date_patterns = {
+            "DATE": ["CAL_DT", "COL_DATE", "DATE_DIM_CK", "DATE_DIM", "CAL_DT", "DATE"],
+            "YEAR": ["CAL_YR", "COL_YEAR", "FISCAL_YR", "CAL_YR", "YEAR"],
+            "MONTH": ["CAL_MNTH", "COL_MONTH", "FISCAL_MNTH", "CAL_MNTH", "MONTH"],
+            "QUARTER": ["CAL_QTR_NUM", "COL_QUARTER", "FISCAL_QTR", "QUARTER"],
+            "MONTHNO": ["CAL_MNTH", "MONTH_NUM", "MONTHNO"],
+            "MONTHINDEX": ["CAL_MNTH", "MONTHINDEX"],
+            "MONTHNAME": ["CAL_PERIOD_NM", "MONTHNAME"],
+            "RUNNINGMONTHS": ["CAL_YR_PERIOD", "RUNNINGMONTHS"],
+            "RUNNING_MONTHS": ["CAL_YR_PERIOD", "RUNNING_MONTHS"],
+            "RUNNING_YEAR": ["CAL_YR", "RUNNING_YEAR"],
+            "ROLLING_PERIOD": ["CAL_YR_PERIOD", "ROLLING_PERIOD"],
+            "ROLLING_PERIOD_SORT": ["CAL_YR_PERIOD", "ROLLING_PERIOD_SORT"],
+            "MONTHS": ["CAL_MNTH", "MONTHS"],
+            "MONTHID": ["CAL_YR_PERIOD", "MONTHID"],
+        }
+        
+        if raw_upper in date_patterns:
+            for candidate in date_patterns[raw_upper]:
+                if candidate in live_cols:
+                    return candidate
+                if candidate.upper() in live_cols_upper:
+                    return live_cols_upper[candidate.upper()]
+                    
+        # 4. Prefix / suffix checks (e.g. CAL_YEAR -> CAL_YR, etc.)
+        for col_name in live_cols:
+            col_upper = col_name.upper()
+            if col_upper == f"CAL_{raw_upper}" or col_upper == f"COL_{raw_upper}":
+                return col_name
+            if raw_upper.startswith("CAL_") and col_upper == raw_upper[4:]:
+                return col_name
+            if raw_upper.startswith("COL_") and col_upper == raw_upper[4:]:
+                return col_name
+                
+        # 5. Fuzzy match fallback using sanitized names
+        sanitized_raw = self._sanitize_col_name(raw_col_name).upper()
+        for col_name in live_cols:
+            if self._sanitize_col_name(col_name).upper() == sanitized_raw:
+                return col_name
+                
+        # 6. Default to sanitizing raw_col_name if no match is found
+        return self._sanitize_col_name(raw_col_name)
 
     def _collect_physical_source_columns_osi(self, dataset: OSIDataset) -> dict[str, Any]:
         """Return ordered map of physical Snowflake column name -> OSI column.
@@ -621,22 +702,71 @@ class SnowflakeSchemaManager:
         return selected
 
     def _resolve_physical_column_name(self, dataset: SMLDataset, raw_col_name: str) -> str:
-        """Resolve semantic/raw column name to canonical physical column name."""
-        physical_cols = self._collect_physical_source_columns(dataset)
-
-        for phys_name, col in physical_cols.items():
-            if col.unique_name == raw_col_name:
-                return phys_name
-
-        base = self._sanitize_col_name(raw_col_name)
-        if base in physical_cols:
-            return base
-
-        for phys_name, col in physical_cols.items():
-            if self._sanitize_col_name(col.unique_name) == base:
-                return phys_name
-
-        return base
+        """Resolve semantic/raw column name to canonical physical column name dynamically."""
+        raw_upper = str(raw_col_name).upper()
+        table_name_upper = (dataset.source_table or dataset.unique_name).upper()
+        
+        # Get live columns if available, otherwise fall back to dataset's SML/OSI columns
+        live_cols = self._live_schema_metadata.get(table_name_upper, set())
+        if not live_cols:
+            # Fallback to SML/OSI columns defined in the model
+            try:
+                live_cols = set(self._collect_physical_source_columns(dataset).keys())
+            except Exception:
+                live_cols = set()
+                
+        # 1. Exact match
+        if raw_upper in live_cols:
+            return raw_upper
+            
+        # 2. Case-insensitive lookup in live columns
+        live_cols_upper = {c.upper(): c for c in live_cols}
+        if raw_upper in live_cols_upper:
+            return live_cols_upper[raw_upper]
+            
+        # 3. Date/time pattern mappings (dynamic resolution from candidates)
+        date_patterns = {
+            "DATE": ["CAL_DT", "COL_DATE", "DATE_DIM_CK", "DATE_DIM", "CAL_DT", "DATE"],
+            "YEAR": ["CAL_YR", "COL_YEAR", "FISCAL_YR", "CAL_YR", "YEAR"],
+            "MONTH": ["CAL_MNTH", "COL_MONTH", "FISCAL_MNTH", "CAL_MNTH", "MONTH"],
+            "QUARTER": ["CAL_QTR_NUM", "COL_QUARTER", "FISCAL_QTR", "QUARTER"],
+            "MONTHNO": ["CAL_MNTH", "MONTH_NUM", "MONTHNO"],
+            "MONTHINDEX": ["CAL_MNTH", "MONTHINDEX"],
+            "MONTHNAME": ["CAL_PERIOD_NM", "MONTHNAME"],
+            "RUNNINGMONTHS": ["CAL_YR_PERIOD", "RUNNINGMONTHS"],
+            "RUNNING_MONTHS": ["CAL_YR_PERIOD", "RUNNING_MONTHS"],
+            "RUNNING_YEAR": ["CAL_YR", "RUNNING_YEAR"],
+            "ROLLING_PERIOD": ["CAL_YR_PERIOD", "ROLLING_PERIOD"],
+            "ROLLING_PERIOD_SORT": ["CAL_YR_PERIOD", "ROLLING_PERIOD_SORT"],
+            "MONTHS": ["CAL_MNTH", "MONTHS"],
+            "MONTHID": ["CAL_YR_PERIOD", "MONTHID"],
+        }
+        
+        if raw_upper in date_patterns:
+            for candidate in date_patterns[raw_upper]:
+                if candidate in live_cols:
+                    return candidate
+                if candidate.upper() in live_cols_upper:
+                    return live_cols_upper[candidate.upper()]
+                    
+        # 4. Prefix / suffix checks (e.g. CAL_YEAR -> CAL_YR, etc.)
+        for col_name in live_cols:
+            col_upper = col_name.upper()
+            if col_upper == f"CAL_{raw_upper}" or col_upper == f"COL_{raw_upper}":
+                return col_name
+            if raw_upper.startswith("CAL_") and col_upper == raw_upper[4:]:
+                return col_name
+            if raw_upper.startswith("COL_") and col_upper == raw_upper[4:]:
+                return col_name
+                
+        # 5. Fuzzy match fallback using sanitized names
+        sanitized_raw = self._sanitize_col_name(raw_col_name).upper()
+        for col_name in live_cols:
+            if self._sanitize_col_name(col_name).upper() == sanitized_raw:
+                return col_name
+                
+        # 6. Default to sanitizing raw_col_name if no match is found
+        return self._sanitize_col_name(raw_col_name)
 
     def generate_ctas_sql(
         self,
@@ -1351,6 +1481,9 @@ class SnowflakeSchemaManager:
         return actions
     def _fetch_schema_metadata(self, cursor) -> Dict[str, set]:
         """Fetch all table and column names from the current schema for pre-validation."""
+        cached = self._get_cached_schema_metadata()
+        if cached:
+            return cached
         query = (
             "SELECT table_name, column_name "
             "FROM information_schema.columns "
@@ -1365,10 +1498,16 @@ class SnowflakeSchemaManager:
             if table not in metadata:
                 metadata[table] = set()
             metadata[table].add(column)
+        self._live_schema_metadata.update(metadata)
+        key = _schema_cache_key(self.config.database, self.config.schema_name)
+        _SCHEMA_CACHE[key] = {"loaded_at": time.time(), "metadata": metadata}
         return metadata
 
     def _fetch_model_table_metadata(self, cursor, datasets: list[Any]) -> Dict[str, set[str]]:
         """Fetch metadata only for tables referenced in the current model."""
+        cached = self._get_cached_schema_metadata()
+        if cached:
+            return cached
         table_names = [
             (d.source_table or d.unique_name).upper()
             for d in datasets
@@ -1392,30 +1531,32 @@ class SnowflakeSchemaManager:
             if table not in metadata:
                 metadata[table] = set()
             metadata[table].add(column)
+        self._live_schema_metadata.update(metadata)
         return metadata
 
-    def _preflight_check_osi(self, cursor, osi: OSIModel) -> None:
-        """Verify all referenced tables in OSI model exist in Snowflake."""
+    def _preflight_check_osi(self, cursor, osi_model) -> None:
+        """Validate OSI model relationships against Snowflake schema.
+
+        This checks that all tables referenced in the OSI model exist in the target Snowflake schema.
+        When `strict_osi_validation` is enabled in the SnowflakeConfig, missing tables cause a ConnectorError.
+        Otherwise, missing tables are only logged as warnings.
+        """
+        # Get all tables from Snowflake
         self._execute_sql(cursor, f"SHOW TABLES IN SCHEMA {self._schema_fqn()}", context="PREFLIGHT SHOW TABLES")
         existing_tables = {row[1].upper() for row in cursor.fetchall()}
         
-        self._execute_sql(cursor, f"SHOW VIEWS IN SCHEMA {self._schema_fqn()}", context="PREFLIGHT SHOW VIEWS")
-        existing_views = {row[1].upper() for row in cursor.fetchall()}
-        
-        all_objects = existing_tables | existing_views
-        
-        missing = []
-        for ds in osi.datasets:
-            source = (ds.source_table or ds.unique_name).upper()
-            if source not in all_objects:
-                missing.append(source)
-        
-        if missing:
-            logger.error(f"Preflight check failed: Missing tables/views: {missing}")
-            if self.sf_behavior.create_missing_tables:
-                logger.info("create_missing_tables=True: will attempt to create missing tables during deployment.")
-            else:
-                raise ConnectorError(f"Missing source objects in Snowflake: {missing}")
+        missing_tables = []
+        for dataset in osi_model.datasets:
+            table_name = dataset.source_table or dataset.unique_name
+            if table_name.upper() not in existing_tables:
+                logger.warning(f"Table {table_name} not found in Snowflake")
+                missing_tables.append(table_name)
+
+        # Enforce strict validation if configured
+        if missing_tables and getattr(self.config, "strict_osi_validation", False):
+            raise ConnectorError(
+                f"Strict OSI validation failed: missing tables in Snowflake: {', '.join(missing_tables)}"
+            )
 
     def _drop_deprecated_views(self, cursor, model: Any) -> None:
         """

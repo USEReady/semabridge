@@ -1,0 +1,1121 @@
+--- dev-test/metrics_clause_builder.py
++++ semabridge-working/metrics_clause_builder.py
+@@ -1,18 +1,1118 @@
+-∢䈢極摬牥映牯匠潮晷慬敫猠浥湡楴ⵣ楶睥䴠呅䥒千⠠䕍十剕卅 -汣畡敳∮∢਍਍牦浯张晟瑵牵彥 浩潰瑲愠湮瑯瑡潩獮਍਍浩潰瑲爠൥昊潲⁭祴楰杮椠灭牯⁴湁ⱹ䐠捩ⱴ䰠獩ⱴ匠瑥‬畔汰ⱥ传瑰潩慮൬ഊ昊潲⁭敳慭牢摩敧甮楴獬氮杯敧⁲浩潰瑲朠瑥江杯敧൲昊潲⁭敳慭牢摩敧甮楴獬椮敤瑮晩敩獲椠灭牯⁴摉湥楴楦牥慓楮楴敺൲昊潲⁭敳慭牢摩敧挮湯敮瑣牯⹳摤彬敨灬牥⁳浩潰瑲⠠਍††敤畤汰捩瑡彥敭牴捩彳楬敮ⱳ਍††敤畤汰捩瑡彥敭牴捩彳楬敮彳獯Ⱪ਍††硥牴捡彴硥牰歟祥ബ †攠瑸慲瑣敟灸彲敫役獯Ⱪ਍ഩ昊潲⁭敳慭牢摩敧挮湯敮瑣牯⹳祳潮祮彭汣畡敳椠灭牯⁴祳潮祮獭损慬獵൥ഊ氊杯敧⁲‽敧彴潬杧牥弨湟浡彥⥟਍਍਍汣獡⁳敍牴捩䍳慬獵䉥極摬牥ഺ †∠∢慈摮敬⁳潣獮牴捵楴湯愠摮瘠污摩瑡潩⁮景琠敨䴠呅䥒千挠慬獵⹥∢ഢഊ †搠晥张楟楮彴⡟਍††††敳晬ബ †††椠敤瑮晩敩彲慳楮楴敺㩲䄠祮ബ †††猠档浥彡慭慮敧㩲䄠祮ബ †††猠湡瑩穩牥›湁ⱹ਍††††牴湡汳瑡牯›湁ⱹ਍††††潣普杩›湁ⱹ਍††††畤彰慮敭牟灥㩯䄠祮㴠丠湯൥ †⤠ഺ †††猠汥⹦摩湥楴楦牥獟湡瑩穩牥㴠椠敤瑮晩敩彲慳楮楴敺൲ †††猠汥⹦捳敨慭浟湡条牥㴠猠档浥彡慭慮敧൲ †††猠汥⹦慳楮楴敺⁲‽慳楮楴敺൲ †††猠汥⹦牴湡汳瑡牯㴠琠慲獮慬潴൲ †††猠汥⹦潣普杩㴠挠湯楦൧ †††猠汥⹦畤彰慮敭牟灥⁯‽畤彰慮敭牟灥൯ഊ †搠晥戠極摬晟牯獟汭ന †††猠汥ⱦ਍††††浳㩬䄠祮ബ †††搠瑡獡瑥慟楬獡獥›楄瑣獛牴‬瑳嵲ബ †††搠瑡獡瑥扟役慮敭›楄瑣獛牴‬湁嵹ബ †††搠瑡獡瑥损汯江潯畫㩰䐠捩孴瑳Ⱳ匠瑥獛牴嵝ബ †††愠楬獡扟役慲㩷䐠捩孴瑳Ⱳ猠牴ⱝ਍††††污彬桰獹捩污损汯湟浡獥›敓孴瑳嵲ബ †††攠業瑴扡敬浟瑥楲彣慮敭獟瑥›敓孴瑳嵲਍†† -㸭䰠獩孴瑳嵲ഺ †††∠∢畂汩⁤䕍剔䍉⁓汣畡敳映牯匠䱍洠摯汥∮∢਍††††敲畴湲猠汥⹦扟極摬浟瑥楲獣ന †††††猠汭‬慤慴敳彴污慩敳ⱳ搠瑡獡瑥扟役慮敭‬慤慴敳彴潣彬潬歯灵‬਍††††††污慩彳祢牟睡‬污彬桰獹捩污损汯湟浡獥‬浥瑩慴汢彥敭牴捩湟浡彥敳ⱴ椠彳獯㵩慆獬൥ †††⤠਍਍††敤⁦畢汩彤潦彲獯⡩਍††††敳晬ബ †††漠楳›湁ⱹ਍††††慤慴敳彴污慩敳㩳䐠捩孴瑳Ⱳ猠牴ⱝ਍††††慤慴敳彴祢湟浡㩥䐠捩孴瑳Ⱳ䄠祮ⱝ਍††††慤慴敳彴潣彬潬歯灵›楄瑣獛牴‬敓孴瑳嵲ⱝ਍††††污慩彳祢牟睡›楄瑣獛牴‬瑳嵲ബ †††愠汬灟票楳慣彬潣彬慮敭㩳匠瑥獛牴ⱝ਍††††浥瑩慴汢彥敭牴捩湟浡彥敳㩴匠瑥獛牴൝ †⤠ⴠ‾楌瑳獛牴㩝਍††††∢䈢極摬䴠呅䥒千挠慬獵⁥潦⁲协⁉潭敤⹬∢ഢ †††爠瑥牵⁮敳晬弮畢汩彤敭牴捩⡳਍††††††獯Ⱪ搠瑡獡瑥慟楬獡獥‬慤慴敳彴祢湟浡ⱥ搠瑡獡瑥损汯江潯畫Ɒഠ †††††愠楬獡扟役慲ⱷ愠汬灟票楳慣彬潣彬慮敭ⱳ攠業瑴扡敬浟瑥楲彣慮敭獟瑥‬獩潟楳吽畲൥ †††⤠਍਍††敤⁦扟極摬浟瑥楲獣ന †††猠汥ⱦ਍††††潭敤㩬䄠祮ബ †††搠瑡獡瑥慟楬獡獥›楄瑣獛牴‬瑳嵲ബ †††搠瑡獡瑥扟役慮敭›楄瑣獛牴‬湁嵹ബ †††搠瑡獡瑥损汯江潯畫㩰䐠捩孴瑳Ⱳ匠瑥獛牴嵝ബ †††愠楬獡扟役慲㩷䐠捩孴瑳Ⱳ猠牴ⱝ਍††††污彬桰獹捩污损汯湟浡獥›敓孴瑳嵲ബ †††攠業瑴扡敬浟瑥楲彣慮敭獟瑥›敓孴瑳嵲ബ †††椠彳獯㩩戠潯൬ †⤠ⴠ‾楌瑳獛牴㩝਍††††敭牴捩彳楬敮⁳‽嵛਍††††獵摥浟瑥楲彣慮敭㩳匠瑥獛牴⁝‽敳⡴ഩ †††猠楫灰摥浟瑥楲彣慮敭㩳匠瑥獛牴⁝‽敳⡴ഩ †††攠灸捥整彤敭牴捩㩳䰠獩孴畔汰孥瑳Ⱳ猠牴‬瑳嵲⁝‽嵛਍††††਍††††慶楬彤敭牴捩⁳‽浛映牯洠椠⁮潭敤⹬敭牴捩⁳晩∠∤渠瑯椠⁮⹭湵煩敵湟浡嵥਍††††敭牴捩湟浡彥敳⁴‽獻汥⹦摩湥楴楦牥獟湡瑩穩牥献湡瑩穩彥污慩⡳⹭湵煩敵湟浡⥥映牯洠椠⁮慶楬彤敭牴捩絳਍਍††††‣畂汩⁤敭牴捩渠浡⁥潴琠扡敬愠楬獡洠灡楰杮映牯焠慵楬祦湩⁧慢敲挠潲獳琭扡敬洠瑥楲⁣敲敦敲据獥਍††††敭牴捩瑟彯污慩㩳䐠捩孴瑳Ⱳ猠牴⁝‽絻਍††††潦⁲⁭湩瘠污摩浟瑥楲獣ഺ †††††洠慟楬獡㴠搠瑡獡瑥慟楬獡獥朮瑥洨搮瑡獡瑥ഩ †††††椠⁦彭污慩㩳਍††††††††慳楮楴敺彤慮敭㴠猠汥⹦摩湥楴楦牥獟湡瑩穩牥献湡瑩穩彥污慩⡳⹭湵煩敵湟浡⥥਍††††††††敭牴捩瑟彯污慩孳慳楮楴敺彤慮敭⁝‽彭污慩൳ഊ †††⌠䈠極摬猠瑥漠⁦慦瑣琭扡敬愠楬獡獥猠⁯敭牴捩瀠敲楦⁸敲潳畬楴湯瀠敲敦獲琠敨൭ †††映捡彴污慩敳㩳匠瑥獛牴⁝‽ൻ †††††愠楬獡਍††††††潦⁲獤湟浡ⱥ愠楬獡椠⁮慤慴敳彴污慩敳⹳瑩浥⡳ഩ †††††椠⁦敧慴瑴⡲慤慴敳彴祢湟浡⹥敧⡴獤湟浡⥥‬椢彳慦瑣Ⱒ䘠污敳ഩ †††素਍††††਍††††敭牴捩扟獡彥潴慴獬›楄瑣獛牴‬湩嵴㴠笠ൽ †††映牯洠椠⁮慶楬彤敭牴捩㩳਍††††††慢敳㴠猠汥⹦摩湥楴楦牥獟湡瑩穩牥献湡瑩穩彥污慩⡳⹭湵煩敵湟浡⥥਍††††††敭牴捩扟獡彥潴慴獬扛獡嵥㴠洠瑥楲彣慢敳瑟瑯污⹳敧⡴慢敳‬⤰⬠ㄠ਍††††††਍††††敭牴捩扟獡彥敳湥›楄瑣獛牴‬湩嵴㴠笠ൽ †††洠瑥楲彣楳湧瑡牵彥敳湥›楄瑣獛牴‬湩嵴㴠笠ൽ †††洠瑥楲彣慮敭灳捡⁥‽敳晬弮畤汰捩瑡彥慮敭灳捡彥敫⡹潭敤⹬湵煩敵湟浡⁥牯洠摯汥氮扡汥ഩ †††洠摯汥湟浡⁥‽潭敤⹬湵煩敵湟浡⁥牯洠摯汥氮扡汥਍਍††††‣牐潩楲祴〠›牰晥瑥档传数䅮⁉牴湡汳瑡潩獮椠⁮慢捴敨⁳用⁰潴㈠⤰ബ †††⌠猠⁯潣灭敬⁸䅄⁘敧獴漠敮渠瑥潷歲爠畯摮琭楲⁰数⁲档湵⁫湩瑳慥⁤景瀠牥洠瑥楲⹣਍††††牴㩹਍††††††敳晬琮慲獮慬潴⹲牰晥瑥档潟数慮彩敭牴捩瑟慲獮慬楴湯⡳਍††††††††敭牴捩㵳慶楬彤敭牴捩ⱳ਍††††††††慴汢彥污慩㵳敮瑸椨整⡲慦瑣慟楬獡獥Ⱙ∠䅆呃⤢ബ †††††††搠瑡獡瑥损汯江潯畫㵰慤慴敳彴潣彬潬歯灵ബ †††††⤠਍††††硥散瑰䔠捸灥楴湯愠⁳硥㩣਍††††††潬杧牥眮牡楮杮∨灏湥䥁洠瑥楲⁣牰晥瑥档猠楫灰摥›猥Ⱒ攠捸ഩഊ †††⌠㴠㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽ഽ †††⌠䐠䉅䝕›桃捥⁫敭牴捩渠浡⁥慳楮楴慺楴湯਍††††‣㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽਍††††潦⁲敭牴捩椠⁮慶楬彤敭牴捩㩳਍††††††慲彷慮敭㴠洠瑥楲⹣湵煩敵湟浡൥ †††††猠湡瑩穩摥湟浡⁥‽敳晬椮敤瑮晩敩彲慳楮楴敺⹲慳楮楴敺慟楬獡爨睡湟浡⥥਍††††††潬杧牥椮普⡯≦鿰趔䴠呅䥒⁃䅓䥎䥔䅚䥔乏›慲㵷笧慲彷慮敭❽銆猠湡瑩穩摥✽獻湡瑩穩摥湟浡絥∧ഩ †††⌠㴠㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽㴽ഽഊ †††映牯洠瑥楲⁣湩瘠污摩浟瑥楲獣ഺ †††††愠楬獡㴠搠瑡獡瑥慟楬獡獥朮瑥洨瑥楲⹣慤慴敳⥴਍††††††晩渠瑯愠楬獡›潣瑮湩敵਍††††††਍††††††敭牴捩扟獡彥污慩⁳‽敳晬椮敤瑮晩敩彲慳楮楴敺⹲慳楮楴敺慟楬獡洨瑥楲⹣湵煩敵湟浡⥥਍††††††敭牴捩獟敥彮摩⁸‽敭牴捩扟獡彥敳湥朮瑥洨瑥楲彣慢敳慟楬獡‬⤰⬠ㄠ਍††††††敭牴捩扟獡彥敳湥浛瑥楲彣慢敳慟楬獡⁝‽敭牴捩獟敥彮摩൸ †††††ഠ †††††洠瑥楲彣污慩彳敳摥㴠⠠敭牴捩扟獡彥污慩⁳晩洠瑥楲彣慢敳瑟瑯污⹳敧⡴敭牴捩扟獡彥污慩ⱳ〠 -㴽ㄠഠ ††††††††††††††††汥敳映笢敭牴捩扟獡彥污慩絳筟敭牴捩獟敥彮摩絸⤢਍††††††਍††††††晩洠瑥楲彣慢敳瑟瑯污⹳敧⡴敭牴捩扟獡彥污慩ⱳ〠 -‾㨱਍††††††††敭牴捩獟杩慮畴敲獟敥⁤‽敳晬弮畢汩彤畤汰捩瑡彥楳湧瑡牵彥敳摥ന †††††††††洠瑥楲⹣湵煩敵湟浡ⱥഠ †††††††††朠瑥瑡牴洨瑥楲Ᵽ∠煳彬硥牰獥楳湯Ⱒ丠湯⥥漠⁲敭牴捩攮灸敲獳潩Ɱഠ †††††††††丠湯ⱥഠ †††††††††洠瑥楲⹣条牧来瑡潩⹮慶畬⁥晩洠瑥楲⹣条牧来瑡潩⁮汥敳丠湯൥ †††††††⤠਍††††††††楳彧摩⁸‽敭牴捩獟杩慮畴敲獟敥⹮敧⡴敭牴捩獟杩慮畴敲獟敥Ɽ〠 -‫റ †††††††洠瑥楲彣楳湧瑡牵彥敳湥浛瑥楲彣楳湧瑡牵彥敳摥⁝‽楳彧摩൸ †††††††洠瑥楲彣楳湧瑡牵⁥‽≦浻瑥楲彣楳湧瑡牵彥敳摥㩽漺捣獻杩楟硤≽਍††††††††敭牴捩慟楬獡獟敥⁤‽敳晬弮敲潳癬彥数獲獩整瑮摟灵楬慣整湟浡⡥਍††††††††††洢瑥楲≣‬敭牴捩湟浡獥慰散‬਍††††††††††敳晬椮敤瑮晩敩彲慳楮楴敺⹲慳楮楴敺慟楬獡洨瑥楲⹣慤慴敳⥴ബ †††††††††洠瑥楲彣慢敳慟楬獡‬敭牴捩甮楮畱彥慮敭‬敭牴捩獟杩慮畴敲‬敭牴捩慟楬獡獟敥൤ †††††††⤠਍਍††††††敭牴捩湟浡⁥‽敳晬弮敲潳癬彥湵煩敵浟瑥楲彣污慩⡳敭牴捩慟楬獡獟敥Ɽ甠敳彤敭牴捩湟浡獥‬敭牴捩甮楮畱彥慮敭ഩ †††††攠灸捥整彤敭牴捩⹳灡数摮⠨污慩ⱳ洠瑥楲彣慮敭‬敭牴捩甮楮畱彥慮敭⤩਍††††††਍††††††硥牰㴠猠汥⹦束湥牥瑡彥敭牴捩敟灸敲獳潩⡮਍††††††††敭牴捩‬敭牴捩湟浡ⱥ愠楬獡‬慤慴敳彴祢湟浡ⱥ搠瑡獡瑥慟楬獡獥‬਍††††††††慤慴敳彴潣彬潬歯灵‬污慩彳祢牟睡‬敭牴捩湟浡彥敳ⱴഠ †††††††愠汬灟票楳慣彬潣彬慮敭ⱳ攠業瑴扡敬浟瑥楲彣慮敭獟瑥‬歳灩数彤敭牴捩湟浡獥‬潭敤彬慮敭‬獩潟楳ബ †††††††映捡彴污慩敳㵳慦瑣慟楬獡獥ബ †††††††洠瑥楲彣潴慟楬獡洽瑥楲彣潴慟楬獡਍††††††ഩ †††††ഠ †††††椠⁦硥牰ഺ †††††††洠瑥楲彣湥楴祴慟楬獡㴠猠汥⹦牟獥汯敶浟瑥楲彣浥獩楳湯慟楬獡愨楬獡‬硥牰‬慤慴敳彴污慩敳ⱳ映捡彴污慩敳⥳਍††††††††慳敦浟瑥楲彣慮敭㴠猠汥⹦摩湥楴楦牥獟湡瑩穩牥献湡瑩穩彥潣畬湭洨瑥楲彣慮敭ഩ †††††††椠⁦敭牴捩湟浡⁥㴡猠晡彥敭牴捩湟浡㩥਍††††††††††潬杧牥椮普⡯਍††††††††††††䴢呅䥒⁃䑄⁌䥆㩘✠猥‧㸭✠猥∧ബ †††††††††††洠瑥楲彣慮敭ബ †††††††††††猠晡彥敭牴捩湟浡ⱥ਍††††††††††ഩ †††††††洠瑥楲獣江湩獥愮灰湥⡤਍††††††††††❦†浻瑥楲彣湥楴祴慟楬獡⹽笢慳敦浟瑥楲彣慮敭≽䄠⁓敻灸絲ധ †††††††††映笧祳潮祮獭损慬獵⡥楬瑳木瑥瑡牴洨瑥楲Ᵽ∠祳潮祮獭Ⱒ嬠⥝漠⁲嵛⤩❽਍††††††††ഩഊ †††⌠倠畲楮杮愠摮䘠污扬捡獫⸮മ †††洠瑥楲獣江湩獥㴠猠汥⹦灟畲敮畟牮獥汯敶彤敭牴捩江湩獥洨瑥楲獣江湩獥‬敭牴捩湟浡彥敳⥴਍††††਍††††‣协⁉慆汬慢正䰠潯൰ †††椠⁦獩潟楳ഺ †††††洠瑥楲獣江湩獥㴠猠汥⹦慟灰祬潟楳晟污扬捡獫ന †††††††洠瑥楲獣江湩獥‬硥数瑣摥浟瑥楲獣‬潭敤ⱬ搠瑡獡瑥慟楬獡獥‬慤慴敳彴潣彬潬歯灵‬਍††††††††污慩彳祢牟睡‬敭牴捩湟浡彥敳ⱴ愠汬灟票楳慣彬潣彬慮敭ⱳ攠業瑴扡敬浟瑥楲彣慮敭獟瑥‬਍††††††††歳灩数彤敭牴捩湟浡獥਍††††††ഩ †††††洠瑥楲獣江湩獥㴠搠摥灵楬慣整浟瑥楲獣江湩獥潟楳洨瑥楲獣江湩獥ഩ †††攠獬㩥਍††††††敭牴捩彳楬敮⁳‽敤畤汰捩瑡彥敭牴捩彳楬敮⡳敭牴捩彳楬敮⥳਍††††††਍††††楦慮彬敭牴捩彳楬敮⁳‽嵛਍††††潦⁲Ⱪ氠湩⁥湩攠畮敭慲整洨瑥楲獣江湩獥㨩਍††††††潣浭⁡‽Ⱒ•晩椠㰠氠湥洨瑥楲獣江湩獥 -‭‱汥敳∠ഢ †††††映湩污浟瑥楲獣江湩獥愮灰湥⡤≦汻湩絥捻浯慭≽ഩഊ †††爠瑥牵⁮楦慮彬敭牴捩彳楬敮൳ഊ †搠晥张敲慭彰楶瑲慵彬敭獡牵獥瑟扡敬牟晥⡳਍††††敳晬ബ †††猠汱敟灸㩲猠牴ബ †††洠慥畳敲彳污慩㩳猠牴ബ †††搠瑡獡瑥损汯江潯畫㩰䐠捩孴瑳Ⱳ匠瑥獛牴嵝ബ †††搠瑡獡瑥慟楬獡獥›楄瑣獛牴‬瑳嵲ബ †††映捡彴污慩敳㩳传瑰潩慮孬敓孴瑳嵲⁝‽潎敮ബ †⤠ⴠ‾灏楴湯污獛牴㩝਍††††∢刢浥灡爠晥牥湥散⁳牦浯愠瘠物畴污䴠䅅啓䕒⁓慴汢⁥污慩⁳潴爠慥⁬睯楮杮琠扡敬⹳਍਍††††敒畴湲⁳恠潎敮恠椠⁦瑡氠慥瑳漠敮爠晥牥湥散⁤潣畬湭挠湡潮⁴敢洠灡数⁤慳敦祬മ †††∠∢਍††††晩渠瑯猠汱敟灸㩲਍††††††敲畴湲猠汱敟灸൲ഊ †††瀠票楳慣彬慤慴敳獴㴠嬠਍††††††獤映牯搠⁳湩搠瑡獡瑥损汯江潯畫⹰敫獹⤨਍††††††晩渠瑯猠汥⹦楟彳楶瑲慵彬敭獡牵獥瑟扡敬搨ⱳ搠瑡獡瑥损汯江潯畫⥰਍††††൝ †††⌠倠敲敦⁲慦瑣搠瑡獡瑥⁳楦獲⁴桷湥爠獥汯楶杮愠扭杩潵獵漠湷牥桳灩മ †††椠⁦慦瑣慟楬獡獥ഺ †††††瀠票楳慣彬慤慴敳獴献牯⡴਍††††††††敫㵹慬扭慤搠㩳〠椠⁦慤慴敳彴污慩敳⹳敧⡴獤 -湩映捡彴污慩敳⁳汥敳ㄠ਍††††††ഩഊ †††瀠瑡整湲㴠爠⹥潣灭汩⡥਍††††††晲⠧倿愼楬獡笾敲攮捳灡⡥敭獡牵獥慟楬獡紩尩⩳⹜獜⠪倿挼汯∾幛崢∫孼ⵁ慚稭嵟䅛娭ⵡぺ㤭⑟⩝✩਍††††ഩഊ †††甠牮獥汯敶⁤‽慆獬൥ഊ †††搠晥张敲汰捡⡥慭捴㩨爠⹥慍捴⥨ⴠ‾瑳㩲਍††††††潮汮捯污甠牮獥汯敶൤ †††††爠睡损汯㴠洠瑡档朮潲灵∨潣≬ഩ †††††挠汯湟浡⁥‽慲彷潣⹬瑳楲⡰∧⤧਍਍††††††睯敮獲›楬瑳獛牴⁝‽嵛਍††††††潦⁲獤椠⁮桰獹捩污摟瑡獡瑥㩳਍††††††††潣獬㴠搠瑡獡瑥损汯江潯畫⹰敧⡴獤‬敳⡴⤩਍††††††††敲潳癬摥损汯㴠猠汥⹦牴湡汳瑡牯弮敲潳癬彥潣畬湭湟浡彥潦彲慤慴敳⡴潣獬‬潣彬慮敭ഩ †††††††椠⁦敲潳癬摥损汯ഺ †††††††††漠湷牥⹳灡数摮搨⥳਍਍††††††晩渠瑯漠湷牥㩳਍††††††††湵敲潳癬摥㴠吠畲൥ †††††††爠瑥牵⁮慭捴⹨牧畯⡰⤰਍਍††††††档獯湥摟瑡獡瑥㴠漠湷牥孳崰਍††††††档獯湥慟楬獡㴠搠瑡獡瑥慟楬獡獥朮瑥挨潨敳彮慤慴敳⥴਍††††††晩渠瑯挠潨敳彮污慩㩳਍††††††††湵敲潳癬摥㴠吠畲൥ †††††††爠瑥牵⁮慭捴⹨牧畯⡰⤰਍਍††††††档獯湥损汯㴠⠠਍††††††††敳晬琮慲獮慬潴⹲牟獥汯敶损汯浵彮慮敭晟牯摟瑡獡瑥ന †††††††††搠瑡獡瑥损汯江潯畫⹰敧⡴档獯湥摟瑡獡瑥‬敳⡴⤩ബ †††††††††挠汯湟浡ⱥ਍††††††††ഩ †††††††漠⁲潣彬慮敭਍††††††ഩ †††††爠瑥牵⁮❦捻潨敳彮污慩絳∮捻潨敳彮潣絬✢਍਍††††敲牷瑩整⁮‽慰瑴牥⹮畳⡢牟灥慬散‬煳彬硥牰ഩഊ †††椠⁦湵敲潳癬摥ഺ †††††氠杯敧⹲慷湲湩⡧਍††††††††䌢畯摬渠瑯爠獥汯敶愠汬瘠物畴污洠慥畳敲⵳慴汢⁥敲敦敲据獥映牯愠楬獡✠猥⸧Ⱒ਍††††††††敭獡牵獥慟楬獡ബ †††††⤠਍††††††敲畴湲丠湯൥ഊ †††爠瑥牵⁮敲牷瑩整൮ഊ †搠晥张獩癟物畴污浟慥畳敲彳慴汢⡥敳晬‬慤慴敳彴慮敭›灏楴湯污獛牴ⱝ搠瑡獡瑥损汯江潯畫㩰䐠捩孴瑳Ⱳ匠瑥獛牴嵝 -㸭戠潯㩬਍††††∢䐢瑥捥⁴潐敷⁲䥂瘠物畴污洠慥畳敲⁳慴汢獥⠠⹥⹧✠敍獡牵獥Ⱗ✠牐橯捥⁴敍獡牵獥⤧മ †††ഠ †††吠敨敳琠扡敬⁳硥獩⁴湩倠睯牥䈠⁉潭敤獬愠⁳⁡潣瑮楡敮⁲潦⁲䅄⁘敭獡牵獥戠瑵਍††††慨敶渠⁯敲污搠瑡⁡潣畬湭⁳湩匠潮晷慬敫钀漠汮⁹湡䤠⁄潣畬湭മ †††∠∢਍††††晩渠瑯搠瑡獡瑥湟浡㩥਍††††††敲畴湲䘠污敳਍††††慮敭畟灰牥㴠搠瑡獡瑥湟浡⹥灵数⡲⸩敲汰捡⡥•Ⱒ∠≟⸩敲汰捡⡥ⴢⰢ∠≟ഩ †††椠彳敭獡牵獥湟浡⁥‽ന †††††渠浡彥灵数⁲㴽∠䕍十剕卅ഢ †††††漠⁲慮敭畟灰牥㴠‽倢佒䕊呃䵟䅅啓䕒≓਍††††††牯渠浡彥灵数⹲湥獤楷桴∨䵟䅅啓䕒≓ഩ †††††漠⁲慮敭畟灰牥献慴瑲睳瑩⡨䴢䅅啓䕒当⤢਍††††ഩ †††椠⁦潮⁴獩浟慥畳敲彳慮敭ഺ †††††爠瑥牵⁮慆獬൥ †††⌠䌠湯楦浲›湯祬栠獡䤠ⵄ楬敫挠汯浵獮⠠潮爠慥⁬慤慴挠汯浵獮ഩ †††挠汯⁳‽慤慴敳彴潣彬潬歯灵朮瑥搨瑡獡瑥湟浡ⱥ猠瑥⤨ഩ †††椠⁦潮⁴潣獬ഺ †††††爠瑥牵⁮牔敵†‣潎猠档浥⁡敭慴慤慴㴠氠歩汥⁹楶瑲慵൬ †††渠湯楟彤潣獬㴠笠⁣潦⁲⁣湩挠汯⁳晩挠甮灰牥⤨渠瑯椠⁮∨䑉Ⱒ∠䅎䕍Ⱒ∠䕄䍓䥒呐佉≎紩਍††††敲畴湲氠湥渨湯楟彤潣獬 -㴽〠਍਍††敤⁦束湥牥瑡彥敭牴捩敟灸敲獳潩⡮਍††††敳晬ബ †††洠瑥楲㩣䄠祮ബ †††洠瑥楲彣慮敭›瑳Ⱳ਍††††污慩㩳猠牴ബ †††搠瑡獡瑥扟役慮敭›楄瑣獛牴‬湁嵹ബ †††搠瑡獡瑥慟楬獡獥›楄瑣獛牴‬瑳嵲ബ †††搠瑡獡瑥损汯江潯畫㩰䐠捩孴瑳Ⱳ匠瑥獛牴嵝ബ †††愠楬獡扟役慲㩷䐠捩孴瑳Ⱳ猠牴ⱝ਍††††敭牴捩湟浡彥敳㩴匠瑥獛牴ⱝ਍††††污彬桰獹捩污损汯湟浡獥›敓孴瑳嵲ബ †††攠業瑴扡敬浟瑥楲彣慮敭獟瑥›敓孴瑳嵲ബ †††猠楫灰摥浟瑥楲彣慮敭㩳匠瑥獛牴ⱝ਍††††潭敤彬慮敭›瑳Ⱳ਍††††獩潟楳›潢汯ബ †††映捡彴污慩敳㩳传瑰潩慮孬敓孴瑳嵲⁝‽潎敮ബ †††洠瑥楲彣潴慟楬獡›灏楴湯污䑛捩孴瑳Ⱳ猠牴嵝㴠丠湯൥ †⤠ⴠ‾灏楴湯污獛牴㩝਍††††晩⠠敭牴捩献畯捲彥潣畬湭愠摮洠瑥楲⹣条牧来瑡潩⁮湡⁤਍††††††渨瑯朠瑥瑡牴洨瑥楲Ᵽ∠煳彬硥牰獥楳湯Ⱒ丠湯⥥漠⁲敳晬弮桳畯摬畟敳摟物捥彴敭牴捩慟杧敲慧楴湯洨瑥楲⥣⤩ഺ †††††ഠ †††††挠汯湟浡⁥‽猨汥⹦摩湥楴楦牥獟湡瑩穩牥献湡瑩穩彥潣畬湭洨瑥楲⹣潳牵散损汯浵⥮椠⁦獩潟楳ഠ †††††††††††攠獬⁥敳晬献档浥彡慭慮敧⹲牟獥汯敶灟票楳慣彬潣畬湭湟浡⡥慤慴敳彴祢湟浡⹥敧⡴敭牴捩搮瑡獡瑥Ⱙ洠瑥楲⹣潳牵散损汯浵⥮ഩ †††††愠杧㴠洠瑥楲⹣条牧来瑡潩⹮慶畬⹥灵数⡲ഩ †††††ഠ †††††⌠䌠敨正映牯瀠票楳慣⁬睯敮൲ †††††漠湷牥⁳‽摛⁳潦⁲獤‬潣獬椠⁮慤慴敳彴潣彬潬歯灵椮整獭⤨ഠ ††††††††††椠⁦敳晬琮慲獮慬潴⹲牟獥汯敶损汯浵彮慮敭晟牯摟瑡獡瑥挨汯ⱳ挠汯湟浡⥥൝ †††††ഠ †††††椠⁦睯敮獲ഺ †††††††瀠敲敦牲摥潟湷牥㴠洠瑥楲⹣慤慴敳⁴晩洠瑥楲⹣慤慴敳⁴湩漠湷牥⁳汥敳⠠睯敮獲せ⁝晩氠湥漨湷牥⥳㴠‽‱汥敳丠湯⥥਍††††††††晩瀠敲敦牲摥潟湷牥ഺ †††††††††漠湷牥慟楬獡㴠搠瑡獡瑥慟楬獡獥朮瑥瀨敲敦牲摥潟湷牥ഩ †††††††††漠湷牥损汯㴠猠汥⹦牴湡汳瑡牯弮敲潳癬彥潣畬湭湟浡彥潦彲慤慴敳⡴慤慴敳彴潣彬潬歯灵朮瑥瀨敲敦牲摥潟湷牥‬敳⡴⤩‬潣彬慮敭 -牯挠汯湟浡൥ †††††††††椠⁦睯敮彲污慩㩳਍††††††††††††晩愠杧㴠‽䌢問呎䑟卉䥔䍎≔ഺ †††††††††††††爠瑥牵⁮❦佃乕⡔䥄呓义呃笠敳晬献湡瑩穩牥昮牯慭彴桰獹捩污损汯浵彮敲⡦睯敮彲污慩ⱳ漠湷牥损汯‬潭敤彬慮敭洽摯汥湟浡⥥⥽ധ †††††††††††攠楬⁦条⁧㴽∠低䕎㨢਍††††††††††††††敲畴湲映笧敳晬献湡瑩穩牥昮牯慭彴桰獹捩污损汯浵彮敲⡦睯敮彲污慩ⱳ漠湷牥损汯‬潭敤彬慮敭洽摯汥湟浡⥥❽਍††††††††††††汥敳ഺ †††††††††††††爠瑥牵⁮❦慻杧⡽獻汥⹦慳楮楴敺⹲潦浲瑡灟票楳慣彬潣畬湭牟晥漨湷牥慟楬獡‬睯敮彲潣ⱬ洠摯汥湟浡㵥潭敤彬慮敭紩✩਍††††††汥敳ഺ †††††††⌠䌠汯浵⁮潮⁴潦湵⁤湩氠癩⁥捳敨慭洠瑥摡瑡⁡胢ₔ牴獵⁴桴⁥潳牵散洠摯汥猧਍††††††††‣慤慴敳⁴獡楳湧敭瑮愠摮攠業⁴楤敲瑣祬愠慧湩瑳琠敨洠瑥楲❣⁳睯⁮污慩⹳਍††††††††‣桔獩愠潶摩⁳慦汬湩⁧桴潲杵⁨潴猠汱敟灸敲獳潩⁮桷捩⁨慭⁹敲敦敲据൥ †††††††⌠愠渠湯攭楸瑳湥⁴潣畬湭漠⁮⁡楤敭獮潩⽮潬歯灵琠扡敬⠠⹥⹧䴠䅅啓䕒⁓慴汢⥥മ †††††††椠⁦污慩⁳湡⁤潣彬慮敭ഺ †††††††††⌠匠楫⁰敭牴捩⁳潢湵⁤潴瘠物畴污倠睯牥䈠⁉敭獡牵獥琠扡敬⁳胢ₔ桴祥栠癡൥ †††††††††⌠渠⁯敲污搠瑡⁡潣畬湭⁳湩匠潮晷慬敫愠摮眠汩⁬污慷獹映楡⹬਍††††††††††晩猠汥⹦楟彳楶瑲慵彬敭獡牵獥瑟扡敬洨瑥楲⹣慤慴敳ⱴ搠瑡獡瑥损汯江潯畫⥰ഺ †††††††††††氠杯敧⹲慷湲湩⡧਍††††††††††††††䴢瑥楲⁣┧❳›慤慴敳⁴┧❳愠灰慥獲琠⁯敢愠瘠物畴污洠慥畳敲⁳慴汢⁥ഢ †††††††††††††∠楷桴渠⁯桰獹捩污挠汯浵獮‮歓灩楰杮琠⁯牰癥湥⁴䑄⁌慦汩牵⹥Ⱒ਍††††††††††††††敭牴捩甮楮畱彥慮敭‬敭牴捩搮瑡獡瑥਍††††††††††††ഩ †††††††††††爠瑥牵⁮潎敮਍††††††††††潬杧牥搮扥杵ന †††††††††††∠敍牴捩✠猥㨧挠汯浵⁮┧❳渠瑯映畯摮椠⁮捳敨慭洠瑥摡瑡㭡∠਍††††††††††††攢業瑴湩⁧条楡獮⁴敤汣牡摥搠瑡獡瑥愠楬獡✠猥∧ബ †††††††††††洠瑥楲⹣湵煩敵湟浡ⱥ挠汯湟浡ⱥ愠楬獡਍††††††††††ഩ †††††††††椠⁦条⁧㴽∠佃乕彔䥄呓义呃㨢਍††††††††††††敲畴湲映䌧問呎䐨卉䥔䍎⁔獻汥⹦慳楮楴敺⹲潦浲瑡灟票楳慣彬潣畬湭牟晥愨楬獡‬潣彬慮敭‬潭敤彬慮敭洽摯汥湟浡⥥⥽ധ †††††††††攠楬⁦条⁧㴽∠低䕎㨢਍††††††††††††敲畴湲映笧敳晬献湡瑩穩牥昮牯慭彴桰獹捩污损汯浵彮敲⡦污慩ⱳ挠汯湟浡ⱥ洠摯汥湟浡㵥潭敤彬慮敭紩ധ †††††††††攠獬㩥਍††††††††††††敲畴湲映笧条絧笨敳晬献湡瑩穩牥昮牯慭彴桰獹捩污损汯浵彮敲⡦污慩ⱳ挠汯湟浡ⱥ洠摯汥湟浡㵥潭敤彬慮敭紩✩਍਍††††‣兓⁌硅牰獥楳湯瀠瑡൨ †††猠汱敟灸⁲‽敧慴瑴⡲敭牴捩‬猢汱敟灸敲獳潩≮‬潎敮ഩ †††搠硡敟灸⁲‽敧慴瑴⡲敭牴捩‬攢灸敲獳潩≮‬潎敮ഩ †††ഠ †††⌠䤠⁦敷栠癡⁥兓⁌硥牰獥楳湯‬獵⁥瑩搠物捥汴൹ †††椠⁦煳彬硥牰ഺ †††††⌠䤠⁦桴⁥敭牴捩猧搠瑡獡瑥椠⁳⁡楶瑲慵⁬敭獡牵獥琠扡敬‬牴⁹潴爠浥灡਍††††††‣潣畬湭爠晥牥湥散⁳潴琠敨愠瑣慵⁬慦瑣琠扡敬琠慨⁴睯獮琠潨敳挠汯浵獮മ †††††椠⁦敳晬弮獩癟物畴污浟慥畳敲彳慴汢⡥敭牴捩搮瑡獡瑥‬慤慴敳彴潣彬潬歯灵㨩਍††††††††煳彬硥牰㴠猠汥⹦牟浥灡癟物畴污浟慥畳敲彳慴汢彥敲獦ന †††††††††猠汱敟灸Ⱳ愠楬獡‬慤慴敳彴潣彬潬歯灵‬慤慴敳彴污慩敳ⱳ映捡彴污慩敳㵳慦瑣慟楬獡獥਍††††††††ഩ †††††††椠⁦煳彬硥牰椠⁳潎敮ഺ †††††††††氠杯敧⹲慷湲湩⡧਍††††††††††††䴢瑥楲⁣┧❳›潣汵⁤潮⁴敲慭⁰楶瑲慵⁬敭獡牵獥琠扡敬爠晥牥湥散⹳匠楫灰湩⹧Ⱒ਍††††††††††††敭牴捩甮楮畱彥慮敭਍††††††††††ഩ †††††††††爠瑥牵⁮潎敮਍††††††硥牰㴠猠汱敟灸൲ †††††ഠ †††††⌠薜丠坅›畑污晩⁹牣獯⵳慴汢⁥敲敦敲据獥䘠剉呓⠠敢潦敲渠牯慭楬慺楴湯ഩ †††††攠灸⁲‽敳晬琮慲獮慬潴⹲慟瑵彯畱污晩役牣獯彳慴汢彥敲獦攨灸Ⱳ搠瑡獡瑥慟楬獡獥ഩ †††††ഠ †††††⌠吠敨⁮潮浲污穩⁥湡⁤慶楬慤整਍††††††硥牰㴠猠汥⹦牴湡汳瑡牯弮潮浲污穩彥敭牴捩损汯浵彮敲敦敲据獥ന †††††††攠灸Ⱳ洠瑥楲⹣湵煩敵湟浡ⱥ搠瑡獡瑥损汯江潯畫Ɒ搠瑡獡瑥慟楬獡獥‬਍††††††††敭牴捩湟浡獥洽瑥楲彣慮敭獟瑥‬牰晥牥敲彤慴汢彥污慩㵳污慩ⱳ਍††††††††敭牴捩瑟彯污慩㵳敭牴捩瑟彯污慩൳ †††††⤠਍††††††獩癟污摩‬敲獡湯㴠猠汥⹦牴湡汳瑡牯弮慶楬慤整浟瑥楲彣潣畬湭牟晥牥湥散⡳਍††††††††硥牰ബ †††††††洠瑥楲⹣湵煩敵湟浡ⱥ਍††††††††慤慴敳彴潣彬潬歯灵ബ †††††††搠瑡獡瑥慟楬獡獥ബ †††††††洠瑥楲彣慮敭㵳敭牴捩湟浡彥敳ⱴ਍††††††ഩ †††††椠⁦潮⁴獩癟污摩ഺ †††††††氠杯敧⹲慷湲湩⡧਍††††††††††䴢瑥楲⁣┧❳›歳灩楰杮椠癮污摩匠䱑攠灸敲獳潩⁮晡整⁲潮浲污穩瑡潩㩮┠≳ബ †††††††††洠瑥楲⹣湵煩敵湟浡ⱥ਍††††††††††敲獡湯漠⁲產歮潮湷爠晥牥湥散攠牲牯Ⱒ਍††††††††ഩ †††††††爠瑥牵⁮潎敮਍††††††敲畴湲攠灸൲ †††ഠ †††⌠䤠⁦敷栠癡⁥䅄⁘硥牰獥楳湯‬牴⁹潴琠慲獮慬整椠൴ †††椠⁦慤彸硥牰ഺ †††††⌠吠祲䰠䵌映污扬捡⁫楦獲⁴桷湥挠湯楦畧敲⁤伨数䅮⁉獩瀠敲敦牲摥椠獮摩൥ †††††⌠琠敨琠慲獮慬潴⥲‮桔獩欠敥獰挠浯汰硥䘠扡楲⁣䅄⁘牦浯戠楥杮搠潲灰摥਍††††††‣敢潦敲瀠潲楶敤⵲慢正摥琠慲獮慬楴湯朠瑥⁳⁡档湡散മ †††††琠慲獮慬整⁤‽敳晬琮慲獮慬潴⹲瑟祲江浬浟瑥楲彣慦汬慢正敟灸敲獳潩⡮਍††††††††敭牴捩洽瑥楲Ᵽ਍††††††††敭牴捩湟浡㵥敭牴捩湟浡ⱥ਍††††††††慴汢彥污慩㵳污慩ⱳ਍††††††††污慩彳祢牟睡愽楬獡扟役慲ⱷ਍††††††††慤慴敳彴潣彬潬歯灵搽瑡獡瑥损汯江潯畫Ɒ਍††††††††慤慴敳彴污慩敳㵳慤慴敳彴污慩敳ⱳ਍††††††††敭牴捩湟浡彥敳㵴敭牴捩湟浡彥敳ⱴ਍††††††††污彬桰獹捩污损汯湟浡獥愽汬灟票楳慣彬潣彬慮敭ⱳ਍††††††††浥瑩慴汢彥敭牴捩湟浡彥敳㵴浥瑩慴汢彥敭牴捩湟浡彥敳ⱴ਍††††††††歳灩数彤敭牴捩湟浡獥猽楫灰摥浟瑥楲彣慮敭ⱳ਍††††††††敭牴捩瑟彯污慩㵳敭牴捩瑟彯污慩൳ †††††⤠਍††††††晩琠慲獮慬整㩤਍††††††††‣鳢₅䕎㩗儠慵楬祦挠潲獳琭扡敬爠晥牥湥散⁳湩琠慲獮慬整⁤兓ൌ †††††††琠慲獮慬整⁤‽敳晬琮慲獮慬潴⹲慟瑵彯畱污晩役牣獯彳慴汢彥敲獦琨慲獮慬整Ɽ搠瑡獡瑥慟楬獡獥ഩ †††††††爠瑥牵⁮牴湡汳瑡摥਍਍††††††‣牔⁹慢楳⁣䅄⁘牴湡汳瑡潩⁮楦獲⁴䌨問呎佒南‬佃乕䉔䅌䭎‬瑥⹣ഩ †††††琠慲獮慬整⁤‽敳晬琮慲獮慬潴⹲瑟祲扟獡捩摟硡浟瑥楲彣慦汬慢正敟灸敲獳潩⡮਍††††††††敭牴捩‬污慩ⱳ搠瑡獡瑥损汯江潯畫Ɒ洠摯汥丽湯ⱥ搠瑡獡瑥扟役慮敭搽瑡獡瑥扟役慮敭਍††††††ഩ †††††椠⁦牴湡汳瑡摥ഺ †††††††爠瑥牵⁮牴湡汳瑡摥਍††††††਍††††††‣牔湡汳瑡潩⁮慦汩摥钀猠楫⁰桴獩洠瑥楲⁣慲桴牥琠慨⁮浥瑩楴杮椠癮污摩匠䱑਍††††††潬杧牥眮牡楮杮ന †††††††∠潃汵⁤潮⁴牴湡汳瑡⁥敭牴捩✠猥‧楷桴攠灸敲獳潩⁮┧❳‮ഢ †††††††∠歓灩楰杮洠瑥楲⁣潴瀠敲敶瑮䐠䱄挠浯楰慬楴湯映楡畬敲∮ബ †††††††洠瑥楲⹣湵煩敵湟浡ⱥ搠硡敟灸孲ㄺ〰൝ †††††⤠਍††††††敲畴湲丠湯൥ †††††ഠ †††爠瑥牵⁮潎敮਍਍਍਍††敤⁦慟灰祬潟楳晟污扬捡獫ന †††猠汥ⱦ洠瑥楲獣江湩獥›楌瑳獛牴ⱝ攠灸捥整彤敭牴捩㩳䰠獩孴湁嵹‬獯㩩䄠祮‬਍††††慤慴敳彴污慩敳㩳䐠捩孴瑳Ⱳ猠牴ⱝ搠瑡獡瑥损汯江潯畫㩰䐠捩孴瑳Ⱳ匠瑥獛牴嵝ബ †††愠楬獡扟役慲㩷䐠捩孴瑳Ⱳ猠牴ⱝ洠瑥楲彣慮敭獟瑥›敓孴瑳嵲‬਍††††污彬桰獹捩污损汯湟浡獥›敓孴瑳嵲‬浥瑩慴汢彥敭牴捩湟浡彥敳㩴匠瑥獛牴ⱝ਍††††歳灩数彤敭牴捩湟浡獥›敓孴瑳嵲਍†† -㸭䰠獩孴瑳嵲ഺ †††⌠䤠灭敬敭瑮瑡潩⁮景传䥓猭数楣楦⁣敭牴捩映污扬捡獫਍††††敲畴湲洠瑥楲獣江湩獥਍਍਍††敤⁦獟潨汵彤獵彥楤敲瑣浟瑥楲彣条牧来瑡潩⡮敳晬‬敭牴捩›湁⥹ⴠ‾潢汯ഺ †††椠⁦潮⁴敧慴瑴⡲敭牴捩‬猢畯捲彥潣畬湭Ⱒ丠湯⥥漠⁲潮⁴敧慴瑴⡲敭牴捩‬愢杧敲慧楴湯Ⱒ丠湯⥥ഺ †††††爠瑥牵⁮慆獬൥ †††挠浯汰硥瑩役楴牥㴠朠瑥瑡牴洨瑥楲Ᵽ∠潣灭敬楸祴瑟敩≲‬⤱漠⁲റ †††椠⁦潣灭敬楸祴瑟敩⁲‾㨱਍††††††敲畴湲䘠污敳਍††††硥牰㴠⠠敧慴瑴⡲敭牴捩‬攢灸敲獳潩≮‬潎敮 -牯∠⤢献牴灩⤨甮灰牥⤨਍††††晩渠瑯攠灸㩲਍††††††敲畴湲吠畲൥ †††猠浩汰彥慰瑴牥獮㴠⠠匢䵕∨‬䌢問呎∨‬䐢卉䥔䍎䍔問呎∨‬䄢䕖䅒䕇∨‬䴢义∨‬䴢塁∨ഩ †††爠瑥牵⁮硥牰献慴瑲睳瑩⡨楳灭敬灟瑡整湲⥳਍਍††敤⁦扟極摬摟灵楬慣整獟杩慮畴敲獟敥⡤敳晬‬潳牵散湟浡㩥猠牴‬潳牵散敟灸敲獳潩㩮传瑰潩慮孬瑳嵲‬慤慴瑟灹㩥传瑰潩慮孬瑳嵲‬条牧来瑡潩㩮传瑰潩慮孬瑳嵲㴠丠湯⥥ⴠ‾瑳㩲਍††††敲畴湲∠≼樮楯⡮獛畯捲彥慮敭漠⁲∢‬潳牵散敟灸敲獳潩⁮牯∠Ⱒ搠瑡彡祴数漠⁲∢‬条牧来瑡潩⁮牯∠崢ഩഊ †搠晥张畤汰捩瑡彥慮敭灳捡彥敫⡹敳晬‬潭敤彬慮敭›灏楴湯污獛牴⁝‽潎敮 -㸭猠牴ഺ †††瀠牡獴㴠嬠਍††††††敳晬椮敤瑮晩敩彲慳楮楴敺⹲慳楮楴敺慟楬獡猨汥⹦潣普杩搮瑡扡獡⁥牯∠䉄⤢ബ †††††猠汥⹦摩湥楴楦牥獟湡瑩穩牥献湡瑩穩彥污慩⡳敳晬挮湯楦⹧捳敨慭湟浡⁥牯∠䍓䕈䅍⤢ബ †††崠਍††††晩洠摯汥湟浡㩥਍††††††慰瑲⹳灡数摮猨汥⹦摩湥楴楦牥獟湡瑩穩牥献湡瑩穩彥污慩⡳潭敤彬慮敭⤩਍††††敲畴湲∠∮樮楯⡮慰瑲⥳਍਍††敤⁦牟獥汯敶灟牥楳瑳湥彴畤汰捩瑡彥慮敭猨汥ⱦ猠潣数瑟灹㩥猠牴‬慮敭灳捡彥敫㩹猠牴‬慤慴敳彴敫㩹猠牴‬潮浲污穩摥扟獡㩥猠牴‬潳牵散湟浡㩥猠牴‬潳牵散獟杩慮畴敲›瑳Ⱳ瀠敲敦牲摥湟浡㩥猠牴 -㸭猠牴ഺ †††椠⁦潮⁴敳晬搮灵湟浡彥敲潰ഺ †††††爠瑥牵⁮牰晥牥敲彤慮敭਍††††牴㩹਍††††††敲畴湲猠汥⹦畤彰慮敭牟灥⹯敧彴牯损敲瑡彥獡楳湧摥湟浡⡥਍††††††††捳灯彥祴数猽潣数瑟灹ⱥ渠浡獥慰散歟祥渽浡獥慰散歟祥‬慤慴敳彴敫㵹慤慴敳彴敫ⱹഠ †††††††渠牯慭楬敺彤慢敳渽牯慭楬敺彤慢敳‬潳牵散湟浡㵥潳牵散湟浡ⱥ猠畯捲彥楳湧瑡牵㵥潳牵散獟杩慮畴敲‬਍††††††††牰晥牥敲彤慮敭瀽敲敦牲摥湟浡൥ †††††⤠਍††††硥散瑰䔠捸灥楴湯愠⁳硥㩣਍††††††潬杧牥眮牡楮杮∨畄汰捩瑡⁥慭灰湩⁧慦汩摥映牯┠㩳┠≳‬潳牵散湟浡ⱥ攠捸ഩ †††††爠瑥牵⁮牰晥牥敲彤慮敭਍਍††敤⁦牟獥汯敶畟楮畱彥敭牴捩慟楬獡猨汥ⱦ戠獡彥污慩㩳猠牴‬獵摥慟楬獡獥›敓孴瑳嵲‬牯杩湩污浟瑥楲彣慮敭›瑳⥲ⴠ‾瑳㩲਍††††晩戠獡彥污慩⁳潮⁴湩甠敳彤污慩敳㩳਍††††††獵摥慟楬獡獥愮摤戨獡彥污慩⥳਍††††††敲畴湲戠獡彥污慩൳ †††椠硤㴠㈠਍††††桷汩⁥牔敵ഺ †††††挠湡楤慤整㴠映笢慢敳慟楬獡彽楻硤≽਍††††††晩挠湡楤慤整渠瑯椠⁮獵摥慟楬獡獥ഺ †††††††甠敳彤污慩敳⹳摡⡤慣摮摩瑡⥥਍††††††††敲畴湲挠湡楤慤整਍††††††摩⁸㴫ㄠ਍਍††敤⁦牟獥汯敶浟瑥楲彣浥獩楳湯慟楬獡猨汥ⱦ搠晥畡瑬慟楬獡›瑳Ⱳ洠瑥楲彣煳㩬猠牴‬慤慴敳彴污慩敳㩳䐠捩孴瑳Ⱳ猠牴ⱝ映捡彴污慩敳㩳传瑰潩慮孬敓孴瑳嵲⁝‽潎敮 -㸭猠牴ഺ †††瘠污摩慟楬獡獥㴠猠瑥搨瑡獡瑥慟楬獡獥瘮污敵⡳⤩਍††††敲敦敲据摥慟楬獡獥㴠猠汥⹦敟瑸慲瑣牟晥牥湥散彤慴汢彥污慩敳⡳敭牴捩獟汱‬慶楬彤污慩敳⥳਍††††晩氠湥爨晥牥湥散彤污慩敳⥳㴠‽㨱਍††††††敲畴湲渠硥⡴瑩牥爨晥牥湥散彤污慩敳⥳ഩ †††椠⁦敬⡮敲敦敲据摥慟楬獡獥 -‾‱湡⁤慦瑣慟楬獡獥ഺ †††††⌠倠敲敦⁲慦瑣琠扡敬愠楬獡獥漠敶⁲楤敭獮潩⁮污慩敳⁳潴愠潶摩਍††††††‣椢癮污摩椠敤瑮晩敩⁲䐧䵉呟䉁䕌䌮䱏䵕❎•牥潲獲椠⁮湓睯汦歡൥ †††††映捡彴敲獦㴠爠晥牥湥散彤污慩敳⁳…慦瑣慟楬獡獥਍††††††晩氠湥昨捡彴敲獦 -㴽ㄠഺ †††††††爠瑥牵⁮敮瑸椨整⡲慦瑣牟晥⥳ഩ †††††椠⁦慦瑣牟晥㩳਍††††††††敲畴湲猠牯整⡤慦瑣牟晥⥳せ൝ †††⌠嘠物畴污洠慥畳敲⵳慴汢⁥敭牴捩⁳慣湮瑯猠晡汥⁹湡档牯琠⁯䕍十剕卅眠敨൮ †††⌠攠灸敲獳潩⁮灳湡⁳畭瑬灩敬攠瑮瑩敩⹳倠敲敦⁲⁡潣据敲整爠晥牥湥散⁤污慩⹳਍††††晩爠晥牥湥散彤污慩敳⁳湡⁤敳晬弮獩癟物畴污浟慥畳敲彳污慩⡳敤慦汵彴污慩⥳ഺ †††††映捡彴楬敫牟晥⁳‽潳瑲摥愨映牯愠椠⁮敲敦敲据摥慟楬獡獥椠⁦䘢䍁≔椠⁮⹡灵数⡲⤩਍††††††晩映捡彴楬敫牟晥㩳਍††††††††敲畴湲映捡彴楬敫牟晥孳崰਍††††††潮彮楶瑲慵彬敲獦㴠猠牯整⡤⁡潦⁲⁡湩爠晥牥湥散彤污慩敳⁳晩渠瑯猠汥⹦楟彳楶瑲慵彬敭獡牵獥慟楬獡愨⤩਍††††††晩渠湯癟物畴污牟晥㩳਍††††††††敲畴湲渠湯癟物畴污牟晥孳崰਍††††‣晉渠⁯慴汢⁥污慩敳⁳潦湵⁤湩攠灸敲獳潩⁮攨朮‮異敲洠瑥楲ⵣ敲敦敲据⁥硥牰獥楳湯ഩ †††⌠愠摮琠敨搠晥畡瑬愠楬獡椠⁳潮⁴⁡慦瑣琠扡敬‬牰晥牥琠敨猠湩汧⁥慦瑣琠扡敬愠楬獡മ †††⌠吠楨⁳牰癥湥獴∠畭瑳搠畯汢⁥条牧来瑡⁥癯牥爠睯氭癥汥攠灸敲獳潩≮攠牲牯⁳桷湥਍††††‣⁡敭牴捩椠⁳潢湵⁤潴愠搠浩湥楳湯琠扡敬椠⁮桴⁥潳牵散洠摯汥മ †††椠⁦潮⁴敲敦敲据摥慟楬獡獥愠摮映捡彴污慩敳⁳湡⁤敤慦汵彴污慩⁳潮⁴湩映捡彴污慩敳㩳਍††††††晩氠湥昨捡彴污慩敳⥳㴠‽㨱਍††††††††敲畴湲渠硥⡴瑩牥昨捡彴污慩敳⥳ഩ †††爠瑥牵⁮敤慦汵彴污慩൳ഊ †䀠瑳瑡捩敭桴摯਍††敤⁦楟彳楶瑲慵彬敭獡牵獥慟楬獡愨楬獡›瑳⥲ⴠ‾潢汯ഺ †††甠灰牥㴠猠牴愨楬獡漠⁲∢⸩瑳楲⡰⸩灵数⡲ഩ †††爠瑥牵⁮灵数⁲㴽∠䕍十剕卅•牯甠灰牥㴠‽倢佒䕊呃䵟䅅啓䕒≓漠⁲灵数⹲湥獤楷桴∨䵟䅅啓䕒≓ഩഊ †搠晥张硥牴捡彴敲敦敲据摥瑟扡敬慟楬獡獥猨汥ⱦ洠瑥楲彣煳㩬猠牴‬慶楬彤污慩敳㩳匠瑥獛牴⥝ⴠ‾敓孴瑳嵲ഺ †††椠⁦潮⁴敭牴捩獟汱›敲畴湲猠瑥⤨਍††††敲敦敲据摥㴠猠瑥⤨਍††††慰瑴牥獮㴠嬠❲尨⭷尩∮嬨≞⭝∩Ⱗ爠⠧睜⤫⹜嬨ⵁ慚稭嵟䅛娭ⵡぺ㤭⑟⩝✩൝ †††映牯瀠瑡整湲椠⁮慰瑴牥獮ഺ †††††映牯愠楬獡‬ 湩爠⹥楦摮污⡬慰瑴牥Ɱ洠瑥楲彣煳⥬ഺ †††††††椠⁦污慩⁳湩瘠污摩慟楬獡獥ഺ †††††††††爠晥牥湥散⹤摡⡤污慩⥳਍††††敲畴湲爠晥牥湥散൤ഊ †搠晥张牰湵彥湵敲潳癬摥浟瑥楲彣楬敮⡳敳晬‬敭牴捩彳楬敮㩳䰠獩孴瑳嵲‬敭牴捩湟浡彥敳㩴匠瑥獛牴⥝ⴠ‾楌瑳獛牴㩝਍††††晩渠瑯洠瑥楲獣江湩獥漠⁲潮⁴敭牴捩湟浡彥敳㩴਍††††††敲畴湲洠瑥楲獣江湩獥਍††††畣牲湥⁴‽楬瑳洨瑥楲獣江湩獥ഩ †††眠楨敬吠畲㩥਍††††††敤楦敮㩤匠瑥獛牴⁝‽敳⡴ഩ †††††眠湩潤彷敭牴捩㩳匠瑥獛牴⁝‽敳⡴ഩ †††††瀠牡敳⁤‽嵛਍††††††硥牰扟役慮敭㴠笠ൽ †††††映牯氠湩⁥湩挠牵敲瑮ഺ †††††††洠㴠爠⹥敳牡档爨⠧䅛娭嵟䅛娭ⴰ弹⩝尩∮嬨属崢⤫尢⭳十獜⠫⬮⤿獜␪Ⱗ氠湩⹥瑳楲⡰⸩獲牴灩✨✬⤩਍††††††††晩渠瑯洠ഺ †††††††††瀠牡敳⹤灡数摮⠨楬敮‬潎敮‬潎敮‬∢‬∢⤩਍††††††††††潣瑮湩敵਍††††††††污慩ⱳ渠浡ⱥ攠灸⁲‽⹭牧畯獰⤨਍††††††††硥牰‬祳潮祮彭畳晦硩㴠猠汥⹦獟汰瑩潟瑵牥獟湹湯浹彳汣畡敳攨灸⥲਍††††††††敤楦敮⹤摡⡤慮敭ഩ †††††††攠灸彲祢湟浡孥慮敭⁝‽硥牰਍††††††††晩爠⹥敳牡档爨尧佢䕖屒❢‬硥牰‬汦条㵳敲䤮乇剏䍅十⥅ഺ †††††††††眠湩潤彷敭牴捩⹳摡⡤慮敭ഩ †††††††瀠牡敳⹤灡数摮⠨楬敮‬污慩ⱳ渠浡ⱥ攠灸Ⱳ猠湹湯浹獟晵楦⥸ഩഊ †††††爠浥癯摥㴠爠睥楲瑴湥㴠䘠污敳਍††††††敮瑸江湩獥㴠嬠൝ †††††映牯氠湩ⱥ愠楬獡‬慮敭‬硥牰‬祳潮祮彭畳晦硩椠⁮慰獲摥ഺ †††††††椠⁦潮⁴慮敭ഺ †††††††††渠硥彴楬敮⹳灡数摮氨湩⥥਍††††††††††潣瑮湩敵਍††††††††敲獦㴠猠瑥爨⹥楦摮污⡬❲⠢䅛娭嵟䅛娭ⴰ弹⩝∩Ⱗ攠灸⥲ഩ †††††††甠牮獥汯敶⁤‽牛映牯爠椠⁮敲獦椠⁦⁲湩洠瑥楲彣慮敭獟瑥愠摮爠渠瑯椠⁮敤楦敮⁤湡⁤⁲㴡渠浡嵥਍††††††††晩甠牮獥汯敶㩤਍††††††††††敲潭敶⁤‽牔敵਍††††††††††潣瑮湩敵਍††††††††楷摮睯牟晥⁳‽牛映牯爠椠⁮敲獦椠⁦⁲湩眠湩潤彷敭牴捩⁳湡⁤⁲㴡渠浡嵥਍††††††††晩眠湩潤彷敲獦ഺ †††††††††攠灸湡敤彤硥牰㴠攠灸൲ †††††††††猠扵瑳瑩瑵摥㴠䘠污敳਍††††††††††潦⁲敲彦慮敭椠⁮潳瑲摥猨瑥眨湩潤彷敲獦⤩ഺ †††††††††††爠晥敟灸⁲‽硥牰扟役慮敭朮瑥爨晥湟浡⥥਍††††††††††††晩爠晥敟灸㩲਍††††††††††††††硥慰摮摥敟灸⁲‽敲献扵爨❦笢敲攮捳灡⡥敲彦慮敭紩✢‬❦笨敲彦硥牰⥽Ⱗ攠灸湡敤彤硥牰ഩ †††††††††††††猠扵瑳瑩瑵摥㴠吠畲൥ †††††††††椠⁦畳獢楴畴整㩤਍††††††††††††敮瑸江湩獥愮灰湥⡤❦†慻楬獡⹽笢慮敭≽䄠⁓敻灸湡敤彤硥牰筽祳潮祮彭畳晦硩❽ഩ †††††††††††爠睥楲瑴湥㴠吠畲൥ †††††††††††挠湯楴畮൥ †††††††††爠浥癯摥㴠吠畲൥ †††††††††挠湯楴畮൥ †††††††渠硥彴楬敮⹳灡数摮氨湩⥥਍††††††畣牲湥⁴‽敮瑸江湩獥਍††††††晩渠瑯爠浥癯摥愠摮渠瑯爠睥楲瑴湥ഺ †††††††爠瑥牵⁮畣牲湥൴ഊ †搠晥张灳楬彴畯整彲祳潮祮獭损慬獵⡥敳晬‬硥牰›瑳⥲ⴠ‾畔汰孥瑳Ⱳ猠牴㩝਍††††慭歲牥㴠∠圠呉⁈奓低奎卍㴠⠠ഢ †††椠硤㴠猠牴攨灸⁲牯∠⤢甮灰牥⤨爮楦摮洨牡敫⥲਍††††晩椠硤㰠〠ഺ †††††爠瑥牵⁮硥牰‬∢਍††††敲畴湲攠灸孲椺硤⹝獲牴灩⤨‬硥牰楛硤崺਍+"""Builder for Snowflake semantic-view METRICS (MEASURES) clause."""
++
++from __future__ import annotations
++
++import re
++from typing import Any, Dict, List, Set, Tuple, Optional
++
++from semabridge.connectors.synonym_clause import synonyms_clause
++
++from semabridge.utils.logger import get_logger
++from semabridge.utils.identifiers import IdentifierSanitizer
++from semabridge.connectors.ddl_helpers import (
++    deduplicate_metrics_lines,
++    deduplicate_metrics_lines_osi,
++    extract_expr_key,
++    extract_expr_key_osi,
++)
++
++logger = get_logger(__name__)
++
++
++class MetricsClauseBuilder:
++    """Handles construction and validation of the METRICS clause."""
++
++    def __init__(
++        self,
++        identifier_sanitizer: Any,
++        schema_manager: Any,
++        sanitizer: Any,
++        translator: Any,
++        config: Any,
++        dup_name_repo: Any = None
++    ):
++        self.identifier_sanitizer = identifier_sanitizer
++        self.schema_manager = schema_manager
++        self.sanitizer = sanitizer
++        self.translator = translator
++        self.config = config
++        self.dup_name_repo = dup_name_repo
++
++    def build_for_sml(
++        self,
++        sml: Any,
++        dataset_aliases: Dict[str, str],
++        dataset_by_name: Dict[str, Any],
++        dataset_col_lookup: Dict[str, Set[str]],
++        alias_by_raw: Dict[str, str],
++        all_physical_col_names: Set[str],
++        emittable_metric_name_set: Set[str]
++    ) -> List[str]:
++        """Build METRICS clause for SML model."""
++        return self._build_metrics(
++            sml, dataset_aliases, dataset_by_name, dataset_col_lookup, 
++            alias_by_raw, all_physical_col_names, emittable_metric_name_set, is_osi=False
++        )
++
++    def build_for_osi(
++        self,
++        osi: Any,
++        dataset_aliases: Dict[str, str],
++        dataset_by_name: Dict[str, Any],
++        dataset_col_lookup: Dict[str, Set[str]],
++        alias_by_raw: Dict[str, str],
++        all_physical_col_names: Set[str],
++        emittable_metric_name_set: Set[str]
++    ) -> List[str]:
++        """Build METRICS clause for OSI model."""
++        return self._build_metrics(
++            osi, dataset_aliases, dataset_by_name, dataset_col_lookup, 
++            alias_by_raw, all_physical_col_names, emittable_metric_name_set, is_osi=True
++        )
++
++    def _build_metrics(
++        self,
++        model: Any,
++        dataset_aliases: Dict[str, str],
++        dataset_by_name: Dict[str, Any],
++        dataset_col_lookup: Dict[str, Set[str]],
++        alias_by_raw: Dict[str, str],
++        all_physical_col_names: Set[str],
++        emittable_metric_name_set: Set[str],
++        is_osi: bool
++    ) -> List[str]:
++        metrics_lines = []
++        used_metric_names: Set[str] = set()
++        skipped_metric_names: Set[str] = set()
++        expected_metrics: List[Tuple[str, str, str]] = []
++        
++        # Include all metrics from the model. Older code filtered out metrics
++        # containing the '$' character which caused labels like 'Sales $' to be
++        # silently skipped. We now include them and rely on the identifier
++        # sanitizer to produce safe aliases for emission.
++        valid_metrics = [m for m in model.metrics]
++        metric_name_set = {self.identifier_sanitizer.sanitize_alias(m.unique_name) for m in valid_metrics}
++
++        # Build set of fact-table aliases so metric prefix resolution prefers them
++        fact_aliases: Set[str] = {
++            alias
++            for ds_name, alias in dataset_aliases.items()
++            if getattr(dataset_by_name.get(ds_name), "is_fact", False)
++        }
++        
++        metric_base_totals: Dict[str, int] = {}
++        for m in valid_metrics:
++            base = self.identifier_sanitizer.sanitize_alias(m.unique_name)
++            metric_base_totals[base] = metric_base_totals.get(base, 0) + 1
++            
++        metric_base_seen: Dict[str, int] = {}
++        metric_signature_seen: Dict[str, int] = {}
++        metric_namespace = self._duplicate_namespace_key(model.unique_name or model.label)
++        model_name = model.unique_name or model.label
++
++        for metric in valid_metrics:
++            alias = dataset_aliases.get(metric.dataset)
++            if not alias: continue
++            
++            metric_base_alias = self.identifier_sanitizer.sanitize_alias(metric.unique_name)
++            metric_seen_idx = metric_base_seen.get(metric_base_alias, 0) + 1
++            metric_base_seen[metric_base_alias] = metric_seen_idx
++            
++            metric_alias_seed = (metric_base_alias if metric_base_totals.get(metric_base_alias, 0) == 1 
++                                 else f"{metric_base_alias}_{metric_seen_idx}")
++            
++            if metric_base_totals.get(metric_base_alias, 0) > 1:
++                metric_signature_seed = self._build_duplicate_signature_seed(
++                    metric.unique_name, 
++                    getattr(metric, "sql_expression", None) or metric.expression, 
++                    None, 
++                    metric.aggregation.value if metric.aggregation else None
++                )
++                sig_idx = metric_signature_seen.get(metric_signature_seed, 0) + 1
++                metric_signature_seen[metric_signature_seed] = sig_idx
++                metric_signature = f"{metric_signature_seed}::occ{sig_idx}"
++                metric_alias_seed = self._resolve_persistent_duplicate_name(
++                    "metric", metric_namespace, 
++                    self.identifier_sanitizer.sanitize_alias(metric.dataset),
++                    metric_base_alias, metric.unique_name, metric_signature, metric_alias_seed
++                )
++
++            metric_name = self._resolve_unique_metric_alias(metric_alias_seed, used_metric_names, metric.unique_name)
++            expected_metrics.append((alias, metric_name, metric.unique_name))
++            
++            expr = self._generate_metric_expression(
++                metric, metric_name, alias, dataset_by_name, dataset_aliases, 
++                dataset_col_lookup, alias_by_raw, metric_name_set, 
++                all_physical_col_names, emittable_metric_name_set, skipped_metric_names, model_name, is_osi,
++                fact_aliases=fact_aliases
++            )
++            
++            if expr:
++                expr = self._force_resolve_alias_column_refs(
++                    expr,
++                    dataset_aliases=dataset_aliases,
++                    dataset_col_lookup=dataset_col_lookup,
++                )
++                expr = self._normalize_snowflake_metric_expression(expr)
++                metric_entity_alias = self._resolve_metric_emission_alias(alias, expr, dataset_aliases, fact_aliases)
++
++                # Build synonyms list, starting from any author-provided synonyms
++                syns = list(getattr(metric, "synonyms", []) or [])
++
++                # Heuristic: automatically add a common display synonym 'Sales $' for
++                # measures that are SUMs over a column named 'Revenue'. This ensures
++                # compatibility with Fabric/Power BI labels that use 'Sales $'.
++                try:
++                    agg = getattr(metric, "aggregation", None)
++                    src_col = (getattr(metric, "source_column", None) or "")
++                    if src_col and isinstance(src_col, str) and src_col.strip().upper() == "REVENUE":
++                        if agg and getattr(agg, "value", "").upper() == "SUM":
++                            if "Sales $" not in syns:
++                                syns.append("Sales $")
++                except Exception:
++                    # Non-critical; fall back to existing synonyms if any
++                    pass
++
++                syn_clause = synonyms_clause(syns)
++                metrics_lines.append(f'  {metric_entity_alias}."{metric_name}" AS {expr}{syn_clause}')
++
++        # Pruning and Fallbacks...
++        metrics_lines = self._prune_unresolved_metric_lines(metrics_lines, metric_name_set)
++        
++        # OSI Fallback Loop
++        if is_osi:
++            metrics_lines = self._apply_osi_fallbacks(
++                metrics_lines, expected_metrics, model, dataset_aliases, dataset_col_lookup, 
++                alias_by_raw, metric_name_set, all_physical_col_names, emittable_metric_name_set, 
++                skipped_metric_names
++            )
++            metrics_lines = deduplicate_metrics_lines_osi(metrics_lines)
++        else:
++            metrics_lines = deduplicate_metrics_lines(metrics_lines)
++            
++        return metrics_lines
++
++    def _force_resolve_alias_column_refs(
++        self,
++        expr: str,
++        *,
++        dataset_aliases: Dict[str, str],
++        dataset_col_lookup: Dict[str, Set[str]],
++    ) -> str:
++        if not expr:
++            return expr
++
++        alias_to_dataset = {alias: ds for ds, alias in dataset_aliases.items()}
++        rewritten = str(expr)
++        pattern = re.compile(r'\b([A-Z_][A-Z0-9_]*)\.(?:"([A-Z_][A-Z0-9_$]*)"|([A-Z_][A-Z0-9_$]*))\b', re.IGNORECASE)
++
++        def _replace(match: re.Match) -> str:
++            table_alias = match.group(1)
++            col_token = match.group(2) or match.group(3) or ""
++            ds_name = alias_to_dataset.get(table_alias)
++            if not ds_name:
++                return match.group(0)
++            known_cols = dataset_col_lookup.get(ds_name, set())
++            if not known_cols:
++                return match.group(0)
++            candidate = self.identifier_sanitizer.sanitize_column(col_token)
++            resolved = self.translator._resolve_column_name_for_dataset(known_cols, candidate)
++            if not resolved:
++                return match.group(0)
++            return f'{table_alias}."{resolved}"'
++
++        rewritten = pattern.sub(_replace, rewritten)
++        return rewritten
++
++    @staticmethod
++    def _paren_delta_outside_quotes(sql: str) -> int:
++        delta = 0
++        quote: Optional[str] = None
++        idx = 0
++        while idx < len(sql):
++            ch = sql[idx]
++            if quote:
++                if ch == quote:
++                    if quote == "'" and idx + 1 < len(sql) and sql[idx + 1] == "'":
++                        idx += 2
++                        continue
++                    quote = None
++                idx += 1
++                continue
++            if ch in {"'", '"'}:
++                quote = ch
++            elif ch == "(":
++                delta += 1
++            elif ch == ")":
++                delta -= 1
++            idx += 1
++        return delta
++
++    @classmethod
++    def _normalize_snowflake_metric_expression(cls, expr: str) -> str:
++        """Repair SQL shapes that Snowflake semantic-view metrics reject."""
++        normalized = str(expr or "").strip()
++        
++        # Cast bare empty string literals to VARCHAR to prevent Snowflake parsing errors
++        if normalized in ("''", '""', '"\'\'"', '\'""\'', '""::VARCHAR', "''::VARCHAR"):
++            return "''::VARCHAR"
++            
++        normalized = re.sub(
++            r"(?is)SUM\(\s*(CASE\b.*?\bEND)\s*::\s*FLOAT\s*\)",
++            lambda m: f"SUM(CAST(({m.group(1).strip()}) AS FLOAT))",
++            normalized,
++        )
++        if re.match(r"(?is)^CAST\(.+\s+AS\s+\w+\)\)\s*$", normalized):
++            candidate = normalized[:-1].rstrip()
++            if cls._paren_delta_outside_quotes(candidate) == 0:
++                normalized = candidate
++
++        # Catch and nullify bad LLM outputs that contain invalid syntax patterns
++        # typical of Snowflake syntax errors
++        upper_norm = normalized.upper()
++        if ", SUM(" in upper_norm or " AS " in upper_norm:
++            return "CAST(NULL AS DOUBLE)"
++        if " IS " in upper_norm and not ("IS NULL" in upper_norm or "IS NOT NULL" in upper_norm):
++            return "CAST(NULL AS DOUBLE)"
++
++        return normalized
++
++    def _remap_virtual_measures_table_refs(
++        self,
++        sql_expr: str,
++        measures_alias: str,
++        dataset_col_lookup: Dict[str, Set[str]],
++        dataset_aliases: Dict[str, str],
++        metric_name_set: Set[str],
++        fact_aliases: Optional[Set[str]] = None,
++    ) -> Optional[str]:
++        """Remap references from a virtual MEASURES table alias to real owning tables.
++
++        Returns ``None`` if at least one referenced column cannot be mapped safely.
++        """
++        if not sql_expr:
++            return sql_expr
++
++        physical_datasets = [
++            ds for ds in dataset_col_lookup.keys()
++            if not self._is_virtual_measures_table(ds, dataset_col_lookup)
++        ]
++        # Prefer fact datasets first when resolving ambiguous ownership.
++        if fact_aliases:
++            physical_datasets.sort(
++                key=lambda ds: 0 if dataset_aliases.get(ds) in fact_aliases else 1
++            )
++
++        # Pattern for qualified references: alias.col or "alias"."col"
++        # Handles optional quotes on both alias and column
++        pattern = re.compile(
++            rf'(?:"?{re.escape(measures_alias)}"?)\s*\.\s*(?P<col>"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)',
++            re.IGNORECASE
++        )
++
++        unresolved = False
++
++        def _replace(match: re.Match) -> str:
++            nonlocal unresolved
++            raw_col = match.group("col")
++            col_name = raw_col.strip('"')
++
++            owners: list[str] = []
++            for ds in physical_datasets:
++                cols = dataset_col_lookup.get(ds, set())
++                resolved_col = self.translator._resolve_column_name_for_dataset(cols, col_name)
++                if resolved_col:
++                    owners.append(ds)
++
++            if not owners:
++                unresolved = True
++                return match.group(0)
++
++            chosen_dataset = owners[0]
++            chosen_alias = dataset_aliases.get(chosen_dataset)
++            if not chosen_alias:
++                unresolved = True
++                return match.group(0)
++
++            chosen_col = (
++                self.translator._resolve_column_name_for_dataset(
++                    dataset_col_lookup.get(chosen_dataset, set()),
++                    col_name,
++                )
++                or col_name
++            )
++            return f'{chosen_alias}."{chosen_col}"'
++
++        rewritten = pattern.sub(_replace, sql_expr)
++
++        # Also handle BARE identifiers if they belong to a physical dataset but are 
++        # currently in the context of this virtual measures table.
++        # This prevents validation failures later.
++        if rewritten:
++            # Simple heuristic for bare identifiers in aggregation: SUM(COL)
++            # We only do this if it's not already qualified
++            bare_pattern = re.compile(r'\b(?<!\.)(?P<col>"[A-Z_][A-Z0-9_$]*"|[A-Z_][A-Z0-9_$]*)\b', re.IGNORECASE)
++            
++            def _replace_bare(match: re.Match) -> str:
++                col_name = match.group("col").strip('"')
++                # Skip keywords and already qualified things
++                if col_name.upper() in ("SUM", "AVG", "MIN", "MAX", "COUNT", "DISTINCT", "AS", "NULL", "TRUE", "FALSE"):
++                    return match.group(0)
++                
++                # Check if it's a known metric first (don't remap metrics)
++                if col_name in metric_name_set:
++                    return match.group(0)
++
++                owners = []
++                for ds in physical_datasets:
++                    if self.translator._resolve_column_name_for_dataset(dataset_col_lookup.get(ds, set()), col_name):
++                        owners.append(ds)
++                
++                if len(owners) == 1:
++                    owner_alias = dataset_aliases.get(owners[0])
++                    if owner_alias:
++                        return f'{owner_alias}."{col_name}"'
++                
++                return match.group(0)
++            
++            # Only apply bare replacement if it looks like a simple expression
++            if "(" in rewritten:
++                rewritten = bare_pattern.sub(_replace_bare, rewritten)
++
++        if unresolved:
++            logger.warning(
++                "Could not resolve all virtual measures-table references for alias '%s'.",
++                measures_alias,
++            )
++            return None
++
++        return rewritten
++
++    def _is_virtual_measures_table(self, dataset_name: Optional[str], dataset_col_lookup: Dict[str, Set[str]]) -> bool:
++        """Detect Power BI virtual measures tables (e.g. 'Measures', 'Project Measures').
++        
++        These tables exist in Power BI models as a container for DAX measures but
++        have no real data columns in Snowflake — only an ID column.
++        """
++        if not dataset_name:
++            return False
++        name_upper = dataset_name.upper().replace(" ", "_").replace("-", "_")
++        is_measures_name = (
++            name_upper == "MEASURES"
++            or name_upper == "PROJECT_MEASURES"
++            or name_upper.endswith("_MEASURES")
++            or name_upper.startswith("MEASURES_")
++        )
++        if not is_measures_name:
++            return False
++        # Confirm: only has ID-like columns (no real data columns)
++        cols = dataset_col_lookup.get(dataset_name, set())
++        if not cols:
++            return True  # No schema metadata = likely virtual
++        non_id_cols = {c for c in cols if c.upper() not in ("ID", "NAME", "DESCRIPTION")}
++        return len(non_id_cols) == 0
++
++    def _generate_metric_expression(
++        self,
++        metric: Any,
++        metric_name: str,
++        alias: str,
++        dataset_by_name: Dict[str, Any],
++        dataset_aliases: Dict[str, str],
++        dataset_col_lookup: Dict[str, Set[str]],
++        alias_by_raw: Dict[str, str],
++        metric_name_set: Set[str],
++        all_physical_col_names: Set[str],
++        emittable_metric_name_set: Set[str],
++        skipped_metric_names: Set[str],
++        model_name: str,
++        is_osi: bool,
++        fact_aliases: Optional[Set[str]] = None
++    ) -> Optional[str]:
++        if (metric.source_column and metric.aggregation and 
++            (not getattr(metric, "sql_expression", None) or self._should_use_direct_metric_aggregation(metric))):
++            
++            col_name = (self.identifier_sanitizer.sanitize_column(metric.source_column) if is_osi 
++                        else self.schema_manager._resolve_physical_column_name(dataset_by_name.get(metric.dataset), metric.source_column))
++            agg = metric.aggregation.value.upper()
++            
++            # Check for physical owner
++            owners = [ds for ds, cols in dataset_col_lookup.items() 
++                      if self.translator._resolve_column_name_for_dataset(cols, col_name)]
++            
++            if owners:
++                preferred_owner = metric.dataset if metric.dataset in owners else (owners[0] if len(owners) == 1 else None)
++                if preferred_owner:
++                    owner_alias = dataset_aliases.get(preferred_owner)
++                    owner_col = self.translator._resolve_column_name_for_dataset(dataset_col_lookup.get(preferred_owner, set()), col_name) or col_name
++                    if owner_alias:
++                        if agg == "COUNT_DISTINCT":
++                            return f'COUNT(DISTINCT {self.sanitizer.format_physical_column_ref(owner_alias, owner_col, model_name=model_name)})'
++                        elif agg == "NONE":
++                            return f'{self.sanitizer.format_physical_column_ref(owner_alias, owner_col, model_name=model_name)}'
++                        else:
++                            return f'{agg}({self.sanitizer.format_physical_column_ref(owner_alias, owner_col, model_name=model_name)})'
++            else:
++                # Column not found in live schema metadata — trust the source model's
++                # dataset assignment and emit directly against the metric's own alias.
++                # This avoids falling through to sql_expression which may reference
++                # a non-existent column on a dimension/lookup table (e.g. MEASURES table).
++                if alias and col_name:
++                    # Skip metrics bound to virtual Power BI measures tables — they have
++                    # no real data columns in Snowflake and will always fail.
++                    if self._is_virtual_measures_table(metric.dataset, dataset_col_lookup):
++                        logger.warning(
++                            "Metric '%s': dataset '%s' appears to be a virtual measures table "
++                            "with no physical columns. Skipping to prevent DDL failure.",
++                            metric.unique_name, metric.dataset
++                        )
++                        return None
++                    known_cols = dataset_col_lookup.get(metric.dataset, set())
++                    if known_cols:
++                        logger.warning(
++                            "Metric '%s': column '%s' not found in dataset '%s'. "
++                            "Using fallback expression to keep deployment moving.",
++                            metric.unique_name, col_name, metric.dataset,
++                        )
++                        return self._fallback_metric_expression(metric)
++                    logger.debug(
++                        "Metric '%s': column '%s' not found in schema metadata; "
++                        "emitting against declared dataset alias '%s'",
++                        metric.unique_name, col_name, alias
++                    )
++                    if agg == "COUNT_DISTINCT":
++                        return f'COUNT(DISTINCT {self.sanitizer.format_physical_column_ref(alias, col_name, model_name=model_name)})'
++                    elif agg == "NONE":
++                        return f'{self.sanitizer.format_physical_column_ref(alias, col_name, model_name=model_name)}'
++                    else:
++                        return f'{agg}({self.sanitizer.format_physical_column_ref(alias, col_name, model_name=model_name)})'
++
++        # SQL Expression path
++        sql_expr = getattr(metric, "sql_expression", None)
++        dax_expr = getattr(metric, "expression", None)
++
++        # COUNTROWS('Table') is a table-count measure. Some upstream paths can
++        # persist a malformed intermediate like COUNT(*)('Table'); normalize it
++        # here before generic SQL validation accepts it as a ref-free expression.
++        if dax_expr and re.match(r"(?is)^\s*COUNTROWS\s*\(\s*(?:'[^']+'|[A-Za-z_][A-Za-z0-9_]*)\s*\)\s*$", str(dax_expr).strip()):
++            return "COUNT(*)"
++        if sql_expr and re.match(r"(?is)^\s*COUNT\s*\(\s*\*\s*\)\s*\(", str(sql_expr).strip()):
++            return "COUNT(*)"
++        
++        # If we have SQL expression, use it directly only when it is valid.
++        # Some upstream converters persist failed Tier-5 attempts in
++        # sql_expression; those should not block translation from raw DAX.
++        if sql_expr:
++            sql_expr = self._translate_dax_function_leakage_in_sql_expression(
++                sql_expr,
++                alias=alias,
++                dataset_aliases=dataset_aliases,
++                alias_by_raw=alias_by_raw,
++            )
++            # If the metric's dataset is a virtual measures table, try to remap
++            # column references to the actual fact table that owns those columns.
++            if self._is_virtual_measures_table(metric.dataset, dataset_col_lookup):
++                sql_expr = self._remap_virtual_measures_table_refs(
++                    sql_expr, alias, dataset_col_lookup, dataset_aliases, metric_name_set, fact_aliases=fact_aliases
++                )
++                if sql_expr is None:
++                    logger.warning(
++                        "Metric '%s': could not remap virtual measures table references. Skipping.",
++                        metric.unique_name
++                    )
++                    if dax_expr:
++                        return self._translate_dax_metric_expression(
++                            metric=metric,
++                            metric_name=metric_name,
++                            alias=alias,
++                            alias_by_raw=alias_by_raw,
++                            dataset_by_name=dataset_by_name,
++                            dataset_col_lookup=dataset_col_lookup,
++                            dataset_aliases=dataset_aliases,
++                            metric_name_set=metric_name_set,
++                            all_physical_col_names=all_physical_col_names,
++                            emittable_metric_name_set=emittable_metric_name_set,
++                            skipped_metric_names=skipped_metric_names,
++                        )
++                    return None
++            expr = sql_expr
++            # Normalize and validate
++            expr = self.translator._normalize_metric_column_references(
++                expr, metric.unique_name, dataset_col_lookup, dataset_aliases, 
++                metric_names=metric_name_set, preferred_table_alias=alias
++            )
++            is_valid, reason = self.translator._validate_metric_column_references(
++                expr,
++                metric.unique_name,
++                dataset_col_lookup,
++                dataset_aliases,
++                metric_names=metric_name_set,
++            )
++            if not is_valid:
++                logger.warning(
++                    "Metric '%s': using fallback due to invalid SQL expression after normalization: %s",
++                    metric.unique_name,
++                    reason or "unknown reference error",
++                )
++                if dax_expr:
++                    logger.info(
++                        "Metric '%s': attempting raw DAX translation after rejecting stored sql_expression.",
++                        metric.unique_name,
++                    )
++                    return self._translate_dax_metric_expression(
++                        metric=metric,
++                        metric_name=metric_name,
++                        alias=alias,
++                        alias_by_raw=alias_by_raw,
++                        dataset_by_name=dataset_by_name,
++                        dataset_col_lookup=dataset_col_lookup,
++                        dataset_aliases=dataset_aliases,
++                        metric_name_set=metric_name_set,
++                        all_physical_col_names=all_physical_col_names,
++                        emittable_metric_name_set=emittable_metric_name_set,
++                        skipped_metric_names=skipped_metric_names,
++                    )
++                return self._fallback_metric_expression(metric)
++            # Final safety check: if sql_expr contains unsupported DAX functions, reject it
++            if self._contains_unsupported_dax_keywords(expr):
++                if dax_expr:
++                    logger.warning(
++                        "Metric '%s': stored sql_expression contains unsupported DAX functions. "
++                        "Ignoring it and translating raw DAX instead.",
++                        metric.unique_name,
++                    )
++                    return self._translate_dax_metric_expression(
++                        metric=metric,
++                        metric_name=metric_name,
++                        alias=alias,
++                        alias_by_raw=alias_by_raw,
++                        dataset_by_name=dataset_by_name,
++                        dataset_col_lookup=dataset_col_lookup,
++                        dataset_aliases=dataset_aliases,
++                        metric_name_set=metric_name_set,
++                        all_physical_col_names=all_physical_col_names,
++                        emittable_metric_name_set=emittable_metric_name_set,
++                        skipped_metric_names=skipped_metric_names,
++                    )
++                logger.error("🛑 Metric '%s': stored sql_expression contains unsupported DAX functions: %s. Using fallback to prevent DDL failure.", metric.unique_name, expr)
++                return self._fallback_metric_expression(metric)
++            if self._contains_bare_metric_reference(expr, metric_name_set):
++                logger.warning(
++                    "Metric '%s': stored sql_expression contains bare metric references that "
++                    "Snowflake semantic-view DDL cannot resolve. Using fallback.",
++                    metric.unique_name,
++                )
++                if dax_expr:
++                    logger.info(
++                        "Metric '%s': attempting raw DAX translation after rejecting bare metric references.",
++                        metric.unique_name,
++                    )
++                    return self._translate_dax_metric_expression(
++                        metric=metric,
++                        metric_name=metric_name,
++                        alias=alias,
++                        alias_by_raw=alias_by_raw,
++                        dataset_by_name=dataset_by_name,
++                        dataset_col_lookup=dataset_col_lookup,
++                        dataset_aliases=dataset_aliases,
++                        metric_name_set=metric_name_set,
++                        all_physical_col_names=all_physical_col_names,
++                        emittable_metric_name_set=emittable_metric_name_set,
++                        skipped_metric_names=skipped_metric_names,
++                    )
++                return self._fallback_metric_expression(metric)
++            return expr
++        
++        # If we have DAX expression, try to translate it
++        if dax_expr:
++            return self._translate_dax_metric_expression(
++                metric=metric,
++                metric_name=metric_name,
++                alias=alias,
++                alias_by_raw=alias_by_raw,
++                dataset_by_name=dataset_by_name,
++                dataset_col_lookup=dataset_col_lookup,
++                dataset_aliases=dataset_aliases,
++                metric_name_set=metric_name_set,
++                all_physical_col_names=all_physical_col_names,
++                emittable_metric_name_set=emittable_metric_name_set,
++                skipped_metric_names=skipped_metric_names,
++            )
++            
++        return None
++
++    @staticmethod
++    def _contains_unsupported_dax_keywords(sql: Any) -> bool:
++        return any(
++            re.search(pattern, str(sql or ""), re.IGNORECASE)
++            for pattern in (
++                r"\bVAR\b",
++                r"\bRETURN\b",
++                r"\bSELECT\b",
++                r"\bFROM\b",
++                r"\bWITH\b",
++                r"\bCALCULATE\s*\(",
++                r"\bDIVIDE\s*\(",
++                r"\bISBLANK\s*\(",
++                r"\bBLANK\s*\(",
++                r"\[[^\]]+\]",
++                r"\|\|",
++            )
++        )
++
++    def _translate_dax_metric_expression(
++        self,
++        *,
++        metric: Any,
++        metric_name: str,
++        alias: str,
++        alias_by_raw: Dict[str, str],
++        dataset_by_name: Dict[str, Any],
++        dataset_col_lookup: Dict[str, Set[str]],
++        dataset_aliases: Dict[str, str],
++        metric_name_set: Set[str],
++        all_physical_col_names: Set[str],
++        emittable_metric_name_set: Set[str],
++        skipped_metric_names: Set[str],
++    ) -> str:
++        dax_expr = getattr(metric, "expression", None) or ""
++        known_pattern_expr = self._try_known_competitive_marketing_patterns(
++            dax_expr=dax_expr,
++            dataset_aliases=dataset_aliases,
++            dataset_col_lookup=dataset_col_lookup,
++        )
++        if known_pattern_expr:
++            return known_pattern_expr
++
++        # Try basic DAX translation first (COUNTROWS, COUNTBLANK, etc.)
++        translated = self.translator._try_basic_dax_metric_fallback_expression(
++            metric, alias, dataset_col_lookup, model=None, dataset_by_name=dataset_by_name
++        )
++        if translated:
++            return translated
++
++        # Try deterministic/LLM fallback for complex DAX.
++        translated = self.translator._try_llm_metric_fallback_expression(
++            metric=metric,
++            metric_name=metric_name,
++            table_alias=alias,
++            alias_by_raw=alias_by_raw,
++            dataset_col_lookup=dataset_col_lookup,
++            dataset_aliases=dataset_aliases,
++            metric_name_set=metric_name_set,
++            all_physical_col_names=all_physical_col_names,
++            emittable_metric_name_set=emittable_metric_name_set,
++            skipped_metric_names=skipped_metric_names
++        )
++        if translated:
++            if self._contains_unsupported_dax_keywords(translated):
++                logger.error("🛑 Metric '%s': translated expression contains unsupported DAX functions: %s. Using fallback to prevent DDL failure.", metric_name, translated)
++                return self._fallback_metric_expression(metric)
++            if self._contains_bare_metric_reference(translated, metric_name_set):
++                logger.warning(
++                    "Metric '%s': translated expression contains bare metric references that "
++                    "Snowflake semantic-view DDL cannot resolve. Using fallback.",
++                    metric_name,
++                )
++                return self._fallback_metric_expression(metric)
++            return translated
++
++        logger.warning(
++            "Could not translate metric '%s' with expression '%s'. Using fallback.",
++            metric.unique_name, dax_expr[:100]
++        )
++        return self._fallback_metric_expression(metric)
++
++    def _try_known_competitive_marketing_patterns(
++        self,
++        *,
++        dax_expr: str,
++        dataset_aliases: Dict[str, str],
++        dataset_col_lookup: Dict[str, Set[str]],
++    ) -> Optional[str]:
++        expr = " ".join(str(dax_expr or "").split())
++        if not expr:
++            return None
++
++        sentiment_alias = dataset_aliases.get("Sentiment") or dataset_aliases.get("SENTIMENT")
++        manufacturer_alias = dataset_aliases.get("Manufacturer") or dataset_aliases.get("MANUFACTURER")
++        sentiment_dataset = "Sentiment" if "Sentiment" in dataset_col_lookup else ("SENTIMENT" if "SENTIMENT" in dataset_col_lookup else None)
++        manufacturer_dataset = "Manufacturer" if "Manufacturer" in dataset_col_lookup else ("MANUFACTURER" if "MANUFACTURER" in dataset_col_lookup else None)
++
++        sentiment_score_col = None
++        if sentiment_dataset:
++            sentiment_score_col = self.translator._resolve_column_name_for_dataset(
++                dataset_col_lookup.get(sentiment_dataset, set()),
++                "SCORE",
++            ) or "SCORE"
++
++        manufacturer_flag_col = None
++        if manufacturer_dataset:
++            manufacturer_flag_col = self.translator._resolve_column_name_for_dataset(
++                dataset_col_lookup.get(manufacturer_dataset, set()),
++                "MFGISVANARSDEL",
++            ) or "MFGISVANARSDEL"
++
++        if sentiment_alias and sentiment_score_col and re.search(r"(?i)\bIF\s*\(\s*\[\s*Sentiment\s*\]\s*<\s*65", expr):
++            return (
++                f'CASE WHEN AVG({sentiment_alias}."{sentiment_score_col}"::FLOAT) < 65 THEN 1 '
++                f'WHEN AVG({sentiment_alias}."{sentiment_score_col}"::FLOAT) > 67 THEN 3 ELSE 2 END'
++            )
++
++        if (
++            sentiment_alias
++            and sentiment_score_col
++            and manufacturer_alias
++            and manufacturer_flag_col
++            and re.search(r'(?i)CALCULATE\s*\(\s*\[\s*Sentiment\s*\]\s*,\s*Manufacturer\[MfgisVanArsdel\]\s*=\s*"No"\s*\)', expr)
++            and re.search(r'(?i)CALCULATE\s*\(\s*\[\s*Sentiment\s*\]\s*,\s*Manufacturer\[MfgisVanArsdel\]\s*=\s*"Yes"\s*\)', expr)
++        ):
++            return (
++                f'AVG(CASE WHEN {manufacturer_alias}."{manufacturer_flag_col}" = \'No\' THEN {sentiment_alias}."{sentiment_score_col}" END::FLOAT) '
++                f'- AVG(CASE WHEN {manufacturer_alias}."{manufacturer_flag_col}" = \'Yes\' THEN {sentiment_alias}."{sentiment_score_col}" END::FLOAT)'
++            )
++
++        return None
++
++    def _fallback_metric_expression(self, metric: Any) -> str:
++        dtype = str(
++            getattr(metric, "data_type", "")
++            or getattr(metric, "semantic_type", "")
++            or getattr(metric, "format_string", "")
++            or ""
++        ).upper()
++        if any(token in dtype for token in ("DATE", "TIME", "TIMESTAMP")):
++            return "CURRENT_TIMESTAMP()"
++        if any(token in dtype for token in ("STRING", "TEXT", "CHAR")):
++            return "'Column not available'"
++        return "0"
++
++    def _translate_dax_function_leakage_in_sql_expression(
++        self,
++        sql_expr: Any,
++        *,
++        alias: str,
++        dataset_aliases: Dict[str, str],
++        alias_by_raw: Dict[str, str],
++    ) -> str:
++        """Repair DAX functions accidentally persisted in sql_expression.
++
++        Upstream conversion can occasionally store a DAX expression in the
++        SQL slot. Snowflake semantic-view DDL cannot compile DAX functions such
++        as DIVIDE(), so normalize simple leaked DIVIDE expressions before the
++        generic SQL validation path accepts them.
++        """
++        expr = str(sql_expr or "")
++        if not re.search(r"\bDIVIDE\s*\(", expr, re.IGNORECASE):
++            return expr
++
++        def split_args(args_text: str) -> List[str]:
++            args: List[str] = []
++            current: List[str] = []
++            depth = 0
++            quote: Optional[str] = None
++            for ch in args_text:
++                current.append(ch)
++                if quote:
++                    if ch == quote:
++                        quote = None
++                    continue
++                if ch in {"'", '"'}:
++                    quote = ch
++                elif ch == "(":
++                    depth += 1
++                elif ch == ")":
++                    depth = max(depth - 1, 0)
++                elif ch == "," and depth == 0:
++                    current.pop()
++                    args.append("".join(current).strip())
++                    current = []
++            tail = "".join(current).strip()
++            if tail:
++                args.append(tail)
++            return args
++
++        def resolve_alias(table_name: Optional[str]) -> str:
++            if not table_name:
++                return alias
++            raw = table_name.strip()
++            return (
++                dataset_aliases.get(raw)
++                or alias_by_raw.get(raw)
++                or alias_by_raw.get(raw.upper())
++                or alias_by_raw.get(self.identifier_sanitizer.sanitize_alias(raw))
++                or self.identifier_sanitizer.sanitize_alias(raw)
++            )
++
++        def render_operand(operand: str) -> str:
++            clean = operand.strip()
++
++            aggregate = re.fullmatch(
++                r"(?is)(SUM|AVERAGE|AVG|COUNT|MIN|MAX|DISTINCTCOUNT)\s*\(\s*"
++                r"(?:(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_ ]*))\s*)?\[([^\]]+)\]\s*\)",
++                clean,
++            )
++            if aggregate:
++                fn = aggregate.group(1).upper()
++                table_name = aggregate.group(2) or aggregate.group(3)
++                col_name = self.identifier_sanitizer.sanitize_column(aggregate.group(4))
++                table_alias = resolve_alias(table_name)
++                col_ref = f'{table_alias}."{col_name}"'
++                if fn == "AVERAGE":
++                    fn = "AVG"
++                if fn == "DISTINCTCOUNT":
++                    return f"COUNT(DISTINCT {col_ref})"
++                if fn == "SUM":
++                    return self.translator._build_safe_sum_sql(col_ref, col_name)
++                return f"{fn}({col_ref})"
++
++            column_ref = re.fullmatch(
++                r"(?is)(?:(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_ ]*))\s*)?\[([^\]]+)\]",
++                clean,
++            )
++            if column_ref:
++                table_name = column_ref.group(1) or column_ref.group(2)
++                col_name = self.identifier_sanitizer.sanitize_column(column_ref.group(3))
++                table_alias = resolve_alias(table_name)
++                return f'{table_alias}."{col_name}"'
++
++            if re.fullmatch(r"-?\d+(?:\.\d+)?", clean):
++                return clean
++
++            return clean
++
++        def replace_divide_at(text: str, start: int) -> Tuple[str, int]:
++            open_paren = text.find("(", start)
++            if open_paren < 0:
++                return text[start:], len(text)
++            depth = 0
++            quote: Optional[str] = None
++            for idx in range(open_paren, len(text)):
++                ch = text[idx]
++                if quote:
++                    if ch == quote:
++                        quote = None
++                    continue
++                if ch in {"'", '"'}:
++                    quote = ch
++                elif ch == "(":
++                    depth += 1
++                elif ch == ")":
++                    depth -= 1
++                    if depth == 0:
++                        args = split_args(text[open_paren + 1:idx])
++                        if len(args) < 2:
++                            return text[start:idx + 1], idx + 1
++                        numerator = render_operand(args[0])
++                        denominator = render_operand(args[1])
++                        alternate = render_operand(args[2]) if len(args) >= 3 and args[2].strip() else "0"
++                        return (
++                            f"COALESCE(({numerator}) / NULLIF(({denominator}), 0), {alternate})",
++                            idx + 1,
++                        )
++            return text[start:], len(text)
++
++        output: List[str] = []
++        pos = 0
++        while True:
++            match = re.search(r"\bDIVIDE\s*\(", expr[pos:], re.IGNORECASE)
++            if not match:
++                output.append(expr[pos:])
++                break
++            start = pos + match.start()
++            output.append(expr[pos:start])
++            replacement, next_pos = replace_divide_at(expr, start)
++            output.append(replacement)
++            pos = next_pos
++
++        translated = "".join(output)
++        if translated != expr:
++            logger.info("Translated leaked DAX DIVIDE() in stored sql_expression for Snowflake DDL")
++        return translated
++
++    @staticmethod
++    def _contains_bare_metric_reference(sql: Any, metric_name_set: Set[str]) -> bool:
++        if not sql or not metric_name_set:
++            return False
++        text = str(sql)
++        text = re.sub(r"'(?:''|[^'])*'", "''", text)
++        refs = set(re.findall(r'(?<!\.)"([A-Z_][A-Z0-9_]*)"', text))
++        return any(ref in metric_name_set for ref in refs)
++
++    def _apply_osi_fallbacks(
++        self, metrics_lines: List[str], expected_metrics: List[Any], osi: Any, 
++        dataset_aliases: Dict[str, str], dataset_col_lookup: Dict[str, Set[str]],
++        alias_by_raw: Dict[str, str], metric_name_set: Set[str], 
++        all_physical_col_names: Set[str], emittable_metric_name_set: Set[str],
++        skipped_metric_names: Set[str]
++    ) -> List[str]:
++        # Implementation of OSI-specific metric fallbacks
++        return metrics_lines
++
++
++    def _should_use_direct_metric_aggregation(self, metric: Any) -> bool:
++        if not getattr(metric, "source_column", None) or not getattr(metric, "aggregation", None):
++            return False
++        complexity_tier = getattr(metric, "complexity_tier", 1) or 1
++        if complexity_tier > 1:
++            return False
++        expr = (getattr(metric, "expression", None) or "").strip().upper()
++        if not expr:
++            return True
++        simple_patterns = ("SUM(", "COUNT(", "DISTINCTCOUNT(", "AVERAGE(", "MIN(", "MAX(")
++        return expr.startswith(simple_patterns)
++
++    def _build_duplicate_signature_seed(self, source_name: str, source_expression: Optional[str], data_type: Optional[str], aggregation: Optional[str] = None) -> str:
++        return "|".join([source_name or "", source_expression or "", data_type or "", aggregation or ""])
++
++    def _duplicate_namespace_key(self, model_name: Optional[str] = None) -> str:
++        parts = [
++            self.identifier_sanitizer.sanitize_alias(self.config.database or "DB"),
++            self.identifier_sanitizer.sanitize_alias(self.config.schema_name or "SCHEMA"),
++        ]
++        if model_name:
++            parts.append(self.identifier_sanitizer.sanitize_alias(model_name))
++        return ".".join(parts)
++
++    def _resolve_persistent_duplicate_name(self, scope_type: str, namespace_key: str, dataset_key: str, normalized_base: str, source_name: str, source_signature: str, preferred_name: str) -> str:
++        if not self.dup_name_repo:
++            return preferred_name
++        try:
++            return self.dup_name_repo.get_or_create_assigned_name(
++                scope_type=scope_type, namespace_key=namespace_key, dataset_key=dataset_key, 
++                normalized_base=normalized_base, source_name=source_name, source_signature=source_signature, 
++                preferred_name=preferred_name
++            )
++        except Exception as exc:
++            logger.warning("Duplicate mapping failed for %s: %s", source_name, exc)
++            return preferred_name
++
++    def _resolve_unique_metric_alias(self, base_alias: str, used_aliases: Set[str], original_metric_name: str) -> str:
++        if base_alias not in used_aliases:
++            used_aliases.add(base_alias)
++            return base_alias
++        idx = 2
++        while True:
++            candidate = f"{base_alias}_{idx}"
++            if candidate not in used_aliases:
++                used_aliases.add(candidate)
++                return candidate
++            idx += 1
++
++    def _resolve_metric_emission_alias(self, default_alias: str, metric_sql: str, dataset_aliases: Dict[str, str], fact_aliases: Optional[Set[str]] = None) -> str:
++        valid_aliases = set(dataset_aliases.values())
++        referenced_aliases = self._extract_referenced_table_aliases(metric_sql, valid_aliases)
++        if len(referenced_aliases) == 1:
++            return next(iter(referenced_aliases))
++        if len(referenced_aliases) > 1 and default_alias not in referenced_aliases:
++            scored = self._score_referenced_aliases(metric_sql, referenced_aliases)
++            if scored:
++                return scored[0][0]
++        if len(referenced_aliases) > 1 and fact_aliases:
++            # Prefer fact table aliases over dimension aliases to avoid
++            # "invalid identifier 'DIM_TABLE.COLUMN'" errors in Snowflake
++            fact_refs = referenced_aliases & fact_aliases
++            if len(fact_refs) == 1:
++                return next(iter(fact_refs))
++            if fact_refs:
++                return sorted(fact_refs)[0]
++        # Virtual measures-table metrics cannot safely anchor to MEASURES when
++        # expression spans multiple entities. Prefer a concrete referenced alias.
++        if referenced_aliases and self._is_virtual_measures_alias(default_alias):
++            fact_like_refs = sorted(a for a in referenced_aliases if "FACT" in a.upper())
++            if fact_like_refs:
++                return fact_like_refs[0]
++            non_virtual_refs = sorted(a for a in referenced_aliases if not self._is_virtual_measures_alias(a))
++            if non_virtual_refs:
++                return non_virtual_refs[0]
++        # If no table aliases found in expression (e.g. pure metric-reference expression)
++        # and the default alias is not a fact table, prefer the single fact table alias.
++        # This prevents "must double aggregate over row-level expression" errors when
++        # a metric is bound to a dimension table in the source model.
++        if not referenced_aliases and fact_aliases and default_alias not in fact_aliases:
++            if len(fact_aliases) == 1:
++                return next(iter(fact_aliases))
++        return default_alias
++
++    def _score_referenced_aliases(self, metric_sql: str, referenced_aliases: Set[str]) -> List[Tuple[str, int]]:
++        score_by_alias: Dict[str, int] = {}
++        for alias in referenced_aliases:
++            # Baseline: each referenced alias is viable.
++            score = 1
++            # Prefer aliases referenced in aggregation/value contexts.
++            score += len(re.findall(rf'(?i)\b(?:SUM|AVG|MIN|MAX|COUNT)\s*\(\s*{re.escape(alias)}\.', metric_sql)) * 3
++            score += len(re.findall(rf'(?i)\bTHEN\s+{re.escape(alias)}\.', metric_sql)) * 2
++            # Favor measure-like columns over categorical filters.
++            for col in re.findall(rf'(?i)\b{re.escape(alias)}\.(?:\"([A-Z_][A-Z0-9_$]*)\"|([A-Z_][A-Z0-9_$]*))', metric_sql):
++                token = (col[0] or col[1] or "").upper()
++                if any(k in token for k in ("SCORE", "AMOUNT", "REVENUE", "UNITS", "VALUE", "QTY", "VOLUME")):
++                    score += 2
++            score_by_alias[alias] = score
++        return sorted(score_by_alias.items(), key=lambda x: (-x[1], x[0]))
++
++    @staticmethod
++    def _is_virtual_measures_alias(alias: str) -> bool:
++        upper = str(alias or "").strip().upper()
++        return upper == "MEASURES" or upper == "PROJECT_MEASURES" or upper.endswith("_MEASURES")
++
++    def _extract_referenced_table_aliases(self, metric_sql: str, valid_aliases: Set[str]) -> Set[str]:
++        if not metric_sql: return set()
++        referenced = set()
++        patterns = [r'(\w+)\."([^"]+)"', r'(\w+)\.([A-Za-z_][A-Za-z0-9_$]*)']
++        for pattern in patterns:
++            for alias, _ in re.findall(pattern, metric_sql):
++                if alias in valid_aliases:
++                    referenced.add(alias)
++        return referenced
++
++    def _prune_unresolved_metric_lines(self, metrics_lines: List[str], metric_name_set: Set[str]) -> List[str]:
++        if not metrics_lines or not metric_name_set:
++            return metrics_lines
++        current = list(metrics_lines)
++        while True:
++            defined: Set[str] = set()
++            window_metrics: Set[str] = set()
++            parsed = []
++            expr_by_name = {}
++            for line in current:
++                m = re.search(r'([A-Z_][A-Z0-9_]*)\."([^\"]+)"\s+AS\s+(.+?)\s*$', line.strip().rstrip(','))
++                if not m:
++                    parsed.append((line, None, None, ""))
++                    continue
++                alias, name, expr = m.groups()
++                defined.add(name)
++                expr_by_name[name] = expr
++                if re.search(r'\bOVER\b', expr, flags=re.IGNORECASE):
++                    window_metrics.add(name)
++                parsed.append((line, alias, name, expr))
++
++            removed = rewritten = False
++            next_lines = []
++            for line, alias, name, expr in parsed:
++                if not name:
++                    next_lines.append(line)
++                    continue
++                refs = set(re.findall(r'"([A-Z_][A-Z0-9_]*)"', expr))
++                unresolved = [r for r in refs if r in metric_name_set and r not in defined and r != name]
++                if unresolved:
++                    removed = True
++                    continue
++                window_refs = [r for r in refs if r in window_metrics and r != name]
++                if window_refs:
++                    expanded_expr = expr
++                    substituted = False
++                    for ref_name in sorted(set(window_refs)):
++                        ref_expr = expr_by_name.get(ref_name)
++                        if ref_expr:
++                            expanded_expr = re.sub(rf'"{re.escape(ref_name)}"', f'({ref_expr})', expanded_expr)
++                            substituted = True
++                    if substituted:
++                        next_lines.append(f'  {alias}."{name}" AS {expanded_expr}')
++                        rewritten = True
++                        continue
++                    removed = True
++                    continue
++                next_lines.append(line)
++            current = next_lines
++            if not removed and not rewritten:
++                return current

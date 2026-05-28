@@ -9,20 +9,35 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+# Reconfigure stdout/stderr to use UTF-8 to support emoji characters on Windows terminals
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8')
+
+
 def find_latest_debug_dir() -> Path:
-    """Find the most recent debug output directory."""
+    """Find the most recent debug output directory containing raw_fabric_model.json."""
     debug_root = Path("output/debug")
     if not debug_root.exists():
         print("❌ No debug output found. Run deployment first.")
         sys.exit(1)
     
-    dirs = sorted([d for d in debug_root.iterdir() if d.is_dir()], 
-                  key=lambda x: x.stat().st_mtime, reverse=True)
-    if not dirs:
-        print("❌ No debug directories found.")
-        sys.exit(1)
+    # Recursively find all raw_fabric_model.json files
+    model_files = list(debug_root.glob("**/raw_fabric_model.json"))
+    if not model_files:
+        # Fall back to finding any directories as before if none found
+        dirs = sorted([d for d in debug_root.iterdir() if d.is_dir()], 
+                      key=lambda x: x.stat().st_mtime, reverse=True)
+        if not dirs:
+            print("❌ No debug directories found.")
+            sys.exit(1)
+        return dirs[0]
     
-    return dirs[0]
+    # Sort model files by modification time of the file or their parent directory
+    model_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+    return model_files[0].parent
+
 
 def extract_fabric_model_ddl(model_path: Path) -> str:
     """Extract DDL from raw_fabric_model.json."""
@@ -172,28 +187,33 @@ def main():
     print("🔍 SEMANTIC VIEW DEBUG ANALYSIS")
     print("="*70 + "\n")
     
-    # Find latest debug directory
-    debug_dir = find_latest_debug_dir()
-    print(f"📂 Found debug directory: {debug_dir.name}")
-    
-    # Check for model output
-    model_file = debug_dir / "raw_fabric_model.json"
-    if not model_file.exists():
-        print(f"❌ No model file found at {model_file}")
+    # Try to find the latest DDL SQL file under output/debug
+    debug_root = Path("output/debug")
+    if not debug_root.exists():
+        print("❌ No debug output found. Run deployment first.")
         sys.exit(1)
+        
+    sql_files = list(debug_root.glob("**/*.sql"))
+    if not sql_files:
+        print("❌ No SQL files found under output/debug.")
+        sys.exit(1)
+        
+    sql_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+    ddl_file = sql_files[0]
+    print(f"📄 Found latest DDL file: {ddl_file.name}")
+    print(f"📂 Location: {ddl_file.parent}\n")
     
-    print(f"📄 Reading model: {model_file.name}\n")
-    
-    # Extract DDL
-    ddl = extract_fabric_model_ddl(model_file)
-    if not ddl:
-        print("⚠️  Could not extract DDL from model file")
+    try:
+        ddl = ddl_file.read_text(encoding="utf-8")
+    except Exception as e:
+        print(f"❌ Error reading DDL file: {e}")
         sys.exit(1)
     
     ddl_lines = len(ddl.split('\n'))
     print(f"📊 DDL Statistics:")
     print(f"   Total lines: {ddl_lines}")
     print(f"   Total size: {len(ddl):,} bytes\n")
+
     
     # Analyze issues
     print("🔎 Scanning for known issues...\n")
@@ -217,7 +237,7 @@ def main():
     with open(report_file, 'w', encoding='utf-8') as f:
         f.write("SEMANTIC VIEW DEBUG ANALYSIS REPORT\n")
         f.write("="*70 + "\n\n")
-        f.write(f"Debug Directory: {debug_dir}\n")
+        f.write(f"Debug Directory: {ddl_file.parent}\n")
         f.write(f"DDL Lines: {ddl_lines}\n\n")
         f.write("ISSUES FOUND:\n")
         f.write("-"*70 + "\n")

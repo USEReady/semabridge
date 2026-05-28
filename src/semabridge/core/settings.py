@@ -77,6 +77,10 @@ class SnowflakeConfig(BaseSettings):
             "or 'entity_suffix' (e.g. REGION_ACC)."
         ),
     )
+    strict_osi_validation: bool = Field(
+        default=False,
+        description="If True, OSI preflight validation errors will raise exceptions and abort deployment",
+    )
     
     @field_validator("account")
     @classmethod

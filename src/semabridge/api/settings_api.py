@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from semabridge.api.deps import get_db
 from semabridge.auth.deps import get_current_user
 from semabridge.repository.orm.models import LocalFolder, UserCredential
+from semabridge.connectors.schema_manager import clear_schema_cache
 
 logger = logging.getLogger("semabridge.api.settings")
 
@@ -259,6 +260,13 @@ def save_secret(
     )
 
 
+@router.post("/schema/refresh", status_code=status.HTTP_200_OK)
+def refresh_schema_cache_endpoint(current_user=Depends(get_current_user)) -> dict:
+    """Clear cached Snowflake schema metadata so next deploy reloads it."""
+    clear_schema_cache()
+    return {"status": "ok", "message": "Schema cache cleared"}
+
+
 @router.delete("/secrets/{key}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_secret(
     key: str,
@@ -292,4 +300,4 @@ def delete_secret(
     if result.rowcount == 0:
         raise HTTPException(status_code=404, detail=f"Secret '{normalized_key}' not found.")
 
-    logger.info("API secret '%s' deleted for user %d.", normalized_key, current_user.id)
+    logger.info("API secret '%s' deleted for user %d.", normalized_key, current_user.id)

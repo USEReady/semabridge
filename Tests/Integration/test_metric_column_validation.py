@@ -161,6 +161,7 @@ class TestMetricColumnValidation:
 
     def test_normalize_metric_column_references_quotes_reserved_word_value(self, emitter):
         """Test that _normalize_metric_column_references quotes the 'VALUE' reserved word."""
+        emitter._id.suppress_reserved = False
         metric_sql = 'sf."VALUE"'
         metric_name = "value_metric"
         dataset_col_lookup = {"salesfact": {"VALUE"}}
@@ -175,6 +176,7 @@ class TestMetricColumnValidation:
 
     def test_normalize_metric_column_references_quotes_unquoted_reserved_word_value(self, emitter):
         """Test that _normalize_metric_column_references quotes an unquoted 'VALUE' reserved word."""
+        emitter._id.suppress_reserved = False
         metric_sql = 'SUM(sf.VALUE)'
         metric_name = "value_metric"
         dataset_col_lookup = {"salesfact": {"VALUE"}}
@@ -246,9 +248,7 @@ class TestMetricColumnValidation:
         )
 
         assert translated is not None
-        assert 'SUM(sf."REVENUE"::FLOAT) OVER (' in translated
-        assert 'PARTITION BY sf."YEAR"' in translated
-        assert 'ORDER BY sf."DATE"' in translated
+        assert 'SUM(CASE WHEN sf."COL_DATE" >= DATE_TRUNC(\'YEAR\', MAX_DATE) AND sf."COL_DATE" <= MAX_DATE THEN sf."REVENUE"::FLOAT END)' in translated
 
     def test_basic_fallback_sply_uses_window_when_offset_present(self, emitter, monkeypatch):
         """SPLY keeps universal window fallback even when offset key exists."""
@@ -277,11 +277,7 @@ class TestMetricColumnValidation:
         )
 
         assert translated is not None
-        assert 'LAG(SUM(sf."REVENUE"::FLOAT), 12) OVER (' in translated
-        # Fixed: Now uses actual MONTH and YEAR dimension columns instead of scalar functions
-        # (required for Snowflake semantic model compliance)
-        assert 'PARTITION BY sf."MONTH"' in translated
-        assert 'ORDER BY sf."YEAR", sf."MONTH"' in translated
+        assert 'SUM(CASE WHEN YEAR(sf."COL_DATE") = YEAR(MAX_DATE) - 1 AND sf."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC(\'YEAR\', MAX_DATE)) AND DATEADD(YEAR, -1, MAX_DATE) THEN sf."REVENUE"::FLOAT END)' in translated
 
     def test_warns_for_non_sync_friendly_time_intelligence_dax(self, emitter, caplog):
         """Unsupported TI functions should emit a warn-only parser guidance message."""
@@ -423,7 +419,7 @@ class TestMetricColumnValidation:
             metric_names={"SPEND_OF_TOTAL", "TOTAL_SPEND"},
         )
         # Note: Now produces ::FLOAT as required for Snowflake numeric metrics.
-        assert 'SUM(SPEND_FACT.TRANSACTION_USD_AMOUNT::FLOAT)' in repaired
+        assert 'SUM(SPEND_FACT."TRANSACTION_USD_AMOUNT"::FLOAT)' in repaired
         assert 'SUM("SPEND_FACT")' not in repaired
 
     def test_repair_preserves_real_metric_aggregate_wrappers(self, emitter):
@@ -447,7 +443,7 @@ class TestMetricColumnValidation:
         # Existing metric wrapper is handled by wrapper rewrite to direct metric ref,
         # while the invalid table-name wrapper is repaired to a physical column.
         assert '"TOTAL_SPEND"' in repaired
-        assert 'SUM(SPEND_FACT.TRANSACTION_USD_AMOUNT::FLOAT)' in repaired
+        assert 'SUM(SPEND_FACT."TRANSACTION_USD_AMOUNT"::FLOAT)' in repaired
 
     def test_partition_identifier_prefers_metric_entity_alias(self, emitter):
         """Qualify partition key within metric entity when resolvable there."""
@@ -816,7 +812,7 @@ class TestBooleanSumHandling:
 
         ddl = emitter.generate_ddls_from_osi(model)[0]
 
-        assert 'FABRICMODEL_DATA."FABRICMODEL_DATA_SUM_OF_QUANTITY" AS SUM(FABRICMODEL_DATA."QUANTITY")' in ddl
+        assert 'FABRICMODEL_DATA."FABRICMODEL_DATA_SUM_OF_QUANTITY" AS SUM(FABRICMODEL_DATA."QUANTITY"::FLOAT)' in ddl
         assert 'SUM(ORDERS."QUANTITY"::FLOAT)' not in ddl
 
 

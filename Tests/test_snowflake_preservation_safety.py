@@ -140,7 +140,7 @@ def test_existing_table_validation_checks_columns() -> None:
         "DIM": {"exists": True, "columns": ["DIM_ID"], "table_name": 'TEST_SCHEMA."DIM"'},
     }
 
-    errors = emitter._validate_relationships_measures_on_existing_tables(MagicMock(), model, existing_tables, False)
+    errors, _ = emitter._validate_relationships_measures_on_existing_tables(MagicMock(), model, existing_tables, False)
 
     assert any("missing from_columns" in error for error in errors)
     assert not any("source_column" in error for error in errors)
@@ -197,6 +197,6 @@ def test_existing_table_validation_detects_type_mismatches() -> None:
         },
     }
 
-    errors = emitter._validate_relationships_measures_on_existing_tables(MagicMock(), model, existing_tables, False)
+    errors, _ = emitter._validate_relationships_measures_on_existing_tables(MagicMock(), model, existing_tables, False)
 
     assert any("column type mismatch" in error for error in errors)

@@ -1,0 +1,31 @@
+date_table_patterns:
+  - dim_date
+  - calendar
+  - date
+  - fiscal_calendar
+  - dates
+
+date_column_patterns:
+  - cal_dt
+  - date
+  - calendar_date
+  - business_date
+
+year_column_patterns:
+  - year
+  - cal_yr
+  - fiscal_year
+
+month_column_patterns:
+  - month
+  - cal_mo
+  - cal_month
+
+quarter_column_patterns:
+  - quarter
+  - cal_qtr
+
+monthindex_column_patterns:
+  - monthindex
+  - cal_mnth_num
+  - month_index

@@ -50,6 +50,22 @@ class SnowflakeBehavior(BaseModel):
             "during deployment instead of destructive CREATE OR REPLACE"
         )
     )
+    auto_create_enriched_view: bool = Field(
+        default=True,
+        description="Automatically create enriched view with pre-computed columns and anchors"
+    )
+    auto_execute_precompute: bool = Field(
+        default=True,
+        description="Automatically execute pre-compute suggestions"
+    )
+    use_enriched_view_for_metrics: bool = Field(
+        default=True,
+        description="Use the enriched view as the source for metrics"
+    )
+    source_table_mapping: dict[str, str] = Field(
+        default_factory=dict,
+        description="Map fact table name to enriched view name"
+    )
 
 class FabricBehavior(BaseModel):
     """Fabric/PowerBI behavior controls."""

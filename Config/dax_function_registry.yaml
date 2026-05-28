@@ -1,0 +1,37 @@
+# DAX function registry for deterministic AST renderer
+# type: window | scalar | expr
+# template variables: {arg0}, {arg1}, {arg2}, {table_alias}, {date_alias}
+
+TOTALYTD:
+  type: window
+  template: |
+    {arg0} OVER (
+        PARTITION BY {date_alias}."YEAR"
+        ORDER BY {date_alias}."DATE"
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    )
+TOTALMTD:
+  type: window
+  template: |
+    {arg0} OVER (
+        PARTITION BY {date_alias}."YEAR", {date_alias}."MONTH"
+        ORDER BY {date_alias}."DATE"
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    )
+TOTALQTD:
+  type: window
+  template: |
+    {arg0} OVER (
+        PARTITION BY {date_alias}."YEAR", {date_alias}."QUARTER"
+        ORDER BY {date_alias}."DATE"
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    )
+DIVIDE:
+  type: scalar
+  template: "DIV0({arg0}, {arg1})"
+IF:
+  type: expr
+  template: "CASE WHEN {arg0} THEN {arg1} ELSE {arg2} END"
+ISBLANK:
+  type: expr
+  template: "({arg0} IS NULL)"

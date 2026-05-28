@@ -10,9 +10,7 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
+from starlette.middleware.base import BaseHTTPMiddleware  # kept for AuthMiddleware compat
 
 from semabridge.api.services.connection_api_service import _get_msal_app, _last_poll_time, _poll_sessions, _poll_sessions_lock
 from semabridge.api.services.project_api_service import (
@@ -513,35 +511,66 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.debug('Database engine disposed on shutdown')
 
 
-class RequestResponseLoggingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next) -> Response:
-        skip_paths = ['/api/health', '/docs', '/redoc', '/openapi.json']
-        if request.url.path in skip_paths:
-            return await call_next(request)
+class RequestResponseLoggingMiddleware:
+    """Pure ASGI logging middleware.
 
-        method = request.method
-        path = request.url.path
-        query_string = request.url.query
+    Replaces BaseHTTPMiddleware to avoid the Starlette `call_next()` /
+    `asyncio.CancelledError` crash that occurs on Windows when a client
+    disconnects mid-request or a long-running operation is cancelled.
+    BaseHTTPMiddleware wraps requests in a background task; when that task
+    is cancelled the CancelledError bubbles up through call_next() and can
+    kill the server worker. A pure ASGI middleware has no such wrapper and
+    therefore handles cancellation gracefully.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        skip_paths = {'/api/health', '/docs', '/redoc', '/openapi.json'}
+        path = scope.get("path", "")
+        if path in skip_paths:
+            await self.app(scope, receive, send)
+            return
+
+        method = scope.get("method", "")
+        query_string = scope.get("query_string", b"").decode("utf-8", errors="replace")
         log_msg = f'[REQUEST] {method} {path}'
         if query_string:
             log_msg += f'?{query_string}'
-
         logger.info(log_msg)
+
         start_time = time.time()
+        status_code = 0
+
+        async def send_wrapper(message):
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message.get("status", 0)
+            await send(message)
+
         try:
-            response = await call_next(request)
+            await self.app(scope, receive, send_wrapper)
+        except asyncio.CancelledError:
+            # Client disconnected — log but do not re-raise to avoid crashing
+            # the server worker (especially common on Windows ProactorEventLoop).
+            elapsed = time.time() - start_time
+            logger.debug(f'[CANCELLED] {method} {path} ({elapsed:.2f}s) — client disconnected')
+            return
         except Exception:
             elapsed = time.time() - start_time
             logger.exception(f'[EXCEPTION] {method} {path} ({elapsed:.2f}s)')
             raise
+
         elapsed = time.time() - start_time
-
-        if response.status_code >= 400:
-            logger.warning(f'[RESPONSE] {method} {path} -> {response.status_code} ({elapsed:.2f}s)')
+        if status_code >= 400:
+            logger.warning(f'[RESPONSE] {method} {path} -> {status_code} ({elapsed:.2f}s)')
         else:
-            logger.info(f'[RESPONSE] {method} {path} -> {response.status_code} ({elapsed:.2f}s)')
-
-        return response
+            logger.info(f'[RESPONSE] {method} {path} -> {status_code} ({elapsed:.2f}s)')
 
 
 def configure_app(app: FastAPI) -> FastAPI:

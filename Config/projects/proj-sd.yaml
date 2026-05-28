@@ -41,6 +41,6 @@ project_id: proj-sd
 display_name: sd
 target:
   type: databricks
-owner_user_id: '1'
+owner_user_id: '3'
 project_metadata:
-  owner_user_id: '1'
+  owner_user_id: '3'

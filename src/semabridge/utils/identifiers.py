@@ -114,20 +114,31 @@ class IdentifierSanitizer:
     @staticmethod
     def is_physical_source_column(source_expr: str) -> bool:
         """
-        Determine if a source expression is a physical table reference.
-
-        Physical format: ``TABLE.COLUMN`` (e.g., ``L_CUSTOMER.CUSTOMER_ID``)
-        Logical format: anything else (e.g., ``[Sales].Amount`` or ``Amount``)
-
-        Args:
-            source_expr: Source expression string
-
-        Returns:
-            True if the expression matches TABLE.COLUMN pattern, False otherwise
+        Determine if a source expression is a physical table reference or plain column.
+        Filters out complex calculated formulas (which contain functions or operations).
         """
         if not source_expr:
             return False
-        return bool(_PHYSICAL_SOURCE_PATTERN.match(source_expr))
+        source_expr = source_expr.strip()
+        
+        # Strip quotes and standard bracket notations for comparison
+        clean = source_expr.replace('"', '').replace('[', '.').replace(']', '')
+        
+        # Check for function calls (parentheses) or operators indicating complex logical formulas
+        if any(char in clean for char in ['(', ')', '+', '*', '/', '=', '<', '>', ',']):
+            return False
+            
+        # Ignore expressions with arithmetic subtraction/dash unless it's a simple name
+        # Snowflake/Databricks column identifiers typically don't have spaces or mathematical symbols
+        if '-' in clean and ' ' in clean:
+            return False
+            
+        # Check that it splits into at most 2 parts (e.g. TABLE.COLUMN or COLUMN)
+        parts = [p.strip() for p in clean.split('.') if p.strip()]
+        if len(parts) <= 2:
+            return True
+            
+        return False
 
     def sanitize_column(self, name: str) -> str:
         """

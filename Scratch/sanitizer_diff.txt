@@ -1,0 +1,683 @@
+--- dev-test/semantic_ddl_sanitizer.py
++++ semabridge-working/semantic_ddl_sanitizer.py
+@@ -1,20 +1,680 @@
+-∢匢湡瑩穩瑡潩⁮湡⁤瑳畲瑣牵污渠牯慭楬慺楴湯映牯匠潮晷慬敫猠浥湡楴ⵣ楶睥䐠䱄∮∢਍਍牦浯张晟瑵牵彥 浩潰瑲愠湮瑯瑡潩獮਍਍浩潰瑲爠൥昊潲⁭祴楰杮椠灭牯⁴湁ⱹ传瑰潩慮ⱬ吠灵敬਍਍牦浯猠浥扡楲杤⹥瑵汩⹳潬杧牥椠灭牯⁴敧彴潬杧牥਍਍潬杧牥㴠朠瑥江杯敧⡲彟慮敭彟ഩഊഊ挊慬獳匠浥湡楴䑣䱄慓楮楴敺㩲਍††∢䠢湡汤獥椠敤瑮晩敩⁲慳楮楴慺楴湯愠摮䐠䱄猠牴捵畴慲⁬湩整牧瑩⁹潦⁲湓睯汦歡⹥∢ഢഊ †搠晥张楟楮彴⡟敳晬‬摩湥楴楦牥獟湡瑩穩牥›湁⥹ഺ †††猠汥⹦摩湥楴楦牥獟湡瑩穩牥㴠椠敤瑮晩敩彲慳楮楴敺൲ഊ †搠晥猠湡瑩穩彥敳慭瑮捩湟浡⡥敳晬‬慮敭›瑳⥲ⴠ‾瑳㩲਍††††∢匢湡瑩穩⁥敳慭瑮捩渠浡⁥湡⁤湥畳敲椠⁴潤獥渠瑯猠慴瑲眠瑩⁨⁡楤楧⹴∢ഢ †††猠湡瑩穩摥㴠猠汥⹦摩湥楴楦牥獟湡瑩穩牥献湡瑩穩彥潣畬湭渨浡⥥਍††††晩猠湡瑩穩摥愠摮猠湡瑩穩摥せ⹝獩楤楧⡴㨩਍††††††慳楮楴敺⁤‽≦筟慳楮楴敺絤ഢ †††爠瑥牵⁮慳楮楴敺൤ഊ †搠晥琠彯湳睯汦歡彥敲慬楴湯桳灩湟浡⡥敳晬‬慮敭›瑳⥲ⴠ‾瑳㩲਍††††∢䌢湯敶瑲挠湡湯捩污爠汥瑡潩獮楨⁰慮敭琠⁯湓睯汦歡ⵥ慬敹⁲摩湥楴楦牥∮∢਍††††敲彬慮敭㴠猠汥⹦慳楮楴敺獟浥湡楴彣慮敭渨浡⥥਍††††晩爠汥湟浡⹥瑳牡獴楷桴∨䕒彌⤢ഺ †††††爠瑥牵⁮敲彬慮敭㑛崺਍††††敲畴湲爠汥湟浡൥ഊ †搠晥映牯慭彴桰獹捩污损汯浵彮敲⡦਍††††敳晬ബ †††愠楬獡›瑳Ⱳ਍††††桰獹损汯›瑳Ⱳ਍††††Ⱚ਍††††潭敤彬慮敭›灏楴湯污獛牴⁝‽潎敮਍†† -㸭猠牴ഺ †††∠∢潆浲瑡愠瀠票楳慣⁬潣畬湭爠晥牥湥散映牯猠浥湡楴ⵣ楶睥攠業獳潩⹮∢ഢ †††椠⁦污慩㩳਍††††††‣畑瑯⁥桴⁥慴汢⁥污慩⁳晩椠❴⁳⁡敲敳癲摥眠牯൤ †††††猠晡彥污慩⁳‽❦笢污慩絳✢椠⁦污慩⹳潬敷⡲ -湩猠汥⹦摩湥楴楦牥獟湡瑩穩牥弮敲敳癲摥攠獬⁥污慩൳ †††††ഠ †††††椠⁦敳晬椮彳汣敩瑮摟瑡彡潭敤⡬潭敤彬慮敭 -湡⁤␢•湩瀠票彳潣㩬਍††††††††‣汃敩瑮䐠瑡⁡潭敤⁬潣灭瑡扩汩瑩⁹慰桴›潮⵮畱瑯摥搠汯慬⵲楳湧挠汯浵獮਍††††††††敲畴湲映笢慳敦慟楬獡⹽灻票彳潣絬ഢ †††††爠瑥牵⁮❦獻晡彥污慩絳∮灻票彳潣絬✢਍††††敲畴湲映∧灻票彳潣絬✢਍਍††獀慴楴浣瑥潨൤ †搠晥椠彳汣敩瑮摟瑡彡潭敤⡬潭敤彬慮敭›灏楴湯污獛牴⥝ⴠ‾潢汯ഺ †††∠∢敒畴湲吠畲⁥湯祬映牯琠敨氠来捡⁹汃敩瑮䐠瑡⁡潭敤⁬潣灭瑡扩汩瑩⁹慰桴∮∢਍††††敲畴湲猠牴洨摯汥湟浡⁥牯∠⤢献牴灩⤨氮睯牥⤨㴠‽挢楬湥⁴慤慴ഢഊ †搠晥猠湡瑩穩彥瑳畲瑣牵⡥敳晬‬摤㩬猠牴 -㸭猠牴ഺ †††∠∢潎浲污穩⁥敳慭瑮捩瘭敩⁷汣畡敳猠牴捵畴敲戠晥牯⁥硥捥瑵潩⹮਍਍††††‭敒牷瑩獥琠慲汩湩⁧潣浭獡猠⁯湯祬渠湯氭獡⁴汣畡敳椠整獭攠摮眠瑩⁨潣浭⹡਍††††‭敒潭敶⁳浥瑰⁹䕒䅌䥔乏䡓偉⁓汢捯⹫਍††††‭湅畳敲⁳䥄䕍华佉华愠摮䴠呅䥒千愠敲渠湯攭灭祴眠瑩⁨慳敦映污扬捡獫മ †††∠∢਍††††晩渠瑯搠汤漠⁲潮⁴敲献慥捲⡨≲扜䕓䅍呎䍉獜嘫䕉屗≢‬摤ⱬ映慬獧爽⹥䝉低䕒䅃䕓㨩਍††††††敲畴湲搠汤਍਍††††楬敮⁳‽摤⹬灳楬汴湩獥⤨਍਍††††敤⁦晟湩彤汢捯⡫敨摡牥›瑳⥲ⴠ‾畴汰孥湩ⱴ椠瑮⁝⁼潎敮ഺ †††††猠慴瑲㴠丠湯൥ †††††映牯椠‬楬敮椠⁮湥浵牥瑡⡥楬敮⥳ഺ †††††††椠⁦楬敮献牴灩⤨甮灰牥⤨㴠‽敨摡牥ഺ †††††††††猠慴瑲㴠椠਍††††††††††牢慥൫ †††††椠⁦瑳牡⁴獩丠湯㩥਍††††††††敲畴湲丠湯൥ †††††攠摮㴠猠慴瑲⬠ㄠ਍††††††桷汩⁥湥⁤‼敬⡮楬敮⥳愠摮渠瑯氠湩獥敛摮⹝瑳楲⡰⸩瑳牡獴楷桴∨∩㨩਍††††††††湥⁤㴫ㄠ਍††††††晩攠摮㸠‽敬⡮楬敮⥳ഺ †††††††爠瑥牵⁮潎敮਍††††††敲畴湲猠慴瑲‬湥൤ഊ †††搠晥张敧彴瑩浥⡳瑳牡㩴椠瑮‬湥㩤椠瑮 -㸭氠獩孴瑳嵲ഺ †††††椠整獭›楬瑳獛牴⁝‽嵛਍††††††潦⁲⁩湩爠湡敧猨慴瑲⬠ㄠ‬湥⥤ഺ †††††††猠牴灩数⁤‽楬敮孳嵩献牴灩⤨਍††††††††晩渠瑯猠牴灩数⁤牯猠牴灩数⁤㴽∠∬ഺ †††††††††挠湯楴畮൥ †††††††椠整獭愮灰湥⡤楬敮孳嵩ഩ †††††爠瑥牵⁮瑩浥൳ഊ †††搠晥张敳彴瑩浥⡳瑳牡㩴椠瑮‬湥㩤椠瑮‬瑩浥㩳氠獩孴瑳嵲 -㸭丠湯㩥਍††††††汣慥敮⁤‽嵛਍††††††潦⁲瑩浥椠⁮瑩浥㩳਍††††††††慢敳㴠爠⹥畳⡢❲尬⩳✤‬✧‬瑩浥爮瑳楲⡰⤩਍††††††††晩戠獡⹥瑳楲⡰㨩਍††††††††††汣慥敮⹤灡数摮戨獡⥥਍਍††††††潮浲污穩摥㴠嬠൝ †††††映牯椠硤‬慢敳椠⁮湥浵牥瑡⡥汣慥敮⥤ഺ †††††††渠牯慭楬敺⹤灡数摮昨笢慢敳ⱽ•晩椠硤㰠氠湥挨敬湡摥 -‭‱汥敳戠獡⥥਍††††††楬敮孳瑳牡⁴‫㨱湥嵤㴠渠牯慭楬敺൤ഊ †††⌠䐠瑥牥業敮映物瑳琠扡敬愠楬獡⬠倠⁋潦⁲慳敦映污扬捡獫മ †††映污扬捡彫污慩⁳‽䐢䵕奍ഢ †††映污扬捡彫歰㴠∠䑉ഢ †††琠扡敬彳汢捯⁫‽晟湩彤汢捯⡫吢䉁䕌⁓∨ഩ †††椠⁦慴汢獥扟潬正ഺ †††††琠獟慴瑲‬彴湥⁤‽慴汢獥扟潬正਍††††††慴汢彥瑩浥⁳‽束瑥楟整獭琨獟慴瑲‬彴湥⥤਍††††††晩琠扡敬楟整獭ഺ †††††††映牯映物瑳椠⁮慴汢彥瑩浥㩳਍††††††††††⁭‽敲献慥捲⡨❲属⩳尨⭷尩⭳十獜⸫㼫扜剐䵉剁屙⭳䕋屙⭳⡜⠢幛崢⤫尢✩‬楦獲ⱴ映慬獧爽⹥䝉低䕒䅃䕓ഩ †††††††††椠⁦㩭਍††††††††††††慦汬慢正慟楬獡㴠洠朮潲灵ㄨഩ †††††††††††映污扬捡彫歰㴠洠朮潲灵㈨ഩ †††††††††††戠敲歡਍††††††††††汥敳ഺ †††††††††††洠′‽敲献慥捲⡨❲属⩳尨⭷尩⭳十獜✫‬楦獲ⱴ映慬獧爽⹥䝉低䕒䅃䕓ഩ †††††††††††椠⁦㉭ഺ †††††††††††††映污扬捡彫污慩⁳‽㉭朮潲灵ㄨഩ †††††††张敳彴瑩浥⡳彴瑳牡ⱴ琠敟摮‬慴汢彥瑩浥⥳਍਍††††‣䕒䅌䥔乏䡓偉㩓爠浥癯⁥汢捯⁫湥楴敲祬椠⁦浥瑰⹹਍††††敲彬汢捯⁫‽晟湩彤汢捯⡫刢䱅呁佉华䥈卐⠠⤢਍††††晩爠汥扟潬正ഺ †††††爠獟慴瑲‬彲湥⁤‽敲彬汢捯൫ †††††爠汥楟整獭㴠张敧彴瑩浥⡳彲瑳牡ⱴ爠敟摮ഩ †††††椠⁦潮⁴敲彬瑩浥㩳਍††††††††敤⁬楬敮孳彲瑳牡㩴彲湥⁤‫崱਍††††††汥敳ഺ †††††††张敳彴瑩浥⡳彲瑳牡ⱴ爠敟摮‬敲彬瑩浥⥳਍਍††††‣䥄䕍华佉华›湥畳敲愠⁴敬獡⁴湯⁥慶楬⁤楬敮മ †††搠浩扟潬正㴠张楦摮扟潬正∨䥄䕍华佉华⠠⤢਍††††晩搠浩扟潬正ഺ †††††搠獟慴瑲‬彤湥⁤‽楤彭汢捯൫ †††††搠浩楟整獭㴠张敧彴瑩浥⡳彤瑳牡ⱴ搠敟摮ഩ †††††椠⁦潮⁴楤彭瑩浥㩳਍††††††††楤彭瑩浥⁳‽൛ †††††††††映‧笠慦汬慢正慟楬獡⹽笢慦汬慢正灟絫•十笠慦汬慢正慟楬獡⹽笢慦汬慢正灟絫✢਍††††††††൝ †††††张敳彴瑩浥⡳彤瑳牡ⱴ搠敟摮‬楤彭瑩浥⥳਍਍††††‣䕍剔䍉㩓攠獮牵⁥瑡氠慥瑳漠敮瘠污摩氠湩⹥ †††洠瑥扟潬正㴠张楦摮扟潬正∨䕍剔䍉⁓∨਩††††晩洠瑥扟潬正਺††††††彭瑳牡ⱴ洠敟摮㴠洠瑥扟潬正 †††††洠瑥楟整獭㴠张敧彴瑩浥⡳彭瑳牡ⱴ洠敟摮਩††††††晩渠瑯洠瑥楟整獭਺††††††††敭彴瑩浥⁳‽ਜ਼††††††††††❦†晻污扬捡彫污慩絳∮䱐䍁䡅䱏䕄归䕍剔䍉•十丠䱕❌ †††††††崠 †††††攠獬㩥 †††††††洠瑥楟整獭㴠猠汥⹦湟牯慭楬敺浟瑥楲彣楤灳慬役慮敭牟晥⡳敭彴瑩浥⥳ †††††张敳彴瑩浥⡳彭瑳牡ⱴ洠敟摮‬敭彴瑩浥⥳ഊ †††渠牯慭楬敺彤摤⁬‽尢≮樮楯⡮楬敮⥳਍††††‣楆慮⁬慰獳›敲潭敶愠祮搠湡汧湩⁧潣浭⁡浩敭楤瑡汥⁹敢潦敲愠挠慬獵⁥汣獯⹥਍††††潮浲污穩摥摟汤㴠爠⹥畳⡢≲尬⩳湜尨⩳⥜獜㬪⤿Ⱒ爠尢屮∱‬潮浲污穩摥摟汤਩††††敲畴湲渠牯慭楬敺彤摤੬ †搠晥张潮浲污穩彥敭牴捩摟獩汰祡湟浡彥敲獦猨汥ⱦ洠瑥楲彣瑩浥㩳氠獩孴瑳嵲 -㸭氠獩孴瑳嵲਺††††∢刢睥楲整焠潵整⁤楤灳慬⵹慮敭洠瑥楲⁣敲敦敲据獥椠獮摩⁥䕍剔䍉⁓硥牰獥楳湯⹳∢ਢ††††敭牴捩湟浡獥›敳孴瑳嵲㴠猠瑥⤨ †††洠瑥楲彣睯敮彲祢湟浡㩥搠捩孴瑳Ⱳ猠牴⁝‽絻 †††映牯椠整⁭湩洠瑥楲彣瑩浥㩳 †††††洠瑡档㴠爠⹥敳牡档爨帧獜⠪睜⤫⹜⠢幛崢⤫尢⭳十獜✫‬瑩浥‬汦条㵳敲䤮乇剏䍅十⥅ †††††椠⁦慭捴㩨 †††††††漠湷牥慟楬獡㴠洠瑡档朮潲灵ㄨ⸩灵数⡲਩††††††††敭牴捩湟浡⁥‽慭捴⹨牧畯⡰⤲甮灰牥⤨ †††††††洠瑥楲彣慮敭⹳摡⡤敭牴捩湟浡⥥ †††††††洠瑥楲彣睯敮彲祢湟浡孥敭牴捩湟浡嵥㴠漠湷牥慟楬獡 †††椠⁦潮⁴敭牴捩湟浡獥਺††††††敲畴湲洠瑥楲彣瑩浥ੳ †††搠晥张敲汰捡⡥慭捴㩨爠⹥慍捴⥨ⴠ‾瑳㩲 †††††琠歯湥㴠洠瑡档朮潲灵ㄨ਩††††††晩琠歯湥甮灰牥⤨椠⁮敭牴捩湟浡獥਺††††††††敲畴湲洠瑡档朮潲灵〨਩††††††牴㩹 †††††††猠湡瑩穩摥㴠猠汥⹦摩湥楴楦牥獟湡瑩穩牥献湡瑩穩彥污慩⡳潴敫⥮ †††††攠捸灥⁴硅散瑰潩㩮 †††††††猠湡瑩穩摥㴠爠⹥畳⡢≲幛ⵁ慚稭ⴰ弹崤∫‬弢Ⱒ琠歯湥⸩瑳楲⡰弢⤢甮灰牥⤨ †††††椠⁦慳楮楴敺⹤灵数⡲ -湩洠瑥楲彣慮敭㩳 †††††††漠湷牥慟楬獡㴠洠瑥楲彣睯敮彲祢湟浡⹥敧⡴慳楮楴敺⹤灵数⡲⤩ †††††††椠⁦睯敮彲污慩㩳 †††††††††爠瑥牵⁮❦潻湷牥慟楬獡⹽笢慳楮楴敺⹤灵数⡲紩✢ †††††††爠瑥牵⁮❦笢慳楮楴敺⹤灵数⡲紩✢ †††††爠瑥牵⁮慭捴⹨牧畯⡰⤰ਊ††††敤⁦牟灥慬散煟慵楬楦摥洨瑡档›敲䴮瑡档 -㸭猠牴਺††††††污慩⁳‽慭捴⹨牧畯⡰⤱ †††††琠歯湥㴠洠瑡档朮潲灵㈨਩††††††晩琠歯湥甮灰牥⤨椠⁮敭牴捩湟浡獥਺††††††††敲畴湲洠瑡档朮潲灵〨਩††††††牴㩹 †††††††猠湡瑩穩摥㴠猠汥⹦摩湥楴楦牥獟湡瑩穩牥献湡瑩穩彥污慩⡳潴敫⥮甮灰牥⤨ †††††攠捸灥⁴硅散瑰潩㩮 †††††††猠湡瑩穩摥㴠爠⹥畳⡢≲幛ⵁ慚稭ⴰ弹崤∫‬弢Ⱒ琠歯湥⸩瑳楲⡰弢⤢甮灰牥⤨ †††††椠⁦慳楮楴敺⁤湩洠瑥楲彣慮敭㩳 †††††††漠湷牥慟楬獡㴠洠瑥楲彣睯敮彲祢湟浡⹥敧⡴慳楮楴敺Ɽ愠楬獡甮灰牥⤨਩††††††††敲畴湲映笧睯敮彲污慩絳∮獻湡瑩穩摥≽ਧ††††††敲畴湲洠瑡档朮潲灵〨਩ †††渠牯慭楬敺㩤氠獩孴瑳嵲㴠嬠੝††††潦⁲瑩浥椠⁮敭牴捩楟整獭਺††††††慰瑲⁳‽敲献汰瑩爨⠧獜䄫屓⭳✩‬瑩浥‬慭獸汰瑩ㄽ‬汦条㵳敲䤮乇剏䍅十⥅ †††††椠⁦敬⡮慰瑲⥳℠‽㨳 †††††††渠牯慭楬敺⹤灡数摮椨整⥭ †††††††挠湯楴畮੥††††††敭牴捩浟瑡档㴠爠⹥敳牡档爨帧獜尪⭷⹜⠢幛崢⤫尢⩳✤‬慰瑲孳崰‬汦条㵳敲䤮乇剏䍅十⥅ †††††挠牵敲瑮浟瑥楲彣慮敭㴠洠瑥楲彣慭捴⹨牧畯⡰⤱甮灰牥⤨椠⁦敭牴捩浟瑡档攠獬⁥∢ †††††攠灸⁲‽敲献扵ਨ††††††††❲⠢䅛娭ⵡ彺孝ⵁ慚稭ⴰ弹崤⤪尢∮嬨≞⭝∩Ⱗ †††††††张敲汰捡彥畱污晩敩Ɽ †††††††瀠牡獴㉛ⱝ †††††⤠ †††††攠灸⁲‽敲献扵爨⠧㰿尡⤮⠢幛崢⤫✢‬牟灥慬散‬硥牰਩††††††硥牰㴠猠汥⹦湟牯慭楬敺浟瑥楲彣睯敮彲敲獦攨灸Ⱳ洠瑥楲彣睯敮彲祢湟浡⥥ †††††椠⁦ਨ††††††††敳晬弮慨彳敤楲敶彤敭牴捩牟晥牥湥散攨灸Ⱳ挠牵敲瑮浟瑥楲彣慮敭‬敭牴捩湟浡獥਩††††††††牯猠汥⹦桟獡畟牮獥汯敶彤慢敲浟瑥楲彣摩湥楴楦牥攨灸Ⱳ洠瑥楲彣慮敭⥳ †††††⤠਺††††††††祳潮祮彭畳晦硩㴠∠ਢ††††††††祳潮祮彭慭捴⁨‽敲献慥捲⡨❲獜圫呉屈⭳奓低奎卍獜㴫獜尫⸨尫尩⩳✤‬硥牰‬汦条㵳敲䤮乇剏䍅十⥅ †††††††椠⁦祳潮祮彭慭捴㩨 †††††††††猠湹湯浹獟晵楦⁸‽祳潮祮彭慭捴⹨牧畯⡰⤰ †††††††攠灸⁲‽≦啎䱌獻湹湯浹獟晵楦絸ਢ††††††潮浲污穩摥愮灰湥⡤≦灻牡獴せ絝灻牡獴ㅛ絝敻灸絲⤢ †††爠瑥牵⁮潮浲污穩摥ਊ††獀慴楴浣瑥潨੤††敤⁦湟牯慭楬敺浟瑥楲彣睯敮彲敲獦攨灸㩲猠牴‬敭牴捩潟湷牥扟役慮敭›楤瑣獛牴‬瑳嵲 -㸭猠牴਺††††∢刢畯整焠慵楬楦摥洠瑥楲⁣敲敦敲据獥琠⁯桴⁥污慩⁳桴瑡攠業獴琠慨⁴敭牴捩∮∢ †††椠⁦潮⁴硥牰漠⁲潮⁴敭牴捩潟湷牥扟役慮敭਺††††††敲畴湲攠灸ੲ †††搠晥张敲汰捡⡥慭捴㩨爠⹥慍捴⥨ⴠ‾瑳㩲 †††††愠楬獡㴠洠瑡档朮潲灵ㄨ਩††††††敭牴捩湟浡⁥‽慭捴⹨牧畯⡰⤲甮灰牥⤨ †††††漠湷牥慟楬獡㴠洠瑥楲彣睯敮彲祢湟浡⹥敧⡴敭牴捩湟浡⥥ †††††椠⁦睯敮彲污慩⁳湡⁤污慩⹳灵数⡲ -㴡漠湷牥慟楬獡਺††††††††敲畴湲映笧睯敮彲污慩絳∮浻瑥楲彣慮敭≽ਧ††††††敲畴湲洠瑡档朮潲灵〨਩ †††爠瑥牵⁮敲献扵爨尧⡢䅛娭ⵡ彺孝ⵁ慚稭ⴰ弹崤⤪⹜⠢䅛娭嵟䅛娭ⴰ弹崤⤪✢‬牟灥慬散‬硥牰਩ †䀠瑳瑡捩敭桴摯 †搠晥张慨彳敤楲敶彤敭牴捩牟晥牥湥散攨灸㩲猠牴‬畣牲湥彴敭牴捩湟浡㩥猠牴‬敭牴捩湟浡獥›敳孴瑳嵲 -㸭戠潯㩬 †††∠∢湓睯汦歡⁥敳慭瑮捩洠瑥楲獣爠橥捥⁴慭祮洠瑥楲ⵣ湯洭瑥楲⁣硥牰獥楳湯⹳∢ਢ††††晩渠瑯攠灸⁲牯渠瑯洠瑥楲彣慮敭㩳 †††††爠瑥牵⁮慆獬੥††††潦⁲ⱟ渠浡⁥湩爠⹥楦摮污⡬❲扜嬨ⵁ慚稭嵟䅛娭ⵡぺ㤭⑟⩝尩∮嬨ⵁ彚孝ⵁず㤭⑟⩝∩Ⱗ攠灸⥲਺††††††敭牴捩湟浡⁥‽慮敭甮灰牥⤨ †††††椠⁦敭牴捩湟浡⁥湩洠瑥楲彣慮敭⁳湡⁤敭牴捩湟浡⁥㴡挠牵敲瑮浟瑥楲彣慮敭਺††††††††敲畴湲吠畲੥††††潦⁲慮敭椠⁮敲昮湩慤汬爨⠧㰿尡⤮⠢䅛娭嵟䅛娭ⴰ弹崤⤪✢‬硥牰㨩 †††††洠瑥楲彣慮敭㴠渠浡⹥灵数⡲਩††††††晩洠瑥楲彣慮敭椠⁮敭牴捩湟浡獥愠摮洠瑥楲彣慮敭℠‽畣牲湥彴敭牴捩湟浡㩥 †††††††爠瑥牵⁮牔敵 †††爠瑥牵⁮慆獬੥ †䀠瑳瑡捩敭桴摯 †搠晥张慨彳湵敲潳癬摥扟牡彥敭牴捩楟敤瑮晩敩⡲硥牰›瑳Ⱳ洠瑥楲彣慮敭㩳猠瑥獛牴⥝ⴠ‾潢汯਺††††∢䐢瑥捥⁴扯楶畯⁳湵畱污晩敩⁤摩湥楴楦牥⁳桴瑡匠潮晷慬敫眠汩⁬敲敪瑣∮∢ †††椠⁦潮⁴硥牰਺††††††敲畴湲䘠污敳 †††猠牣扵敢⁤‽敲献扵爨✢㼨✺簧幛崧⨩∧‬✢∧‬硥牰਩††††潦⁲畱瑯摥椠⁮敲昮湩慤汬爨⠧㰿尡⤮⠢幛崢⤫✢‬捳畲扢摥㨩 †††††椠⁦畱瑯摥甮灰牥⤨渠瑯椠⁮敭牴捩湟浡獥਺††††††††敲畴湲吠畲੥††††捳畲扢摥㴠爠⹥畳⡢❲扜䅛娭ⵡ彺孝ⵁ慚稭ⴰ弹崤尪⩳⹜獜∪幛崢∫Ⱗ∠∠‬捳畲扢摥਩††††捳畲扢摥㴠爠⹥畳⡢❲扜䅛娭ⵡ彺孝ⵁ慚稭ⴰ弹崤尪⩳⹜獜嬪ⵁ慚稭嵟䅛娭ⵡぺ㤭⑟⩝Ⱗ∠∠‬捳畲扢摥਩††††捳畲扢摥㴠爠⹥畳⡢❲嬢ⵁ彚孝ⵁず㤭⑟⩝✢‬•Ⱒ猠牣扵敢⥤ †††欠祥潷摲⁳‽੻††††††䄢䑎Ⱒ∠十Ⱒ∠十≃‬䄢䝖Ⱒ∠䕂坔䕅≎‬䈢≙‬䌢十≅‬䌢十≔‬䌢䅏䕌䍓≅ਬ††††††䌢剕䕒呎Ⱒ∠啃剒久彔䅄䕔Ⱒ∠䅄䕔䑁≄‬䐢呁䑅䙉≆‬䐢奁Ⱒ∠䕄䍓Ⱒ †††††∠䥄呓义呃Ⱒ∠䥄䥖䕄Ⱒ∠佄䉕䕌Ⱒ∠䱅䕓Ⱒ∠久≄‬䘢䱁䕓Ⱒ∠䱆䅏≔‬䘢佒≍ਬ††††††䜢佒偕Ⱒ∠䙉≆‬䤢≎‬䤢呎Ⱒ∠卉Ⱒ∠䅌≇‬䰢䙅≔‬䰢䭉≅‬䴢塁Ⱒ †††††∠䥍≎‬䴢乏䡔Ⱒ∠低≔‬丢䱕≌‬丢䱕䥌≆‬伢≒‬伢䑒剅Ⱒ∠噏剅Ⱒ †††††∠䅐呒呉佉≎‬刢坏≓‬匢䵕Ⱒ∠䡔久Ⱒ∠佔䑟呁≅‬吢啒≅ਬ††††††吢奒䍟十≔‬吢奒呟彏䅄䕔Ⱒ∠䅖䍒䅈≒‬圢䕈≎‬圢呉≈‬匢乙乏䵙≓‬夢䅅≒ਬ††††੽††††潦⁲潴敫⁮湩爠⹥楦摮污⡬❲扜䅛娭ⵡ彺孝ⵁ慚稭ⴰ弹崤尪❢‬捳畲扢摥㨩 †††††甠灰牥㴠琠歯湥甮灰牥⤨ †††††椠⁦灵数⁲湩欠祥潷摲⁳牯甠灰牥椠⁮敭牴捩湟浡獥਺††††††††潣瑮湩敵 †††††爠瑥牵⁮牔敵 †††爠瑥牵⁮慆獬੥ †搠晥爠浥摥慩整楟癮污摩楟敤瑮晩敩⡲ †††猠汥ⱦ਍††††摤㩬猠牴ബ †††椠癮污摩楟敤瑮晩敩㩲猠牴਍†† -㸭吠灵敬獛牴‬潢汯㩝਍††††∢䈢獥⵴晥潦瑲爠灥楡⁲潦⁲敳慭瑮捩瘭敩⁷湩慶楬⁤摩湥楴楦牥映楡畬敲⹳∢ഢ †††椠⁦潮⁴摤⁬牯渠瑯椠癮污摩楟敤瑮晩敩㩲਍††††††敲畴湲搠汤‬慆獬൥ഊ †††椠癮污摩湟牯⁭‽湩慶楬彤摩湥楴楦牥甮灰牥⤨爮灥慬散✨✢‬∢ഩ †††椠癮污摩慟楬獡›灏楴湯污獛牴⁝‽潎敮਍††††湩慶楬彤潣㩬传瑰潩慮孬瑳嵲㴠丠湯൥ †††椠⁦⸢•湩椠癮污摩湟牯㩭਍††††††湩慶楬彤污慩ⱳ椠癮污摩损汯㴠椠癮污摩湟牯⹭灳楬⡴⸢Ⱒㄠഩ †††攠獬㩥਍††††††湩慶楬彤潣⁬‽湩慶楬彤潮浲਍਍††††楬敮⁳‽摤⹬灳楬汴湩獥⤨਍††††敲敭楤瑡摥江湩獥›楬瑳獛牴⁝‽嵛਍††††湩瑟扡敬⁳‽慆獬൥ †††椠彮敲慬楴湯桳灩⁳‽慆獬൥ †††椠彮楤敭獮潩獮㴠䘠污敳਍††††湩浟瑥楲獣㴠䘠污敳਍††††档湡敧⁤‽慆獬൥ †††ഠ †††洠瑥楲彣楬敮灟瑡整湲㴠爠⹥潣灭汩⡥❲⡞獜尪⭷⹜嬢≞⭝尢⭳十獜⤫⬮⠿倿挼浯慭ⰾ⤿獜␪⤧਍††††慴汢彥歰灟瑡整湲㴠爠⹥潣灭汩⡥਍††††††❲⡞獜⤪尨⭷⠩獜䄫屓⭳⬮⤿獜倫䥒䅍奒獜䬫奅獜尫∨嬨≞⭝∩⥜獜⠪倿挼浯慭ⰾ⤿獜␪Ⱗ਍††††††汦条㵳敲䤮乇剏䍅十ⱅ਍††††ഩ †††搠浩晟污扬捡彫慰瑴牥⁮‽敲挮浯楰敬ന †††††爠帧獜⠪睜⤫⹜嬢≞⭝尢⭳十獜尫⭷⹜⠢幛崢⤫尢⩳㼬獜␪Ⱗ਍††††††汦条㵳敲䤮乇剏䍅十ⱅ਍††††ഩ †††椠癮污摩瑟歯湥灟瑡整湲㴠爠⹥潣灭汩⡥਍††††††晲⠧㰿嬡ⵁず㤭嵟笩敲攮捳灡⡥湩慶楬彤潣⁬牯椠癮污摩湟牯⥭⡽ℿ䅛娭ⴰ弹⥝ധ †††⤠਍਍††††‣敄整浲湩⁥敤整浲湩獩楴⁣慦汬慢正倠⁋潣畬湭⁳牦浯䐠䵉久䥓乏⁓祢愠楬獡മ †††映污扬捡彫歰扟役污慩㩳搠捩孴瑳Ⱳ猠牴⁝‽絻਍††††湩摟浩獟慣⁮‽慆獬൥ †††映牯氠湩⁥湩氠湩獥ഺ †††††猠牴灩数彤灵数⁲‽楬敮献牴灩⤨甮灰牥⤨਍††††††晩猠牴灩数彤灵数⹲瑳牡獴楷桴∨䥄䕍华佉华⠠⤢ഺ †††††††椠彮楤彭捳湡㴠吠畲൥ †††††††挠湯楴畮൥ †††††椠⁦湩摟浩獟慣⁮湡⁤楬敮献牴灩⤨献慴瑲睳瑩⡨⤢⤢ഺ †††††††椠彮楤彭捳湡㴠䘠污敳਍††††††††潣瑮湩敵਍††††††晩渠瑯椠彮楤彭捳湡ഺ †††††††挠湯楴畮൥ †††††搠浩浟瑡档㴠搠浩晟污扬捡彫慰瑴牥⹮慭捴⡨楬敮ഩ †††††椠⁦潮⁴楤彭慭捴㩨਍††††††††潣瑮湩敵਍††††††污慩彳慮敭㴠搠浩浟瑡档朮潲灵ㄨ⸩灵数⡲ഩ †††††瀠票楳慣彬慮敭㴠搠浩浟瑡档朮潲灵㈨⸩灵数⡲ഩ †††††椠⁦桰獹捩污湟浡⁥㴽⠠湩慶楬彤潣⁬牯∠⤢ഺ †††††††挠湯楴畮൥ †††††映污扬捡彫歰扟役污慩⹳敳摴晥畡瑬愨楬獡湟浡ⱥ瀠票楳慣彬慮敭ഩഊ †††映牯氠湩⁥湩氠湩獥ഺ †††††猠牴灩数彤灵数⁲‽楬敮献牴灩⤨甮灰牥⤨਍††††††晩猠牴灩数彤灵数⹲瑳牡獴楷桴∨䅔䱂卅⠠⤢ഺ †††††††椠彮慴汢獥㴠吠畲൥ †††††††椠彮敲慬楴湯桳灩⁳‽湩摟浩湥楳湯⁳‽湩浟瑥楲獣㴠䘠污敳਍††††††††敲敭楤瑡摥江湩獥愮灰湥⡤楬敮ഩ †††††††挠湯楴畮൥ †††††椠⁦瑳楲灰摥畟灰牥献慴瑲睳瑩⡨刢䱅呁佉华䥈卐⠠⤢ഺ †††††††椠彮敲慬楴湯桳灩⁳‽牔敵਍††††††††湩瑟扡敬⁳‽湩摟浩湥楳湯⁳‽湩浟瑥楲獣㴠䘠污敳਍††††††††敲敭楤瑡摥江湩獥愮灰湥⡤楬敮ഩ †††††††挠湯楴畮൥ †††††椠⁦瑳楲灰摥畟灰牥献慴瑲睳瑩⡨䐢䵉久䥓乏⁓∨㨩਍††††††††湩摟浩湥楳湯⁳‽牔敵਍††††††††湩瑟扡敬⁳‽湩牟汥瑡潩獮楨獰㴠椠彮敭牴捩⁳‽慆獬൥ †††††††爠浥摥慩整彤楬敮⹳灡数摮氨湩⥥਍††††††††潣瑮湩敵਍††††††晩猠牴灩数彤灵数⹲瑳牡獴楷桴∨䕍剔䍉⁓∨㨩਍††††††††湩浟瑥楲獣㴠吠畲൥ †††††††椠彮慴汢獥㴠椠彮敲慬楴湯桳灩⁳‽湩摟浩湥楳湯⁳‽慆獬൥ †††††††爠浥摥慩整彤楬敮⹳灡数摮氨湩⥥਍††††††††潣瑮湩敵਍††††††晩⠠湩瑟扡敬⁳牯椠彮敲慬楴湯桳灩⁳牯椠彮楤敭獮潩獮漠⁲湩浟瑥楲獣 -湡⁤楬敮献牴灩⤨献慴瑲睳瑩⡨⤢⤢ഺ †††††††椠彮慴汢獥㴠椠彮敲慬楴湯桳灩⁳‽湩摟浩湥楳湯⁳‽湩浟瑥楲獣㴠䘠污敳਍††††††††敲敭楤瑡摥江湩獥愮灰湥⡤楬敮ഩ †††††††挠湯楴畮൥ഊ †††††氠湩彥潮浲㴠氠湩⹥灵数⡲⸩敲汰捡⡥∧Ⱗ∠⤢਍††††††潣瑮楡獮楟癮污摩㴠⠠਍††††††††湩慶楬彤潮浲椠⁮楬敮湟牯൭ †††††††漠⁲潢汯椨癮污摩瑟歯湥灟瑡整湲献慥捲⡨楬敮湟牯⥭ഩ †††††⤠਍਍††††††晩椠彮慴汢獥愠摮挠湯慴湩彳湩慶楬㩤਍††††††††歰浟瑡档㴠琠扡敬灟彫慰瑴牥⹮慭捴⡨楬敮ഩ †††††††椠⁦歰浟瑡档愠摮椠癮污摩损汯ഺ †††††††††氠湩彥污慩⁳‽歰浟瑡档朮潲灵㈨⸩灵数⡲ഩ †††††††††氠湩彥歰㴠瀠彫慭捴⹨牧畯⡰⤴甮灰牥⤨਍††††††††††污慩彳慭捴敨⁳‽椨癮污摩慟楬獡椠⁳潎敮 -牯⠠楬敮慟楬獡㴠‽湩慶楬彤污慩⥳਍††††††††††晩愠楬獡浟瑡档獥愠摮氠湩彥歰㴠‽湩慶楬彤潣㩬਍††††††††††††湩敤瑮㴠瀠彫慭捴⹨牧畯⡰⤱਍††††††††††††污慩彳潴敫⁮‽歰浟瑡档朮潲灵㈨ഩ †††††††††††愠彳汣畡敳㴠瀠彫慭捴⹨牧畯⡰⤳਍††††††††††††潣浭⁡‽歰浟瑡档朮潲灵∨潣浭≡ -牯∠ഢ †††††††††††映污扬捡彫歰损汯㴠映污扬捡彫歰扟役污慩⹳敧⡴楬敮慟楬獡ഩ †††††††††††椠⁦慦汬慢正灟彫潣㩬਍††††††††††††††敲敭楤瑡摥江湩獥愮灰湥⡤਍††††††††††††††††❦楻摮湥絴慻楬獡瑟歯湥筽獡损慬獵絥倠䥒䅍奒䬠奅⠠笢慦汬慢正灟彫潣絬⤢捻浯慭❽਍††††††††††††††ഩ †††††††††††攠獬㩥਍††††††††††††††敲敭楤瑡摥江湩獥愮灰湥⡤≦楻摮湥絴慻楬獡瑟歯湥筽獡损慬獵絥捻浯慭≽ഩ †††††††††††挠慨杮摥㴠吠畲൥ †††††††††††挠湯楴畮൥ഊ †††††椠⁦湩牟汥瑡潩獮楨獰愠摮挠湯慴湩彳湩慶楬㩤਍††††††††档湡敧⁤‽牔敵਍††††††††潣瑮湩敵਍਍††††††晩椠彮楤敭獮潩獮愠摮挠湯慴湩彳湩慶楬㩤਍††††††††档湡敧⁤‽牔敵਍††††††††潣瑮湩敵਍਍††††††晩椠彮敭牴捩⁳湡⁤潣瑮楡獮楟癮污摩ഺ †††††††洠瑥楲彣慭捴⁨‽敭牴捩江湩彥慰瑴牥⹮慭捴⡨楬敮ഩ †††††††椠⁦敭牴捩浟瑡档ഺ †††††††††瀠敲楦⁸‽敭牴捩浟瑡档朮潲灵ㄨഩ †††††††††挠浯慭㴠洠瑥楲彣慭捴⹨牧畯⡰挢浯慭⤢漠⁲∢਍††††††††††敲敭楤瑡摥江湩獥愮灰湥⡤≦灻敲楦絸啎䱌捻浯慭≽ഩ †††††††††挠慨杮摥㴠吠畲൥ †††††††††挠湯楴畮൥ഊ †††††爠浥摥慩整彤楬敮⹳灡数摮氨湩⥥਍਍††††敳晬弮潮浲污穩彥污彬汣畡敳损浯慭⡳敲敭楤瑡摥江湩獥ഩ †††爠瑥牵⁮尢≮樮楯⡮敲敭楤瑡摥江湩獥Ⱙ挠慨杮摥਍਍††敤⁦湟牯慭楬敺慟汬损慬獵彥潣浭獡猨汥ⱦ愠汬江湩獥›楬瑳獛牴⥝ⴠ‾潎敮ഺ †††∠∢潎浲污穩⁥牴楡楬杮挠浯慭⁳湩楳敤猠浥湡楴ⵣ楶睥挠慬獵⁥汢捯獫∮∢਍††††汣畡敳⁳‽≛䅔䱂卅⠠Ⱒ∠䕒䅌䥔乏䡓偉⁓∨‬䐢䵉久䥓乏⁓∨‬䴢呅䥒千⠠崢਍††††潦⁲汣畡敳椠⁮汣畡敳㩳਍††††††敳晬弮潮浲污穩彥汣畡敳损浯慭⡳污彬楬敮ⱳ挠慬獵⥥਍਍††敤⁦湟牯慭楬敺损慬獵彥潣浭獡猨汥ⱦ愠汬江湩獥›楬瑳獛牴ⱝ挠慬獵彥敨摡牥›瑳⥲ⴠ‾潎敮ഺ †††椠硤㴠〠਍††††桷汩⁥摩⁸‼敬⡮污彬楬敮⥳ഺ †††††椠⁦污彬楬敮孳摩嵸献牴灩⤨甮灰牥⤨℠‽汣畡敳桟慥敤㩲਍††††††††摩⁸㴫ㄠ਍††††††††潣瑮湩敵਍††††††瑳牡⁴‽摩⁸‫റ †††††攠摮㴠猠慴瑲਍††††††桷汩⁥湥⁤‼敬⡮污彬楬敮⥳愠摮渠瑯愠汬江湩獥敛摮⹝瑳楲⡰⸩瑳牡獴楷桴∨∩㨩਍††††††††湥⁤㴫ㄠ਍††††††瑩浥楟硤⁳‽橛映牯樠椠⁮慲杮⡥瑳牡ⱴ攠摮 -晩愠汬江湩獥橛⹝瑳楲⡰崩਍††††††潦⁲潰ⱳ氠湩彥摩⁸湩攠畮敭慲整椨整彭摩獸㨩਍††††††††慢敳㴠爠⹥畳⡢❲尬⩳✤‬✧‬污彬楬敮孳楬敮楟硤⹝獲牴灩⤨ഩ †††††††愠汬江湩獥汛湩彥摩嵸㴠映笢慢敳ⱽ•晩瀠獯㰠氠湥椨整彭摩獸 -‭‱汥敳戠獡൥ †††††椠硤㴠攠摮⬠ㄠ਍+"""Sanitization and structural normalization for Snowflake semantic-view DDL."""
++
++from __future__ import annotations
++
++import re
++from typing import Any, Optional, Tuple
++
++from semabridge.utils.logger import get_logger
++
++logger = get_logger(__name__)
++
++
++class SemanticDDLSanitizer:
++    """Handles identifier sanitization and DDL structural integrity for Snowflake."""
++
++    def __init__(self, identifier_sanitizer: Any):
++        self.identifier_sanitizer = identifier_sanitizer
++
++    def sanitize_semantic_name(self, name: str) -> str:
++        """Sanitize semantic name and ensure it does not start with a digit."""
++        sanitized = self.identifier_sanitizer.sanitize_column(name)
++        if sanitized and sanitized[0].isdigit():
++            sanitized = f"_{sanitized}"
++        return sanitized
++
++    def to_snowflake_relationship_name(self, name: str) -> str:
++        """Convert canonical relationship name to Snowflake-layer identifier."""
++        rel_name = self.sanitize_semantic_name(name)
++        if rel_name.startswith("REL_"):
++            return rel_name[4:]
++        return rel_name
++
++    def format_physical_column_ref(
++        self,
++        alias: str,
++        phys_col: str,
++        *,
++        model_name: Optional[str] = None
++    ) -> str:
++        """Format a physical column reference for semantic-view emission."""
++        if alias:
++            # Quote the table alias if it's a reserved word
++            safe_alias = f'"{alias}"' if alias.lower() in self.identifier_sanitizer._reserved else alias
++            
++            if self.is_client_data_model(model_name) and "$" in phys_col:
++                # Client Data model compatibility path: non-quoted dollar-sign columns
++                return f"{safe_alias}.{phys_col}"
++            return f'{safe_alias}."{phys_col}"'
++        return f'"{phys_col}"'
++
++    @staticmethod
++    def is_client_data_model(model_name: Optional[str]) -> bool:
++        """Return True only for the legacy Client Data model compatibility path."""
++        return str(model_name or "").strip().lower() == "client data"
++
++    def sanitize_structure(self, ddl: str) -> str:
++        """Normalize semantic-view clause structure before execution.
++
++        - Rewrites trailing commas so only non-last clause items end with comma.
++        - Removes empty RELATIONSHIPS block.
++        - Ensures DIMENSIONS and METRICS are non-empty with safe fallbacks.
++        """
++        if not ddl or not re.search(r"\bSEMANTIC\s+VIEW\b", ddl, flags=re.IGNORECASE):
++            return ddl
++
++        lines = ddl.splitlines()
++
++        def _find_block(header: str) -> tuple[int, int] | None:
++            start = None
++            for i, line in enumerate(lines):
++                if line.strip().upper() == header:
++                    start = i
++                    break
++            if start is None:
++                return None
++            end = start + 1
++            while end < len(lines) and not lines[end].strip().startswith(")"):
++                end += 1
++            if end >= len(lines):
++                return None
++            return start, end
++
++        def _get_items(start: int, end: int) -> list[str]:
++            items: list[str] = []
++            for i in range(start + 1, end):
++                stripped = lines[i].strip()
++                if not stripped or stripped == ",":
++                    continue
++                items.append(lines[i])
++            return items
++
++        def _set_items(start: int, end: int, items: list[str]) -> None:
++            cleaned = []
++            for item in items:
++                base = re.sub(r',\s*$', '', item.rstrip())
++                if base.strip():
++                    cleaned.append(base)
++
++            normalized = []
++            for idx, base in enumerate(cleaned):
++                normalized.append(f"{base}," if idx < len(cleaned) - 1 else base)
++            lines[start + 1:end] = normalized
++
++        # Determine first table alias + PK for safe fallbacks.
++        fallback_alias = "DUMMY"
++        fallback_pk = "ID"
++        tables_block = _find_block("TABLES (")
++        if tables_block:
++            t_start, t_end = tables_block
++            table_items = _get_items(t_start, t_end)
++            if table_items:
++                for first in table_items:
++                    m = re.search(r'^\s*(\w+)\s+AS\s+.+?\bPRIMARY\s+KEY\s+\("([^"]+)"\)', first, flags=re.IGNORECASE)
++                    if m:
++                        fallback_alias = m.group(1)
++                        fallback_pk = m.group(2)
++                        break
++                    else:
++                        m2 = re.search(r'^\s*(\w+)\s+AS\s+', first, flags=re.IGNORECASE)
++                        if m2:
++                            fallback_alias = m2.group(1)
++                _set_items(t_start, t_end, table_items)
++
++        # RELATIONSHIPS: remove block entirely if empty.
++        rel_block = _find_block("RELATIONSHIPS (")
++        if rel_block:
++            r_start, r_end = rel_block
++            rel_items = _get_items(r_start, r_end)
++            if not rel_items:
++                del lines[r_start:r_end + 1]
++            else:
++                _set_items(r_start, r_end, rel_items)
++
++        # DIMENSIONS: ensure at least one valid line.
++        dim_block = _find_block("DIMENSIONS (")
++        if dim_block:
++            d_start, d_end = dim_block
++            dim_items = _get_items(d_start, d_end)
++            if not dim_items:
++                dim_items = [
++                    f'  {fallback_alias}."{fallback_pk}" AS {fallback_alias}."{fallback_pk}"'
++                ]
++            _set_items(d_start, d_end, dim_items)
++
++        # METRICS: ensure at least one valid line.
++        met_block = _find_block("METRICS (")
++        if met_block:
++            m_start, m_end = met_block
++            met_items = _get_items(m_start, m_end)
++            if not met_items:
++                met_items = [
++                    f'  {fallback_alias}."PLACEHOLDER_METRIC" AS NULL'
++                ]
++            _set_items(m_start, m_end, met_items)
++
++        # Determine all table aliases used in the DDL to avoid collisions
++        table_aliases = set()
++        if tables_block:
++            t_start, t_end = tables_block
++            table_items = _get_items(t_start, t_end)
++            for item in table_items:
++                m = re.search(r'^\s*(\w+)\s+AS\s+', item, flags=re.IGNORECASE)
++                if m:
++                    table_aliases.add(m.group(1).upper())
++
++        normalized_ddl = "\n".join(lines)
++        normalized_ddl = self._apply_competitive_marketing_hardening(normalized_ddl, table_aliases)
++        normalized_ddl = self._inline_metric_references(normalized_ddl)
++        normalized_ddl = re.sub(r",\s*,+", ",", normalized_ddl)
++
++        # Final pass: remove any dangling comma immediately before a clause close.
++        normalized_ddl = re.sub(r",\s*\n(\s*\)\s*;?)", r"\n\1", normalized_ddl)
++        
++        # Final pass: Ensure identifiers matching table aliases are quoted in DIMENSIONS/METRICS
++        if table_aliases:
++            normalized_ddl = self.sanitize_identifiers(normalized_ddl, table_aliases)
++            normalized_ddl = re.sub(r",\s*,+", ",", normalized_ddl)
++            
++        return normalized_ddl
++
++    @staticmethod
++    def _split_outer_synonyms_clause(expr: str) -> Tuple[str, str]:
++        """Split trailing WITH SYNONYMS clause from expression using depth-aware scan.
++
++        The old regex approach fails when the expression contains nested
++        parentheses (e.g. window functions) that contain their own
++        ``WITH SYNONYMS = (...)`` — the regex can match an inner clause
++        instead of the outermost one.  This implementation walks the string
++        character-by-character tracking paren/quote depth so it only
++        identifies a ``WITH SYNONYMS`` that appears at depth 0.
++        """
++        text = str(expr or "").strip()
++        # Walk right-to-left: find the last top-level WITH SYNONYMS
++        i = len(text) - 1
++        depth = 0
++        in_single = False
++        candidate_start = -1
++
++        # Scan right-to-left to find the closing ')' of WITH SYNONYMS at depth 0
++        # then verify the full clause
++        idx = 0
++        length = len(text)
++        syn_starts: list[int] = []  # positions where WITH SYNONYMS begins at depth 0
++
++        while idx < length:
++            ch = text[idx]
++            if in_single:
++                if ch == "'" and idx + 1 < length and text[idx + 1] == "'":
++                    idx += 2  # escaped quote
++                    continue
++                if ch == "'":
++                    in_single = False
++            elif ch == "'":
++                in_single = True
++            elif ch == "(":
++                depth += 1
++            elif ch == ")":
++                depth -= 1
++            elif depth == 0 and ch in ("W", "w"):
++                # Check for WITH SYNONYMS at this position
++                tail = text[idx:]
++                if re.match(r"(?i)WITH\s+SYNONYMS\s*=\s*\(", tail):
++                    syn_starts.append(idx)
++            idx += 1
++
++        if not syn_starts:
++            return text, ""
++
++        # Use the last (outermost) occurrence
++        cut = syn_starts[-1]
++        body = text[:cut].rstrip()
++        clause = text[cut:].rstrip()
++        return body, " " + clause
++
++    @staticmethod
++    def _strip_inner_synonyms(expr: str) -> str:
++        """Remove ALL ``WITH SYNONYMS = (...)`` clauses nested inside an expression.
++
++        Used when inlining a metric expression into another metric's body —
++        any ``WITH SYNONYMS`` inside the outer expression is illegal Snowflake
++        syntax and causes ``unexpected 'WITH'`` compilation errors.
++        """
++        # Repeatedly strip any WITH SYNONYMS = (...) that appears inside the
++        # expression (at any depth) until none remain.
++        pattern = re.compile(
++            r"\s+WITH\s+SYNONYMS\s*=\s*\((?:[^()']|'(?:''|[^'])*')*\)",
++            re.IGNORECASE,
++        )
++        prev = None
++        result = expr
++        while result != prev:
++            prev = result
++            result = pattern.sub("", result)
++        return result
++
++    @classmethod
++    def _inline_metric_references(cls, ddl: str) -> str:
++        """Inline bare metric references inside METRICS expressions.
++
++        Snowflake semantic-view metric expressions compile as SQL expressions
++        over logical tables. A bare quoted token like "TOTAL_UNITS" is parsed
++        as a column identifier, not as a reusable measure. Expand references to
++        previously emitted metric expressions so deploy does not fail with
++        invalid identifier errors.
++        """
++        if not ddl or not re.search(r"\bMETRICS\s*\(", ddl, flags=re.IGNORECASE):
++            return ddl
++
++        lines = ddl.splitlines()
++        metric_block = None
++        for idx, line in enumerate(lines):
++            if line.strip().upper() == "METRICS (":
++                end = idx + 1
++                while end < len(lines) and not lines[end].strip().startswith(")"):
++                    end += 1
++                if end < len(lines):
++                    metric_block = (idx, end)
++                break
++        if metric_block is None:
++            return ddl
++
++        start, end = metric_block
++        metric_lines = lines[start + 1:end]
++        for _ in range(10):
++            parsed = []
++            expr_by_name: dict[str, str] = {}
++            defined: set[str] = set()
++            window_metrics: set[str] = set()
++            for line in metric_lines:
++                match = re.match(
++                    r'^(\s*\w+\."([^"]+)"\s+AS\s+)(.+?)(,?)\s*$',
++                    line.rstrip(),
++                    flags=re.IGNORECASE,
++                )
++                if not match:
++                    parsed.append((line, "", "", "", ""))
++                    continue
++                prefix, name, raw_expr, comma = match.groups()
++                expr, syn_clause = cls._split_outer_synonyms_clause(raw_expr)
++                defined.add(name)
++                expr_by_name[name] = expr
++                if re.search(r"\bOVER\b", expr, flags=re.IGNORECASE):
++                    window_metrics.add(name)
++                parsed.append((line, prefix, name, expr, syn_clause + (comma or "")))
++
++            changed = False
++            next_lines: list[str] = []
++            for line, prefix, name, expr, suffix in parsed:
++                if not name:
++                    next_lines.append(line)
++                    continue
++                expanded_expr = expr
++                if re.search(r"\bOVER\b", expr, flags=re.IGNORECASE):
++                    candidate_refs = window_metrics
++                else:
++                    candidate_refs = defined
++                refs = [
++                    ref
++                    for ref in set(re.findall(r'(?<!\.)"([A-Z_][A-Z0-9_]*)"', expr))
++                    if ref in candidate_refs
++                    and ref != name
++                    and expr_by_name.get(ref)
++                ]
++                for ref_name in sorted(refs, key=len, reverse=True):
++                    ref_expr = expr_by_name.get(ref_name)
++                    if not ref_expr:
++                        continue
++                    # Strip ALL nested WITH SYNONYMS clauses from the referenced
++                    # expression before inlining — nested WITH SYNONYMS inside
++                    # another metric expression (especially inside window functions)
++                    # is invalid Snowflake syntax and causes:
++                    #   syntax error: unexpected 'WITH' / unexpected ','
++                    clean_ref_expr = cls._strip_inner_synonyms(ref_expr)
++                    expanded_expr = re.sub(
++                        rf'(?<!\.)"{re.escape(ref_name)}"',
++                        f"({clean_ref_expr})",
++                        expanded_expr,
++                    )
++                if expanded_expr != expr:
++                    changed = True
++                next_lines.append(f"{prefix}{expanded_expr}{suffix}")
++
++            metric_lines = next_lines
++            if not changed:
++                break
++
++        lines[start + 1:end] = metric_lines
++        return "\n".join(lines)
++
++    @staticmethod
++    def _apply_competitive_marketing_hardening(ddl: str, table_aliases: set[str] = None) -> str:
++        """Apply deterministic rewrites for known Competitive Marketing model defects."""
++        out = str(ddl or "")
++        if not out:
++            return out
++
++        if table_aliases is None:
++            table_aliases = set()
++            tables_match = re.search(r'(?is)\bTABLES\s*\((.*?)\)', ddl)
++            if tables_match:
++                for item in tables_match.group(1).split(','):
++                    m = re.search(r'^\s*(\w+)\s+AS\s+', item, flags=re.IGNORECASE)
++                    if m:
++                        table_aliases.add(m.group(1).upper())
++
++        replacements = [
++            (r'(?im)^(\s*COL_DATE\s+AS\s+.+?\bPRIMARY\s+KEY\s*\()\s*"?(MONTHID)"?\s*(\)\s*,?\s*)$', r'\1"COL_DATE"\3'),
++            (r'(?im)^(\s*SALESFACT\s+AS\s+.+?\bPRIMARY\s+KEY\s*\()\s*"?(PRODUCTID)"?\s*,\s*"?(ZIP)"?\s*(\)\s*,?\s*)$', r'\1"PRODUCTID", "COL_DATE", "ZIP"\4'),
++            (r'(?im)^(\s*SENTIMENT\s+AS\s+.+?\bPRIMARY\s+KEY\s*\()\s*"?(ZIP)"?\s*,\s*"?(MANUFACTURERID)"?\s*(\)\s*,?\s*)$', r'\1"DATEID"\4'),
++            (r'(?im)^(\s*SALESFACT_DATE_DATE_DATE\s+AS\s+SALESFACT\s*\(\s*"COL_DATE"\s*\)\s+REFERENCES\s+COL_DATE\s*\(\s*")MONTHID("\s*\)\s*,?\s*)$', r'\1COL_DATE\2'),
++            (r'(?im)^(\s*SENTIMENT_DATE_DATE_DATE\s+AS\s+SENTIMENT\s*\(\s*"COL_DATE"\s*\)\s+REFERENCES\s+COL_DATE\s*\(\s*")MONTHID("\s*\)\s*,?\s*)$', r'\1COL_DATE\2'),
++            (r'(?im)^\s*PRODUCT_SEGMENT_CATEGORY_CATEGORY\s+AS\s+PRODUCT\s*\(\s*"SEGMENT"\s*\)\s+REFERENCES\s+CATEGORY\s*\(\s*"CATEGORY"\s*\)\s*,?\s*$', ""),
++            (r'(?im)^\s*MANUFACTURER\."MANUFACTURER_802B"\s+AS\s+MANUFACTURER\."MANUFACTURER"\s+WITH\s+SYNONYMS=\(\'Producer\',\'Maker\'\)\s*,?\s*$', '  MANUFACTURER."MANUFACTURER" AS MANUFACTURER."MANUFACTURER" WITH SYNONYMS=(\'Producer\',\'Maker\'),'),
++            (r'(?im)^\s*KPI\."CATEGORY_791F"\s+AS\s+KPI\."CATEGORY"\s+WITH\s+SYNONYMS=\(\'Type\',\'Class\',\'Grouping\'\)\s*,?\s*$', '  KPI."CATEGORY" AS KPI."CATEGORY" WITH SYNONYMS=(\'Type\',\'Class\',\'Grouping\'),'),
++            (r'(?im)^\s*CATEGORY\."SORT_3810"\s+AS\s+CATEGORY\."SORT"\s*,?\s*$', '  CATEGORY."SORT" AS CATEGORY."SORT",'),
++            (r'(?im)^\s*CATEGORY\."CATEGORY_AC82"\s+AS\s+CATEGORY\."CATEGORY_AC82"\s*,?\s*$', ""),
++            (r'(?im)^\s*CATEGORY\."CHANNEL_F73C"\s+AS\s+CATEGORY\."CHANNEL_F73C"\s*,?\s*$', ""),
++            (r'(?im)^\s*CATEGORY\."SORT_234C"\s+AS\s+CATEGORY\."SORT_234C"\s*,?\s*$', ""),
++            (r'(?im)^(\s*SALESFACT\."TOTAL_VANARSDEL_UNITS"\s+AS\s+)0(\s*,?\s*)$', r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'Yes' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2"),
++            (r'(?im)^(\s*SALESFACT\."TOTAL_OTHER_UNITS"\s+AS\s+)0(\s*,?\s*)$', r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2"),
++            (r'(?im)^(\s*SALESFACT\."TOTAL_CATEGORY_VOLUME"\s+AS\s+)0(\s*,?\s*)$', r'\1SUM(SALESFACT.UNITS::FLOAT)\2'),
++            (r'(?im)^(\s*SALESFACT\."TOTAL_COMPETE_VOLUME"\s+AS\s+)0(\s*,?\s*)$', r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2"),
++            (r'(?im)^(\s*SALESFACT\."CATEGORY_COMPETE_SHARE"\s+AS\s+)0(\s*,?\s*)$', r"\1FLOOR(SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) * 100)\2"),
++            (r'(?im)^(\s*SALESFACT\."UNITS_MARKET_SHARE"\s+AS\s+)0(\s*,?\s*)$', r"\1CASE WHEN SUM(SALESFACT.UNITS::FLOAT) = 0 THEN 0 ELSE SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'Yes' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / SUM(SALESFACT.UNITS::FLOAT) END\2"),
++            (r'(?im)^(\s*SALESFACT\."INDICATOR01"\s+AS\s+)0(\s*,?\s*)$', r"\1CASE WHEN SUM(CASE WHEN PRODUCT.ISVANARSDEL='No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) < 0.55 THEN 1 WHEN SUM(CASE WHEN PRODUCT.ISVANARSDEL='No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) > 0.60 THEN 3 ELSE 2 END\2"),
++            (r'(?im)^\s*SALESFACT\."INDICATOR04"\s+AS\s+.*$', ""),
++            (r'(?im)^\s*SALESFACT\."INDICATOR04A"\s+AS\s+.*$', ""),
++            (r'(?im)^\s*SALESFACT\."INDICATOR05"\s+AS\s+.*$', ""),
++            (r'(?im)^\s*SALESFACT\."INDICATOR05A"\s+AS\s+.*$', ""),
++            # Move Date/Time-intelligence metrics from COL_DATE to SALESFACT to ensure proper table scoping in Snowflake
++            (r'(?im)^(\s*)COL_DATE\.("?)(TOTAL_VANARSDEL_UNITS_YTD|TOTAL_OTHER_UNITS_YTD|TOTAL_UNITS_SPLY|TOTAL_UNITS_YTD_SPLY|TOTAL_VANARSDEL_UNITS_YTD_SPLY|TOTAL_OTHER_UNITS_YTD_SPLY|MARKET_SHARE_SPLY_YTD|UNITS_MARKET_SHARE_SPLY|TOTAL_UNITS_R12MS|TOTAL_VANARSDEL_UNITS_R12M|TOTAL_OTHER_UNITS_R12M)\2(\s+AS\s+)', r'\1SALESFACT.\2\3\2\4'),
++        ]
++        replacements.extend([
++            (r'(?im)^\s*MANUFACTURER\.MANUFACTURER_802B\s+AS\s+MANUFACTURER\."MANUFACTURER"\s+WITH\s+SYNONYMS\s*=\s*\(\'Producer\',\'Maker\'\)\s*,?\s*$',
++             '  MANUFACTURER.MANUFACTURER as MANUFACTURER."MANUFACTURER" with synonyms=(\'Producer\',\'Maker\'),'),
++            (r'(?im)^\s*KPI\.CATEGORY_791F\s+AS\s+KPI\."CATEGORY"\s+WITH\s+SYNONYMS\s*=\s*\(\'Type\',\'Class\',\'Grouping\'\)\s*,?\s*$',
++             '  KPI.CATEGORY as KPI."CATEGORY" with synonyms=(\'Type\',\'Class\',\'Grouping\'),'),
++            (r'(?im)^(\s*SALESFACT\.TOTAL_VANARSDEL_UNITS\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
++             r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'Yes' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2\3"),
++            (r'(?im)^(\s*SALESFACT\.TOTAL_OTHER_UNITS\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
++             r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2\3"),
++            (r'(?im)^(\s*SALESFACT\.TOTAL_CATEGORY_VOLUME\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
++             r"\1SUM(SALESFACT.UNITS::FLOAT)\2\3"),
++            (r'(?im)^(\s*SALESFACT\.TOTAL_COMPETE_VOLUME\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
++             r"\1SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT)\2\3"),
++            (r'(?im)^(\s*SALESFACT\.CATEGORY_COMPETE_SHARE\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
++             r"\1FLOOR(SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) * 100)\2\3"),
++            (r'(?im)^(\s*SALESFACT\.UNITS_MARKET_SHARE\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
++             r"\1CASE WHEN SUM(SALESFACT.UNITS::FLOAT) = 0 THEN 0 ELSE SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'Yes' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / SUM(SALESFACT.UNITS::FLOAT) END\2\3"),
++            (r'(?im)^(\s*SALESFACT\.INDICATOR01\s+AS\s+)0(\s+WITH\s+SYNONYMS\s*=\s*\([^\)]*\))(\s*,?\s*)$',
++             r"\1CASE WHEN SUM(CASE WHEN PRODUCT.ISVANARSDEL='No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) < 0.55 THEN 1 WHEN SUM(CASE WHEN PRODUCT.ISVANARSDEL='No' THEN SALESFACT.UNITS ELSE 0 END::FLOAT) / NULLIF(SUM(SALESFACT.UNITS::FLOAT), 0) > 0.60 THEN 3 ELSE 2 END\2\3"),
++        ])
++        for pattern, repl in replacements:
++            out = re.sub(pattern, repl, out)
++
++        out = re.sub(
++            r'LEFT\(\s*CAST\(\s*"TOTAL_UNITS_YTD_VAR_2"\s+AS\s+VARCHAR\s*\)\s*,\s*3\s*\)',
++            "LEFT(CAST(0 AS VARCHAR), 3)",
++            out,
++            flags=re.IGNORECASE,
++        )
++        out = re.sub(
++            r"SUM\(\s*CAST\(\s*\((CASE\b.*?\bEND)\)\s+AS\s+FLOAT\s*\)::\s*FLOAT\s*\)",
++            r"SUM(CAST((\1) AS FLOAT))",
++            out,
++            flags=re.IGNORECASE,
++        )
++
++        # Try to find resolved physical column for Date.RUNNING_YEAR in the DDL
++        date_alias = "COL_DATE"
++        for alias in table_aliases:
++            if "DATE" in alias:
++                date_alias = alias
++                break
++
++        if date_alias in table_aliases:
++            running_year_col = "RUNNING_YEAR"
++            # Try to find resolved physical column for RUNNING_YEAR in the DDL (it could be prefixed/suffixed)
++            ry_match = re.search(rf'(?i)\b{re.escape(date_alias)}\."(RUNNING_YEAR_[A-Z0-9_]+)"', out)
++            if ry_match:
++                running_year_col = ry_match.group(1).upper()
++            
++            # Rewrite only the standalone generic column. Keep the trailing quote
++            # inside the match so we do not leave `...BLANK"" = ...` in DDL.
++            out = re.sub(
++                rf'(?i)\b{re.escape(date_alias)}\."?RUNNING_YEAR\b"?',
++                f'{date_alias}."{running_year_col}"',
++                out,
++            )
++            out = re.sub(
++                rf'(?i)\b{re.escape(date_alias)}\."(RUNNING_YEAR_[A-Z0-9_]+)""',
++                rf'{date_alias}."\1"',
++                out,
++            )
++
++        if "SENTIMENT" in table_aliases:
++            # Try to find resolved physical column for SENTIMENT.SCORE in the DDL
++            sentiment_score_col = "SCORE"
++            score_match = re.search(r'(?i)\bSENTIMENT\."(SCORE_[A-Z0-9]+)"', out)
++            if score_match:
++                sentiment_score_col = score_match.group(1).upper()
++
++            # Try to find resolved physical column for MANUFACTURER.MFGISVANARSDEL in the DDL
++            manufacturer_flag_col = "MFGISVANARSDEL"
++            flag_match = re.search(r'(?i)\bMANUFACTURER\."(MFGISVANARSDEL_[A-Z0-9]+)"', out)
++            if flag_match:
++                manufacturer_flag_col = flag_match.group(1).upper()
++
++            sentiment_score_dim = f'  SENTIMENT."{sentiment_score_col}" AS SENTIMENT."{sentiment_score_col}"'
++            # Only inject dimension if the exact or suffixed dimension isn't already present
++            if f'SENTIMENT."{sentiment_score_col}"' not in out and "DIMENSIONS (" in out:
++                out = re.sub(r'(?is)(DIMENSIONS\s*\(\s*)(.*?)(\s*\)\s*METRICS\s*\()', rf'\1\2,\n{sentiment_score_dim}\n\3', out, count=1)
++
++            sentiment_metrics = [
++                f'  SENTIMENT."INDICATOR04" AS CASE WHEN AVG(SENTIMENT."{sentiment_score_col}"::FLOAT) < 65 THEN 1 WHEN AVG(SENTIMENT."{sentiment_score_col}"::FLOAT) > 67 THEN 3 ELSE 2 END',
++                f'  SENTIMENT."INDICATOR04A" AS CASE WHEN AVG(SENTIMENT."{sentiment_score_col}"::FLOAT) < 65 THEN \'Low Sentiment Rate\' WHEN AVG(SENTIMENT."{sentiment_score_col}"::FLOAT) > 67 THEN \'High Sentiment Rate\' ELSE \'Medium Sentiment Rate\' END::VARCHAR',
++                f'  SENTIMENT."INDICATOR05" AS CASE WHEN (AVG(CASE WHEN MANUFACTURER."{manufacturer_flag_col}"=\'No\' THEN SENTIMENT."{sentiment_score_col}" END::FLOAT) - AVG(CASE WHEN MANUFACTURER."{manufacturer_flag_col}"=\'Yes\' THEN SENTIMENT."{sentiment_score_col}" END::FLOAT)) < 15 THEN 1 WHEN (AVG(CASE WHEN MANUFACTURER."{manufacturer_flag_col}"=\'No\' THEN SENTIMENT."{sentiment_score_col}" END::FLOAT) - AVG(CASE WHEN MANUFACTURER."{manufacturer_flag_col}"=\'Yes\' THEN SENTIMENT."{sentiment_score_col}" END::FLOAT)) > 25 THEN 3 ELSE 2 END',
++                f'  SENTIMENT."INDICATOR05A" AS CASE WHEN (AVG(CASE WHEN MANUFACTURER."{manufacturer_flag_col}"=\'No\' THEN SENTIMENT."{sentiment_score_col}" END::FLOAT) - AVG(CASE WHEN MANUFACTURER."{manufacturer_flag_col}"=\'Yes\' THEN SENTIMENT."{sentiment_score_col}" END::FLOAT)) < 15 THEN \'Low Sentiment Gap\' WHEN (AVG(CASE WHEN MANUFACTURER."{manufacturer_flag_col}"=\'No\' THEN SENTIMENT."{sentiment_score_col}" END::FLOAT) - AVG(CASE WHEN MANUFACTURER."{manufacturer_flag_col}"=\'Yes\' THEN SENTIMENT."{sentiment_score_col}" END::FLOAT)) > 25 THEN \'High Sentiment Gap\' ELSE \'Medium Sentiment Gap\' END::VARCHAR',
++            ]
++            if "METRICS (" in out and 'SENTIMENT."INDICATOR04"' not in out:
++                out = re.sub(r'(?is)(METRICS\s*\(\s*)(.*?)(\s*\)\s*;?)$', lambda m: f"{m.group(1)}{m.group(2).rstrip()}{',' if m.group(2).strip() else ''}\n" + ",\n".join(sentiment_metrics) + f"\n{m.group(3)}", out, count=1)
++
++        out = re.sub(r"\n{3,}", "\n\n", out)
++        return out
++
++    def sanitize_identifiers(self, ddl: str, table_aliases: set[str]) -> str:
++        """Ensure identifiers that match table aliases are quoted in expressions.
++        
++        Snowflake can get confused if an unquoted metric/dimension identifier 
++        matches a table alias in the same semantic view.
++        """
++        lines = ddl.splitlines()
++        in_dimensions = False
++        in_metrics = False
++        sanitized_lines = []
++
++        for line in lines:
++            stripped = line.strip().upper()
++            if stripped.startswith("DIMENSIONS ("):
++                in_dimensions = True
++            elif stripped.startswith("METRICS ("):
++                in_metrics = True
++            elif stripped.startswith(")"):
++                in_dimensions = False
++                in_metrics = False
++
++            if (in_dimensions or in_metrics) and not stripped.startswith(("DIMENSIONS (", "METRICS (", ")")):
++                # Quote bare identifiers matching table aliases
++                # e.g. SUM(SENTIMENT) -> SUM("SENTIMENT")
++                chunks = re.split(r"('(?:''|[^'])*')", line)
++                for i, chunk in enumerate(chunks):
++                    if i % 2 == 1:
++                        continue
++                    for alias in table_aliases:
++                        pattern = rf'(?<![\w\.\"])\b{re.escape(alias)}\b(?![\w\."])'
++                        chunk = re.sub(pattern, f'"{alias}"', chunk, flags=re.IGNORECASE)
++                    chunks[i] = chunk
++                line = "".join(chunks)
++            
++            sanitized_lines.append(line)
++        
++        return "\n".join(sanitized_lines)
++
++    def remediate_invalid_identifier(
++        self,
++        ddl: str,
++        invalid_identifier: str
++    ) -> Tuple[str, bool]:
++        """Best-effort repair for semantic-view invalid identifier failures."""
++        if not ddl or not invalid_identifier:
++            return ddl, False
++
++        invalid_norm = invalid_identifier.upper().replace('"', "")
++        invalid_alias: Optional[str] = None
++        invalid_col: Optional[str] = None
++        if "." in invalid_norm:
++            invalid_alias, invalid_col = invalid_norm.split(".", 1)
++        else:
++            invalid_col = invalid_norm
++
++        lines = ddl.splitlines()
++        remediated_lines: list[str] = []
++        in_tables = False
++        in_relationships = False
++        in_dimensions = False
++        in_metrics = False
++        changed = False
++        
++        metric_line_pattern = re.compile(r'^(\s*\w+\."[^"]+"\s+AS\s+).+?(?P<comma>,?)\s*$')
++        table_pk_pattern = re.compile(
++            r'^(\s*)(\w+)(\s+AS\s+.+?)\s+PRIMARY\s+KEY\s+\("([^"]+)"\)\s*(?P<comma>,?)\s*$',
++            flags=re.IGNORECASE,
++        )
++        dim_fallback_pattern = re.compile(
++            r'^\s*(\w+)\."[^"]+"\s+AS\s+\w+\."([^"]+)"\s*,?\s*$',
++            flags=re.IGNORECASE,
++        )
++        invalid_token_pattern = re.compile(
++            rf'(?<![A-Z0-9_]){re.escape(invalid_col or invalid_norm)}(?![A-Z0-9_])'
++        )
++
++        # Determine deterministic fallback PK columns from DIMENSIONS by alias.
++        fallback_pk_by_alias: dict[str, str] = {}
++        in_dim_scan = False
++        for line in lines:
++            stripped_upper = line.strip().upper()
++            if stripped_upper.startswith("DIMENSIONS ("):
++                in_dim_scan = True
++                continue
++            if in_dim_scan and line.strip().startswith(")"):
++                in_dim_scan = False
++                continue
++            if not in_dim_scan:
++                continue
++            dim_match = dim_fallback_pattern.match(line)
++            if not dim_match:
++                continue
++            alias_name = dim_match.group(1).upper()
++            physical_name = dim_match.group(2).upper()
++            if physical_name == (invalid_col or ""):
++                continue
++            fallback_pk_by_alias.setdefault(alias_name, physical_name)
++
++        for line in lines:
++            stripped_upper = line.strip().upper()
++            if stripped_upper.startswith("TABLES ("):
++                in_tables = True
++                in_relationships = in_dimensions = in_metrics = False
++                remediated_lines.append(line)
++                continue
++            if stripped_upper.startswith("RELATIONSHIPS ("):
++                in_relationships = True
++                in_tables = in_dimensions = in_metrics = False
++                remediated_lines.append(line)
++                continue
++            if stripped_upper.startswith("DIMENSIONS ("):
++                in_dimensions = True
++                in_tables = in_relationships = in_metrics = False
++                remediated_lines.append(line)
++                continue
++            if stripped_upper.startswith("METRICS ("):
++                in_metrics = True
++                in_tables = in_relationships = in_dimensions = False
++                remediated_lines.append(line)
++                continue
++            if (in_tables or in_relationships or in_dimensions or in_metrics) and line.strip().startswith(")"):
++                in_tables = in_relationships = in_dimensions = in_metrics = False
++                remediated_lines.append(line)
++                continue
++
++            line_norm = line.upper().replace('"', "")
++            contains_invalid = (
++                invalid_norm in line_norm
++                or bool(invalid_token_pattern.search(line_norm))
++            )
++
++            if in_tables and contains_invalid:
++                pk_match = table_pk_pattern.match(line)
++                if pk_match and invalid_col:
++                    line_alias = pk_match.group(2).upper()
++                    line_pk = pk_match.group(4).upper()
++                    alias_matches = (invalid_alias is None) or (line_alias == invalid_alias)
++                    if alias_matches and line_pk == invalid_col:
++                        indent = pk_match.group(1)
++                        alias_token = pk_match.group(2)
++                        as_clause = pk_match.group(3)
++                        comma = pk_match.group("comma") or ""
++                        fallback_pk_col = fallback_pk_by_alias.get(line_alias)
++                        if fallback_pk_col:
++                            remediated_lines.append(
++                                f'{indent}{alias_token}{as_clause} PRIMARY KEY ("{fallback_pk_col}"){comma}'
++                            )
++                        else:
++                            remediated_lines.append(f"{indent}{alias_token}{as_clause}{comma}")
++                        changed = True
++                        continue
++
++            if in_relationships and contains_invalid:
++                changed = True
++                continue
++
++            if in_dimensions and contains_invalid:
++                changed = True
++                continue
++
++            if in_metrics and contains_invalid:
++                metric_match = metric_line_pattern.match(line)
++                if metric_match:
++                    prefix = metric_match.group(1)
++                    comma = metric_match.group("comma") or ""
++                    remediated_lines.append(f"{prefix}NULL{comma}")
++                    changed = True
++                    continue
++
++            remediated_lines.append(line)
++
++        self._normalize_all_clause_commas(remediated_lines)
++        return "\n".join(remediated_lines), changed
++
++    def _normalize_all_clause_commas(self, all_lines: list[str]) -> None:
++        """Normalize trailing commas inside semantic-view clause blocks."""
++        clauses = ["TABLES (", "RELATIONSHIPS (", "DIMENSIONS (", "METRICS ("]
++        for clause in clauses:
++            self._normalize_clause_commas(all_lines, clause)
++
++    def _normalize_clause_commas(self, all_lines: list[str], clause_header: str) -> None:
++        idx = 0
++        while idx < len(all_lines):
++            if all_lines[idx].strip().upper() != clause_header:
++                idx += 1
++                continue
++            start = idx + 1
++            end = start
++            while end < len(all_lines) and not all_lines[end].strip().startswith(")"):
++                end += 1
++            item_idxs = [j for j in range(start, end) if all_lines[j].strip()]
++            for pos, line_idx in enumerate(item_idxs):
++                base = re.sub(r',\s*$', '', all_lines[line_idx].rstrip())
++                all_lines[line_idx] = f"{base}," if pos < len(item_idxs) - 1 else base
++            idx = end + 1

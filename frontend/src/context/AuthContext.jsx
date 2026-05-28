@@ -258,11 +258,18 @@ export function AuthProvider({ children }) {
 
   const register = useCallback(async (username, email, password) => {
     setError(null);
-    const res = await fetch(`${AUTH_BASE}/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, email, password }),
-    });
+    let res;
+    try {
+      res = await fetchWithTimeout(`${AUTH_BASE}/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, email, password }),
+      }, AUTH_REQUEST_TIMEOUT_MS);
+    } catch (err) {
+      const msg = err?.name === 'AbortError' ? 'Request timed out. Please try again.' : 'Network error. Please check your connection.';
+      setError(msg);
+      throw new Error(msg);
+    }
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       const msg = body.detail || `Registration failed (${res.status})`;
@@ -274,12 +281,19 @@ export function AuthProvider({ children }) {
 
   const login = useCallback(async (username, password) => {
     setError(null);
-    const res = await fetch(`${AUTH_BASE}/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ username, password }),
-    });
+    let res;
+    try {
+      res = await fetchWithTimeout(`${AUTH_BASE}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ username, password }),
+      }, AUTH_REQUEST_TIMEOUT_MS);
+    } catch (err) {
+      const msg = err?.name === 'AbortError' ? 'Request timed out. Please try again.' : 'Network error. Please check your connection.';
+      setError(msg);
+      throw new Error(msg);
+    }
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       const msg = body.detail || `Login failed (${res.status})`;

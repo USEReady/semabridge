@@ -67,6 +67,8 @@ class SnowflakeEmitter(BaseEmitter):
 
         self._live_schema_metadata: Dict[str, set[str]] = {}
         self._verified_tables: set[str] = set()
+        # Local mapping for enriched views when behavior config lacks an explicit mapping
+        self._enriched_view_mapping: Dict[str, str] = {}
 
         # ---------------------------------------------------------
         # Initialize Domain Managers
@@ -169,8 +171,12 @@ class SnowflakeEmitter(BaseEmitter):
                         if enriched_view and getattr(self.sf_behavior, 'use_enriched_view_for_metrics', False):
                             fact_table = self._identify_fact_table(model)
                             if fact_table:
-                                self.sf_behavior.source_table_mapping = getattr(self.sf_behavior, 'source_table_mapping', {}) or {}
-                                self.sf_behavior.source_table_mapping[fact_table] = enriched_view
+                                mapping = getattr(self.sf_behavior, 'source_table_mapping', None)
+                                if mapping is None:
+                                    # Keep mapping local to emitter instance
+                                    self._enriched_view_mapping[fact_table] = enriched_view
+                                else:
+                                    mapping[fact_table] = enriched_view
                                 logger.info(f"✅ Using enriched view {enriched_view} as source for {fact_table}")
 
                 
@@ -379,6 +385,16 @@ class SnowflakeEmitter(BaseEmitter):
 
     def generate_cortex_yaml_from_osi(self, osi: OSIModel) -> str:
         return _renderers.generate_cortex_yaml_from_osi(self, osi)
+
+    def _get_source_table_mapping(self) -> Dict[str, str]:
+        """Return effective source_table_mapping, merging behavior config and local enriched mapping.
+
+        Behavior-level mapping takes precedence over local emitter mapping.
+        """
+        mapping = getattr(self.sf_behavior, 'source_table_mapping', None) or {}
+        merged = dict(self._enriched_view_mapping or {})
+        merged.update(mapping or {})
+        return merged
 
     def deploy_cortex_yaml(self, cursor: Any, sml: SMLModel, yaml_content: str) -> None:
         """Upload and register Cortex Analyst YAML via a Snowflake internal stage.
@@ -992,9 +1008,13 @@ class SnowflakeEmitter(BaseEmitter):
             
             # Check if this is a CREATE TABLE statement
             if ddl_upper.startswith('CREATE TABLE') or 'CREATE OR REPLACE TABLE' in ddl_upper:
-                # Extract the table name from the DDL using regex (handles quoted identifiers)
-                match = re.search(r'(?:CREATE\s+(?:OR\s+REPLACE\s+)?TABLE)\s+(?:[^.\s]+\.)?["\']?([^"\'\s]+)["\']?', ddl, re.IGNORECASE)
-                ddl_table_name = match.group(1).upper() if match else None
+                # Extract the table name from the DDL (handles fully-qualified and quoted identifiers)
+                match = re.search(r'(?:CREATE\s+(?:OR\s+REPLACE\s+)?TABLE(?:\s+IF\s+NOT\s+EXISTS)?)\s+([^\s(]+)', ddl, re.IGNORECASE)
+                if match:
+                    full_name = match.group(1)
+                    ddl_table_name = full_name.split('.')[-1].strip('"').strip("'").upper()
+                else:
+                    ddl_table_name = None
                 
                 skip = False
                 if ddl_table_name:
@@ -1176,62 +1196,279 @@ class SnowflakeEmitter(BaseEmitter):
     def _auto_execute_precompute_suggestions(self, model, cursor) -> None:
         """
         Automatically execute pre-compute suggestions in Snowflake.
-        This eliminates manual ALTER TABLE commands.
+        Only adds denormalized columns to fact/bridge tables when the column
+        truly does NOT already exist in that table.
         """
         suggestions = self.semantic_view_builder._precompute_suggestions(model)
-        
+
         if not suggestions:
             return
-        
+
         logger.info("🚀 Auto-executing pre-compute suggestions...")
-        
-        # Data Engineering Explicit Fixes
-        fact_table = self._identify_fact_table(model)
-        if fact_table:
-            try:
-                cursor.execute(f"ALTER TABLE {fact_table} ADD COLUMN IF NOT EXISTS ATINDICATOR04 VARCHAR")
-                cursor.execute(f"ALTER TABLE {fact_table} ADD COLUMN IF NOT EXISTS ATINDICATOR05 VARCHAR")
-                logger.info(f"✅ Added missing explicit columns to {fact_table}")
-            except Exception as e:
-                pass
-        
+
+        rich_details = self.semantic_view_builder.get_precompute_details()
+        if rich_details:
+            logger.info(
+                "Pre-compute suggestions will be projected through enriched views; "
+                "skipping physical base-table mutation."
+            )
+            return
+
+        # Build a live lookup: table_name_upper -> set of existing column names (upper)
+        live_meta: dict[str, set[str]] = {}
+        if hasattr(self, 'semantic_view_builder') and hasattr(self.semantic_view_builder, 'live_schema_metadata'):
+            live_meta = {
+                k.upper(): {c.upper() for c in v}
+                for k, v in self.semantic_view_builder.live_schema_metadata.items()
+            }
+
+        if not live_meta:
+            sf_meta = self.schema_manager._fetch_schema_metadata(cursor)
+            if not sf_meta:
+                datasets = list(getattr(model, "datasets", []) or [])
+                sf_meta = self.schema_manager._fetch_model_table_metadata(cursor, datasets)
+            if sf_meta:
+                self._live_schema_metadata.update(sf_meta)
+                live_meta = {
+                    k.upper(): {c.upper() for c in v}
+                    for k, v in sf_meta.items()
+                }
+
         for table, cols in suggestions.items():
-            # Check if table exists
-            check_query = f"SHOW TABLES LIKE '{table.upper()}'"
-            cursor.execute(check_query)
-            if not cursor.fetchone():
-                logger.warning(f"Table {table} not found, skipping pre-compute")
+            table_upper = table.upper()
+
+            # Resolve physical table name (model name may differ from Snowflake name)
+            existing_cols = live_meta.get(table_upper, set())
+
+            # Skip suggestion entirely if ALL referenced columns already exist in
+            # the target table — these are DAX self-references (e.g. 'Date'[MonthIndex])
+            # not actual cross-table denormalization requests.
+            cols_needing_add = []
+            for col in cols:
+                col_upper = col.upper().replace(' ', '_')
+                # Map common DAX name -> physical name (e.g. Date -> COL_DATE)
+                physical = self._resolve_physical_col_name(col, existing_cols)
+                if physical in existing_cols or col_upper in existing_cols:
+                    logger.debug(
+                        "Skipping pre-compute for %s.%s: column already exists as %s",
+                        table, col, physical or col_upper
+                    )
+                else:
+                    cols_needing_add.append(col)
+
+            if not cols_needing_add:
+                logger.info(
+                    "Skipping all pre-compute suggestions for %s: columns already present", table
+                )
                 continue
-            
-            # Add columns if not exist
-            for col in cols:
+
+            # Check table exists
+            try:
+                cursor.execute(f"SHOW TABLES LIKE '{table_upper}'")
+                if not cursor.fetchone():
+                    logger.warning("Table %s not found, skipping pre-compute", table)
+                    continue
+            except Exception:
+                continue
+
+            for col in cols_needing_add:
                 col_safe = col.upper().replace(' ', '_')
-                try:
-                    add_col_sql = f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col_safe} VARCHAR"
-                    cursor.execute(add_col_sql)
-                    logger.info(f"✅ Added column {col_safe} to {table}")
-                except Exception as e:
-                    logger.debug(f"Column {col_safe} may already exist: {e}")
-            
-            # Populate from related table
-            # Detect source table from relationships
-            for col in cols:
                 source_table = self._find_source_table_for_precompute(table, col)
-                if source_table and col:
-                    col_safe = col.upper().replace(' ', '_')
-                    try:
-                        update_sql = f"""
-                        UPDATE {table} t
-                        SET t.{col_safe} = s.{col}
-                        FROM {source_table} s
-                        WHERE t.{self._get_join_key(table, source_table)} = s.{self._get_join_key(source_table, table)}
-                        """
-                        cursor.execute(update_sql)
-                        logger.info(f"✅ Populated {col_safe} in {table} from {source_table}")
-                    except Exception as e:
-                        logger.warning(f"Could not auto-populate {col_safe}: {e}")
-        
+                if not source_table:
+                    logger.warning("Could not find source table for %s.%s; skipping", table, col)
+                    continue
+
+                # Resolve source column physical name
+                source_existing = live_meta.get(source_table.upper(), set())
+                src_col_phys = self._resolve_physical_col_name(col, source_existing) or col_safe
+
+                # Resolve join keys
+                from_key = self._get_directional_join_key(table, source_table, from_side=table)
+                to_key = self._get_directional_join_key(table, source_table, from_side=source_table)
+
+                # Add column if not exists
+                try:
+                    cursor.execute(
+                        f'ALTER TABLE "{table_upper}" ADD COLUMN IF NOT EXISTS "{col_safe}" VARCHAR'
+                    )
+                    logger.info("Added column %s to %s", col_safe, table)
+                except Exception as e:
+                    logger.debug("Column %s may already exist in %s: %s", col_safe, table, e)
+
+                # Populate using Snowflake-compatible correlated UPDATE
+                update_sql = (
+                    f'UPDATE "{table_upper}" t '
+                    f'SET t."{col_safe}" = ('
+                    f'  SELECT s."{src_col_phys}" FROM "{source_table.upper()}" s '
+                    f'  WHERE s."{to_key}" = t."{from_key}" LIMIT 1'
+                    f')'
+                )
+                try:
+                    cursor.execute(update_sql)
+                    logger.info("Populated %s in %s from %s", col_safe, table, source_table)
+                except Exception as e:
+                    logger.warning("Could not auto-populate %s: %s", col_safe, e)
+
         logger.info("✅ Pre-compute suggestions executed successfully")
+
+    def _resolve_physical_col_name(self, dax_col_name: str, existing_cols: set[str]) -> str:
+        """
+        Map a DAX column name (potentially model-level) to its physical Snowflake column name.
+        Tries: exact, COL_{name}, {name}ID, and case-insensitive match.
+        """
+        candidates = [
+            dax_col_name.upper(),
+            f"COL_{dax_col_name.upper()}",
+            dax_col_name.upper().replace(' ', '_'),
+        ]
+        for c in candidates:
+            if c in existing_cols:
+                return c
+        # Try substring match (e.g. DAX 'Date' might be 'COL_DATE')
+        for existing in existing_cols:
+            if dax_col_name.upper() in existing:
+                return existing
+        return dax_col_name.upper().replace(' ', '_')
+
+    def _get_directional_join_key(self, table1: str, table2: str, from_side: str) -> str:
+        """
+        Return the join column for `from_side` in the relationship between table1 and table2.
+        """
+        if not hasattr(self, '_model') or not self._model:
+            return "ID"
+        for rel in getattr(self._model, 'relationships', []):
+            from_ds = getattr(rel, 'from_dataset', None)
+            to_ds = getattr(rel, 'to_dataset', None)
+            if not from_ds or not to_ds:
+                continue
+            if from_ds.upper() == table1.upper() and to_ds.upper() == table2.upper():
+                cols = getattr(rel, 'from_columns', []) if from_side.upper() == table1.upper() else getattr(rel, 'to_columns', [])
+                return cols[0].upper() if cols else "ID"
+            if from_ds.upper() == table2.upper() and to_ds.upper() == table1.upper():
+                cols = getattr(rel, 'to_columns', []) if from_side.upper() == table1.upper() else getattr(rel, 'from_columns', [])
+                return cols[0].upper() if cols else "ID"
+        return "ID"
+
+    def _get_dataset_by_name(self, model: Any, dataset_name: str) -> Optional[Any]:
+        for dataset in getattr(model, "datasets", []) or []:
+            if str(getattr(dataset, "unique_name", "")).casefold() == str(dataset_name).casefold():
+                return dataset
+        return None
+
+    def _dataset_source_ref(self, model: Any, dataset_name: str) -> str:
+        dataset = self._get_dataset_by_name(model, dataset_name)
+        source_table_mapping = getattr(self.behavior.snowflake, "source_table_mapping", {}) or {}
+        source_table = source_table_mapping.get(
+            getattr(dataset, "unique_name", dataset_name),
+            getattr(dataset, "source_table", None) or dataset_name,
+        )
+        safe_table = self._id.sanitize_table_name(source_table)
+        return f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
+
+    def _resolve_model_column_name(self, model: Any, dataset_name: str, column_name: str) -> str:
+        dataset = self._get_dataset_by_name(model, dataset_name)
+        if dataset is not None:
+            try:
+                return self.schema_manager._resolve_physical_column_name(dataset, column_name)
+            except Exception:
+                pass
+        return self._id.sanitize_column(column_name)
+
+    def _relationship_edges(self, model: Any, dataset_name: str) -> list[dict[str, Any]]:
+        edges: list[dict[str, Any]] = []
+        for rel in getattr(model, "relationships", []) or []:
+            if not getattr(rel, "is_active", True):
+                continue
+            from_ds = getattr(rel, "from_dataset", None)
+            to_ds = getattr(rel, "to_dataset", None)
+            from_cols = list(getattr(rel, "from_columns", []) or [])
+            to_cols = list(getattr(rel, "to_columns", []) or [])
+            if not from_ds or not to_ds or not from_cols or not to_cols:
+                continue
+            if str(from_ds).casefold() == str(dataset_name).casefold():
+                edges.append(
+                    {
+                        "current_dataset": from_ds,
+                        "next_dataset": to_ds,
+                        "current_columns": from_cols,
+                        "next_columns": to_cols,
+                    }
+                )
+            if str(to_ds).casefold() == str(dataset_name).casefold():
+                edges.append(
+                    {
+                        "current_dataset": to_ds,
+                        "next_dataset": from_ds,
+                        "current_columns": to_cols,
+                        "next_columns": from_cols,
+                    }
+                )
+        return edges
+
+    def _find_relationship_path(self, model: Any, start_dataset: str, target_dataset: str) -> list[dict[str, Any]]:
+        if str(start_dataset).casefold() == str(target_dataset).casefold():
+            return []
+        queue: list[tuple[str, list[dict[str, Any]]]] = [(start_dataset, [])]
+        visited = {str(start_dataset).casefold()}
+        while queue:
+            current, path = queue.pop(0)
+            for edge in self._relationship_edges(model, current):
+                nxt = str(edge["next_dataset"])
+                key = nxt.casefold()
+                if key in visited:
+                    continue
+                next_path = [*path, edge]
+                if key == str(target_dataset).casefold():
+                    return next_path
+                visited.add(key)
+                queue.append((nxt, next_path))
+        return []
+
+    def _build_precomputed_column_select(
+        self,
+        model: Any,
+        target_dataset: str,
+        source_dataset: str,
+        source_column: str,
+        precomputed_column: str,
+    ) -> Optional[str]:
+        path = self._find_relationship_path(model, target_dataset, source_dataset)
+        if not path:
+            logger.warning(
+                "No active relationship path from %s to %s; cannot precompute %s.%s",
+                target_dataset,
+                source_dataset,
+                source_dataset,
+                source_column,
+            )
+            return None
+
+        first = path[0]
+        from_clause = f'FROM {self._dataset_source_ref(model, first["next_dataset"])} j1'
+        first_current_col = self._resolve_model_column_name(model, first["current_dataset"], first["current_columns"][0])
+        first_next_col = self._resolve_model_column_name(model, first["next_dataset"], first["next_columns"][0])
+        where_clause = f'f."{first_current_col}" = j1."{first_next_col}"'
+        joins: list[str] = []
+
+        for idx, edge in enumerate(path[1:], start=2):
+            prev_alias = f"j{idx - 1}"
+            alias = f"j{idx}"
+            prev_col = self._resolve_model_column_name(model, edge["current_dataset"], edge["current_columns"][0])
+            next_col = self._resolve_model_column_name(model, edge["next_dataset"], edge["next_columns"][0])
+            joins.append(
+                f'JOIN {self._dataset_source_ref(model, edge["next_dataset"])} {alias} '
+                f'ON {prev_alias}."{prev_col}" = {alias}."{next_col}"'
+            )
+
+        source_alias = f"j{len(path)}"
+        source_col = self._resolve_model_column_name(model, source_dataset, source_column)
+        return (
+            f'\n        , (SELECT {source_alias}."{source_col}"\n'
+            f'           {from_clause}\n'
+            f'           {" ".join(joins)}\n'
+            f'           WHERE {where_clause}\n'
+            f'           LIMIT 1) AS "{precomputed_column}"'
+        )
 
 
     def _create_enriched_view(self, model, cursor):
@@ -1245,41 +1482,199 @@ class SnowflakeEmitter(BaseEmitter):
         
         date_info = self._find_date_table(model)
         enriched_view_name = f"{fact_table}_ENRICHED"
+        fact_dataset = self._get_dataset_by_name(model, fact_table)
+        fact_source_name = getattr(fact_dataset, "source_table", None) or fact_table
+        fact_source_safe = self._id.sanitize_table_name(fact_source_name)
+        fact_source_ref = f'"{self.config.database}"."{self.config.schema_name}"."{fact_source_safe}"'
+        fact_source_key = self._id.sanitize_table_name(fact_source_name).upper()
+        fact_cols = {
+            str(c).upper()
+            for c in self._live_schema_metadata.get(fact_source_key, set())
+        }
+        if not fact_cols and fact_dataset is not None:
+            fact_cols = {
+                self._resolve_model_column_name(model, fact_table, getattr(c, "unique_name", "")).upper()
+                for c in getattr(fact_dataset, "columns", []) or []
+                if getattr(c, "unique_name", None)
+            }
+        projected_cols: set[str] = set()
         
         select_parts = [f"SELECT f.*"]
         
-        # Add Pre-compute for percentage measures (Data Engineering Explicit Fix)
-        select_parts.append(f"\n        , (SELECT SUM(UNITS) FROM {fact_table}) AS TOTAL_UNITS_ALL")
+        if "UNITS" in fact_cols:
+            select_parts.append(f'\n        , (SELECT SUM("UNITS") FROM {fact_source_ref}) AS "TOTAL_UNITS_ALL"')
+            projected_cols.add("TOTAL_UNITS_ALL")
         
-        # Add pre-computed flag columns
+        # Add generic cross-dataset precomputed columns into the fact enriched view.
         suggestions = self.semantic_view_builder._precompute_suggestions(model)
-        for table, cols in suggestions.items():
-            if table.upper() in fact_table.upper():
-                for col in cols:
-                    source_table = self._find_source_table_for_precompute(table, col)
-                    if source_table:
-                        col_safe = col.upper().replace(' ', '_')
-                        select_parts.append(f"""
-                        , (SELECT {col} FROM {source_table} s 
-                           WHERE f.{self._get_join_key(fact_table, source_table)} = s.{self._get_join_key(source_table, fact_table)}
-                          ) AS {col_safe}""")
+        _ = suggestions
+        for detail in self.semantic_view_builder.get_precompute_details():
+            if str(detail.get("target_dataset", "")).casefold() != str(fact_table).casefold():
+                continue
+            projection = self._build_precomputed_column_select(
+                model=model,
+                target_dataset=detail["target_dataset"],
+                source_dataset=detail["source_dataset"],
+                source_column=detail["source_column"],
+                precomputed_column=detail["precomputed_column"],
+            )
+            if projection:
+                select_parts.append(projection)
+                projected_cols.add(detail["precomputed_column"].upper())
         
         # Add YTD anchor
         if date_info:
             date_table, date_col, fiscal_col = date_info
+            source_table_mapping = getattr(self.behavior.snowflake, "source_table_mapping", {}) or {}
+
+            date_dataset = next(
+                (d for d in getattr(model, "datasets", []) or [] if d.unique_name == date_table),
+                None,
+            )
+
+            if date_dataset:
+                resolved_source_table = source_table_mapping.get(
+                    date_dataset.unique_name,
+                    date_dataset.source_table or date_dataset.unique_name,
+                )
+                safe_table = self._id.sanitize_table_name(resolved_source_table)
+                date_table_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
+                resolved_date_col = self.schema_manager._resolve_physical_column_name(date_dataset, date_col)
+                resolved_fiscal_col = self.schema_manager._resolve_physical_column_name(date_dataset, fiscal_col)
+            else:
+                safe_table = self._id.sanitize_table_name(date_table)
+                date_table_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
+                resolved_date_col = self._id.sanitize_column(date_col)
+                resolved_fiscal_col = self._id.sanitize_column(fiscal_col)
+
             select_parts.append(f"""
-            , (SELECT MAX({date_col}) FROM {fact_table}) AS max_date
-            , (SELECT MAX({fiscal_col}) FROM {date_table} WHERE {date_col} = CURRENT_DATE()) AS _current_fiscal_period""")
+            , (SELECT MAX("{resolved_date_col}") FROM {fact_source_ref}) AS "MAX_DATE"
+            , (SELECT MAX("{resolved_fiscal_col}") FROM {date_table_ref} WHERE "{resolved_date_col}" = CURRENT_DATE()) AS "_CURRENT_FISCAL_PERIOD""")
+            projected_cols.update({"MAX_DATE", "_CURRENT_FISCAL_PERIOD"})
         
-        select_parts.append(f"FROM {fact_table} f")
+        select_parts.append(f"FROM {fact_source_ref} f")
         
         create_view_sql = "\n".join(select_parts)
         full_sql = f"CREATE OR REPLACE VIEW {enriched_view_name} AS\n{create_view_sql}"
         
         try:
             cursor.execute(full_sql)
+            enriched_cols = set(fact_cols) | projected_cols
+            if enriched_cols:
+                self._live_schema_metadata[enriched_view_name.upper()] = enriched_cols
+                if hasattr(self, "semantic_view_builder"):
+                    self.semantic_view_builder.live_schema_metadata[enriched_view_name.upper()] = enriched_cols
             logger.info(f"✅ Created enriched view: {enriched_view_name}")
             return enriched_view_name
         except Exception as e:
             logger.warning(f"Failed to create enriched view: {e}")
             return None
+
+    # =========================================================================
+    # BACKWARD COMPATIBILITY PROXY METHODS
+    # =========================================================================
+
+    def _validate_metric_column_references(
+        self,
+        metric_sql: str,
+        metric_name: str,
+        dataset_col_lookup: Dict[str, set[str]],
+        dataset_aliases: Dict[str, str],
+        metric_names: Optional[set[str]] = None
+    ) -> Tuple[bool, Optional[str]]:
+        return self.translator._validate_metric_column_references(
+            metric_sql, metric_name, dataset_col_lookup, dataset_aliases, metric_names
+        )
+
+    def _normalize_metric_column_references(
+        self,
+        metric_sql: str,
+        metric_name: str,
+        dataset_col_lookup: Dict[str, set[str]],
+        dataset_aliases: Dict[str, str],
+        metric_names: Optional[set[str]] = None,
+        preferred_table_alias: Optional[str] = None,
+        metric_to_alias: Optional[Dict[str, str]] = None
+    ) -> str:
+        return self.translator._normalize_metric_column_references(
+            metric_sql, metric_name, dataset_col_lookup, dataset_aliases, metric_names, preferred_table_alias, metric_to_alias
+        )
+
+    def _build_safe_sum_sql(self, expr_sql: str, identifier_hint: Optional[str] = None) -> str:
+        return self.measure_synchronizer._build_safe_sum_sql(expr_sql, identifier_hint)
+
+    def generate_semantic_view_tiered(
+        self,
+        model_name: str,
+        shadow_table: str,
+        triage_results: Dict[str, Any],
+        grain_dimensions: list[str]
+    ) -> str:
+        return self.measure_synchronizer.generate_semantic_view_tiered(
+            model_name, shadow_table, triage_results, grain_dimensions
+        )
+
+    def _try_basic_dax_metric_fallback_expression(
+        self,
+        *,
+        metric: Any,
+        table_alias: str,
+        dataset_col_lookup: Dict[str, set[str]],
+        model: Optional[Any] = None,
+        dataset_by_name: Optional[Dict[str, Any]] = None
+    ) -> Optional[str]:
+        return self.translator._try_basic_dax_metric_fallback_expression(
+            metric=metric,
+            table_alias=table_alias,
+            dataset_col_lookup=dataset_col_lookup,
+            model=model,
+            dataset_by_name=dataset_by_name
+        )
+
+    def _build_known_metric_fallback_expression(self, *args, **kwargs) -> None:
+        return None
+
+    def _rewrite_window_metric_expression(self, metric_sql: str, preferred_table_alias: Optional[str] = None) -> str:
+        return self.translator._rewrite_window_metric_expression(metric_sql, preferred_table_alias)
+
+    def _dedupe_qualified_column_tokens(self, sql: str) -> str:
+        return self.translator._dedupe_qualified_column_tokens(sql)
+
+    def _resolve_metric_emission_alias(
+        self,
+        default_alias: str,
+        expr_sql: str,
+        dataset_aliases: Dict[str, str],
+        metric_to_alias: Optional[Dict[str, str]] = None
+    ) -> str:
+        from semabridge.connectors.metrics_clause_builder import MetricsClauseBuilder
+        builder = MetricsClauseBuilder(
+            identifier_sanitizer=self._id,
+            schema_manager=self.schema_manager,
+            sanitizer=None,
+            translator=self.translator,
+            config=self.config,
+            dup_name_repo=self._dup_name_repo
+        )
+        fact_aliases = set()
+        if hasattr(self, "_model") and self._model:
+            for ds in getattr(self._model, "datasets", []):
+                if getattr(ds, "is_fact", False) and ds.unique_name in dataset_aliases:
+                    fact_aliases.add(dataset_aliases[ds.unique_name])
+        return builder._resolve_metric_emission_alias(default_alias, expr_sql, dataset_aliases, fact_aliases)
+
+    def _build_schema_validation_map(self, sml: Any) -> Dict[str, set[str]]:
+        schema_map = {}
+        for ds in getattr(sml, "datasets", []):
+            columns = set()
+            for col in getattr(ds, "columns", []):
+                if getattr(col, "source_expression", None) is None:
+                    columns.add(col.unique_name.upper())
+            schema_map[ds.unique_name.lower()] = columns
+        return schema_map
+
+    def _generate_semantic_view(self, sml: Any) -> str:
+        return self.semantic_view_builder._generate_semantic_view(sml)
+
+    def _generate_semantic_view_from_osi(self, osi: Any) -> str:
+        return self.semantic_view_builder._generate_semantic_view_from_osi(osi)

@@ -5,9 +5,10 @@ const TOKEN_KEY = 'semabridge-token';
 const FABRIC_TOKEN_KEY = 'semabridge-fabric-token';
 const FABRIC_TOKEN_EXPIRES_KEY = 'semabridge-fabric-token-expires';
 const API_CACHE_TTL_MS = 2 * 60 * 1000;
-const API_REQUEST_TIMEOUT_MS = 15000;
-const UI_LIST_REQUEST_TIMEOUT_MS = 12000;
-const PROJECT_LIST_REQUEST_TIMEOUT_MS = 20000;
+const API_REQUEST_TIMEOUT_MS = 60000;
+const UI_LIST_REQUEST_TIMEOUT_MS = 30000;
+const PROJECT_LIST_REQUEST_TIMEOUT_MS = 60000;
+const PROJECT_RUN_REQUEST_TIMEOUT_MS = 180000;
 const UI_LIST_CACHE_TTL_MS = 20000;
 const apiCache = new Map();
 const inFlightApiCalls = new Map();
@@ -1212,7 +1213,9 @@ export const api = {
     async getProject(projectId, options = {}) {
         const noCache = Boolean(options?.noCache);
         const query = noCache ? `?refresh=${Date.now()}` : '';
-        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}${query}`);
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}${query}`, {
+            timeoutMs: PROJECT_LIST_REQUEST_TIMEOUT_MS,
+        });
         const data = await handleResponse(res);
         return normalizeProject(data);
     },
@@ -1562,6 +1565,7 @@ export const api = {
             method: 'POST',
             headers: payload ? { 'Content-Type': 'application/json' } : undefined,
             body: payload ? JSON.stringify(payload) : undefined,
+            timeoutMs: PROJECT_RUN_REQUEST_TIMEOUT_MS,
         });
         return handleResponse(res);
     },
@@ -1570,6 +1574,7 @@ export const api = {
         // Backend compatibility API exposes /run as the sync trigger route.
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
             method: 'POST',
+            timeoutMs: PROJECT_RUN_REQUEST_TIMEOUT_MS,
         });
         return handleResponse(res);
     },

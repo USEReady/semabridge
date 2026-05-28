@@ -68,6 +68,9 @@ class DAXTranslator:
         "year_col": "YEAR",
         "period_col": "PERIOD",
     }
+
+    def _get_date_alias(self) -> str:
+        return os.getenv("SEMABRIDGE_DATE_ALIAS", self.CALENDAR_MAP.get("table", "CALENDAR"))
     
     # Time Intelligence patterns that CAN be translated to Snowflake window functions
     TIME_INTEL_PATTERNS = {
@@ -109,6 +112,20 @@ class DAXTranslator:
         "ALL",
         "ALLEXCEPT",
     )
+
+    UNSAFE_TIME_OFFSET_FUNCTIONS = (
+        "SAMEPERIODLASTYEAR",
+        "PREVIOUSYEAR",
+        "PREVIOUSMONTH",
+        "PREVIOUSQUARTER",
+        "DATEADD",
+        "DATESYTD",
+        "DATESMTD",
+        "DATESQTD",
+        "PARALLELPERIOD",
+        "OPENINGBALANCEYEAR",
+        "CLOSINGBALANCEYEAR",
+    )
     
     # Patterns that CANNOT be safely translated (require DAX engine evaluation)
     UNSUPPORTED_PATTERNS = [
@@ -143,6 +160,23 @@ class DAXTranslator:
             return DAXTranslationResult(None, 3, "")
         
         clean_dax = dax.strip()
+        if self._contains_unsafe_time_offset(clean_dax):
+            logger.debug(
+                "Rejected unsupported time-offset DAX before deterministic/LLM fallback: %s",
+                clean_dax[:120],
+            )
+            return DAXTranslationResult(None, 4, clean_dax)
+
+        # Tier 1-4 are handled before the broader deterministic fallback so
+        # common patterns remain predictable and do not get over-simplified.
+        tiered_sql = self._try_tiered_translation(
+            clean_dax,
+            table_alias,
+            dataset_name,
+            metrics_context,
+        )
+        if tiered_sql:
+            return tiered_sql
         
         # **NEW PRIMARY FLOW: Try deterministic translator first**
         # This enforces pipeline as single source of truth
@@ -168,13 +202,20 @@ class DAXTranslator:
         if tier1_sql:
             return DAXTranslationResult(tier1_sql, 1, clean_dax)
 
-        if any(re.search(rf"\b{pattern}\b", clean_dax, re.IGNORECASE) for pattern in self.STRICT_BLOCKED_FUNCTIONS):
-            logger.debug(f"Strict translator rejected unsupported DAX pattern: {clean_dax[:80]}...")
-            return DAXTranslationResult(None, 4, clean_dax)
+        strict_blocked = any(
+            re.search(rf"\b{pattern}\b", clean_dax, re.IGNORECASE)
+            for pattern in self.STRICT_BLOCKED_FUNCTIONS
+        )
+        if strict_blocked:
+            logger.debug(
+                "Strict translator rejected unsupported DAX pattern; continuing with AST/LLM: %s",
+                clean_dax[:80],
+            )
 
-        strict_sql = self._try_strict_translation(clean_dax, table_alias, metrics_context)
-        if strict_sql:
-            return DAXTranslationResult(strict_sql, 2, clean_dax)
+        if not strict_blocked:
+            strict_sql = self._try_strict_translation(clean_dax, table_alias, metrics_context)
+            if strict_sql:
+                return DAXTranslationResult(strict_sql, 2, clean_dax)
 
         if metrics_context:
             dependency_sql = self._try_dependency_translation(
@@ -206,6 +247,7 @@ class DAXTranslator:
             ast_sql = try_ast_translate(
                 clean_dax,
                 table_alias=table_alias,
+                date_alias=self._get_date_alias(),
                 measure_sql_map=resolved_measures,
             )
             if ast_sql:
@@ -226,6 +268,7 @@ class DAXTranslator:
             ast_sql = try_ast_translate(
                 clean_dax,
                 table_alias=table_alias,
+                date_alias=self._get_date_alias(),
                 measure_sql_map=resolved_measures,
             )
             if ast_sql:
@@ -244,6 +287,84 @@ class DAXTranslator:
 
         # No translation possible — return None (all tiers exhausted)
         return DAXTranslationResult(None, 4, clean_dax)
+
+    def _try_tiered_translation(
+        self,
+        clean_dax: str,
+        table_alias: str,
+        dataset_name: str,
+        metrics_context: List[Any] = None,
+    ) -> Optional[DAXTranslationResult]:
+        tier1_sql = self._try_tier1(clean_dax, table_alias)
+        if tier1_sql:
+            return DAXTranslationResult(tier1_sql, 1, clean_dax)
+
+        strict_blocked = any(
+            re.search(rf"\b{pattern}\b", clean_dax, re.IGNORECASE)
+            for pattern in self.STRICT_BLOCKED_FUNCTIONS
+        )
+        if not strict_blocked:
+            strict_sql = self._try_strict_translation(clean_dax, table_alias, metrics_context)
+            if strict_sql:
+                return DAXTranslationResult(strict_sql, 2, clean_dax)
+
+        if metrics_context:
+            dependency_sql = self._try_dependency_translation(
+                clean_dax,
+                table_alias,
+                dataset_name,
+                metrics_context,
+            )
+            if dependency_sql:
+                return DAXTranslationResult(dependency_sql, 2, clean_dax)
+
+            tier2_sql = self._try_branching(clean_dax, metrics_context)
+            if tier2_sql:
+                return DAXTranslationResult(tier2_sql, 2, clean_dax)
+
+        resolved_measures = {}
+        if metrics_context:
+            for metric in metrics_context:
+                if getattr(metric, "sql_expression", None):
+                    resolved_measures[metric.unique_name] = metric.sql_expression
+
+        is_time_intel = any(func.upper() in clean_dax.upper() for func in self.TIME_INTEL_FUNCTIONS)
+        if is_time_intel:
+            from semabridge.converter.dax_ast_parser import try_ast_translate
+
+            ast_sql = try_ast_translate(
+                clean_dax,
+                table_alias=table_alias,
+                date_alias=self._get_date_alias(),
+                measure_sql_map=resolved_measures,
+            )
+            if ast_sql:
+                return DAXTranslationResult(ast_sql, 3, clean_dax)
+
+        is_complex = any(
+            re.search(pattern, clean_dax, re.IGNORECASE)
+            for pattern in self.UNSUPPORTED_PATTERNS
+        )
+        if is_complex:
+            from semabridge.converter.dax_ast_parser import try_ast_translate
+
+            ast_sql = try_ast_translate(
+                clean_dax,
+                table_alias=table_alias,
+                date_alias=self._get_date_alias(),
+                measure_sql_map=resolved_measures,
+            )
+            if ast_sql:
+                return DAXTranslationResult(ast_sql, 4, clean_dax)
+
+        return None
+
+    def _contains_unsafe_time_offset(self, dax: str) -> bool:
+        upper_dax = (dax or "").upper()
+        return any(
+            re.search(rf"\b{re.escape(func)}\s*\(", upper_dax)
+            for func in self.UNSAFE_TIME_OFFSET_FUNCTIONS
+        )
 
     def _try_dependency_translation(
         self,
@@ -522,6 +643,7 @@ class DAXTranslator:
                 return None
 
             base_sql = self._strip_outer_parens(base_sql)
+            date_alias = self._get_date_alias()
             parsed_agg = self._parse_sql_aggregation(base_sql)
             if parsed_agg:
                 agg_func, value_expr = parsed_agg
@@ -529,14 +651,14 @@ class DAXTranslator:
                 if agg_func == "COUNT_DISTINCT":
                     return (
                         f"COUNT(DISTINCT {value_expr}) OVER "
-                        "(PARTITION BY CALENDAR.YEAR ORDER BY CALENDAR.PERIOD)"
+                        f"(PARTITION BY {date_alias}.YEAR ORDER BY {date_alias}.PERIOD)"
                     )
                 return (
                     f"{sql_agg}({value_expr}) OVER "
-                    "(PARTITION BY CALENDAR.YEAR ORDER BY CALENDAR.PERIOD)"
+                    f"(PARTITION BY {date_alias}.YEAR ORDER BY {date_alias}.PERIOD)"
                 )
 
-            return f"SUM({base_sql}) OVER (PARTITION BY CALENDAR.YEAR ORDER BY CALENDAR.PERIOD)"
+            return f"SUM({base_sql}) OVER (PARTITION BY {date_alias}.YEAR ORDER BY {date_alias}.PERIOD)"
 
         if upper_dax.startswith("CALCULATE(") and clean_dax.endswith(")"):
             args = self._split_dax_arguments(clean_dax[len("CALCULATE("):-1])

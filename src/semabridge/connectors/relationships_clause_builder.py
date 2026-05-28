@@ -79,76 +79,82 @@ class RelationshipsClauseBuilder:
             from_ds = dataset_by_name.get(rel.from_dataset)
             to_ds = dataset_by_name.get(rel.to_dataset)
             
-            if is_osi:
-                from_col = self.identifier_sanitizer.sanitize_column(rel.from_columns[0])
-                to_col = self.identifier_sanitizer.sanitize_column(rel.to_columns[0]) if rel.to_columns else ""
-            else:
-                from_col = (
-                    self.schema_manager._resolve_physical_column_name(from_ds, rel.from_columns[0])
-                    if from_ds else self.identifier_sanitizer.sanitize_column(rel.from_columns[0])
-                )
-                to_col = (
-                    self.schema_manager._resolve_physical_column_name(to_ds, rel.to_columns[0])
-                    if (to_ds and rel.to_columns)
-                    else (self.identifier_sanitizer.sanitize_column(rel.to_columns[0]) if rel.to_columns else "")
-                )
+            from_cols: list[str] = []
+            to_cols: list[str] = []
 
-            if not from_col:
+            if is_osi:
+                from_cols = [self.identifier_sanitizer.sanitize_column(c) for c in rel.from_columns]
+                to_cols = [self.identifier_sanitizer.sanitize_column(c) for c in (rel.to_columns or [])]
+            else:
+                for c in rel.from_columns:
+                    resolved = self.schema_manager._resolve_physical_column_name(from_ds, c) if from_ds else self.identifier_sanitizer.sanitize_column(c)
+                    from_cols.append(resolved)
+                for c in (rel.to_columns or []):
+                    resolved = self.schema_manager._resolve_physical_column_name(to_ds, c) if to_ds else self.identifier_sanitizer.sanitize_column(c)
+                    to_cols.append(resolved)
+
+            if not from_cols or any(not c for c in from_cols):
                 logger.warning(
                     f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
                     f"from_col is empty after resolution."
                 )
                 continue
 
-            # Validate FK column exists
+            # Validate FK columns exist
             from_phys = dataset_col_lookup.get(rel.from_dataset, set())
-            if from_phys and from_col not in from_phys:
-                fallback_fk = sorted(from_phys)[0]
-                logger.warning(
-                    f"Remapping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
-                    f"FK column '{from_col}' is not physical in '{rel.from_dataset}'. "
-                    f"Using '{fallback_fk}'."
-                )
-                from_col = fallback_fk
+            if from_phys:
+                validated_from = [c for c in from_cols if c in from_phys]
+                if not validated_from:
+                    fallback_fk = sorted(from_phys)[0]
+                    logger.warning(
+                        f"Remapping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                        f"FK columns {from_cols} not physical in '{rel.from_dataset}'. "
+                        f"Using '{fallback_fk}'."
+                    )
+                    from_cols = [fallback_fk]
+                else:
+                    from_cols = validated_from
 
             # Validate PK reference
-            if to_col:
+            if to_cols:
                 to_phys = dataset_col_lookup.get(rel.to_dataset, set())
-                mapped_to_alias = relationship_target_alias.get((rel.to_dataset, to_col.upper()))
+                mapped_to_alias = relationship_target_alias.get((rel.to_dataset, to_cols[0].upper()))
                 if mapped_to_alias:
                     to_alias = mapped_to_alias
                 
                 declared_pk_cols = declared_pk_by_alias.get(to_alias, [])
                 to_phys_upper = {c.upper() for c in to_phys}
-                
-                if to_phys and to_col.upper() not in to_phys_upper:
-                    fallback_to = declared_pk_cols[0] if declared_pk_cols else sorted(to_phys)[0]
-                    logger.warning(
-                        f"Remapping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
-                        f"referenced column '{to_col}' is not physical in '{rel.to_dataset}'. "
-                        f"Using '{fallback_to}'."
-                    )
-                    to_col = fallback_to
-                    mapped_to_alias = relationship_target_alias.get((rel.to_dataset, to_col.upper()))
-                    if mapped_to_alias:
-                        to_alias = mapped_to_alias
-                    declared_pk_cols = declared_pk_by_alias.get(to_alias, declared_pk_cols)
+                if to_phys:
+                    validated_to = [c for c in to_cols if c.upper() in to_phys_upper]
+                    if not validated_to:
+                        fallback_to = declared_pk_cols[0] if declared_pk_cols else sorted(to_phys)[0]
+                        logger.warning(
+                            f"Remapping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                            f"referenced columns {to_cols} not physical in '{rel.to_dataset}'. "
+                            f"Using '{fallback_to}'."
+                        )
+                        to_cols = [fallback_to]
+                    else:
+                        to_cols = validated_to
 
-                if declared_pk_cols and to_col.upper() not in {c.upper() for c in declared_pk_cols}:
-                    fallback_to = declared_pk_cols[0]
-                    logger.warning(
-                        f"Remapping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
-                        f"referenced column '{to_col}' is not the declared PK {declared_pk_cols} "
-                        f"for '{rel.to_dataset}'. Using '{fallback_to}'."
-                    )
-                    to_col = fallback_to
-                    mapped_to_alias = relationship_target_alias.get((rel.to_dataset, to_col.upper()))
-                    if mapped_to_alias:
-                        to_alias = mapped_to_alias
+                if declared_pk_cols:
+                    declared_upper = {c.upper() for c in declared_pk_cols}
+                    if not all(c.upper() in declared_upper for c in to_cols):
+                        fallback_to = declared_pk_cols[0]
+                        logger.warning(
+                            f"Remapping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
+                            f"referenced columns {to_cols} are not declared PK {declared_pk_cols} "
+                            f"for '{rel.to_dataset}'. Using '{fallback_to}'."
+                        )
+                        to_cols = [fallback_to]
+                        mapped_to_alias = relationship_target_alias.get((rel.to_dataset, to_cols[0].upper()))
+                        if mapped_to_alias:
+                            to_alias = mapped_to_alias
 
-            ref_clause = f'{to_alias} ("{to_col}")' if to_col else to_alias
+            quoted_to_cols = [f'"{c}"' for c in to_cols]
+            ref_clause = f'{to_alias} ({", ".join(quoted_to_cols)})' if to_cols else to_alias
             rel_name = self.sanitizer.to_snowflake_relationship_name(getattr(rel, "unique_name", "") or "")
-            from_ref = f'"{from_col}"'
+            from_ref = ", ".join([f'"{c}"' for c in from_cols])
             
             if rel_name:
                 rel_lines.append(f'  {rel_name} AS {from_alias} ({from_ref}) REFERENCES {ref_clause}')
