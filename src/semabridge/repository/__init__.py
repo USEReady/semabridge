@@ -14,6 +14,7 @@ from semabridge.repository.semantic_snapshot_manager import SemanticSnapshotMana
 from semabridge.repository.semantic_diff_engine import SemanticDiffEngine
 from semabridge.repository.rollback_orchestrator import RollbackOrchestrator
 from semabridge.repository.command_logger import CommandLogger, get_command_logger
+from semabridge.repository.semantic_payload_repository import backfill_parsed_semantic_payloads
 
 __all__ = [
     "SemanticVersionManager",
@@ -22,4 +23,5 @@ __all__ = [
     "RollbackOrchestrator",
     "CommandLogger",
     "get_command_logger",
+    "backfill_parsed_semantic_payloads",
 ]

@@ -31,6 +31,11 @@ from semabridge.connectors.snowflake_emitter_parts import renderers as _renderer
 if TYPE_CHECKING:
     from semabridge.intermediate.models import OSIModel
 
+    try:
+        from semabridge.intermediate.models import OSIModel as ParsedSemanticPayloadModel
+    except Exception:  # pragma: no cover
+        ParsedSemanticPayloadModel = Any
+
 logger = get_logger(__name__)
 
 
@@ -120,8 +125,20 @@ class SnowflakeEmitter(BaseEmitter):
         max_workers: int = 4,
         sync_mode: str = "copy",
     ) -> bool:
-        """Deploy the SML model to Snowflake."""
-        return self._execute_deployment_pipeline(sml, is_osi=False, sync_mode=sync_mode)
+        """Deploy the SML model to Snowflake.
+
+        New behavior: convert the provided SML model into the official parsed
+        payload dict and route deployment through `deploy_from_payload` so the
+        JSONB-backed payload contract is the single emission entry point.
+        """
+        try:
+            from semabridge.transformers.official_payload import smlmodel_to_official_payload
+        except Exception:
+            # Fallback to previous direct path if transformer unavailable
+            return self._execute_deployment_pipeline(sml, is_osi=False, sync_mode=sync_mode)
+
+        payload = smlmodel_to_official_payload(sml, target_platform="snowflake")
+        return self.deploy_from_payload(payload, parallel=parallel, max_workers=max_workers, sync_mode=sync_mode)
 
     def deploy_from_osi(
         self,
@@ -130,8 +147,58 @@ class SnowflakeEmitter(BaseEmitter):
         max_workers: int = 4,
         sync_mode: str = "copy",
     ) -> bool:
-        """Deploy an OSI model directly to Snowflake."""
-        return self._execute_deployment_pipeline(osi, is_osi=True, sync_mode=sync_mode)
+        """Deploy an OSI model directly to Snowflake.
+
+        New behavior: map OSI -> official payload dict and route through
+        `deploy_from_payload` to ensure a single canonical deployment path.
+        """
+        try:
+            # Prefer a dedicated OSI->payload transformer if available
+            from semabridge.transformers.osi_to_payload import osi_to_payload
+        except Exception:
+            osi_to_payload = None
+
+        if osi_to_payload:
+            try:
+                payload = osi_to_payload(osi)
+            except Exception:
+                payload = {
+                    "model_name": getattr(osi, "unique_name", getattr(osi, "label", "model")),
+                    "version": getattr(osi, "version", "1.0"),
+                    "datasets": [],
+                    "metrics": [],
+                    "dimensions": [],
+                    "relationships": [],
+                }
+        else:
+            payload = {
+                "model_name": getattr(osi, "unique_name", getattr(osi, "label", "model")),
+                "version": getattr(osi, "version", "1.0"),
+                "datasets": [],
+                "metrics": [],
+                "dimensions": [],
+                "relationships": [],
+            }
+
+        return self.deploy_from_payload(payload, parallel=parallel, max_workers=max_workers, sync_mode=sync_mode)
+
+    def deploy_from_payload(
+        self,
+        payload: Dict[str, Any],
+        parallel: bool = False,
+        max_workers: int = 4,
+        sync_mode: str = "copy",
+    ) -> bool:
+        """Deploy a parsed official semantic payload to Snowflake.
+
+        This is the new contract boundary for stored JSONB payloads.
+        The payload is converted to OSI once, then routed through the existing
+        OSI deployment path to preserve the current builder structure.
+        """
+        from semabridge.transformers.payload_to_osi import payload_to_osi
+
+        osi_model = payload_to_osi(payload)
+        return self._execute_deployment_pipeline(osi_model, is_osi=True, sync_mode=sync_mode)
 
     def _execute_deployment_pipeline(
         self,
@@ -150,6 +217,18 @@ class SnowflakeEmitter(BaseEmitter):
                 effective_sync_mode = "copy"
             
             logger.info("[%s] start model=%s", path_type, model_name)
+
+            # Step -2: Check strict warnings constraint before connection
+            if getattr(self.sf_behavior, "strict_inactive_relationships", False):
+                all_warnings = []
+                for metric in getattr(model, "metrics", []) or []:
+                    for warning in getattr(metric, "translation_warning", []) or []:
+                        all_warnings.append(f"Metric '{metric.unique_name}': {warning}")
+                if all_warnings:
+                    formatted_warnings = "\n".join(f"  - {w}" for w in all_warnings)
+                    raise ConnectorError(
+                        f"Strict deployment aborted: Inactive relationships or translation warnings detected:\n{formatted_warnings}"
+                    )
 
             conn, owns_conn = self.connection_manager.get_connection()
             logger.info("Starting deployment with STRICT sanitization rules")
@@ -361,6 +440,12 @@ class SnowflakeEmitter(BaseEmitter):
 
     def generate_ddls(self, sml: SMLModel) -> list[str]:
         return self.semantic_view_builder.generate_ddls(sml)
+
+    def generate_ddls_from_payload(self, payload: Dict[str, Any]) -> list[str]:
+        """Generate DDL from a parsed official semantic payload dict."""
+        from semabridge.transformers.payload_to_osi import payload_to_osi
+
+        return self.semantic_view_builder.generate_ddls_from_osi(payload_to_osi(payload))
 
     def generate_ddls_from_osi(self, osi: OSIModel) -> list[str]:
         return self.semantic_view_builder.generate_ddls_from_osi(osi)

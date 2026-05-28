@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import usePageCache from '../hooks/usePageCache';
 import {
     History,
@@ -743,6 +743,7 @@ export default function VersionControlPage() {
     const [showRestorePreview, setShowRestorePreview] = useState(null); // snapshot_id for preview
     const [selectedModelHistory, setSelectedModelHistory] = useState(null);
     const [stats, setStats] = useState(null);
+    const [hasLoadedProjects, setHasLoadedProjects] = useState(false);
 
     // Cached UI state — survives SPA navigation within the same tab.
     const [vcCache, setVcCache] = usePageCache('version-control-page', {
@@ -759,6 +760,11 @@ export default function VersionControlPage() {
     const { addLog } = useLogs();
     const normalizeId = useCallback((value) => String(value ?? '').trim(), []);
 
+    const latestProjectIdRef = useRef(selectedProjectId);
+    useEffect(() => {
+        latestProjectIdRef.current = selectedProjectId;
+    }, [selectedProjectId]);
+
     const loadProjects = useCallback(async () => {
         setIsProjectsLoading(true);
         setProjectsLoadError('');
@@ -770,8 +776,11 @@ export default function VersionControlPage() {
             const currentId = normalizeId(selectedProjectId);
             const hasCurrent = currentId && projectList.some((p) => normalizeId(p?.id ?? p?.project_id) === currentId);
             if (projectList.length > 0 && !hasCurrent) {
-                setSelectedProjectId(normalizeId(projectList[0].id ?? projectList[0].project_id));
+                const nextId = normalizeId(projectList[0].id ?? projectList[0].project_id);
+                latestProjectIdRef.current = nextId;
+                setSelectedProjectId(nextId);
             }
+            setHasLoadedProjects(true);
         } catch (err) {
             setProjectsLoadError(err?.message || 'Failed to load projects');
             addLog('error', 'VC', 'Failed to load projects: ' + err.message);
@@ -791,6 +800,10 @@ export default function VersionControlPage() {
                 api.apiFetch ? api.apiFetch(`/projects/${projectId}/stats`) : Promise.resolve(null)
             ]);
             
+            if (normalizeId(projId) !== normalizeId(latestProjectIdRef.current)) {
+                return;
+            }
+
             const sorted = (Array.isArray(runs) ? runs : []).sort((a, b) => new Date(b.started_at || 0) - new Date(a.started_at || 0));
             setVersions(sorted);
             const runIds = new Set(sorted.map((r) => r.run_id));
@@ -808,10 +821,15 @@ export default function VersionControlPage() {
                 return prev;
             });
         } catch (err) {
+            if (normalizeId(projId) !== normalizeId(latestProjectIdRef.current)) {
+                return;
+            }
             setVersionsLoadError(err?.message || 'Failed to load version history');
             addLog('error', 'VC', 'Load failed: ' + err.message);
         } finally {
-            setIsLoading(false);
+            if (normalizeId(projId) === normalizeId(latestProjectIdRef.current)) {
+                setIsLoading(false);
+            }
         }
     }, [addLog, normalizeId]);
 
@@ -820,7 +838,7 @@ export default function VersionControlPage() {
     }, [loadProjects]);
 
     useEffect(() => {
-        if (selectedProjectId) {
+        if (hasLoadedProjects && selectedProjectId) {
             // Reset state when switching projects
             setDiffSelection([]);
             setViewMode('history');
@@ -828,7 +846,7 @@ export default function VersionControlPage() {
             setSelectedRun(null);
             loadVersions(selectedProjectId);
         }
-    }, [selectedProjectId, loadVersions]);
+    }, [hasLoadedProjects, selectedProjectId, loadVersions]);
 
     const filteredVersions = useMemo(() => {
         let list = versions;

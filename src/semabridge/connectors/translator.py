@@ -930,9 +930,9 @@ class MetricExpressionTranslator:
         if is_flag:
             return f"SUM(IFF({expr_sql} = 1 OR {expr_sql} = TRUE, 1, 0))"
 
-        if expr_sql.strip().upper().endswith("::FLOAT"):
-            return f"SUM({expr_sql})"
-        return f"SUM({expr_sql}::FLOAT)"
+        # Robust numeric coercion for mixed-source models:
+        # DATE/TIMESTAMP and other non-numeric values should not fail compilation.
+        return f"SUM(TRY_TO_DOUBLE(TO_VARCHAR({expr_sql})))"
 
     def _resolve_column_name_for_dataset(self, known_columns: set[str], candidate: str) -> Optional[str]:
         if not known_columns: return None

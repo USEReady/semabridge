@@ -11,6 +11,7 @@ from semabridge.repository.orm.base import Base
 from semabridge.repository.orm.models import (
     # Application layer
     ModelVersionHistory,
+    ParsedSemanticPayload,
     Post,
     User,
     UserCredential,
@@ -40,6 +41,7 @@ __all__ = [
     "UserCredential",
     "Post",
     "ModelVersionHistory",
+    "ParsedSemanticPayload",
     # Version-control layer
     "Project",
     "SnapshotRow",

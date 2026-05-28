@@ -7,6 +7,7 @@ from semabridge.connectors.dimensions_clause_builder import DimensionsClauseBuil
 from semabridge.connectors.relationships_clause_builder import RelationshipsClauseBuilder
 from semabridge.connectors.semantic_ddl_sanitizer import SemanticDDLSanitizer
 from semabridge.connectors.translator import MetricExpressionTranslator
+from semabridge.connectors.schema_manager import SnowflakeSchemaManager
 from semabridge.utils.identifiers import IdentifierSanitizer
 
 
@@ -61,7 +62,91 @@ def test_dimensions_emit_one_semantic_dimension_per_physical_column():
     assert 'DIVERSITY_DIM."DIVERSITY_KEY"' in lines[0]
 
 
-def test_relationship_builder_keeps_inactive_fabric_relationships():
+def test_dimensions_keep_same_alias_across_different_tables():
+    id_sanitizer = IdentifierSanitizer()
+    builder = DimensionsClauseBuilder(
+        id_sanitizer,
+        _Schema(),
+        _DDL(),
+        translator=None,
+        behavior=SimpleNamespace(semantic_model=SimpleNamespace(sync_all_attributes=True)),
+    )
+
+    first_dataset = SimpleNamespace(
+        unique_name="Gender",
+        columns=[SimpleNamespace(unique_name="Sort", label="Sort", synonyms=[], is_measure_candidate=False)],
+    )
+    second_dataset = SimpleNamespace(
+        unique_name="Separation Reasons",
+        columns=[SimpleNamespace(unique_name="Sort", label="Sort", synonyms=[], is_measure_candidate=False)],
+    )
+    first_dim = SimpleNamespace(
+        attributes=[
+            SimpleNamespace(
+                dataset="Gender",
+                unique_name="Sort",
+                source_column="Sort",
+                dataset_column="Sort",
+            )
+        ]
+    )
+    second_dim = SimpleNamespace(
+        attributes=[
+            SimpleNamespace(
+                dataset="Separation Reasons",
+                unique_name="Sort",
+                source_column="Sort",
+                dataset_column="Sort",
+            )
+        ]
+    )
+
+    lines = builder.build_for_osi(
+        SimpleNamespace(
+            dimensions=[first_dim, second_dim],
+            datasets=[first_dataset, second_dataset],
+            unique_name="model",
+            label="model",
+        ),
+        dataset_aliases={"Gender": "GENDER", "Separation Reasons": "SEPARATION_REASONS"},
+        dataset_by_name={"Gender": first_dataset, "Separation Reasons": second_dataset},
+        dataset_col_lookup={"Gender": {"SORT"}, "Separation Reasons": {"SORT"}},
+        measure_columns=set(),
+    )
+
+    assert any('GENDER."SORT"' in line for line in lines)
+    assert any('SEPARATION_REASONS."SORT"' in line for line in lines)
+    assert not any('SORT_2' in line for line in lines)
+
+
+def test_physical_column_collisions_keep_base_name_and_hash_suffix():
+    manager = SnowflakeSchemaManager(
+        config=SimpleNamespace(database="DB", schema_name="SCHEMA"),
+        behavior=SimpleNamespace(
+            snowflake=SimpleNamespace(),
+            compatibility=SimpleNamespace(),
+        ),
+        identifier_sanitizer=IdentifierSanitizer(),
+        connection_manager=SimpleNamespace(),
+    )
+    dataset = SimpleNamespace(
+        unique_name="Scenario",
+        source_table="Scenario",
+        columns=[
+            SimpleNamespace(unique_name="Scenario Key", source_expression=None, data_type="string"),
+            SimpleNamespace(unique_name="SCENARIO_KEY", source_expression=None, data_type="string"),
+        ],
+    )
+
+    physical = manager._collect_physical_source_columns_osi(dataset)
+
+    assert "SCENARIO_KEY" in physical
+    assert len(physical) == 2
+    assert any(name.startswith("SCENARIO_KEY_") for name in physical)
+    assert not any(name.endswith("_1") or name.endswith("_2") for name in physical)
+
+
+def test_relationship_builder_drops_inactive_fabric_relationships():
     builder = RelationshipsClauseBuilder(IdentifierSanitizer(), _Schema(), _DDL())
     rel = SimpleNamespace(
         unique_name="spend_fact_Posting_Date_date_LY_CAL_DT_inactive",
@@ -81,9 +166,7 @@ def test_relationship_builder_keeps_inactive_fabric_relationships():
         relationship_target_alias={},
     )
 
-    assert lines == [
-        '  SPEND_FACT_POSTING_DATE_DATE_LY_CAL_DT_INACTIVE AS SPEND_FACT ("POSTING_DATE") REFERENCES COL_DATE ("LY_CAL_DT")'
-    ]
+    assert lines == []
 
 
 def test_openai_dax_translation_is_attempted_when_key_is_configured(monkeypatch):

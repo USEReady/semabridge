@@ -141,6 +141,13 @@ def test_rule_based_translation():
     return failed == 0
 
 
+def test_rule_based_translation_does_not_emit_null_placeholder_for_unsupported_expression():
+    """Unsupported expressions should fail closed instead of becoming literal NULL SQL."""
+    sql = rule_based_translation("NOT_A_REAL_FUNCTION([Amount])", "sales")
+
+    assert sql is None
+
+
 def test_quota_savings():
     """Test quota savings calculation."""
     print("\n" + "="*80)

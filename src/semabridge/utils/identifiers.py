@@ -420,6 +420,12 @@ class IdentifierSanitizer:
         # Take the last two parts (TABLE.COLUMN)
         return (parts[-2], parts[-1])
 
+    @staticmethod
+    def _generate_deterministic_hash(original_name: str, sanitized_base: str) -> str:
+        """Generate a stable 4-character uppercase hash for a collision suffix."""
+        seed = f"{original_name}{sanitized_base}".encode("utf-8")
+        return hashlib.sha256(seed).hexdigest()[:4].upper()
+
 
 # ───────────────────────────────────────────────────────────────────────────
 # IdentifierRegistry — Collision Detection & Resolution
@@ -549,11 +555,5 @@ class IdentifierRegistry:
 
     @staticmethod
     def _generate_deterministic_hash(original_name: str, sanitized_base: str) -> str:
-        """Generate a stable 4-character uppercase hash for a collision suffix.
-
-        Seeds the hash with the original identifier so that two different
-        source fields that both sanitize to the same base (e.g. "REGION")
-        will still produce distinct hashes (e.g. "A1B2" vs "7F3C").
-        """
-        seed = f"{original_name}{sanitized_base}".encode("utf-8")
-        return hashlib.sha256(seed).hexdigest()[:4].upper()
+        """Generate a stable 4-character uppercase hash for a collision suffix."""
+        return IdentifierSanitizer._generate_deterministic_hash(original_name, sanitized_base)

@@ -514,6 +514,13 @@ class MetricsClauseBuilder:
             idx += 1
 
     def _resolve_metric_emission_alias(self, default_alias: str, metric_sql: str, dataset_aliases: Dict[str, str], fact_aliases: Optional[Set[str]] = None) -> str:
+        if not isinstance(metric_sql, str):
+            logger.warning(
+                "Metric SQL expression for alias resolution is non-string (%s); falling back to default alias '%s'.",
+                type(metric_sql).__name__,
+                default_alias,
+            )
+            return default_alias
         valid_aliases = set(dataset_aliases.values())
         referenced_aliases = self._extract_referenced_table_aliases(metric_sql, valid_aliases)
         if len(referenced_aliases) == 1:

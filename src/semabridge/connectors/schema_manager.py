@@ -502,7 +502,9 @@ class SnowflakeSchemaManager:
             next_idx = base_seen.get(safe_base, 0) + 1
             base_seen[safe_base] = next_idx
 
-            if base_totals.get(safe_base, 0) > 1:
+            if next_idx == 1:
+                safe_name = safe_base
+            else:
                 signature_seed = self._build_duplicate_signature_seed(
                     source_name=col.unique_name,
                     source_expression=getattr(col, "source_expression", None),
@@ -511,7 +513,8 @@ class SnowflakeSchemaManager:
                 sig_idx = signature_seen.get(signature_seed, 0) + 1
                 signature_seen[signature_seed] = sig_idx
                 source_signature = f"{signature_seed}::occ{sig_idx}"
-                preferred_name = f"{safe_base}_{next_idx}"
+                preferred_hash = IdentifierSanitizer._generate_deterministic_hash(source_signature, safe_base)
+                preferred_name = f"{safe_base}_{preferred_hash}"
                 safe_name = self._resolve_persistent_duplicate_name(
                     scope_type="column",
                     namespace_key=namespace_key,
@@ -521,13 +524,12 @@ class SnowflakeSchemaManager:
                     source_signature=source_signature,
                     preferred_name=preferred_name,
                 )
-            else:
-                safe_name = safe_base
 
             while safe_name in selected:
-                next_idx += 1
-                base_seen[safe_base] = next_idx
-                safe_name = f"{safe_base}_{next_idx}"
+                salt = signature_seen.get(signature_seed, 0) + 1
+                signature_seen[signature_seed] = salt
+                salted_signature = f"{source_signature}::salt{salt}"
+                safe_name = f"{safe_base}_{IdentifierSanitizer._generate_deterministic_hash(salted_signature, safe_base)}"
 
             if base_totals.get(safe_base, 0) > 1:
                 logger.warning(
@@ -590,7 +592,7 @@ class SnowflakeSchemaManager:
             next_idx = base_seen.get(safe_base, 0) + 1
             base_seen[safe_base] = next_idx
 
-            if base_totals.get(safe_base, 0) == 1:
+            if next_idx == 1:
                 safe_name = safe_base
             else:
                 signature_seed = self._build_duplicate_signature_seed(
@@ -601,7 +603,8 @@ class SnowflakeSchemaManager:
                 sig_idx = signature_seen.get(signature_seed, 0) + 1
                 signature_seen[signature_seed] = sig_idx
                 source_signature = f"{signature_seed}::occ{sig_idx}"
-                preferred_name = f"{safe_base}_{next_idx}"
+                preferred_hash = IdentifierSanitizer._generate_deterministic_hash(source_signature, safe_base)
+                preferred_name = f"{safe_base}_{preferred_hash}"
                 safe_name = self._resolve_persistent_duplicate_name(
                     scope_type="column",
                     namespace_key=namespace_key,
@@ -612,9 +615,10 @@ class SnowflakeSchemaManager:
                     preferred_name=preferred_name,
                 )
             while safe_name in selected:
-                next_idx += 1
-                base_seen[safe_base] = next_idx
-                safe_name = f"{safe_base}_{next_idx}"
+                salt = signature_seen.get(signature_seed, 0) + 1
+                signature_seen[signature_seed] = salt
+                salted_signature = f"{source_signature}::salt{salt}"
+                safe_name = f"{safe_base}_{IdentifierSanitizer._generate_deterministic_hash(salted_signature, safe_base)}"
 
             selected[safe_name] = col
 

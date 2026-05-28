@@ -20,6 +20,7 @@ from semabridge.sml.models import (
 )
 from semabridge.converter.dax_translator import DAXTranslator
 from semabridge.core.behavior import ConnectorBehavior
+from semabridge.intermediate.models import OSIAttribute
 from semabridge.utils.logger import get_logger
 from semabridge.utils.naming import to_alias
 from semabridge.utils.relationship_naming import generate_relationship_name
@@ -52,6 +53,7 @@ class TMSLTransformer:
         self._synonym_overrides: Dict[tuple[str, str, str], List[str]] = {}
         self._synonym_model_names: List[str] = []
         self._current_table_name = ""
+        self._behavior: Any = None
 
     def _sanitize_sql_identifier(self, value: str) -> str:
         """Normalize SQL identifiers for generated Databricks SQL fragments."""
@@ -120,6 +122,7 @@ class TMSLTransformer:
             SMLModel object
         """
         try:
+            self._behavior = behavior
             model_obj = tmsl_json.get("model", {})
             name = model_obj.get("name", "FabricModel")
             self._synonym_overrides = (
@@ -323,12 +326,11 @@ class TMSLTransformer:
                         if col.is_hidden or col.is_measure_candidate:
                             continue
                         
-                    attr = SMLAttribute(
+                    attr = OSIAttribute(
                         unique_name=col.unique_name,
                         label=col.label,
                         dataset=ds.unique_name,
-                        dataset_column=col.unique_name,
-                        description=col.description,
+                        source_column=col.unique_name,
                         is_hidden=col.is_hidden
                     )
                     attributes.append(attr)
@@ -727,6 +729,8 @@ class TMSLTransformer:
                 ),
                 user_defined=user_synonyms,
                 auto_generated=self._auto_synonyms(col_name),
+                field_name=col_name,
+                behavior=self._behavior,
             ),
         )
 
@@ -761,6 +765,8 @@ class TMSLTransformer:
                     ),
                     user_defined=empty_user_synonyms,
                     auto_generated=self._auto_synonyms(empty_display_name),
+                    field_name=measure_def["name"],
+                    behavior=self._behavior,
                 ),
             )
         
@@ -836,6 +842,8 @@ class TMSLTransformer:
                 ),
                 user_defined=user_synonyms,
                 auto_generated=self._auto_synonyms(display_name or measure_def["name"]),
+                field_name=measure_def["name"],
+                behavior=self._behavior,
             ),
         )
 

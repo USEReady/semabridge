@@ -287,12 +287,14 @@ export function SyncStatusProvider({ children }) {
 
     // Prefer SSE; polling is the fallback
     startSSE();
-    // Always do one immediate poll to populate state before SSE delivers its first frame
-    poll();
+    // Delay the first poll slightly to let higher-priority post-login API
+    // calls (projects, config) go through first, reducing request congestion.
+    const initialPollTimer = setTimeout(poll, 500);
 
     return () => {
       disposed = true;
       clearTimeout(timeoutId);
+      clearTimeout(initialPollTimer);
       if (esRef) { esRef.close(); esRef = null; }
       if (completionTimeoutRef.current) {
         clearTimeout(completionTimeoutRef.current);

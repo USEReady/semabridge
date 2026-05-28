@@ -122,101 +122,91 @@ def _normalize_yaml_windows_path_fields(yaml_text: str) -> str:
 
 
 def _resolve_models_path() -> Path:
+    """Synchronize compat project cache from persisted ORM projects.
+
+    The ORM project table is the source of truth. Any compat-store project
+    that does not exist in the backend table is removed, and matching rows
+    are refreshed from the database on every load.
     """
-    Resolve the local models directory using a strict precedence chain.
-
-        Resolution order:
-            1. SEMABRIDGE_LOCAL_MODELS_PATH env var
-            2. core.local_models_path in config.yaml (from semabridge init)
-            3. semabridge.yaml source.pbix_folder
-            4. semabridge.yaml source.repository_path
-            5. Default: project root (current working directory)
-    """
-    # 1. Environment variable
-    env_val = os.environ.get("SEMABRIDGE_LOCAL_MODELS_PATH")
-    if env_val:
-        return Path(env_val).expanduser().resolve()
-
-    # 2. Global config.yaml
     try:
-        from semabridge.core.initializer import SemabridgeInitializer
-        global_cfg_path = SemabridgeInitializer.get_default_config_path()
-        if global_cfg_path.exists():
-            global_cfg = yaml.safe_load(global_cfg_path.read_text(encoding="utf-8"))
-            raw = (global_cfg or {}).get("core", {}).get("local_models_path")
-            if raw:
-                return Path(raw).expanduser().resolve()
-    except Exception:
-        pass
+        from semabridge.repository.orm.models import Project
+        from sqlalchemy import select
 
-    # 3/4. Project-level semabridge.yaml
-    try:
-        from semabridge.core.config_loader import get_default_config_path
-        sema_yaml = get_default_config_path() or Path("config/semabridge.yaml")
-        if sema_yaml.exists():
-            cfg = yaml.safe_load(sema_yaml.read_text(encoding="utf-8"))
-            source_cfg = (cfg or {}).get("source", {})
-            raw = source_cfg.get("pbix_folder") or source_cfg.get("repository_path")
-            if raw:
-                return Path(raw).expanduser().resolve()
-    except Exception:
-        pass
+        with db_manager._session() as session:
+            rows = session.execute(
+                select(Project).order_by(Project.last_updated.desc().nullslast()).limit(500)
+            ).scalars().all()
 
-    # 5. Default — project root (no more ./models subdirectory)
-    return Path.cwd()
+        orm_project_ids: set[str] = set()
+        dirty = False
+        had_rows = bool(rows)
 
+        for row in rows:
+            pid = str(row.project_id or "").strip()
+            if not pid or pid in _compat_deleted_project_ids:
+                continue
 
-def _snapshot_model_if_changed(
-    model_id: str, content: str, author: str = "discovery",
-) -> str | None:
-    """
-    Create a DuckDB version row for a model ONLY if its content has changed
-    since the last snapshot.  Returns the new version_id or None if skipped.
+            orm_project_ids.add(pid)
+            current = _compat_projects.get(pid) if isinstance(_compat_projects.get(pid), dict) else {}
+            project_name = _compat_clean_project_name(row.name, f"Project {pid[-6:]}")
+            project = {
+                "id": pid,
+                "project_id": pid,
+                "semantic_name": project_name,
+                "display_name": project_name,
+                "name": project_name,
+                "description": str(current.get("description") or ""),
+                "source": row.adapter or current.get("source") or "fabric",
+                "source_config": current.get("source_config") if isinstance(current.get("source_config"), dict) else {},
+                "adapter": row.adapter or current.get("adapter") or "fabric",
+                "workspace_id": row.workspace_id or current.get("workspace_id") or "",
+                "account_id": current.get("account_id"),
+                "source_account_id": current.get("source_account_id"),
+                "target_account_id": current.get("target_account_id"),
+                "owner_user_id": current.get("owner_user_id"),
+                "user_id": current.get("user_id"),
+                "connection_tag": row.connection_tag or current.get("connection_tag"),
+                "target": current.get("target") if isinstance(current.get("target"), dict) else {},
+                "targets": current.get("targets") if isinstance(current.get("targets"), list) else [],
+                "target_type": str(current.get("target_type") or "snowflake"),
+                "folder_id": current.get("folder_id"),
+                "status": str(current.get("status") or "draft"),
+                "created_at": current.get("created_at") or _compat_now_iso(),
+                "updated_at": _compat_now_iso(),
+                "mapping_profile": str(current.get("mapping_profile") or ""),
+                "config_source": str(current.get("config_source") or "orm"),
+            }
 
-    Extracts `version_tag` from the model YAML itself so each version
-    is tagged with the model's own semantic version identifier.
-    """
-    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    if _last_snapshot_hash.get(model_id) == content_hash:
-        return None
+            if current != project:
+                _compat_projects[pid] = project
+                dirty = True
 
-    try:
-        parsed = yaml.safe_load(content) or {}
-    except yaml.YAMLError:
-        parsed = {"raw": content}
+            _compat_project_configs.setdefault(pid, _compat_project_configs.get(pid) or _compat_default_project_yaml(project))
+            _compat_project_runs.setdefault(pid, [])
+            _compat_project_snapshots.setdefault(pid, [])
+            _compat_snapshot_groups.setdefault(pid, [])
 
-    # Auto-extract version_tag from the model YAML
-    version_tag = parsed.get("version_tag") or parsed.get("version") or None
+        stale_ids = [
+            project_id
+            for project_id in list(_compat_projects.keys())
+            if project_id not in orm_project_ids and project_id not in _compat_deleted_project_ids
+        ]
+        for project_id in stale_ids:
+            _compat_projects.pop(project_id, None)
+            _compat_project_configs.pop(project_id, None)
+            _compat_project_runs.pop(project_id, None)
+            _compat_project_snapshots.pop(project_id, None)
+            _compat_snapshot_groups.pop(project_id, None)
+            _compat_run_snapshots.pop(project_id, None)
+            for mapping_id, mapping in list(_compat_mappings.items()):
+                if isinstance(mapping, dict) and str(mapping.get("project_id") or "").strip() == project_id:
+                    _compat_mappings.pop(mapping_id, None)
+            dirty = True
 
-    ws_id = ""
-    try:
-        ws_id = settings.fabric.workspace_id
-    except Exception:
-        ws_id = "local"
-
-    version_id = db_manager.insert_model_version(
-        model_id=model_id,
-        workspace_id=ws_id or "local",
-        snapshot=parsed,
-        author=author,
-        change_summary=f"Snapshot by {author}",
-        version_tag=version_tag,
-    )
-    _last_snapshot_hash[model_id] = content_hash
-    return version_id
-
-
-version_control_service = VersionControlService(
-    db_manager=db_manager,
-    models_path_resolver=_resolve_models_path,
-    hash_tracker=_last_snapshot_hash,
-)
-
-
-# -------------------------------------------------------
-# Health
-# -------------------------------------------------------
-
+        if dirty or had_rows:
+            _compat_save_store()
+    except Exception as exc:
+        logger.debug("ORM project bootstrap skipped: %s", exc)
 
 _compat_projects: Dict[str, Dict[str, Any]] = {}
 _compat_project_configs: Dict[str, str] = {}
@@ -236,24 +226,31 @@ _compat_job_config: Dict[str, Any] = {
     "mode": "local",
 }
 _compat_store_loaded: bool = False
+_compat_modular_bootstrapped: bool = False
 
 
 def _compat_now_iso() -> str:
     return datetime.utcnow().isoformat()
 
 def _compat_store_path() -> Path:
-    p = Path("config/.semabridge_compat_store.json")
-    if p.exists():
-        return p
+    # Prefer an existing compat store inside any recognized config root
+    for root in _compat_config_roots():
+        candidate = root / ".semabridge_compat_store.json"
+        if candidate.exists():
+            return candidate
+
+    # Legacy location at repository root
     legacy = Path(".semabridge_compat_store.json")
     if legacy.exists():
         return legacy
-    
-    # If config doesn't exist, write to current dir
-    if not Path("config").exists():
-        return legacy
-        
-    return p
+
+    # If no file exists yet, prefer writing into an existing config root
+    for root in _compat_config_roots():
+        if root.exists():
+            return root / ".semabridge_compat_store.json"
+
+    # Fallback to legacy path in current directory
+    return legacy
 
 
 def _compat_repo_root() -> Path:
@@ -436,81 +433,98 @@ def _compat_load_modular_project(project_id: str) -> Optional[Dict[str, Any]]:
     }
 
 
-def _compat_bootstrap_projects_from_modular_configs() -> None:
-    seen: set[str] = set()
-    for projects_dir in _compat_projects_dirs():
-        if not projects_dir.exists():
+def _compat_modular_project_record(
+    project_id: str,
+    bundle: Dict[str, Any],
+    existing: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    assembled = bundle.get("assembled") if isinstance(bundle.get("assembled"), dict) else {}
+    project_cfg = bundle.get("project_cfg") if isinstance(bundle.get("project_cfg"), dict) else {}
+    metadata = assembled.get("project_metadata") if isinstance(assembled.get("project_metadata"), dict) else {}
+    source_cfg = assembled.get("source") if isinstance(assembled.get("source"), dict) else {}
+    target_cfg = assembled.get("target") if isinstance(assembled.get("target"), dict) else {}
+    targets_cfg = assembled.get("targets") if isinstance(assembled.get("targets"), list) else []
+    first_target_cfg = targets_cfg[0] if targets_cfg and isinstance(targets_cfg[0], dict) else {}
+    existing = existing if isinstance(existing, dict) else {}
+
+    project_name = _compat_clean_project_name(
+        metadata.get("name") or assembled.get("project_name") or project_cfg.get("project_name") or project_cfg.get("display_name"),
+        f"Project {project_id[-6:]}",
+    )
+    source_account_id = str(
+        source_cfg.get("identity_id") or source_cfg.get("account_id") or existing.get("source_account_id") or ""
+    ).strip() or None
+    target_account_id = str(
+        target_cfg.get("identity_id")
+        or target_cfg.get("account_id")
+        or first_target_cfg.get("identity_id")
+        or first_target_cfg.get("account_id")
+        or existing.get("target_account_id")
+        or ""
+    ).strip() or None
+    account_id = str(
+        existing.get("account_id")
+        or source_account_id
+        or target_account_id
+        or ""
+    ).strip() or None
+    owner_user_id = str(
+        assembled.get("owner_user_id")
+        or metadata.get("owner_user_id")
+        or existing.get("owner_user_id")
+        or existing.get("user_id")
+        or ""
+    ).strip() or None
+
+    payload = {
+        "name": project_name,
+        "display_name": project_name,
+        "description": str(metadata.get("description") or existing.get("description") or ""),
+        "source": {
+            **source_cfg,
+            "type": source_cfg.get("type") or existing.get("source") or "fabric",
+        },
+        "target": {
+            **target_cfg,
+            "type": target_cfg.get("type") or first_target_cfg.get("type") or existing.get("target_type") or "snowflake",
+        } if (target_cfg or first_target_cfg or existing.get("target_type")) else {},
+        "targets": targets_cfg,
+        "account_id": account_id,
+        "user_id": owner_user_id,
+        "owner_user_id": owner_user_id,
+        "folder_id": existing.get("folder_id"),
+        "source_type": source_cfg.get("type") or existing.get("source") or "fabric",
+        "target_type": target_cfg.get("type") or first_target_cfg.get("type") or existing.get("target_type") or "snowflake",
+        "connection_tag": source_cfg.get("connection_tag") or target_cfg.get("connection_tag") or first_target_cfg.get("connection_tag"),
+    }
+
+    project = _compat_project_payload(project_id, payload)
+    project["semantic_name"] = project_name
+    project["display_name"] = project_name
+    project["name"] = project_name
+    project["description"] = str(metadata.get("description") or existing.get("description") or "")
+    project["folder_id"] = existing.get("folder_id")
+    project["status"] = existing.get("status") or "draft"
+    project["mapping_profile"] = str(assembled.get("mapping_profile") or existing.get("mapping_profile") or "")
+    project["config_source"] = "modular"
+    project["created_at"] = existing.get("created_at") or _compat_now_iso()
+    project["updated_at"] = existing.get("updated_at") or project["created_at"]
+    project["source_config"] = source_cfg
+    if target_cfg or first_target_cfg:
+        project["target"] = target_cfg or first_target_cfg
+    if targets_cfg:
+        project["targets"] = targets_cfg
+    return project
+
+
+def _compat_modular_project_matches(existing: Dict[str, Any], candidate: Dict[str, Any]) -> bool:
+    keys = set(existing.keys()) | set(candidate.keys())
+    for key in keys:
+        if key in {"created_at", "updated_at"}:
             continue
-
-        for path in sorted(projects_dir.glob("*.y*ml")):
-            project_id = path.stem.strip()
-            if not project_id or project_id in seen or project_id in _compat_deleted_project_ids:
-                continue
-            bundle = _compat_load_modular_project(project_id)
-            if not bundle:
-                continue
-
-            assembled = bundle["assembled"]
-            source_cfg = assembled.get("source") if isinstance(assembled.get("source"), dict) else {}
-            target_cfg = assembled.get("target") if isinstance(assembled.get("target"), dict) else {}
-            targets_cfg = assembled.get("targets") if isinstance(assembled.get("targets"), list) else []
-            first_target_cfg = targets_cfg[0] if targets_cfg and isinstance(targets_cfg[0], dict) else {}
-            metadata = assembled.get("project_metadata") if isinstance(assembled.get("project_metadata"), dict) else {}
-            existing = _compat_projects.get(project_id) if isinstance(_compat_projects.get(project_id), dict) else {}
-            owner_user_id = str(
-                assembled.get("owner_user_id")
-                or metadata.get("owner_user_id")
-                or existing.get("owner_user_id")
-                or existing.get("user_id")
-                or ""
-            ).strip() or None
-            source_account_id = str(
-                source_cfg.get("identity_id")
-                or source_cfg.get("account_id")
-                or existing.get("source_account_id")
-                or ""
-            ).strip() or None
-            target_account_id = str(
-                target_cfg.get("identity_id")
-                or target_cfg.get("account_id")
-                or first_target_cfg.get("identity_id")
-                or first_target_cfg.get("account_id")
-                or existing.get("target_account_id")
-                or ""
-            ).strip() or None
-            account_id = str(
-                existing.get("account_id")
-                or source_account_id
-                or target_account_id
-                or ""
-            ).strip() or None
-            project = {
-                "id": project_id,
-                "project_id": project_id,
-                "name": _compat_clean_project_name(metadata.get("name") or assembled.get("project_name"), f"Project {project_id[-6:]}"),
-                "description": str(metadata.get("description") or existing.get("description") or ""),
-                "source": source_cfg.get("type") or existing.get("source") or "fabric",
-                "adapter": source_cfg.get("type") or existing.get("adapter") or "fabric",
-                "workspace_id": str(source_cfg.get("workspace_id") or existing.get("workspace_id") or ""),
-                "account_id": account_id,
-                "source_account_id": source_account_id,
-                "target_account_id": target_account_id,
-                "owner_user_id": owner_user_id,
-                "user_id": owner_user_id,
-                "target_type": target_cfg.get("type") or existing.get("target_type") or "snowflake",
-                "folder_id": existing.get("folder_id"),
-                "status": existing.get("status") or "draft",
-                "mapping_profile": assembled.get("mapping_profile") or "",
-                "config_source": "modular",
-                "created_at": existing.get("created_at") or _compat_now_iso(),
-                "updated_at": _compat_now_iso(),
-            }
-            _compat_projects[project_id] = project
-            _compat_project_configs[project_id] = str(bundle.get("config_yaml") or "").strip()
-            _compat_project_runs.setdefault(project_id, [])
-            _compat_project_snapshots.setdefault(project_id, [])
-            _compat_snapshot_groups.setdefault(project_id, [])
-            seen.add(project_id)
+        if existing.get(key) != candidate.get(key):
+            return False
+    return True
 
 
 def _compat_save_store() -> None:
@@ -654,42 +668,99 @@ def _compat_load_store() -> None:
 
 
 def _compat_bootstrap_projects_from_orm() -> None:
-    """Seed compatibility project cache from persisted ORM projects when memory is empty."""
-    if _compat_projects:
-        return
+    """Synchronize compat project cache from persisted ORM projects.
 
+    The ORM project table is the source of truth. Any compat-store project
+    that does not exist in the backend table is removed, and matching rows
+    are refreshed from the database on every load.
+    """
     try:
         from semabridge.repository.orm.models import Project
         from sqlalchemy import select
 
-        with db_manager.get_session() as session:
+        with db_manager._session() as session:
             rows = session.execute(
                 select(Project).order_by(Project.last_updated.desc().nullslast()).limit(500)
             ).scalars().all()
 
+        orm_project_ids: set[str] = set()
+        dirty = False
+
         for row in rows:
             pid = str(row.project_id or "").strip()
-            if not pid or pid in _compat_deleted_project_ids:
+            if not pid:
                 continue
+
+            if pid in _compat_deleted_project_ids:
+                _compat_deleted_project_ids.discard(pid)
+                dirty = True
+
+            orm_project_ids.add(pid)
+            current = _compat_projects.get(pid) if isinstance(_compat_projects.get(pid), dict) else {}
+            project_name = _compat_clean_project_name(row.name, f"Project {pid[-6:]}")
             project = {
                 "id": pid,
                 "project_id": pid,
-                "name": _compat_clean_project_name(row.name, f"Project {pid[-6:]}"),
-                "description": "",
-                "source": row.adapter or "fabric",
-                "adapter": row.adapter or "fabric",
-                "workspace_id": row.workspace_id or "",
-                "target_type": "snowflake",
-                "folder_id": None,
-                "status": "draft",
-                "created_at": _compat_now_iso(),
+                "semantic_name": project_name,
+                "display_name": project_name,
+                "name": project_name,
+                "description": str(current.get("description") or ""),
+                "source": row.adapter or current.get("source") or "fabric",
+                "source_config": current.get("source_config") if isinstance(current.get("source_config"), dict) else {},
+                "adapter": row.adapter or current.get("adapter") or "fabric",
+                "workspace_id": row.workspace_id or current.get("workspace_id") or "",
+                "account_id": current.get("account_id"),
+                "source_account_id": current.get("source_account_id"),
+                "target_account_id": current.get("target_account_id"),
+                "owner_user_id": current.get("owner_user_id"),
+                "user_id": current.get("user_id"),
+                "connection_tag": row.connection_tag or current.get("connection_tag"),
+                "target": current.get("target") if isinstance(current.get("target"), dict) else {},
+                "targets": current.get("targets") if isinstance(current.get("targets"), list) else [],
+                "target_type": str(current.get("target_type") or "snowflake"),
+                "folder_id": current.get("folder_id"),
+                "status": str(current.get("status") or "draft"),
+                "created_at": current.get("created_at") or _compat_now_iso(),
                 "updated_at": _compat_now_iso(),
+                "mapping_profile": str(current.get("mapping_profile") or ""),
+                "config_source": str(current.get("config_source") or "orm"),
             }
-            _compat_projects[pid] = project
-            _compat_project_configs.setdefault(pid, _compat_load_repo_yaml_text() or _compat_default_project_yaml(project))
+
+            if current != project:
+                _compat_projects[pid] = project
+                dirty = True
+
+            _compat_project_configs.setdefault(pid, _compat_project_configs.get(pid) or _compat_default_project_yaml(project))
             _compat_project_runs.setdefault(pid, [])
             _compat_project_snapshots.setdefault(pid, [])
             _compat_snapshot_groups.setdefault(pid, [])
+
+        stale_ids = [
+            project_id
+            for project_id in list(_compat_projects.keys())
+            if project_id not in orm_project_ids and project_id not in _compat_deleted_project_ids
+        ]
+        for project_id in stale_ids:
+            _compat_deleted_project_ids.add(project_id)
+            _compat_projects.pop(project_id, None)
+            _compat_project_configs.pop(project_id, None)
+            _compat_project_runs.pop(project_id, None)
+            _compat_project_snapshots.pop(project_id, None)
+            _compat_snapshot_groups.pop(project_id, None)
+            _compat_run_snapshots.pop(project_id, None)
+            for path in _compat_project_yaml_paths(project_id):
+                try:
+                    if path.exists() and path.is_file():
+                        path.unlink()
+                except Exception as exc:
+                    logger.warning("Failed to delete stale project config file %s: %s", path, exc)
+            for mapping_id, mapping in list(_compat_mappings.items()):
+                if isinstance(mapping, dict) and str(mapping.get("project_id") or "").strip() == project_id:
+                    _compat_mappings.pop(mapping_id, None)
+            dirty = True
+
+        if dirty:
+            _compat_save_store()
     except Exception as exc:
         logger.debug("ORM project bootstrap skipped: %s", exc)
 
@@ -739,10 +810,10 @@ def _compat_bootstrap_project_from_repo_yaml() -> None:
 
 
 def _compat_ensure_loaded() -> None:
+    global _compat_modular_bootstrapped
     _compat_load_store()
-    _compat_bootstrap_projects_from_modular_configs()
     _compat_bootstrap_projects_from_orm()
-    _compat_bootstrap_project_from_repo_yaml()
+    _compat_modular_bootstrapped = True
 
 
 def _compat_repo_yaml_path() -> Path:

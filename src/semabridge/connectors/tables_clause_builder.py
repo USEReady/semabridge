@@ -105,11 +105,18 @@ class TablesClauseBuilder:
         declared_pk_by_alias: dict[str, list[str]] = {}
 
         relationship_pk_map = {}
+        dataset_cols_by_name: dict[str, dict[str, Any]] = {
+            ds.unique_name: {str(col.unique_name).upper(): col for col in getattr(ds, "columns", [])}
+            for ds in datasets
+        }
         for rel in relationships:
             if rel.is_active and rel.to_dataset and rel.to_columns:
                 if rel.to_dataset not in relationship_pk_map:
                     relationship_pk_map[rel.to_dataset] = []
                 for col in rel.to_columns:
+                    col_obj = dataset_cols_by_name.get(rel.to_dataset, {}).get(str(col).upper())
+                    if getattr(col_obj, "is_measure_candidate", False):
+                        continue
                     if col not in relationship_pk_map[rel.to_dataset]:
                         relationship_pk_map[rel.to_dataset].append(col)
 
@@ -148,20 +155,19 @@ class TablesClauseBuilder:
                 and not any(getattr(c, "is_key", False) for c in dataset.columns)
             )
 
+            key_cols = [c for c in dataset.columns if c.is_key]
             if is_measure_only:
                 pk_cols = []
+            elif key_cols:
+                res_col = self.identifier_sanitizer.sanitize_column(key_cols[0].unique_name) if is_osi else self.schema_manager._resolve_physical_column_name(dataset, key_cols[0].unique_name)
+                pk_cols = [f'"{res_col}"']
             elif relationship_pk_cols:
                 pk_cols = [f'"{relationship_pk_cols[0]}"']
             else:
-                key_cols = [c for c in dataset.columns if c.is_key]
-                if key_cols:
-                    res_col = self.identifier_sanitizer.sanitize_column(key_cols[0].unique_name) if is_osi else self.schema_manager._resolve_physical_column_name(dataset, key_cols[0].unique_name)
-                    pk_cols = [f'"{res_col}"']
-                else:
-                    if getattr(self.behavior.snowflake, "pk_resolution_mode", None) == "strict":
-                        raise ValueError(f"No PK found for {dataset.unique_name}")
-                    col_name = dataset.columns[0].unique_name if dataset.columns else "ID"
-                    pk_cols = [f'"{self.identifier_sanitizer.sanitize_column(col_name)}"']
+                if getattr(self.behavior.snowflake, "pk_resolution_mode", None) == "strict":
+                    raise ValueError(f"No PK found for {dataset.unique_name}")
+                col_name = dataset.columns[0].unique_name if dataset.columns else "ID"
+                pk_cols = [f'"{self.identifier_sanitizer.sanitize_column(col_name)}"']
 
             # Verification
             verified_pk = [p for p in pk_cols if p.strip('"') in known_phys]
@@ -174,7 +180,7 @@ class TablesClauseBuilder:
 
             pk_clause = f"PRIMARY KEY ({', '.join(verified_pk)})" if verified_pk else ""
             
-            if getattr(self.behavior.snowflake, "auto_add_anchors", True) and (dataset.is_fact or is_measure_only or "fact" in dataset.unique_name.lower()):
+            if getattr(self.behavior.snowflake, "auto_add_anchors", False) and (dataset.is_fact or is_measure_only or "fact" in dataset.unique_name.lower()):
                 full_table = self._build_source_query_with_anchors(full_table, dataset.unique_name, self._current_model)
 
             tables_lines.append(f'  {alias} AS {full_table} {pk_clause}')

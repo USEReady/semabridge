@@ -7,6 +7,8 @@ auditable hashing strategy across the application.
 
 from __future__ import annotations
 
+import asyncio
+
 import bcrypt as _bcrypt
 
 
@@ -35,3 +37,12 @@ def verify_password(plain: str, hashed: str) -> bool:
         ``True`` if the password matches, ``False`` otherwise.
     """
     return _bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+
+
+async def verify_password_async(plain: str, hashed: str) -> bool:
+    """Async version of :func:`verify_password`.
+
+    Offloads the CPU-bound bcrypt check to a thread so the event loop
+    remains free to serve other requests during the ~200-400ms computation.
+    """
+    return await asyncio.to_thread(verify_password, plain, hashed)

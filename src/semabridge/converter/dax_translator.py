@@ -155,7 +155,7 @@ class DAXTranslator:
                 dataset_name,
                 metric_name=metric_name
             )
-            if det_result.is_success and det_result.sql:
+            if det_result.is_success and det_result.sql and det_result.sql.strip().upper() != "NULL":
                 logger.info(f"✓ Deterministic translation successful: {det_result.sql[:60]}")
                 return DAXTranslationResult(det_result.sql, det_result.tier, clean_dax)
             else:
@@ -165,7 +165,7 @@ class DAXTranslator:
         
         # Tier 1: Direct Aggregations
         tier1_sql = self._try_tier1(clean_dax, table_alias)
-        if tier1_sql:
+        if tier1_sql and tier1_sql.strip().upper() != "NULL":
             return DAXTranslationResult(tier1_sql, 1, clean_dax)
 
         if any(re.search(rf"\b{pattern}\b", clean_dax, re.IGNORECASE) for pattern in self.STRICT_BLOCKED_FUNCTIONS):
@@ -173,7 +173,7 @@ class DAXTranslator:
             return DAXTranslationResult(None, 4, clean_dax)
 
         strict_sql = self._try_strict_translation(clean_dax, table_alias, metrics_context)
-        if strict_sql:
+        if strict_sql and strict_sql.strip().upper() != "NULL":
             return DAXTranslationResult(strict_sql, 2, clean_dax)
 
         if metrics_context:
@@ -183,14 +183,14 @@ class DAXTranslator:
                 dataset_name,
                 metrics_context,
             )
-            if dependency_sql:
+            if dependency_sql and dependency_sql.strip().upper() != "NULL":
                 return DAXTranslationResult(dependency_sql, 2, clean_dax)
         
         # Tier 2: Branching & Arithmetic
         # e.g. [Net Sales] = [Gross Sales] - [Discounts]
         if metrics_context:
             tier2_sql = self._try_branching(clean_dax, metrics_context)
-            if tier2_sql:
+            if tier2_sql and tier2_sql.strip().upper() != "NULL":
                 return DAXTranslationResult(tier2_sql, 2, clean_dax)
         
         # Tier 3: Time Intelligence (TOTALYTD, TOTALMTD, TOTALQTD, SAMEPERIODLASTYEAR, etc.)
@@ -208,7 +208,7 @@ class DAXTranslator:
                 table_alias=table_alias,
                 measure_sql_map=resolved_measures,
             )
-            if ast_sql:
+            if ast_sql and ast_sql.strip().upper() != "NULL":
                 return DAXTranslationResult(ast_sql, 3, clean_dax)
 
         # Tier 4: Complex CALCULATE / FILTER / ALL / ALLEXCEPT — attempt AST translation
@@ -228,7 +228,7 @@ class DAXTranslator:
                 table_alias=table_alias,
                 measure_sql_map=resolved_measures,
             )
-            if ast_sql:
+            if ast_sql and ast_sql.strip().upper() != "NULL":
                 return DAXTranslationResult(ast_sql, 4, clean_dax)
 
         # Tier 5: LLM Fallback - Use Claude for complex expressions deterministic parsing couldn't handle
@@ -239,7 +239,7 @@ class DAXTranslator:
             dataset_name,
             metric_name
         )
-        if llm_result:
+        if llm_result and llm_result.sql and llm_result.sql.strip().upper() != "NULL":
             return llm_result
 
         # No translation possible — return None (all tiers exhausted)

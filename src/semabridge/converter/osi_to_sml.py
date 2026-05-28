@@ -57,6 +57,13 @@ class OSIToSMLConverter(BaseConverter):
     """
 
     def __init__(self):
+        """Create converter.
+
+        By default DAX translation is disabled to keep conversions strictly
+        between the official OSI and SML shapes. Set `enable_dax_translation=True`
+        when translation of DAX expressions into SQL is explicitly desired.
+        """
+        self.enable_dax_translation = True
         self.dax_translator = DAXTranslator()
 
     def to_osi(self, sml_model: SMLModel) -> OSIModel:
@@ -132,21 +139,23 @@ class OSIToSMLConverter(BaseConverter):
                     table_alias = to_alias(sml_metric.dataset)
                     tier5_candidates.append((sml_metric.unique_name, dax, table_alias, sml_metric.dataset))
             
-            # Step 3d: Batch translate all Tier 5 candidates at once (reduces API calls by 90%)
-            if tier5_candidates:
-                logger.info(f"📦 Batch translating {len(tier5_candidates)} Tier 5 metrics...")
-                batch_results = self.dax_translator.batch_translate_tier5(tier5_candidates)
-                
-                # Apply batch translation results back to metrics
-                for metric in sml.metrics:
-                    if metric.unique_name in batch_results and batch_results[metric.unique_name]:
-                        translation = batch_results[metric.unique_name]
-                        if translation and translation.is_success:
-                            metric.sql_expression = translation.sql
-                            metric.complexity_tier = translation.tier
-                            metric.sync_enabled = True
-                            metric.sync_failure_reason = None
-                            logger.debug(f"✓ Applied batch translation for '{metric.unique_name}'")
+                # Step 3d: Batch translate Tier 5 candidates only if DAX translation
+                # is explicitly enabled. By default we do not perform any DAX
+                # translation so the converter remains strictly OSI <-> SML.
+                if tier5_candidates and self.enable_dax_translation and self.dax_translator:
+                    logger.info(f"📦 Batch translating {len(tier5_candidates)} Tier 5 metrics...")
+                    batch_results = self.dax_translator.batch_translate_tier5(tier5_candidates)
+
+                    # Apply batch translation results back to metrics
+                    for metric in sml.metrics:
+                        if metric.unique_name in batch_results and batch_results[metric.unique_name]:
+                            translation = batch_results[metric.unique_name]
+                            if translation and translation.is_success:
+                                metric.sql_expression = translation.sql
+                                metric.complexity_tier = translation.tier
+                                metric.sync_enabled = True
+                                metric.sync_failure_reason = None
+                                logger.debug(f"✓ Applied batch translation for '{metric.unique_name}'")
 
             # 4. Convert Relationships
             for osi_rel in osi_model.relationships:
@@ -161,6 +170,9 @@ class OSIToSMLConverter(BaseConverter):
 
             # 5. Inject Calendar Dimension if missing (SML Requirement for Cortex)
             self._inject_calendar_dimension(sml)
+
+            # 6. Trace inactive relationships to flag silently wrong metrics
+            self._trace_inactive_relationships(sml)
 
             return sml
 
@@ -208,14 +220,18 @@ class OSIToSMLConverter(BaseConverter):
         )
 
     def _convert_dimension(self, osi_dim: OSIDimension) -> SMLDimension:
+        # Preserve OSI attribute shape when creating SML-compatible dimensions.
+        # The SML compatibility shim aliases `SMLDimension` to the OSI model
+        # type; therefore we must build `OSIAttribute` instances here so
+        # pydantic validation succeeds.
         attributes = []
         for attr in osi_dim.attributes:
-            attributes.append(SMLAttribute(
+            attributes.append(OSIAttribute(
                 unique_name=attr.unique_name,
                 label=attr.label,
                 dataset=attr.dataset,
-                dataset_column=attr.source_column,
-                is_hidden=attr.is_hidden
+                source_column=attr.source_column,
+                is_hidden=attr.is_hidden,
             ))
             
         return SMLDimension(
@@ -231,8 +247,20 @@ class OSIToSMLConverter(BaseConverter):
         # DAX Translation Logic
         expression = osi_metric.expression or ""
 
-        # Analyze Complexity
-        complexity = self.dax_translator.analyze_complexity(expression)
+        # Analyze Complexity only if DAX translation is enabled. When
+        # disabled we use safe defaults that keep the conversion strictly
+        # within official OSI and SML shapes.
+        if self.enable_dax_translation and self.dax_translator:
+            complexity = self.dax_translator.analyze_complexity(expression)
+        else:
+            complexity = {
+                "tier": 0,
+                "requires_time_intel": False,
+                "group_by_dimensions": [],
+                "depends_on_measures": [],
+                "sync_enabled": False,
+                "failure_reason": None,
+            }
         
         sml_agg = getattr(SMLAggregationType, osi_metric.aggregation.name, SMLAggregationType.SUM)
         
@@ -256,7 +284,9 @@ class OSIToSMLConverter(BaseConverter):
         )
         
         # Attempt Translation using automated deterministic/AST/rule/LLM tiers
-        if expression:
+        # Only perform translation when explicitly enabled. Otherwise keep the
+        # OSI expression verbatim in the SML model (no SQL synthesis).
+        if expression and self.enable_dax_translation and self.dax_translator:
             from semabridge.utils.naming import to_alias
             safe_alias = to_alias(osi_metric.dataset)
             translation = self.dax_translator.translate(
@@ -265,13 +295,13 @@ class OSIToSMLConverter(BaseConverter):
                 osi_metric.dataset,
                 metric_name=metric.unique_name
             )
-            
+
             if translation.is_success:
                 metric.sql_expression = translation.sql
                 metric.complexity_tier = translation.tier
                 metric.sync_enabled = True
             elif metric.sync_enabled:
-                 metric.sync_failure_reason = f"DAX translation deferred to Tier-5 batch (Tier {translation.tier})"
+                metric.sync_failure_reason = f"DAX translation deferred to Tier-5 batch (Tier {translation.tier})"
 
         # Propagate Cortex AI metadata from OSI layer
         metric.access_modifier = osi_metric.access_modifier
@@ -295,19 +325,20 @@ class OSIToSMLConverter(BaseConverter):
                     continue
 
                 safe_alias = to_alias(metric.dataset)
-                translation = self.dax_translator.translate(
-                    metric.expression,
-                    safe_alias,
-                    metric.dataset,
-                    metric_name=metric.unique_name,
-                    metrics_context=sml.metrics,
-                )
-                if translation.is_success and translation.sql:
-                    metric.sql_expression = translation.sql
-                    metric.complexity_tier = translation.tier
-                    metric.sync_enabled = True
-                    metric.sync_failure_reason = None
-                    resolved_this_pass += 1
+                if self.enable_dax_translation and self.dax_translator:
+                    translation = self.dax_translator.translate(
+                        metric.expression,
+                        safe_alias,
+                        metric.dataset,
+                        metric_name=metric.unique_name,
+                        metrics_context=sml.metrics,
+                    )
+                    if translation.is_success and translation.sql:
+                        metric.sql_expression = translation.sql
+                        metric.complexity_tier = translation.tier
+                        metric.sync_enabled = True
+                        metric.sync_failure_reason = None
+                        resolved_this_pass += 1
 
             if resolved_this_pass == 0:
                 break
@@ -330,7 +361,7 @@ class OSIToSMLConverter(BaseConverter):
                  to_dataset=osi_rel.to_dataset,
                  to_columns=osi_rel.to_columns,
                  cardinality=sml_card,
-                 cross_filter=sml_cf,
+                 cross_filter_direction=sml_cf,
                  is_active=osi_rel.is_active
              )
         except Exception as e:
@@ -452,3 +483,56 @@ class OSIToSMLConverter(BaseConverter):
 
         if added:
             logger.info("Auto-detected %d simple metrics because OSI contained no explicit measures", added)
+
+    def _trace_inactive_relationships(self, sml: SMLModel) -> None:
+        """Scan inactive relationships and attach structured warnings to dependent metrics."""
+        import re
+        inactive_rels = [r for r in sml.relationships if not r.is_active]
+        if not inactive_rels:
+            return
+
+        # Prepare regex for USERELATIONSHIP pattern
+        userel_pattern = re.compile(
+            r"(?i)USERELATIONSHIP\s*\(\s*(?:'([^']+)'|([A-Za-z0-9_]+))?\[([^\]]+)\]\s*,\s*(?:'([^']+)'|([A-Za-z0-9_]+))?\[([^\]]+)\]\s*\)"
+        )
+
+        for rel in inactive_rels:
+            from_ds = str(rel.from_dataset).casefold()
+            from_col = str(rel.from_columns[0] if rel.from_columns else "").casefold()
+            to_ds = str(rel.to_dataset).casefold()
+            to_col = str(rel.to_columns[0] if rel.to_columns else "").casefold()
+
+            # Find all metrics referencing this inactive relationship
+            dependent_metrics = []
+            for metric in sml.metrics:
+                expr = metric.expression or ""
+                matches = userel_pattern.findall(expr)
+                for m in matches:
+                    t1 = (m[0] or m[1] or "").casefold()
+                    c1 = (m[2] or "").casefold()
+                    t2 = (m[3] or m[4] or "").casefold()
+                    c2 = (m[5] or "").casefold()
+
+                    match_normal = (t1 == from_ds and c1 == from_col and t2 == to_ds and c2 == to_col)
+                    match_reverse = (t1 == to_ds and c1 == to_col and t2 == from_ds and c2 == from_col)
+
+                    if match_normal or match_reverse:
+                        dependent_metrics.append(metric)
+                        break
+
+            # If there are dependent metrics, attach the structured warning to each
+            for dep_metric in dependent_metrics:
+                all_deps_names = [m.unique_name for m in dependent_metrics]
+                warning_msg = (
+                    f"Inactive relationship skipped: {rel.from_dataset}[{rel.from_columns[0]}] -> "
+                    f"{rel.to_dataset}[{rel.to_columns[0]}] (cardinality: {rel.cardinality.value if hasattr(rel.cardinality, 'value') else str(rel.cardinality)}). "
+                    f"Snowflake does not support inactive join paths. "
+                    f"This measure uses USERELATIONSHIP to activate it. "
+                    f"Affected measures: {all_deps_names}."
+                )
+                if warning_msg not in dep_metric.translation_warning:
+                    dep_metric.translation_warning.append(warning_msg)
+                logger.warning(
+                    "Metric '%s' warning: Inactive relationship skipped in DDL but activated by USERELATIONSHIP",
+                    dep_metric.unique_name,
+                )

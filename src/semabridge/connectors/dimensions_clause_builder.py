@@ -63,7 +63,10 @@ class DimensionsClauseBuilder:
         dims_lines = []
         added_dimensions = set()
         added_physical_dimensions = set()
-        used_dimension_aliases: Set[str] = set()
+        used_dimension_aliases_by_dataset: Dict[str, Set[str]] = {}
+
+        def _used_aliases_for(dataset_name: str) -> Set[str]:
+            return used_dimension_aliases_by_dataset.setdefault(dataset_name, set())
 
         # 1. Add explicitly defined dimensions
         for dim in dimensions:
@@ -93,6 +96,7 @@ class DimensionsClauseBuilder:
                     continue
                 
                 if dim_key not in added_dimensions and physical_dim_key not in added_physical_dimensions:
+                    used_dimension_aliases = _used_aliases_for(attr.dataset)
                     emitted_name = self._resolve_unique_dimension_alias(
                         semantic_name, used_dimension_aliases, attr.unique_name
                     )
@@ -140,13 +144,14 @@ class DimensionsClauseBuilder:
                     continue
                 
                 sync_all = self.behavior.semantic_model.sync_all_attributes
-                if not is_osi and getattr(col, "is_measure_candidate", False) and not sync_all:
+                if getattr(col, "is_measure_candidate", False) and not sync_all:
                     continue
                 
                 if self._measure_key(dataset.unique_name, col.unique_name) in measure_columns:
                     if not sync_all:
                         continue
                 
+                used_dimension_aliases = _used_aliases_for(dataset.unique_name)
                 emitted_name = self._resolve_unique_dimension_alias(
                     semantic_name, used_dimension_aliases, semantic_source_name
                 )
@@ -160,7 +165,16 @@ class DimensionsClauseBuilder:
 
         # Fallback
         if not dims_lines and datasets:
-            self._apply_fallback(datasets[0], dataset_aliases, dataset_col_lookup, measure_columns, used_dimension_aliases, dims_lines, model_name, is_osi)
+            self._apply_fallback(
+                datasets[0],
+                dataset_aliases,
+                dataset_col_lookup,
+                measure_columns,
+                _used_aliases_for(datasets[0].unique_name),
+                dims_lines,
+                model_name,
+                is_osi,
+            )
 
         return dims_lines
 

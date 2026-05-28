@@ -530,6 +530,10 @@ class RequestResponseLoggingMiddleware(BaseHTTPMiddleware):
         start_time = time.time()
         try:
             response = await call_next(request)
+        except asyncio.CancelledError:
+            elapsed = time.time() - start_time
+            logger.info(f'[CANCELLED] {method} {path} ({elapsed:.2f}s) during shutdown/request cancellation')
+            raise
         except Exception:
             elapsed = time.time() - start_time
             logger.exception(f'[EXCEPTION] {method} {path} ({elapsed:.2f}s)')

@@ -271,9 +271,9 @@ def _normalize_relationships_for_target(self, model: SMLModel) -> None:
             "FINAL REL: %s (%s.%s -> %s.%s)",
             rel.unique_name,
             rel.from_dataset,
-            rel.from_column,
+            rel.from_columns[0] if rel.from_columns else "",
             rel.to_dataset,
-            rel.to_column,
+            rel.to_columns[0] if rel.to_columns else "",
         )
 
 def _has_path(self, from_table: str, to_table: str, graph: dict[str, set[str]], exclude_edge: tuple[str, str] = None, max_depth: int = 5) -> bool:

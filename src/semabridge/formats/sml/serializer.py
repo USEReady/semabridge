@@ -1,4 +1,4 @@
-﻿"""
+"""
 SML YAML Serializer.
 
 Handles reading and writing SML models to YAML files.
@@ -442,7 +442,7 @@ class SMLSerializer:
             "to_dataset": rel.to_dataset,
             "to_columns": rel.to_columns,
             "cardinality": rel.cardinality.value,
-            "cross_filter": rel.cross_filter.value,
+            "cross_filter": rel.cross_filter_direction.value if hasattr(rel.cross_filter_direction, "value") else str(rel.cross_filter_direction),
             "is_active": rel.is_active,
         }
     

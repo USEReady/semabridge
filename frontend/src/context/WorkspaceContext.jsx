@@ -33,7 +33,6 @@ export function WorkspaceProvider({ children }) {
                 // Use only the DB-driven /connections/fabric/workspaces endpoint.
                 // The old /api/workspaces (settings-based) is intentionally NOT called here.
                 const fabricResponse = await api.fabricListWorkspaces();
-                console.log('WorkspaceContext: raw fabricListWorkspaces response:', fabricResponse);
 
                 const raw = (fabricResponse?.workspaces) || [];
                 const merged = [];

@@ -1,0 +1,45 @@
+name: SML Golden Validation
+
+on:
+  push:
+    paths:
+      - 'Tests/golden/**'
+      - '.github/workflows/sml-validation.yml'
+  pull_request:
+    paths:
+      - 'Tests/golden/**'
+      - '.github/workflows/sml-validation.yml'
+
+jobs:
+  validate-sml:
+    name: Validate SML golden snapshots
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install sml-converters
+        run: npm install -g sml-converters
+
+      - name: Verify sml-converters
+        run: sml-converters --version
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Run canonical validator on golden files
+        env:
+          PYTHONPATH: src
+        run: |
+          set -e
+          for f in Tests/golden/sml/*.json; do
+            echo "Validating $f"
+            python -m semabridge.sml.validator "$f"
+          done

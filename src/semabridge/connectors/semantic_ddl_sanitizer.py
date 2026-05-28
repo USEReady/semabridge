@@ -255,7 +255,33 @@ class SemanticDDLSanitizer:
             metric_name = name.upper()
             if metric_name in metric_names and metric_name != current_metric_name:
                 return True
-        for name in re.findall(r'(?<!\.)"([A-Z_][A-Z0-9_$]*)"', expr):
+                
+        # Find bare quoted identifiers (not preceded or followed by a dot)
+        scrubbed = re.sub(r"'(?:''|[^'])*'", "''", expr)
+        for match in re.finditer(r'"([A-Z_][A-Z0-9_$]*)"', scrubbed):
+            start, end = match.span()
+            # Check if preceded by a dot
+            preceded_by_dot = False
+            if start > 0:
+                idx = start - 1
+                while idx >= 0 and scrubbed[idx].isspace():
+                    idx -= 1
+                if idx >= 0 and scrubbed[idx] == '.':
+                    preceded_by_dot = True
+                    
+            # Check if followed by a dot
+            followed_by_dot = False
+            if end < len(scrubbed):
+                idx = end
+                while idx < len(scrubbed) and scrubbed[idx].isspace():
+                    idx += 1
+                if idx < len(scrubbed) and scrubbed[idx] == '.':
+                    followed_by_dot = True
+                    
+            if preceded_by_dot or followed_by_dot:
+                continue
+                
+            name = match.group(1)
             metric_name = name.upper()
             if metric_name in metric_names and metric_name != current_metric_name:
                 return True
@@ -267,20 +293,49 @@ class SemanticDDLSanitizer:
         if not expr:
             return False
         scrubbed = re.sub(r"'(?:''|[^'])*'", "''", expr)
-        for quoted in re.findall(r'(?<!\.)"([^"]+)"', scrubbed):
+        
+        # Use finditer to get all quoted strings and check their context
+        # (not preceded or followed by a dot)
+        for match in re.finditer(r'"([^"]+)"', scrubbed):
+            start, end = match.span()
+            # Check if preceded by a dot
+            preceded_by_dot = False
+            if start > 0:
+                idx = start - 1
+                while idx >= 0 and scrubbed[idx].isspace():
+                    idx -= 1
+                if idx >= 0 and scrubbed[idx] == '.':
+                    preceded_by_dot = True
+                    
+            # Check if followed by a dot
+            followed_by_dot = False
+            if end < len(scrubbed):
+                idx = end
+                while idx < len(scrubbed) and scrubbed[idx].isspace():
+                    idx += 1
+                if idx < len(scrubbed) and scrubbed[idx] == '.':
+                    followed_by_dot = True
+                    
+            if preceded_by_dot or followed_by_dot:
+                continue
+                
+            quoted = match.group(1)
             if quoted.upper() not in metric_names:
                 return True
+                
         scrubbed = re.sub(r'\b[A-Za-z_][A-Za-z0-9_$]*\s*\.\s*"[^"]+"', " ", scrubbed)
         scrubbed = re.sub(r'\b[A-Za-z_][A-Za-z0-9_$]*\s*\.\s*[A-Za-z_][A-Za-z0-9_$]*', " ", scrubbed)
         scrubbed = re.sub(r'"[A-Z_][A-Z0-9_$]*"', " ", scrubbed)
         keywords = {
             "AND", "AS", "ASC", "AVG", "BETWEEN", "BY", "CASE", "CAST", "COALESCE",
-            "CURRENT", "CURRENT_DATE", "DATEADD", "DATEDIFF", "DAY", "DESC",
-            "DISTINCT", "DIVIDE", "DOUBLE", "ELSE", "END", "FALSE", "FLOAT", "FROM",
-            "GROUP", "IFF", "IN", "INT", "IS", "LAG", "LEFT", "LIKE", "MAX",
-            "MIN", "MONTH", "NOT", "NULL", "NULLIF", "OR", "ORDER", "OVER",
-            "PARTITION", "ROWS", "SUM", "THEN", "TO_DATE", "TRUE",
-            "TRY_CAST", "TRY_TO_DATE", "VARCHAR", "WHEN", "WITH", "SYNONYMS", "YEAR",
+            "COUNT", "COUNT_IF", "CURRENT", "CURRENT_DATE", "DATE", "DATEADD",
+            "DATEDIFF", "DATE_TRUNC", "DAY", "DESC", "DISTINCT", "DIVIDE",
+            "DOUBLE", "ELSE", "END", "EXTRACT", "FALSE", "FLOAT", "FROM", "GROUP",
+            "IFF", "IN", "INT", "IS", "LAG", "LEFT", "LIKE", "MAX", "MIN", "MONTH",
+            "NOT", "NULL", "NULLIF", "OR", "ORDER", "OVER", "PARTITION", "QUARTER",
+            "ROWS", "SUM", "THEN", "TO_DATE", "TO_DOUBLE", "TO_VARCHAR", "TRUE",
+            "TRY_CAST", "TRY_TO_DATE", "TRY_TO_DOUBLE", "VARCHAR", "WEEK", "WHEN",
+            "WITH", "SYNONYMS", "YEAR",
         }
         for token in re.findall(r'\b[A-Za-z_][A-Za-z0-9_$]*\b', scrubbed):
             upper = token.upper()

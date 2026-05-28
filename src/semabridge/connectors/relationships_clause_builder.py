@@ -60,11 +60,11 @@ class RelationshipsClauseBuilder:
         rel_lines = []
         for rel in relationships:
             if not rel.is_active:
-                logger.info(
-                    "Including inactive Fabric relationship '%s' -> '%s' for Snowflake metadata parity.",
-                    rel.from_dataset,
-                    rel.to_dataset,
+                logger.warning(
+                    "Skipping inactive relationship '%s' from Snowflake RELATIONSHIPS DDL clause (inactive joins are not supported).",
+                    rel.unique_name or f"{rel.from_dataset}->{rel.to_dataset}",
                 )
+                continue
 
             from_alias = dataset_aliases.get(rel.from_dataset)
             to_alias = dataset_aliases.get(rel.to_dataset)

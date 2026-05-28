@@ -36,11 +36,23 @@ class CredentialSaveRequest(BaseModel):
 
 # ── Response Schemas ─────────────────────────────────────────────────────
 
+class TokenUserInfo(BaseModel):
+    """Inline user info returned with a token response."""
+
+    id: int
+    username: str
+    email: str
+    role: str
+
+    model_config = {"from_attributes": True}
+
+
 class TokenResponse(BaseModel):
     """Response from ``POST /auth/login``."""
 
     access_token: str
     token_type: str = "bearer"
+    user: Optional[TokenUserInfo] = None
 
 
 class UserResponse(BaseModel):

@@ -12,10 +12,6 @@ const WS_URL = (() => {
         return `${API_BASE_URL.replace(/^http/, 'ws').replace(/\/api$/, '')}/ws/alerts`;
     }
 
-    if (import.meta.env.DEV) {
-        return 'ws://127.0.0.1:8001/ws/alerts';
-    }
-
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${protocol}//${window.location.host}/ws/alerts`;
 })();

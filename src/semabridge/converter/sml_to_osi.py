@@ -183,11 +183,14 @@ class SMLToOSIConverter(BaseConverter):
         """Convert SMLDimension to OSIDimension."""
         attributes = []
         for sml_attr in sml_dim.attributes:
+            source_column = getattr(sml_attr, "source_column", None) or getattr(
+                sml_attr, "dataset_column", None
+            )
             attributes.append(OSIAttribute(
                 unique_name=sml_attr.unique_name,
                 label=sml_attr.label,
                 dataset=sml_attr.dataset,
-                source_column=sml_attr.dataset_column,
+                source_column=source_column,
                 is_hidden=sml_attr.is_hidden,
             ))
         
@@ -221,7 +224,7 @@ class SMLToOSIConverter(BaseConverter):
         """Convert SMLRelationship to OSIRelationship."""
         try:
             osi_card = getattr(OSICardinality, sml_rel.cardinality.name, OSICardinality.MANY_TO_ONE)
-            osi_cf = getattr(OSICrossFilterDirection, sml_rel.cross_filter.name, OSICrossFilterDirection.SINGLE)
+            osi_cf = getattr(OSICrossFilterDirection, sml_rel.cross_filter_direction.name, OSICrossFilterDirection.SINGLE)
             
             return OSIRelationship(
                 unique_name=sml_rel.unique_name,

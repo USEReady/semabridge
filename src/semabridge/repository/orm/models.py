@@ -42,10 +42,13 @@ from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, false, func, text, true
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, object_session
 
 from semabridge.repository.orm.base import Base
 from semabridge.repository.schema_compat import PROJECT_ID_LENGTH
+
+from sqlalchemy import JSON
+from sqlalchemy.dialects.postgresql import JSONB
 
 # Timezone-aware DateTime used everywhere for portability.
 # SQLite stores as TEXT, PostgreSQL as TIMESTAMPTZ, MySQL as DATETIME,
@@ -537,6 +540,82 @@ class ModelVersion(Base):
             f"<ModelVersion(version_id={self.version_id!r}, "
             f"model_id={self.model_id!r}, version_tag={self.version_tag!r})>"
         )
+
+
+# ---------------------------------------------------------------------------
+# PostgreSQL-backed semantic payload storage (JSONB) - isolated and optional
+# ---------------------------------------------------------------------------
+class ParsedSemanticPayload(Base):
+    """Persisted official semantic payloads (PostgreSQL JSONB when available).
+
+    This table is intentionally Postgres-oriented: when a PostgreSQL dialect
+    is in use the ``payload`` column will be JSONB.  When the JSONB type is
+    unavailable the column falls back to ``Text`` and repository helpers are
+    expected to JSON-encode/decode values.
+
+    Fields:
+        id:              UUID primary key (string).
+        model_name:      Logical model name.
+        version:         Optional model version tag.
+        source_platform: Origin platform identifier (e.g. 'fabric').
+        target_platform: Target platform identifier (e.g. 'snowflake').
+        payload_jsonb:   Stored payload (JSONB or Text fallback).
+        created_at/updated_at: Timestamps.
+    """
+
+    __tablename__ = "parsed_semantic_payloads"
+    __table_args__ = (
+        Index("ix_psp_model_name", "model_name"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    version: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    source_platform: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    target_platform: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+
+    # Use generic JSON with a Postgres JSONB variant for portability.
+    # Fall back to TEXT for dialects that do not support JSON/JSONB.
+    payload_jsonb: Mapped[Optional[object]] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql").with_variant(Text(), "sqlite").with_variant(Text(), "duckdb"),
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        _UTC_DT, server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        _UTC_DT, onupdate=func.now(), nullable=True
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ParsedSemanticPayload(id={self.id!r}, model_name={self.model_name!r}, "
+            f"version={self.version!r})>"
+        )
+
+    @property
+    def payload(self) -> Optional[object]:
+        """Return the parsed payload as a native Python object.
+
+        When JSONB is used the underlying driver returns native dicts/lists.
+        When using the Text fallback we decode the stored JSON string.
+        """
+        if isinstance(self.payload_jsonb, (dict, list)):
+            return self.payload_jsonb
+        try:
+            return json.loads(self.payload_jsonb or "null")
+        except Exception:
+            return None
+
+    @payload.setter
+    def payload(self, value: object) -> None:
+        session = object_session(self)
+        dialect_name = session.bind.dialect.name if session and session.bind else None
+        if dialect_name == "postgresql":
+            self.payload_jsonb = value
+        else:
+            self.payload_jsonb = json.dumps(value, ensure_ascii=False)
 
 
 # =============================================================================

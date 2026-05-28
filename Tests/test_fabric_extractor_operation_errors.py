@@ -152,6 +152,21 @@ def test_get_model_definition_retries_transient_initiate_timeout(monkeypatch):
     assert all(call.startswith("POST ") for call in calls)
 
 
+def test_resolve_model_id_rejects_stale_guid(monkeypatch):
+    extractor = _extractor()
+    monkeypatch.setattr(
+        extractor,
+        "list_semantic_models",
+        lambda: [{"id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "displayName": "Known Model"}],
+    )
+
+    with pytest.raises(FabricExtractionError) as exc:
+        extractor.resolve_model_id("11111111-2222-3333-4444-555555555555")
+
+    assert "was not found in workspace" in str(exc.value)
+    assert "Known Model" in str(exc.value)
+
+
 def test_list_semantic_models_retries_transient_timeout(monkeypatch):
     extractor = _extractor()
     calls: list[str] = []

@@ -108,16 +108,47 @@ class FabricExtractor:
 
             if response.status_code in retry_statuses and attempt < transient_retries:
                 attempt += 1
+                
+                # Default delay
+                sleep_seconds = retry_delay * (2 ** (attempt - 1))
+                
+                # Check for Retry-After header specifically for rate limits (HTTP 429)
+                if response.status_code == 429:
+                    retry_after = response.headers.get("Retry-After")
+                    if retry_after:
+                        try:
+                            # Retry-After value is typically seconds
+                            sleep_seconds = float(retry_after)
+                            logger.info(
+                                "Fabric API rate-limited (429). Respecting 'Retry-After' header: sleeping for %.1f seconds",
+                                sleep_seconds,
+                            )
+                        except (ValueError, TypeError):
+                            logger.info(
+                                "Fabric API rate-limited (429). Invalid 'Retry-After' header '%s', backing off exponentially to %.1f seconds",
+                                retry_after,
+                                sleep_seconds,
+                            )
+                    else:
+                        logger.info(
+                            "Fabric API rate-limited (429) with no 'Retry-After' header. Backing off exponentially to %.1f seconds",
+                            sleep_seconds,
+                        )
+                
+                # Cap the sleep delay to a maximum of 120 seconds to prevent hanging indefinitely
+                sleep_seconds = min(sleep_seconds, 120.0)
+
                 logger.warning(
-                    "Fabric API transient HTTP %s for %s %s (attempt %d/%d)",
+                    "Fabric API transient HTTP %s for %s %s (attempt %d/%d). Sleeping for %.1f seconds before retry.",
                     response.status_code,
                     method,
                     url,
                     attempt,
                     transient_retries + 1,
+                    sleep_seconds,
                 )
-                if retry_delay > 0:
-                    time.sleep(retry_delay)
+                if sleep_seconds > 0:
+                    time.sleep(sleep_seconds)
                 continue
 
             return response
@@ -259,14 +290,31 @@ class FabricExtractor:
         """
         import re
         
+        dataset_key = (dataset_id_or_name or "").strip()
+
         # Check if it's already a GUID pattern
         guid_pattern = r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-        if re.match(guid_pattern, dataset_id_or_name):
-            return dataset_id_or_name
+        if re.match(guid_pattern, dataset_key):
+            cached_model = self._model_cache.get(dataset_key.lower())
+            if cached_model and cached_model.get("id"):
+                return str(cached_model.get("id"))
+
+            models = self.list_semantic_models()
+            for model in models:
+                model_id = str(model.get("id", "")).strip()
+                if model_id and model_id.lower() == dataset_key.lower():
+                    logger.info(f"Validated semantic model ID '{dataset_key}' in workspace {self.config.workspace_id}")
+                    return model_id
+
+            available = ", ".join([m.get("displayName", "") for m in models[:5]])
+            raise FabricExtractionError(
+                f"Semantic model ID '{dataset_key}' was not found in workspace '{self.config.workspace_id}'. "
+                f"Available models: {available or '<none>'}"
+            )
         
         # Try cache first
-        if dataset_id_or_name.lower() in self._model_cache:
-            return self._model_cache[dataset_id_or_name.lower()].get("id", dataset_id_or_name)
+        if dataset_key.lower() in self._model_cache:
+            return self._model_cache[dataset_key.lower()].get("id", dataset_key)
         
         # Fetch models and search
         models = self.list_semantic_models()
@@ -280,15 +328,15 @@ class FabricExtractor:
             )
         
         for model in models:
-            if model.get("displayName", "").lower() == dataset_id_or_name.lower():
-                logger.info(f"Resolved '{dataset_id_or_name}' to ID: {model.get('id')}")
+            if model.get("displayName", "").lower() == dataset_key.lower():
+                logger.info(f"Resolved '{dataset_key}' to ID: {model.get('id')}")
                 return model.get("id")
         
         # If no match found, raise error listing available models
         available = ", ".join([m.get("displayName", "") for m in models[:5]])
-        logger.warning(f"Could not resolve '{dataset_id_or_name}' to a model ID")
+        logger.warning(f"Could not resolve '{dataset_key}' to a model ID")
         raise FabricExtractionError(
-            f"Semantic model '{dataset_id_or_name}' not found in workspace '{self.config.workspace_id}'. "
+            f"Semantic model '{dataset_key}' not found in workspace '{self.config.workspace_id}'. "
             f"Available models: {available}"
         )
 

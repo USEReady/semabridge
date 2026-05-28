@@ -112,12 +112,51 @@ class TargetConnectorBase:
     """
     
     def deploy(self, model: Any) -> bool:
+        """Deploy a model to the target connector.
+
+        Prefer the canonical JSON payload path: attempt to convert incoming
+        SML/OSI models to the official payload dict and call
+        `self._emitter.deploy_from_payload`. Fall back to existing deploy
+        methods if conversion is not possible.
+        """
         try:
+            # Prefer payload-based deployment
+            payload = None
+            try:
+                from semabridge.transformers.official_payload import smlmodel_to_official_payload  # type: ignore
+            except Exception:
+                smlmodel_to_official_payload = None
+
+            try:
+                from semabridge.transformers.osi_to_payload import osi_to_payload  # type: ignore
+            except Exception:
+                osi_to_payload = None
+
             model_cls = type(model).__name__
+
+            if smlmodel_to_official_payload and model_cls == "SMLModel":
+                try:
+                    payload = smlmodel_to_official_payload(model, target_platform="snowflake")
+                except Exception:
+                    payload = None
+
+            if payload is None and osi_to_payload and (model_cls == "OSIModel" or hasattr(model, "source_platform")):
+                try:
+                    payload = osi_to_payload(model)
+                except Exception:
+                    payload = None
+
+            if payload is not None:
+                # Route through canonical payload entrypoint
+                self._emitter.deploy_from_payload(payload)
+                return True
+
+            # Fallback to existing behavior
             if model_cls == "OSIModel" or hasattr(model, "source_platform"):
                 self._emitter.deploy_from_osi(model)
             else:
                 self._emitter.deploy(model)
+
             return True
 
         except Exception as e:
@@ -129,7 +168,7 @@ class TargetConnectorBase:
                     f"Underlying table missing during deployment. "
                     f"Continuing semantic model creation. Details: {e}"
                 )
-            return True  # Do NOT fail sync
+                return True  # Do NOT fail sync
 
             # Any other error should still fail
             raise

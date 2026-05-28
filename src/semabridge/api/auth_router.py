@@ -28,13 +28,14 @@ from sqlalchemy.orm import Session
 
 from semabridge.auth.deps import get_current_user
 from semabridge.api.deps import get_db
-from semabridge.auth.passwords import hash_password, verify_password
+from semabridge.auth.passwords import hash_password, verify_password, verify_password_async
 from semabridge.auth.schemas import (
     CredentialListItem,
     CredentialSaveRequest,
     LoginRequest,
     RegisterRequest,
     TokenResponse,
+    TokenUserInfo,
     UserResponse,
 )
 from semabridge.auth.tokens import (
@@ -157,7 +158,10 @@ def auto_login(
     )
 
     logger.info("Auto-login issued for dev user (id=%s)", dev_user.id)
-    return TokenResponse(access_token=access_token)
+    return TokenResponse(
+        access_token=access_token,
+        user=TokenUserInfo.model_validate(dev_user),
+    )
 
 
 # ── Public endpoints ─────────────────────────────────────────────────────
@@ -227,8 +231,12 @@ def login(
 ) -> TokenResponse:
     """Authenticate with username + password and receive a JWT.
 
-    Returns an access token in the response body and sets a
-    refresh token as an HttpOnly cookie for session renewal.
+    Returns an access token in the response body (with inline user info)
+    and sets a refresh token as an HttpOnly cookie for session renewal.
+
+    This handler is synchronous (``def``) because FastAPI runs sync
+    handlers in a threadpool, which naturally offloads the CPU-bound
+    bcrypt verification without cross-thread session issues.
     """
     ip = _client_ip(request)
     username_key = body.username.strip().lower()
@@ -286,7 +294,10 @@ def login(
     )
 
     logger.info("User logged in: %s", user.username)
-    return TokenResponse(access_token=access_token)
+    return TokenResponse(
+        access_token=access_token,
+        user=TokenUserInfo.model_validate(user),
+    )
 
 
 @router.post("/refresh", response_model=TokenResponse)

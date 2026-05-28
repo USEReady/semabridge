@@ -147,6 +147,14 @@ class OSIColumn(OSIBaseModel):
     label: str = Field(default="", description="Display name")
     data_type: OSIDataType = Field(default=OSIDataType.STRING, description="Data type")
     description: Optional[str] = Field(default=None, description="Column description")
+    source_type: Optional[str] = Field(
+        default=None,
+        description="Legacy/source-specific type label preserved for compatibility",
+    )
+    folder: Optional[str] = Field(
+        default=None,
+        description="Display folder preserved for compatibility",
+    )
     is_key: bool = Field(default=False, description="Primary/foreign key indicator")
     is_hidden: bool = Field(default=False, description="Hidden from end users")
     is_measure_candidate: bool = Field(
@@ -218,6 +226,7 @@ class OSIDataset(OSIBaseModel):
     )
     is_fact: bool = Field(default=False, description="Fact table indicator")
     is_hidden: bool = Field(default=False, description="Hidden from end users")
+    row_count: Optional[int] = Field(default=None, description="Optional source row count")
 
     @field_validator("columns")
     @classmethod
@@ -294,6 +303,7 @@ class OSIMetric(OSIBaseModel):
     )
     description: Optional[str] = Field(default=None, description="Metric description")
     format_string: Optional[str] = Field(default=None, description="Display format")
+    folder: Optional[str] = Field(default=None, description="Display folder")
     business_owner: Optional[str] = Field(
         default=None, description="Metric ownership contact (OSI attribute)"
     )
@@ -304,6 +314,7 @@ class OSIMetric(OSIBaseModel):
         description="Cortex Analyst access: 'public_access' or 'private_access'"
     )
     synonyms: List[str] = Field(default_factory=list, description="Alternative names for NLP matching")
+    translation_warning: List[str] = Field(default_factory=list, description="Warnings or issues encountered during translation")
 
     @field_validator("unique_name")
     @classmethod

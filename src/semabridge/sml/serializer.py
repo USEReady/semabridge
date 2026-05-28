@@ -3,299 +3,51 @@ SML YAML Serializer.
 
 Handles reading and writing SML models to YAML files.
 """
-
 from __future__ import annotations
 
 import yaml
 from pathlib import Path
 from typing import Any, Union
 
-from semabridge.sml.models import (
-    SMLModel,
-    SMLDataset,
-    SMLColumn,
-    SMLDimension,
-    SMLAttribute,
-    SMLHierarchy,
-    SMLLevel,
-    SMLMetric,
-    SMLRelationship,
-    DataType,
-    AggregationType,
-    Cardinality,
-    CrossFilterDirection,
-)
-from semabridge.utils.logger import get_logger
-
-logger = get_logger(__name__)
+from semabridge.intermediate.models import OSIModel
 
 
 class SMLSerializer:
+    """Compatibility serializer that reads/writes YAML using the canonical OSI model.
+
+    This keeps the public `semabridge.sml.serializer` API intact while ensuring
+    payloads conform to the official OSI/Intermediate schema.
     """
-    Serializes and deserializes SML models to/from YAML.
-    
-    Supports both single-file and folder-based representations.
-    """
-    
+
     @staticmethod
-    def to_yaml(model: SMLModel, indent: int = 2) -> str:
-        """
-        Convert SML model to YAML string.
-        
-        Args:
-            model: SML model to serialize
-            indent: Indentation level
-            
-        Returns:
-            YAML string representation
-        """
-        data = SMLSerializer._model_to_dict(model)
+    def to_yaml(model: OSIModel, indent: int = 2) -> str:
+        data = model.model_dump()
         return yaml.dump(data, default_flow_style=False, indent=indent, sort_keys=False)
-    
+
     @staticmethod
-    def from_yaml(yaml_content: str) -> SMLModel:
-        """
-        Parse YAML string to SML model.
-        
-        Args:
-            yaml_content: YAML string
-            
-        Returns:
-            SML model instance
-        """
+    def from_yaml(yaml_content: str) -> OSIModel:
         data = yaml.safe_load(yaml_content)
-        return SMLSerializer._dict_to_model(data)
-    
+        return OSIModel.model_validate(data)
+
     @staticmethod
-    def save(model: SMLModel, path: Union[str, Path]) -> Path:
-        """
-        Save SML model to a file.
-        
-        Args:
-            model: SML model to save
-            path: File path (single file) or directory (folder structure)
-            
-        Returns:
-            Path to the saved file/directory
-        """
+    def save(model: OSIModel, path: Union[str, Path]) -> Path:
         path = Path(path)
-        
         if path.suffix in (".yaml", ".yml"):
-            # Single file mode
             path.parent.mkdir(parents=True, exist_ok=True)
             yaml_content = SMLSerializer.to_yaml(model)
             path.write_text(yaml_content, encoding="utf-8")
-            logger.info(f"Saved SML model to {path}")
             return path
         else:
-            # Folder structure mode
-            return SMLSerializer._save_folder(model, path)
-    
+            # Folder-structure support can be added later if required.
+            raise NotImplementedError("Folder-style SML save not implemented in compatibility shim.")
+
     @staticmethod
-    def load(path: Union[str, Path]) -> SMLModel:
-        """
-        Load SML model from a file or folder.
-        
-        Args:
-            path: File path (single file) or directory (folder structure)
-            
-        Returns:
-            SML model instance
-        """
+    def load(path: Union[str, Path]) -> OSIModel:
         path = Path(path)
-        
         if path.is_file():
             yaml_content = path.read_text(encoding="utf-8")
             return SMLSerializer.from_yaml(yaml_content)
-        elif path.is_dir():
-            return SMLSerializer._load_folder(path)
-        else:
-            raise FileNotFoundError(f"SML path not found: {path}")
-    
-    @staticmethod
-    def _save_folder(model: SMLModel, folder: Path) -> Path:
-        """
-        Save SML model to folder structure.
-        
-        Creates:
-        - model.yaml (main model file)
-        - datasets/<name>.yaml
-        - dimensions/<name>.yaml
-        - metrics/<name>.yaml
-        """
-        folder.mkdir(parents=True, exist_ok=True)
-        
-        # Save main model file
-        model_data = {
-            "unique_name": model.unique_name,
-            "object_type": "model",
-            "label": model.label,
-            "description": model.description,
-            "version": model.version,
-            "source_system": model.source_system,
-            "datasets": [ds.unique_name for ds in model.datasets],
-            "dimensions": [dim.unique_name for dim in model.dimensions],
-            "metrics": [m.unique_name for m in model.metrics],
-            "relationships": [SMLSerializer._relationship_to_dict(r) for r in model.relationships],
-        }
-        (folder / "model.yaml").write_text(
-            yaml.dump(model_data, default_flow_style=False, sort_keys=False),
-            encoding="utf-8"
-        )
-        
-        # Save datasets
-        if model.datasets:
-            ds_folder = folder / "datasets"
-            ds_folder.mkdir(exist_ok=True)
-            for ds in model.datasets:
-                ds_data = SMLSerializer._dataset_to_dict(ds)
-                (ds_folder / f"{ds.unique_name}.yaml").write_text(
-                    yaml.dump(ds_data, default_flow_style=False, sort_keys=False),
-                    encoding="utf-8"
-                )
-        
-        # Save dimensions
-        if model.dimensions:
-            dim_folder = folder / "dimensions"
-            dim_folder.mkdir(exist_ok=True)
-            for dim in model.dimensions:
-                dim_data = SMLSerializer._dimension_to_dict(dim)
-                (dim_folder / f"{dim.unique_name}.yaml").write_text(
-                    yaml.dump(dim_data, default_flow_style=False, sort_keys=False),
-                    encoding="utf-8"
-                )
-        
-        # Save metrics
-        if model.metrics:
-            metric_folder = folder / "metrics"
-            metric_folder.mkdir(exist_ok=True)
-            for metric in model.metrics:
-                metric_data = SMLSerializer._metric_to_dict(metric)
-                (metric_folder / f"{metric.unique_name}.yaml").write_text(
-                    yaml.dump(metric_data, default_flow_style=False, sort_keys=False),
-                    encoding="utf-8"
-                )
-        
-        logger.info(f"Saved SML model folder structure to {folder}")
-        return folder
-    
-    @staticmethod
-    def _load_folder(folder: Path) -> SMLModel:
-        """Load SML model from folder structure."""
-        model_file = folder / "model.yaml"
-        if not model_file.exists():
-            raise FileNotFoundError(f"model.yaml not found in {folder}")
-        
-        model_data = yaml.safe_load(model_file.read_text(encoding="utf-8"))
-        
-        # Load datasets
-        datasets = []
-        ds_folder = folder / "datasets"
-        if ds_folder.exists():
-            for ds_file in ds_folder.glob("*.yaml"):
-                ds_data = yaml.safe_load(ds_file.read_text(encoding="utf-8"))
-                datasets.append(SMLSerializer._dict_to_dataset(ds_data))
-        
-        # Load dimensions
-        dimensions = []
-        dim_folder = folder / "dimensions"
-        if dim_folder.exists():
-            for dim_file in dim_folder.glob("*.yaml"):
-                dim_data = yaml.safe_load(dim_file.read_text(encoding="utf-8"))
-                dimensions.append(SMLSerializer._dict_to_dimension(dim_data))
-        
-        # Load metrics
-        metrics = []
-        metric_folder = folder / "metrics"
-        if metric_folder.exists():
-            for metric_file in metric_folder.glob("*.yaml"):
-                metric_data = yaml.safe_load(metric_file.read_text(encoding="utf-8"))
-                metrics.append(SMLSerializer._dict_to_metric(metric_data))
-        
-        # Load relationships from model file
-        relationships = []
-        for rel_data in model_data.get("relationships", []):
-            relationships.append(SMLSerializer._dict_to_relationship(rel_data))
-        
-        return SMLModel(
-            unique_name=model_data["unique_name"],
-            label=model_data.get("label", ""),
-            description=model_data.get("description", ""),
-            version=model_data.get("version", "1.0"),
-            source_system=model_data.get("source_system", "snowflake"),
-            datasets=datasets,
-            dimensions=dimensions,
-            metrics=metrics,
-            relationships=relationships,
-        )
-    
-    @staticmethod
-    def _model_to_dict(model: SMLModel) -> dict[str, Any]:
-        """Convert SML model to dictionary."""
-        return {
-            "unique_name": model.unique_name,
-            "object_type": "model",
-            "label": model.label,
-            "description": model.description,
-            "version": model.version,
-            "source_system": model.source_system,
-            "created_at": model.created_at,
-            "modified_at": model.modified_at,
-            "datasets": [SMLSerializer._dataset_to_dict(ds) for ds in model.datasets],
-            "dimensions": [SMLSerializer._dimension_to_dict(dim) for dim in model.dimensions],
-            "metrics": [SMLSerializer._metric_to_dict(m) for m in model.metrics],
-            "relationships": [SMLSerializer._relationship_to_dict(r) for r in model.relationships],
-        }
-    
-    @staticmethod
-    def _dict_to_model(data: dict[str, Any]) -> SMLModel:
-        """Convert dictionary to SML model."""
-        return SMLModel(
-            unique_name=data["unique_name"],
-            label=data.get("label", ""),
-            description=data.get("description", ""),
-            version=data.get("version", "1.0"),
-            source_system=data.get("source_system", "snowflake"),
-            created_at=data.get("created_at", ""),
-            modified_at=data.get("modified_at"),
-            datasets=[SMLSerializer._dict_to_dataset(ds) for ds in data.get("datasets", [])],
-            dimensions=[SMLSerializer._dict_to_dimension(dim) for dim in data.get("dimensions", [])],
-            metrics=[SMLSerializer._dict_to_metric(m) for m in data.get("metrics", [])],
-            relationships=[SMLSerializer._dict_to_relationship(r) for r in data.get("relationships", [])],
-        )
-    
-    @staticmethod
-    def _dataset_to_dict(dataset: SMLDataset) -> dict[str, Any]:
-        """Convert dataset to dictionary."""
-        return {
-            "unique_name": dataset.unique_name,
-            "object_type": "dataset",
-            "label": dataset.label,
-            "description": dataset.description,
-            "source_table": dataset.source_table,
-            "source_schema": dataset.source_schema,
-            "source_database": dataset.source_database,
-            "is_hidden": dataset.is_hidden,
-            "is_fact": dataset.is_fact,
-            "row_count": dataset.row_count,
-            "columns": [SMLSerializer._column_to_dict(col) for col in dataset.columns],
-        }
-    
-    @staticmethod
-    def _dict_to_dataset(data: dict[str, Any]) -> SMLDataset:
-        """Convert dictionary to dataset."""
-        return SMLDataset(
-            unique_name=data["unique_name"],
-            label=data.get("label", ""),
-            description=data.get("description", ""),
-            source_table=data.get("source_table", ""),
-            source_schema=data.get("source_schema", ""),
-            source_database=data.get("source_database", ""),
-            is_hidden=data.get("is_hidden", False),
-            is_fact=data.get("is_fact", False),
-            row_count=data.get("row_count"),
-            columns=[SMLSerializer._dict_to_column(col) for col in data.get("columns", [])],
-        )
+        raise FileNotFoundError(f"SML path not found: {path}")
     
     @staticmethod
     def _column_to_dict(column: SMLColumn) -> dict[str, Any]:
@@ -444,7 +196,7 @@ class SMLSerializer:
             "to_dataset": rel.to_dataset,
             "to_columns": rel.to_columns,
             "cardinality": rel.cardinality.value,
-            "cross_filter": rel.cross_filter.value,
+            "cross_filter": rel.cross_filter_direction.value if hasattr(rel.cross_filter_direction, "value") else str(rel.cross_filter_direction),
             "is_active": rel.is_active,
         }
     

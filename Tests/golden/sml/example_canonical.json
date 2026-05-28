@@ -1,0 +1,20 @@
+{
+  "datasets": [
+    {
+      "unique_name": "orders",
+      "columns": [
+        {"unique_name": "order_id", "data_type": "integer"},
+        {"unique_name": "user_id", "data_type": "integer"}
+      ],
+      "id": "7487020cae309ad90f409592788bda0c15bc796e"
+    },
+    {
+      "unique_name": "users",
+      "columns": [
+        {"unique_name": "email", "data_type": "string"},
+        {"unique_name": "id", "data_type": "integer"}
+      ],
+      "id": "5199a43a4d0f6815f47faafbcd325da7445f0ff3"
+    }
+  ]
+}

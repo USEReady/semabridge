@@ -1219,7 +1219,8 @@ def translate_dax_with_fallback(
         # Return placeholder that will be replaced after LLM response
         return None  # Will be populated by batcher
     
-    # Step 4: Ultimate fallback - create safe placeholder
-    # This ensures measure is never completely lost
-    logger.warning(f"Fallback: No translation available for {measure_name}, using NULL placeholder")
-    return "NULL"  # Safe SQL that won't break semantic view
+    # Step 4: Ultimate fallback - signal that the measure could not be translated.
+    # Returning a literal NULL here would masquerade as a successful translation and
+    # surface as a fake metric in downstream semantic views.
+    logger.warning(f"Fallback: No translation available for {measure_name}")
+    return None

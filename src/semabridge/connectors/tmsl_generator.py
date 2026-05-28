@@ -267,9 +267,9 @@ in
             self.model.relationships,
             key=lambda r: (
                 r.from_dataset.upper(),
-                r.from_column.upper(),
+                r.from_columns[0].upper() if r.from_columns else "",
                 r.to_dataset.upper(),
-                r.to_column.upper(),
+                r.to_columns[0].upper() if r.to_columns else "",
             ),
         )
 
@@ -281,26 +281,28 @@ in
                 rel.to_dataset.startswith("DateTableTemplate_")):
                 continue
 
+            from_col = rel.from_columns[0] if rel.from_columns else ""
+            to_col = rel.to_columns[0] if rel.to_columns else ""
             endpoint_key = (
                 rel.from_dataset.upper(),
-                rel.from_column.upper(),
+                from_col.upper(),
                 rel.to_dataset.upper(),
-                rel.to_column.upper(),
+                to_col.upper(),
             )
             if endpoint_key in seen_endpoints:
                 logger.warning(
                     f"Skipping duplicate relationship endpoint "
-                    f"{rel.from_dataset}.{rel.from_column} -> {rel.to_dataset}.{rel.to_column}"
+                    f"{rel.from_dataset}.{from_col} -> {rel.to_dataset}.{to_col}"
                 )
                 continue
             seen_endpoints.add(endpoint_key)
                 
             rel_def = {
-                "name": name_tracker.next_name(rel.from_dataset, rel.from_column, rel.to_dataset, rel.to_column),
+                "name": name_tracker.next_name(rel.from_dataset, from_col, rel.to_dataset, to_col),
                 "fromTable": rel.from_dataset,
-                "fromColumn": rel.from_column,
+                "fromColumn": from_col,
                 "toTable": rel.to_dataset,
-                "toColumn": rel.to_column,
+                "toColumn": to_col,
                 "isActive": rel.is_active,
             }
             
@@ -319,7 +321,7 @@ in
                 rel_def["toCardinality"] = "many"
             
             # Map cross-filter direction
-            if rel.cross_filter == CrossFilterDirection.BOTH:
+            if rel.cross_filter_direction == CrossFilterDirection.BOTH:
                 rel_def["crossFilteringBehavior"] = "bothDirections"
             else:
                 rel_def["crossFilteringBehavior"] = "oneDirection"

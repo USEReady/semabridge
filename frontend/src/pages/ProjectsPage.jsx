@@ -550,27 +550,6 @@ export default function ProjectsPage() {
                 Group by System
               </button>
             </div>
-            <div 
-              onClick={() => {
-                updateFilterOption('selectedFolder', null);
-                updateFilterOption('searchQuery', '');
-              }}
-              style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: 8, 
-                padding: '6px 0',
-                fontSize: 13, 
-                fontWeight: 500, 
-                color: selectedFolder === null ? 'var(--text-primary)' : '#6b7280', 
-                cursor: 'pointer',
-                marginTop: 4
-              }}
-              className="hover:text-gray-300 transition-colors"
-            >
-              <Folder size={14} />
-              <span>All Projects ({projects.length})</span>
-            </div>
           </div>
           <div style={{ display: 'flex', gap: 4, marginLeft: 8 }}>
             <button

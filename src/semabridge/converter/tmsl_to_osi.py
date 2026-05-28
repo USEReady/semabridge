@@ -55,6 +55,7 @@ class TMSLToOSIConverter(BaseConverter):
     def __init__(self) -> None:
         self._synonym_overrides: Dict[tuple[str, str, str], List[str]] = {}
         self._synonym_model_names: List[str] = []
+        self._behavior: Any = None
 
     def to_osi(self, source_data: Dict[str, Any]) -> OSIModel:
         """
@@ -73,6 +74,7 @@ class TMSLToOSIConverter(BaseConverter):
             ConversionError: If transformation fails.
         """
         try:
+            self._behavior = source_data.get("behavior")
             tmsl_json = source_data.get("tmsl", {})
             workspace_id = source_data.get("workspace_id")
             dataset_id = source_data.get("dataset_id")
@@ -442,6 +444,8 @@ class TMSLToOSIConverter(BaseConverter):
             ),
             user_defined=user_synonyms,
             auto_generated=self._auto_synonyms(col_name),
+            field_name=col_name,
+            behavior=self._behavior,
         )
 
         # is_enum heuristic: TMSL dataCategory == "Category" or boolean type
@@ -668,6 +672,8 @@ class TMSLToOSIConverter(BaseConverter):
             ),
             user_defined=user_synonyms,
             auto_generated=TMSLToOSIConverter._auto_synonyms(display_name),
+            field_name=name,
+            behavior=self._behavior,
         )
 
         return OSIMetric(

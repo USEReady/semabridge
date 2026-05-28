@@ -11,6 +11,24 @@ const PROJECT_LIST_REQUEST_TIMEOUT_MS = 20000;
 const UI_LIST_CACHE_TTL_MS = 20000;
 const apiCache = new Map();
 const inFlightApiCalls = new Map();
+// Prevent unbounded growth of in-memory caches. Keep a simple LRU-ish cap.
+const API_CACHE_MAX_ITEMS = 200;
+
+function ensureCacheSize() {
+    try {
+        if (apiCache.size > API_CACHE_MAX_ITEMS) {
+            // remove oldest entries (Map preserves insertion order)
+            const toRemove = apiCache.size - API_CACHE_MAX_ITEMS;
+            const it = apiCache.keys();
+            for (let i = 0; i < toRemove; i++) {
+                const k = it.next().value;
+                apiCache.delete(k);
+            }
+        }
+    } catch {
+        // best-effort only
+    }
+}
 
 function getCachedApiValue(cacheKey) {
     const cached = apiCache.get(cacheKey);
@@ -27,7 +45,24 @@ function setCachedApiValue(cacheKey, value, ttlMs = API_CACHE_TTL_MS) {
         value,
         expiresAt: Date.now() + ttlMs,
     });
+    ensureCacheSize();
     return value;
+}
+
+function invalidateApiCache(pattern = null) {
+    try {
+        if (!pattern) {
+            apiCache.clear();
+            return;
+        }
+        for (const key of apiCache.keys()) {
+            if (key.includes(pattern) || key.startsWith(pattern)) {
+                apiCache.delete(key);
+            }
+        }
+    } catch {
+        // best-effort
+    }
 }
 
 function coalesceApiCall(cacheKey, callFn) {
@@ -143,7 +178,8 @@ function normalizeProject(project) {
     }
 
     const id = project.id ?? project.project_id ?? null;
-    const semanticName = project.semantic_name ?? project.display_name ?? project.name ?? project.project_name ?? id;
+    const displayName = project.display_name ?? project.name ?? project.project_name ?? project.semantic_name ?? id;
+    const semanticName = project.semantic_name ?? displayName;
     const source = project.source ?? project.adapter ?? project.source_type ?? null;
     const targetType = project.target_type ?? project.target?.type ?? project.targets?.[0]?.type ?? null;
 
@@ -152,7 +188,7 @@ function normalizeProject(project) {
         id,
         project_id: project.project_id ?? id,
         semantic_name: semanticName,
-        name: semanticName,
+        name: displayName,
         source,
         adapter: project.adapter ?? source,
         target_type: targetType,
@@ -160,33 +196,31 @@ function normalizeProject(project) {
 }
 
 function dedupeProjects(projects) {
-    const bySemanticName = new Map();
-    const unnamed = [];
+    const byId = new Map();
 
     for (const raw of (projects || [])) {
         const p = normalizeProject(raw);
-        const semanticName = String(p?.semantic_name || p?.name || '').trim().toLowerCase();
+        const id = String(p?.id || p?.project_id || '').trim().toLowerCase();
 
-        if (!semanticName) {
-            unnamed.push(p);
+        if (!id) {
             continue;
         }
 
-        const existing = bySemanticName.get(semanticName);
+        const existing = byId.get(id);
         if (!existing) {
-            bySemanticName.set(semanticName, p);
+            byId.set(id, p);
             continue;
         }
 
-        // Keep the freshest payload when duplicate semantic names are returned.
+        // Keep the freshest payload when duplicate IDs are returned.
         const prevTs = String(existing.updated_at || existing.created_at || '');
         const nextTs = String(p.updated_at || p.created_at || '');
         if (nextTs.localeCompare(prevTs) >= 0) {
-            bySemanticName.set(semanticName, p);
+            byId.set(id, p);
         }
     }
 
-    return [...bySemanticName.values(), ...unnamed];
+    return [...byId.values()];
 }
 
 function normalizeFolder(folder) {
@@ -236,6 +270,14 @@ function getAuthHeaders() {
     return {};
 }
 
+// Safe wrapper for callers expecting a Databricks sources helper. Keeps
+// API surface stable; implementation delegates to discovery endpoint.
+async function _getDatabricksSources(connectionId = '') {
+    const query = connectionId ? `?identity_id=${encodeURIComponent(connectionId)}` : '';
+    const res = await authFetch(`${API_BASE_URL}/discovery/databricks/sources${query}`);
+    return handleResponse(res);
+}
+
 /**
  * Return the stored Fabric MSAL access token as a Bearer header if valid.
  * This is injected on Fabric-specific API calls so the backend resolves
@@ -283,8 +325,8 @@ const AUTH_BASE = (import.meta.env.VITE_AUTH_BASE_URL || '/auth').replace(/\/$/,
 let _refreshPromise = null;
 let _lastRefreshFailureAt = 0;
 let _lastAuthExpiredEventAt = 0;
-const REFRESH_FAILURE_COOLDOWN_MS = 2000;
-const AUTH_EXPIRED_EVENT_COOLDOWN_MS = 1000;
+const REFRESH_FAILURE_COOLDOWN_MS = 5000;
+const AUTH_EXPIRED_EVENT_COOLDOWN_MS = 5000;
 
 function hasJwtToken() {
     try {
@@ -397,7 +439,7 @@ async function handleResponse(res) {
 
         // Try refresh + auto-login before giving up
         const _retryFn = res._retryFn;
-        if (_retryFn && hasJwtToken()) {
+        if (_retryFn) {
             const newToken = await tryRefreshToken();
             if (newToken) {
                 // Retry the original request with the new token
@@ -540,6 +582,7 @@ export const api = {
     },
 
     async createAccount(payload) {
+        invalidateApiCache('accounts:');
         const res = await authFetch(`${API_BASE_URL}/accounts`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -549,6 +592,7 @@ export const api = {
     },
 
     async deleteAccount(accountId) {
+        invalidateApiCache('accounts:');
         const res = await authFetch(`${API_BASE_URL}/accounts/${accountId}`, {
             method: 'DELETE'
         });
@@ -557,6 +601,7 @@ export const api = {
     },
 
     async updateAccountTag(accountId, tag) {
+        invalidateApiCache('accounts:');
         const res = await authFetch(`${API_BASE_URL}/accounts/${accountId}/tag`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
@@ -566,6 +611,7 @@ export const api = {
     },
 
     async linkProjectAccount(projectId, payload) {
+        invalidateApiCache('accounts:');
         const res = await authFetch(`${API_BASE_URL}/accounts/project/${projectId}/link-account`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
@@ -575,8 +621,18 @@ export const api = {
     },
 
     async getHealth() {
-        const res = await authFetch(`${API_BASE_URL}/health`);
-        return handleResponse(res);
+        // Health endpoint is public — bypass authFetch/handleResponse to
+        // avoid triggering the 401 recovery pipeline on network errors.
+        // A failed health check should NOT clear auth state.
+        try {
+            const res = await fetchWithTimeout(`${API_BASE_URL}/health`, {
+                credentials: 'include',
+            }, 5000);
+            if (!res.ok) return { status: 'error' };
+            return await res.json();
+        } catch {
+            return { status: 'error' };
+        }
     },
 
     async getDiscovery(sourceType, workspaceId) {
@@ -929,6 +985,14 @@ export const api = {
             localStorage.setItem(FABRIC_TOKEN_KEY, data.access_token);
             const expiresAt = Date.now() + (data.expires_in || 3600) * 1000;
             localStorage.setItem(FABRIC_TOKEN_EXPIRES_KEY, String(expiresAt));
+            // Notify listeners (UI) that a new Fabric token is available.
+            try {
+                window.dispatchEvent(new CustomEvent('semabridge:fabric-token-refreshed', {
+                    detail: { access_token: data.access_token, expires_at: expiresAt }
+                }));
+            } catch (e) {
+                // ignore; best-effort notification
+            }
         }
         return data;
     },
@@ -948,6 +1012,11 @@ export const api = {
     async fabricLogout() {
         localStorage.removeItem(FABRIC_TOKEN_KEY);
         localStorage.removeItem(FABRIC_TOKEN_EXPIRES_KEY);
+        try {
+            window.dispatchEvent(new Event('semabridge:fabric-token-removed'));
+        } catch (e) {
+            // ignore
+        }
         const res = await authFetch(`${API_BASE_URL}/connections/fabric/logout`, {
             method: 'POST',
         });
@@ -982,7 +1051,7 @@ export const api = {
             res = await fetchWithTimeout(
                 `${API_BASE_URL}/connections/fabric/workspaces${query}`,
                 { headers, credentials: 'include' },
-                7000,
+                4000,
             );
         } catch (error) {
             console.warn('[SemaBridge][FabricDiscovery] api:timeout_or_network_error', {
@@ -1073,6 +1142,7 @@ export const api = {
     },
 
     async triggerSemanticSync(payload) {
+        invalidateApiCache('jobs:runs:');
         const res = await authFetch(`${API_BASE_URL}/semantic/sync`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1183,6 +1253,7 @@ export const api = {
     },
 
     async restoreProjectVersion(projectId, payload) {
+        invalidateApiCache('jobs:runs:');
         const body = {
             ...payload,
             restore_snapshot_id: payload?.restore_snapshot_id || payload?.snapshot_id,
@@ -1218,6 +1289,7 @@ export const api = {
     },
 
     async createProject(data) {
+        invalidateApiCache('projects:list');
         const res = await authFetch(`${API_BASE_URL}/projects`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1248,6 +1320,7 @@ export const api = {
     },
 
     async updateProject(projectId, data) {
+        invalidateApiCache('projects:list');
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
@@ -1257,6 +1330,7 @@ export const api = {
     },
 
     async deleteProject(projectId) {
+        invalidateApiCache('projects:list');
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}`, {
             method: 'DELETE',
         });
@@ -1280,17 +1354,31 @@ export const api = {
             try {
                 const res = await authFetch(`${API_BASE_URL}/jobs/runs${querySuffix}`, { timeoutMs: UI_LIST_REQUEST_TIMEOUT_MS });
                 const runs = await handleResponse(res);
-                const normalized = (Array.isArray(runs) ? runs : []).map((run) => ({
-                    ...run,
-                    id: run?.id ?? run?.run_id,
-                    run_id: run?.run_id ?? run?.id,
-                    source_type: run?.source_type ?? run?.source ?? run?.adapter,
-                    message: run?.message ?? run?.error ?? run?.error_message ?? '',
-                    before_target_snapshot_ids: Array.isArray(run?.before_target_snapshot_ids) ? run.before_target_snapshot_ids : (run?.before_target_snapshot_ids ? [run.before_target_snapshot_ids] : []),
-                    after_target_snapshot_ids: Array.isArray(run?.after_target_snapshot_ids) ? run.after_target_snapshot_ids : (run?.after_target_snapshot_ids ? [run.after_target_snapshot_ids] : []),
-                    after_tgt_snapshots: Array.isArray(run?.after_tgt_snapshots) ? run.after_tgt_snapshots : (run?.after_tgt_snapshots ? [run.after_tgt_snapshots] : []),
-                    error: run?.error ?? run?.error_message ?? '',
-                }));
+
+                let projects = [];
+                try {
+                    projects = await this.listProjects();
+                } catch (e) {
+                    projects = readPersistentListCache('semabridge:cache:projects') || [];
+                }
+                const projectMap = new Map((projects || []).map(p => [String(p.id), p]));
+
+                const normalized = (Array.isArray(runs) ? runs : []).map((run) => {
+                    const project = projectMap.get(String(run?.project_id));
+                    const currentProjectName = project?.name || project?.display_name || run?.project_name;
+                    return {
+                        ...run,
+                        id: run?.id ?? run?.run_id,
+                        run_id: run?.run_id ?? run?.id,
+                        project_name: currentProjectName || 'Project run',
+                        source_type: run?.source_type ?? run?.source ?? run?.adapter,
+                        message: run?.message ?? run?.error ?? run?.error_message ?? '',
+                        before_target_snapshot_ids: Array.isArray(run?.before_target_snapshot_ids) ? run.before_target_snapshot_ids : (run?.before_target_snapshot_ids ? [run.before_target_snapshot_ids] : []),
+                        after_target_snapshot_ids: Array.isArray(run?.after_target_snapshot_ids) ? run.after_target_snapshot_ids : (run?.after_target_snapshot_ids ? [run.after_target_snapshot_ids] : []),
+                        after_tgt_snapshots: Array.isArray(run?.after_tgt_snapshots) ? run.after_tgt_snapshots : (run?.after_tgt_snapshots ? [run.after_tgt_snapshots] : []),
+                        error: run?.error ?? run?.error_message ?? '',
+                    };
+                });
                 return setCachedApiValue(cacheKey, normalized, 8000);
             } catch (error) {
                 if (isAuthError(error) || isTimeoutError(error)) {
@@ -1313,7 +1401,24 @@ export const api = {
                     return setCachedApiValue(cacheKey, [], 8000);
                 }
                 const data = await handleResponse(res);
-                return setCachedApiValue(cacheKey, Array.isArray(data) ? data : [], 8000);
+
+                let projects = [];
+                try {
+                    projects = await this.listProjects();
+                } catch (e) {
+                    projects = readPersistentListCache('semabridge:cache:projects') || [];
+                }
+                const projectMap = new Map((projects || []).map(p => [String(p.id), p]));
+
+                const normalized = (Array.isArray(data) ? data : []).map((schedule) => {
+                    const project = projectMap.get(String(schedule?.project_id));
+                    const currentProjectName = project?.name || project?.display_name || schedule?.project_name;
+                    return {
+                        ...schedule,
+                        project_name: currentProjectName || schedule?.project_id || '',
+                    };
+                });
+                return setCachedApiValue(cacheKey, normalized, 8000);
             } catch (error) {
                 if (isAuthError(error) || isTimeoutError(error)) {
                     return setCachedApiValue(cacheKey, getCachedApiValue(cacheKey) || [], 3000);
@@ -1342,6 +1447,7 @@ export const api = {
     },
 
     async triggerJob(projectId) {
+        invalidateApiCache('jobs:runs:');
         const res = await authFetch(`${API_BASE_URL}/jobs/trigger`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1558,6 +1664,7 @@ export const api = {
     },
 
     async runProjectNow(projectId, payload = null) {
+        invalidateApiCache('jobs:runs:');
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
             method: 'POST',
             headers: payload ? { 'Content-Type': 'application/json' } : undefined,
@@ -1567,6 +1674,7 @@ export const api = {
     },
 
     async syncProject(projectId) {
+        invalidateApiCache('jobs:runs:');
         // Backend compatibility API exposes /run as the sync trigger route.
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
             method: 'POST',
@@ -1962,6 +2070,9 @@ export const api = {
         if (!tag) throw new Error('Folder tag is required.');
         const res = await authFetch(`${API_BASE_URL}/folders/${encodeURIComponent(tag)}/files`);
         return handleResponse(res);
+    },
+    async getDatabricksSources(connectionId = '') {
+        return _getDatabricksSources(connectionId);
     },
 };
 

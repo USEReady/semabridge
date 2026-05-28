@@ -8,7 +8,7 @@ This separates "what to run" (ExecutionConfig) from "how to run it" (ConnectorBe
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, List, Optional
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
@@ -48,6 +48,13 @@ class SnowflakeBehavior(BaseModel):
         description=(
             "When enabled, validate and preserve existing Snowflake tables "
             "during deployment instead of destructive CREATE OR REPLACE"
+        )
+    )
+    strict_inactive_relationships: bool = Field(
+        default=False,
+        description=(
+            "When true, promote inactive relationship warnings to hard errors, "
+            "aborting deployment."
         )
     )
 
@@ -377,6 +384,32 @@ class LegacyCleanup(BaseModel):
         description="Drop old _SV views if detected"
     )
 
+class ColumnPatternRule(BaseModel):
+    """Regex pattern for auto-labeling synonyms."""
+    match: str = Field(..., description="Regex pattern matching column name")
+    label: str = Field(..., description="Target synonym label to generate")
+
+class SynonymsBehavior(BaseModel):
+    """Cortex synonym generation behavioral controls."""
+    max_per_field: int = Field(
+        default=3,
+        ge=1,
+        le=7,
+        description="Maximum number of synonyms per attribute or measure (default 3, max 7)"
+    )
+    column_patterns: List[ColumnPatternRule] = Field(
+        default_factory=list,
+        description="Regex pattern mapping column names to custom synonyms"
+    )
+    domain_glossary: Optional[str] = Field(
+        default=None,
+        description="Path to a domain glossary YAML file (term -> list of preferred label synonyms)"
+    )
+    preserve_auto: bool = Field(
+        default=True,
+        description="Merge auto-generated synonyms with user-defined overrides instead of replacing"
+    )
+
 class ConnectorBehavior(BaseModel):
     """
     Root configuration object for Connector Policy.
@@ -389,6 +422,7 @@ class ConnectorBehavior(BaseModel):
     compatibility: CompatibilityBehavior = Field(default_factory=CompatibilityBehavior)
     features: FeatureFlags = Field(default_factory=FeatureFlags)
     legacy: LegacyCleanup = Field(default_factory=LegacyCleanup)
+    synonyms: SynonymsBehavior = Field(default_factory=SynonymsBehavior)
 
     @model_validator(mode="before")
     @classmethod
