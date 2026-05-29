@@ -16,7 +16,8 @@ The following paths are **always** accessible without a token:
 
 Toggle
 ------
-Set ``AUTH_ENABLED=false`` (or omit) to bypass enforcement entirely.
+Set ``AUTH_ENABLED=false`` to bypass enforcement entirely (single-user / dev mode).
+Auth is **enabled by default** (``AUTH_ENABLED`` defaults to ``"true"``).
 This allows the existing frontend to keep working while auth is
 integrated progressively.
 """
@@ -40,10 +41,11 @@ logger = get_logger(__name__)
 # Paths that never require authentication
 PUBLIC_PATHS: Set[str] = {
     "/api/health",
-    "/api/discovery/fabric",       # Fabric discovery (uses Fabric credentials)
-    "/api/discovery/snowflake",    # Snowflake discovery (uses Snowflake credentials)  
-    "/api/discovery/semantic",     # Unified semantic discovery (uses both)
-    "/api/discovery/repository",   # Repository discovery (uses local DB)
+    "/api/health/live",
+    "/api/health/ready",
+    # Discovery endpoints removed from public paths — they return tenant data and require auth.
+    # If a specific discovery endpoint must be public (e.g. for OAuth callback), add it here
+    # with a comment explaining the reason.
     "/auth/register",
     "/auth/login",
     "/auth/auto-login",
@@ -72,8 +74,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
-        # Feature flag — off by default so nothing breaks during rollout
-        if os.environ.get("AUTH_ENABLED", "").lower() != "true":
+        # Feature flag — on by default; set AUTH_ENABLED=false explicitly for dev/single-user mode
+        if os.environ.get("AUTH_ENABLED", "true").lower() != "true":
             return await call_next(request)
 
         path = request.url.path.rstrip("/")

@@ -4,6 +4,18 @@ import { useAuth } from './AuthContext';
 
 const ConfigurationContext = createContext();
 
+// Safe error message extraction — handles API error shapes, plain Error objects,
+// strings, and null/undefined without throwing on unexpected shapes.
+function getErrorMessage(err) {
+  if (!err) return 'Unknown error';
+  if (err.detail && Array.isArray(err.detail)) {
+    return err.detail.map(d => d.msg || d).join(', ');
+  }
+  if (typeof err.message === 'string') return err.message;
+  if (typeof err === 'string') return err;
+  return 'An error occurred';
+}
+
 export function ConfigurationProvider({ children }) {
   const [config, setConfig] = useState(null);
   const [globalConfig, setGlobalConfig] = useState(null);
@@ -21,7 +33,7 @@ export function ConfigurationProvider({ children }) {
       setGlobalConfig(data.global_config);
       setGhostConfig(data.ghost);
     } catch (err) {
-      setError(err.message);
+      setError(getErrorMessage(err));
     } finally {
       setIsLoading(false);
     }
@@ -35,11 +47,12 @@ export function ConfigurationProvider({ children }) {
       await fetchConfig();
       return { success: true };
     } catch (err) {
-      if (err.detail && Array.isArray(err.detail)) {
-         return { success: false, validationErrors: err.detail };
+      if (err && err.detail && Array.isArray(err.detail)) {
+        return { success: false, validationErrors: err.detail };
       }
-      setError(err.message || 'Error saving configuration');
-      return { success: false, error: err.message };
+      const msg = getErrorMessage(err) || 'Error saving configuration';
+      setError(msg);
+      return { success: false, error: msg };
     }
   };
 

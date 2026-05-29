@@ -28,7 +28,7 @@ async def trigger_sync(request: Request, payload: Dict[str, Any]) -> Any:
     from the JWT into the sync payload so downstream project-scoped
     sync flows can enforce direct project ownership.
     """
-    if os.environ.get("AUTH_ENABLED", "").lower() == "true":
+    if os.environ.get("AUTH_ENABLED", "true").lower() == "true":
         user_id = getattr(request.state, "user_id", None)
         if user_id:
             payload["user_id"] = user_id

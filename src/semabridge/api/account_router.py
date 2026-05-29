@@ -23,7 +23,7 @@ def _try_get_user(request: Request, db: Session) -> Optional[User]:
     This allows the account router to work in both authenticated (production)
     and unauthenticated (development) modes without duplicating every endpoint.
     """
-    if os.environ.get("AUTH_ENABLED", "").lower() != "true":
+    if os.environ.get("AUTH_ENABLED", "true").lower() != "true":
         return None
     try:
         return get_current_user(request, db)

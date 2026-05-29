@@ -27,6 +27,25 @@ class LoginRequest(BaseModel):
     password: str = Field(..., description="Plaintext password")
 
 
+class ForgotPasswordRequest(BaseModel):
+    """Body of ``POST /auth/forgot-password``."""
+
+    email: EmailStr = Field(..., description="Email address of the account to reset")
+
+
+class ResetPasswordRequest(BaseModel):
+    """Body of ``POST /auth/reset-password``."""
+
+    token: str = Field(..., description="Reset token received via email")
+    new_password: str = Field(..., min_length=8, max_length=128, description="New password")
+
+
+class ForgotPasswordResponse(BaseModel):
+    """Response from ``POST /auth/forgot-password``."""
+
+    message: str = "If that email is registered, you will receive a reset link shortly."
+
+
 class CredentialSaveRequest(BaseModel):
     """Body of ``POST /auth/credentials/{service}``."""
 

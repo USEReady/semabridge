@@ -101,6 +101,11 @@ class User(Base):
         back_populates="owner",
         lazy="selectin",
     )
+    password_reset_tokens: Mapped[List["PasswordResetToken"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        lazy="select",
+    )
 
     def __repr__(self) -> str:
         return f"<User(id={self.id}, username={self.username!r}, role={self.role!r})>"
@@ -280,6 +285,42 @@ class RefreshToken(Base):
 
     def __repr__(self) -> str:
         return f"<RefreshToken(id={self.id}, user_id={self.user_id}, revoked={self.is_revoked})>"
+
+
+class PasswordResetToken(Base):
+    """One-time password reset token.
+
+    Tokens are hashed before storage (SHA-256) and expire after a
+    configurable window (default 60 minutes).  Each token can only be
+    used once (``used`` flag).  Requesting a new reset invalidates all
+    previous outstanding tokens for the same user.
+    """
+
+    __tablename__ = "password_reset_tokens"
+    __table_args__ = (
+        Index("ix_password_reset_tokens_token_hash", "token_hash", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
+    used: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=false()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        _UTC_DT, server_default=func.now(), nullable=False,
+    )
+
+    # Relationships ----------------------------------------------------------
+    user: Mapped["User"] = relationship(back_populates="password_reset_tokens")
+
+    def __repr__(self) -> str:
+        return (
+            f"<PasswordResetToken(id={self.id}, user_id={self.user_id}, used={self.used})>"
+        )
 
 
 class LocalFolder(Base):

@@ -8,9 +8,22 @@ import contextlib
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+import uuid
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware  # kept for AuthMiddleware compat
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
+
+try:
+    from slowapi import Limiter, _rate_limit_exceeded_handler
+    from slowapi.errors import RateLimitExceeded
+    from slowapi.util import get_remote_address
+    _SLOWAPI_AVAILABLE = True
+except ImportError:
+    _SLOWAPI_AVAILABLE = False
+    Limiter = None  # type: ignore[assignment]
 
 from semabridge.api.services.connection_api_service import _get_msal_app, _last_poll_time, _poll_sessions, _poll_sessions_lock
 from semabridge.api.services.project_api_service import (
@@ -313,7 +326,7 @@ def _assign_orphaned_accounts_to_dev_user() -> None:
     In production (``AUTH_ENABLED=true``), orphaned accounts remain unowned
     and are inaccessible until an admin assigns them.
     """
-    if os.environ.get("AUTH_ENABLED", "").lower() == "true":
+    if os.environ.get("AUTH_ENABLED", "true").lower() == "true":
         return  # Skip in production — admin must assign explicitly.
 
     from sqlalchemy import select, update
@@ -412,15 +425,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         try:
             _apply_schema_compatibility_fixes()
         except Exception as fix_exc:
-            logger.warning('Schema compatibility fix skipped: %s', fix_exc)
+            logger.error('Schema compatibility fix failed: %s', fix_exc, exc_info=True)
         try:
             _migrate_credentials_table()
         except Exception as cred_exc:
-            logger.warning('Credentials table migration skipped: %s', cred_exc)
+            logger.error('Credentials table migration failed: %s', cred_exc, exc_info=True)
         try:
             _apply_rls_policies()
         except Exception as rls_exc:
-            logger.warning('RLS policy setup skipped: %s', rls_exc)
+            logger.error('RLS policy setup failed: %s', rls_exc, exc_info=True)
         try:
             _assign_orphaned_accounts_to_dev_user()
         except Exception as orphan_exc:
@@ -429,7 +442,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.error('ORM table setup failed: %s', exc)
 
     # Phase 3: Log multi-tenant enforcement status at startup.
-    auth_enabled = os.environ.get("AUTH_ENABLED", "").lower() == "true"
+    auth_enabled = os.environ.get("AUTH_ENABLED", "true").lower() == "true"
     if auth_enabled:
         logger.info(
             "AUTH_ENABLED=true — multi-tenant credential isolation ENFORCED. "
@@ -437,7 +450,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
     else:
         logger.info(
-            "AUTH_ENABLED is not set — running in single-user development mode. "
+            "AUTH_ENABLED=false — running in single-user development mode. "
             "Account ownership checks are DISABLED."
         )
 
@@ -511,6 +524,46 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.debug('Database engine disposed on shutdown')
 
 
+class ContentSizeLimitMiddleware(BaseHTTPMiddleware):
+    """Reject requests whose Content-Length exceeds the configured maximum."""
+
+    def __init__(self, app, max_content_size: int = 10 * 1024 * 1024) -> None:
+        super().__init__(app)
+        self.max_content_size = int(os.environ.get("MAX_REQUEST_BODY_BYTES", max_content_size))
+
+    async def dispatch(self, request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > self.max_content_size:
+            return Response("Request body too large", status_code=413)
+        return await call_next(request)
+
+
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    """Attach a X-Request-ID header to every request and response."""
+
+    async def dispatch(self, request: Request, call_next):
+        request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+        request.state.request_id = request_id
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add defensive security headers to every response."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        if os.environ.get("HTTPS_ENABLED", "false").lower() == "true":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+
 class RequestResponseLoggingMiddleware:
     """Pure ASGI logging middleware.
 
@@ -574,22 +627,32 @@ class RequestResponseLoggingMiddleware:
 
 
 def configure_app(app: FastAPI) -> FastAPI:
+    # Wire up slowapi rate limiter if available.
+    if _SLOWAPI_AVAILABLE:
+        limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
+        app.state.limiter = limiter
+        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
     # Starlette processes add_middleware() in REVERSE order: last-added runs first.
-    # We want the execution order: CORSMiddleware → Logging → AuthMiddleware
-    # So we add them in reverse: Auth first, Logging second, CORS last.
+    # Desired execution order (outermost → innermost):
+    #   CORS → Security Headers → Request ID → Content Size → Logging → Auth
+    # So we add them in reverse order below.
     if AuthMiddleware is not None:
         app.add_middleware(AuthMiddleware)
     app.add_middleware(RequestResponseLoggingMiddleware)
+    app.add_middleware(ContentSizeLimitMiddleware)
+    app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
+    _cors_raw = os.environ.get(
+        "CORS_ORIGINS",
+        "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000",
+    )
+    _cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            'http://localhost:5173',   # Vite dev server
-            'http://localhost:3000',   # Alternative dev port
-            'http://127.0.0.1:5173',
-            'http://127.0.0.1:3000',
-        ],
+        allow_origins=_cors_origins,
         allow_credentials=True,
-        allow_methods=['*'],
-        allow_headers=['*'],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization", "X-Request-ID", "X-Fabric-Context"],
     )
     return app

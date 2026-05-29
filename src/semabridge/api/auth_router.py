@@ -16,7 +16,10 @@ except ``register`` and ``login`` which are public.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import os
+import secrets
+import time as _time
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict, deque
 from threading import Lock
 from time import monotonic
@@ -32,8 +35,11 @@ from semabridge.auth.passwords import hash_password, verify_password
 from semabridge.auth.schemas import (
     CredentialListItem,
     CredentialSaveRequest,
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
     LoginRequest,
     RegisterRequest,
+    ResetPasswordRequest,
     TokenResponse,
     UserResponse,
 )
@@ -44,7 +50,8 @@ from semabridge.auth.tokens import (
     get_refresh_token_expiry,
     hash_refresh_token,
 )
-from semabridge.repository.orm.models import RefreshToken, User, UserCredential
+from semabridge.auth.email_service import send_password_reset_email
+from semabridge.repository.orm.models import PasswordResetToken, RefreshToken, User, UserCredential
 from semabridge.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -114,7 +121,6 @@ def auto_login(
 
     Creates a default user ``dev`` on first call; reuses it on subsequent calls.
     """
-    import os
     import uuid
 
     # Find or create default dev user
@@ -150,7 +156,7 @@ def auto_login(
         key=_REFRESH_COOKIE,
         value=raw_refresh,
         httponly=True,
-        secure=False,
+        secure=os.environ.get("COOKIE_SECURE", "true").lower() == "true",
         samesite="lax",
         max_age=7 * 24 * 60 * 60,
         path="/auth",
@@ -358,7 +364,7 @@ def refresh(
         key=_REFRESH_COOKIE,
         value=raw_refresh,
         httponly=True,
-        secure=False,
+        secure=os.environ.get("COOKIE_SECURE", "true").lower() == "true",
         samesite="lax",
         max_age=7 * 24 * 60 * 60,
         path="/auth",
@@ -386,6 +392,110 @@ def logout(
 
     response.delete_cookie(key=_REFRESH_COOKIE, path="/auth")
     logger.info("User logged out")
+
+
+# ── Password reset endpoints ─────────────────────────────────────────────
+
+@router.post("/forgot-password", response_model=ForgotPasswordResponse, status_code=200)
+def forgot_password(
+    request: Request,
+    body: ForgotPasswordRequest,
+    db: Session = Depends(get_db),
+) -> ForgotPasswordResponse:
+    """Request a password reset email.
+
+    Always returns 200 to prevent account enumeration — the same
+    response is returned whether or not the email is registered.
+    """
+    ip = _client_ip(request)
+    _enforce_rate_limit("auth-forgot-password-ip", ip, limit=5, window_seconds=300)
+
+    user = db.execute(
+        select(User).where(User.email == body.email)
+    ).scalar_one_or_none()
+
+    if user:
+        # Generate a cryptographically secure raw token
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hash_refresh_token(raw_token)
+        expiry = datetime.now(timezone.utc) + timedelta(
+            minutes=int(os.environ.get("RESET_TOKEN_EXPIRY_MINUTES", "60"))
+        )
+
+        # Invalidate any existing unused reset tokens for this user
+        db.execute(
+            update(PasswordResetToken)
+            .where(
+                PasswordResetToken.user_id == user.id,
+                PasswordResetToken.used == False,  # noqa: E712
+            )
+            .values(used=True)
+        )
+
+        # Persist the new reset token
+        reset_token = PasswordResetToken(
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=expiry,
+            used=False,
+        )
+        db.add(reset_token)
+        db.commit()
+
+        # Send email — never raise on failure
+        send_password_reset_email(user.email, raw_token, user.username)
+        logger.info("[Auth] Password reset requested for user_id=%s", user.id)
+    else:
+        # Constant-time response to prevent timing-based account enumeration
+        _time.sleep(0.1)
+        logger.info("[Auth] Password reset requested for unknown email (not found)")
+
+    return ForgotPasswordResponse()
+
+
+@router.post("/reset-password", status_code=200)
+def reset_password(
+    body: ResetPasswordRequest,
+    db: Session = Depends(get_db),
+) -> Dict[str, str]:
+    """Complete a password reset using a valid reset token."""
+    token_hash = hash_refresh_token(body.token)
+
+    reset_token = db.execute(
+        select(PasswordResetToken).where(
+            PasswordResetToken.token_hash == token_hash,
+            PasswordResetToken.used == False,  # noqa: E712
+            PasswordResetToken.expires_at > datetime.now(timezone.utc),
+        )
+    ).scalar_one_or_none()
+
+    if not reset_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        )
+
+    user = db.get(User, reset_token.user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid reset token",
+        )
+
+    # Update the password and consume the reset token
+    user.password_hash = hash_password(body.new_password)
+    reset_token.used = True
+
+    # Revoke all active refresh tokens for this user for security
+    db.execute(
+        update(RefreshToken)
+        .where(RefreshToken.user_id == user.id)
+        .values(is_revoked=True)
+    )
+
+    db.commit()
+    logger.info("[Auth] Password reset completed for user_id=%s", user.id)
+    return {"message": "Password reset successfully. Please log in with your new password."}
 
 
 # ── Protected endpoints ──────────────────────────────────────────────────

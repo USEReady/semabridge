@@ -20,7 +20,7 @@ from semabridge.repository.orm.session_factory import db_manager
 
 
 def auth_is_enabled() -> bool:
-    return os.environ.get("AUTH_ENABLED", "").lower() == "true"
+    return os.environ.get("AUTH_ENABLED", "true").lower() == "true"
 
 
 def get_request_user_id(request: Request) -> str | None:

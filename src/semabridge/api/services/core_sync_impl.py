@@ -39,10 +39,10 @@ async def sync_models(payload: Dict[str, Any]):
                     logger.debug("Could not resolve account_id for project %s: %s", project_id, acct_err)
 
         # Phase 2C: Ownership validation — prevent User A from using User B's Account.
-        if account_id and user_id and os.environ.get("AUTH_ENABLED", "").lower() == "true":
+        if account_id and user_id and os.environ.get("AUTH_ENABLED", "true").lower() == "true":
             _validate_account_ownership(account_id, int(user_id))
 
-        if user_id and os.environ.get("AUTH_ENABLED", "").lower() == "true":
+        if user_id and os.environ.get("AUTH_ENABLED", "true").lower() == "true":
             from semabridge.auth.user_credentials import scoped_user_env
 
             with scoped_user_env(int(user_id), "api_secrets"):
@@ -104,7 +104,7 @@ def _validate_account_ownership(account_id: str, user_id: int) -> None:
     except Exception as exc:
         logger.error("Account ownership check failed: %s", exc)
         # Fail-open only in development — fail-closed in production
-        if os.environ.get("AUTH_ENABLED", "").lower() == "true":
+        if os.environ.get("AUTH_ENABLED", "true").lower() == "true":
             raise HTTPException(
                 status_code=500,
                 detail="Account ownership validation failed.",

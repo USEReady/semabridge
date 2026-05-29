@@ -9,9 +9,13 @@ import asyncio
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+import logging
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+
+_main_logger = logging.getLogger(__name__)
 
 from semabridge.api.account_router import router as account_router
 from semabridge.api.app_setup import configure_app, lifespan
@@ -44,6 +48,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 configure_app(app)
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    _main_logger.error(
+        "Unhandled exception on %s %s: %s",
+        request.method, request.url.path, exc,
+        exc_info=True,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"error": "An unexpected error occurred", "path": request.url.path},
+    )
+
 
 # Mount legacy top-level routers plus the newer domain routers on one app
 # so the refactor can stay backward compatible while modules are cleaned up.

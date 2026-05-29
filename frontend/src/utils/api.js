@@ -2,13 +2,23 @@
 // (Removed duplicate export of api. Only export once at the end of the file, with getDatabricksSources included as a method.)
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
 const TOKEN_KEY = 'semabridge-token';
+// Fabric MSAL token is kept in memory only — not persisted to localStorage.
+// This prevents XSS exfiltration of the Fabric OAuth token. On page reload the
+// token is re-acquired via the MSAL device-code / refresh flow.
+// (Legacy localStorage keys are kept only to remove stale values on cleanup.)
 const FABRIC_TOKEN_KEY = 'semabridge-fabric-token';
 const FABRIC_TOKEN_EXPIRES_KEY = 'semabridge-fabric-token-expires';
+
+// Module-level memory storage for the Fabric MSAL token (not persisted across
+// page refreshes — intentional: re-authentication is required after reload).
+let _fabricTokenMemory = null;
+let _fabricTokenExpiresAt = 0;
 const API_CACHE_TTL_MS = 2 * 60 * 1000;
 const API_REQUEST_TIMEOUT_MS = 60000;
 const UI_LIST_REQUEST_TIMEOUT_MS = 30000;
-const PROJECT_LIST_REQUEST_TIMEOUT_MS = 60000;
-const PROJECT_RUN_REQUEST_TIMEOUT_MS = 180000;
+const PROJECT_LIST_REQUEST_TIMEOUT_MS = parseInt(import.meta.env.VITE_API_TIMEOUT_MS ?? '60000', 10);
+const PROJECT_RUN_REQUEST_TIMEOUT_MS = parseInt(import.meta.env.VITE_RUN_TIMEOUT_MS ?? '180000', 10);
+const HEALTH_CHECK_TIMEOUT_MS = parseInt(import.meta.env.VITE_HEALTH_TIMEOUT_MS ?? '5000', 10);
 const UI_LIST_CACHE_TTL_MS = 20000;
 const apiCache = new Map();
 const inFlightApiCalls = new Map();
@@ -283,14 +293,15 @@ async function _getDatabricksSources(connectionId = '') {
  * Return the stored Fabric MSAL access token as a Bearer header if valid.
  * This is injected on Fabric-specific API calls so the backend resolves
  * the correct per-user token instead of falling back to the shared DB row.
+ * The token is stored in memory only (not localStorage) to prevent XSS exfiltration.
  */
 function getFabricAuthHeaders() {
-    const token = localStorage.getItem(FABRIC_TOKEN_KEY);
-    const expiresAt = parseInt(localStorage.getItem(FABRIC_TOKEN_EXPIRES_KEY) || '0', 10);
-    if (token && Date.now() < expiresAt) {
-        return { Authorization: `Bearer ${token}` };
+    if (_fabricTokenMemory && Date.now() < _fabricTokenExpiresAt) {
+        return { Authorization: `Bearer ${_fabricTokenMemory}` };
     }
-    // Token expired or missing - clean up stale values.
+    // Token expired or missing — clear in-memory state and any stale localStorage remnants.
+    _fabricTokenMemory = null;
+    _fabricTokenExpiresAt = 0;
     localStorage.removeItem(FABRIC_TOKEN_KEY);
     localStorage.removeItem(FABRIC_TOKEN_EXPIRES_KEY);
     return {};
@@ -316,9 +327,7 @@ export async function fetchWithTimeout(url, options = {}, timeoutMs = API_REQUES
 }
 
 function hasValidFabricToken() {
-    const token = localStorage.getItem(FABRIC_TOKEN_KEY);
-    const expiresAt = parseInt(localStorage.getItem(FABRIC_TOKEN_EXPIRES_KEY) || '0', 10);
-    return Boolean(token && Date.now() < expiresAt);
+    return Boolean(_fabricTokenMemory && Date.now() < _fabricTokenExpiresAt);
 }
 
 const AUTH_BASE = (import.meta.env.VITE_AUTH_BASE_URL || '/auth').replace(/\/$/, '');
@@ -389,21 +398,10 @@ export async function tryRefreshToken() {
                 }
             }
 
-            // Step 2: Refresh cookie failed — try auto-login (dev mode)
-            const autoRes = await fetchWithTimeout(`${AUTH_BASE}/auto-login`, {
-                method: 'POST',
-                credentials: 'include',
-            });
-            if (autoRes.ok) {
-                const autoData = await autoRes.json();
-                if (autoData.access_token) {
-                    localStorage.setItem(TOKEN_KEY, autoData.access_token);
-                    window.dispatchEvent(new CustomEvent('semabridge:token-refreshed', { detail: autoData.access_token }));
-                    _lastRefreshFailureAt = 0;
-                    return autoData.access_token;
-                }
-            }
-
+            // Refresh cookie missing or expired — notify AuthContext to handle
+            // cleanup. Auto-login is intentionally NOT called here; it may only
+            // be triggered during the explicit dev bootstrap (app first load).
+            emitAuthExpiredOnce();
             _lastRefreshFailureAt = Date.now();
             return null;
         } catch {
@@ -628,7 +626,7 @@ export const api = {
         try {
             const res = await fetchWithTimeout(`${API_BASE_URL}/health`, {
                 credentials: 'include',
-            }, 5000);
+            }, HEALTH_CHECK_TIMEOUT_MS);
             if (!res.ok) return { status: 'error' };
             return await res.json();
         } catch {
@@ -981,11 +979,15 @@ export const api = {
         });
         const data = await handleResponse(res);
 
-        // On success, store the MSAL token in localStorage for Bearer passthrough.
+        // On success, store the MSAL token in memory only (not localStorage) to
+        // prevent XSS exfiltration. The token will need to be re-acquired on reload.
         if (data.status === 'success' && data.access_token) {
-            localStorage.setItem(FABRIC_TOKEN_KEY, data.access_token);
             const expiresAt = Date.now() + (data.expires_in || 3600) * 1000;
-            localStorage.setItem(FABRIC_TOKEN_EXPIRES_KEY, String(expiresAt));
+            _fabricTokenMemory = data.access_token;
+            _fabricTokenExpiresAt = expiresAt;
+            // Clean up any stale localStorage remnants from previous sessions.
+            localStorage.removeItem(FABRIC_TOKEN_KEY);
+            localStorage.removeItem(FABRIC_TOKEN_EXPIRES_KEY);
             // Notify listeners (UI) that a new Fabric token is available.
             try {
                 window.dispatchEvent(new CustomEvent('semabridge:fabric-token-refreshed', {
@@ -1011,6 +1013,9 @@ export const api = {
     },
 
     async fabricLogout() {
+        // Clear in-memory token and any stale localStorage remnants.
+        _fabricTokenMemory = null;
+        _fabricTokenExpiresAt = 0;
         localStorage.removeItem(FABRIC_TOKEN_KEY);
         localStorage.removeItem(FABRIC_TOKEN_EXPIRES_KEY);
         try {
@@ -1072,7 +1077,11 @@ export const api = {
             return { workspaces: [] };
         }
 
-        return handleResponse(res);
+        try {
+            return await handleResponse(res);
+        } catch (err) {
+            throw err;
+        }
     },
 
     async fabricSelectWorkspace(workspaceId, workspaceName) {
@@ -1857,12 +1866,19 @@ export const api = {
         const cacheKey = 'discovery:fabric:workspaces';
         const cached = getCachedApiValue(cacheKey);
         if (cached) return cached;
-        const res = await fetch(`${API_BASE_URL}/connections/fabric/workspaces`, {
-            headers: { ...getAuthHeaders(), ...getFabricAuthHeaders() },
+        // Use authFetch so the app JWT and retry/timeout logic is applied consistently.
+        // Fabric auth headers are merged in via the options headers field.
+        const res = await authFetch(`${API_BASE_URL}/connections/fabric/workspaces`, {
+            method: 'GET',
+            headers: { ...getFabricAuthHeaders() },
         });
-        const data = await handleResponse(res);
-        const normalized = (data.workspaces || data || []).map(normalizeWorkspace);
-        return setCachedApiValue(cacheKey, normalized);
+        try {
+            const data = await handleResponse(res);
+            const normalized = (data.workspaces || data || []).map(normalizeWorkspace);
+            return setCachedApiValue(cacheKey, normalized);
+        } catch (err) {
+            throw err;
+        }
     },
 
     async discoverFabricModels(workspaceId, connectionId = '') {
@@ -2078,6 +2094,42 @@ export const api = {
     },
     async getDatabricksSources(connectionId = '') {
         return _getDatabricksSources(connectionId);
+    },
+
+    // ── Password Reset ────────────────────────────────────────────────────
+
+    /**
+     * Request a password reset email for the given address.
+     * Uses plain fetch — called before the user is authenticated.
+     */
+    async requestPasswordReset(email) {
+        const res = await fetch(`${AUTH_BASE}/forgot-password`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Failed to request password reset');
+        }
+        return res.json();
+    },
+
+    /**
+     * Complete a password reset using the token from the email link.
+     * Uses plain fetch — called before the user is authenticated.
+     */
+    async resetPassword(token, newPassword) {
+        const res = await fetch(`${AUTH_BASE}/reset-password`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token, new_password: newPassword }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Failed to reset password');
+        }
+        return res.json();
     },
 };
 
