@@ -149,7 +149,7 @@ class SemanticDDLSanitizer:
             met_items = _get_items(m_start, m_end)
             if not met_items:
                 met_items = [
-                    f'  {fallback_alias}."PLACEHOLDER_METRIC" AS NULL'
+                    f'  {fallback_alias}."PLACEHOLDER_METRIC" AS COUNT(1)'
                 ]
             else:
                 met_items = self._normalize_metric_display_name_refs(met_items)
@@ -222,11 +222,11 @@ class SemanticDDLSanitizer:
                 self._has_derived_metric_reference(expr, current_metric_name, metric_names)
                 or self._has_unresolved_bare_metric_identifier(expr, metric_names)
             ):
-                synonym_suffix = ""
-                synonym_match = re.search(r'\s+WITH\s+SYNONYMS\s+=\s+\(.+\)\s*$', expr, flags=re.IGNORECASE)
-                if synonym_match:
-                    synonym_suffix = synonym_match.group(0)
-                expr = f"NULL{synonym_suffix}"
+                logger.warning(
+                    "Preserving metric expression for '%s' despite validation warning: %s",
+                    current_metric_name or parts[0].strip(),
+                    expr[:120],
+                )
             normalized.append(f"{parts[0]}{parts[1]}{expr}")
         return normalized
 

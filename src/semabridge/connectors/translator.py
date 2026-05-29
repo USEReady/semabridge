@@ -37,6 +37,12 @@ class MetricExpressionTranslator:
         """
         if not sql or not dataset_aliases:
             return sql
+
+        # Keep this pass idempotent: if a reference is already qualified, do not
+        # rewrite it again. The legacy stack previously doubled qualifications
+        # such as SALESFACT."COL_DATE"."YEAR" during repeated normalization.
+        if re.search(r'\b[A-Za-z_][A-Za-z0-9_$]*\.(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)\.(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)', sql):
+            return sql
         
         # Sort by length (longest first) to avoid partial matches
         sorted_tables = sorted(dataset_aliases.keys(), key=len, reverse=True)
@@ -565,6 +571,10 @@ class MetricExpressionTranslator:
         alias_to_dataset.update({str(v).lower(): k for k, v in dataset_aliases.items()})
         alias_to_dataset.update({str(v).upper(): k for k, v in dataset_aliases.items()})
 
+        if re.search(r'\b[A-Za-z_][A-Za-z0-9_$]*\.(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)\.(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)', metric_sql):
+            logger.debug(f"Metric '{metric_name}': rejecting doubly-qualified identifier chain")
+            return False, "doubly-qualified identifier chain"
+
         patterns = [
             r'(\w+)\."([^"]+)"',
             r'(\w+)\.([A-Za-z_][A-Za-z0-9_]*)',
@@ -646,6 +656,9 @@ class MetricExpressionTranslator:
         alias_to_dataset.update({str(v).upper(): k for k, v in dataset_aliases.items()})
         normalized_sql = metric_sql
         normalized_sql = self._normalize_display_name_metric_references(normalized_sql, metric_names)
+
+        if re.search(r'\b[A-Za-z_][A-Za-z0-9_$]*\.(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)\.(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)', normalized_sql):
+            return normalized_sql
 
         try:
             from semabridge.utils.naming import to_alias as _to_alias
@@ -1035,6 +1048,8 @@ class MetricExpressionTranslator:
 
     def _qualify_bare_partition_identifiers(self, metric_sql: str, dataset_col_lookup: Dict[str, set[str]], dataset_aliases: Dict[str, str], preferred_table_alias: Optional[str] = None) -> str:
         if not metric_sql: return metric_sql
+        if re.search(r'\b[A-Za-z_][A-Za-z0-9_$]*\.(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)\.(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)', metric_sql):
+            return metric_sql
         alias_to_dataset = {alias: ds for ds, alias in dataset_aliases.items()}
         pattern = re.compile(r'(?i)(PARTITION\s+BY\s+)("?[A-Z_][A-Z0-9_]*"?)')
         def _replace(match: re.Match) -> str:
@@ -1054,6 +1069,8 @@ class MetricExpressionTranslator:
 
     def _dedupe_qualified_column_tokens(self, metric_sql: str) -> str:
         if not metric_sql: return metric_sql
+        if re.search(r'\b[A-Za-z_][A-Za-z0-9_$]*\.(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)\.(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)', metric_sql):
+            return metric_sql
         repaired = metric_sql
         repaired = re.sub(r'(\b\w+\.)"([A-Z_][A-Z0-9_]*)"\.\2\b', r'\1"\2"', repaired)
         repaired = re.sub(r'(\b\w+\.)([A-Z_][A-Z0-9_]*)\.\2\b', r'\1\2', repaired)

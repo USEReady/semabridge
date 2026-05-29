@@ -316,7 +316,8 @@ def _deploy_measures(self, context: RunContext, sf_cfg) -> None:
     from semabridge.utils.naming import to_alias
     from datetime import datetime
 
-    translator = DAXTranslator()
+    # Inject the run context's osi_model if available to support model-agnostic generality
+    translator = DAXTranslator(osi_model=getattr(context, "osi_model", None))
     successful_metrics = []
     failed_measures = []
 
@@ -332,6 +333,11 @@ def _deploy_measures(self, context: RunContext, sf_cfg) -> None:
         logger.warning(f"Dependency-aware pre-translation skipped or encountered issue: {exc}")
 
     for metric in context.sml_model.metrics:
+        # If the metric already has a valid sql_expression translated during SML conversion, preserve it
+        if getattr(metric, "sql_expression", None) and metric.sql_expression.strip():
+            successful_metrics.append(metric)
+            continue
+
         if not metric.expression or not metric.expression.strip():
             # Standard metric aggregation without complex DAX expression (direct column agg)
             successful_metrics.append(metric)
@@ -376,6 +382,7 @@ def _deploy_measures(self, context: RunContext, sf_cfg) -> None:
 def _store_failed_measures(self, failed_measures: list[dict], sf_cfg) -> None:
     """Store failed measure diagnostics in _FAILED_MEASURES table in Snowflake."""
     from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+    from semabridge.connectors.sql_validator import ensure_failed_measures_table
     emitter = SnowflakeEmitter(sf_cfg)
     conn, owns_conn = emitter.connection_manager.get_connection()
     try:
@@ -384,29 +391,18 @@ def _store_failed_measures(self, failed_measures: list[dict], sf_cfg) -> None:
         db = sf_cfg.database
         schema = sf_cfg.schema_name
         
-        # Create diagnostics table
-        create_sql = f"""
-        CREATE TABLE IF NOT EXISTS "{db}"."{schema}"."_FAILED_MEASURES" (
-            "measure_name" VARCHAR,
-            "dax_expression" VARCHAR,
-            "error_message" VARCHAR,
-            "captured_at" VARCHAR
-        );
-        """
-        cur.execute(create_sql)
+        ensure_failed_measures_table(cur, db, schema)
         
         # Insert each failed measure diagnostics entry
         insert_sql = f"""
         INSERT INTO "{db}"."{schema}"."_FAILED_MEASURES" 
-        ("measure_name", "dax_expression", "error_message", "captured_at")
-        VALUES (%s, %s, %s, %s);
+        (measure_name, error_message)
+        VALUES (%s, %s);
         """
         for fm in failed_measures:
             cur.execute(insert_sql, (
-                fm["measure_name"],
-                fm["dax_expression"],
-                fm["error_message"],
-                fm["captured_at"]
+                fm.get("measure_name", ""),
+                fm.get("error_message", ""),
             ))
             
         logger.info(f"Stored {len(failed_measures)} failed measures in _FAILED_MEASURES")

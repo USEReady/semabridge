@@ -65,6 +65,9 @@ class SemanticViewBuilder:
         self.metrics_builder = MetricsClauseBuilder(
             identifier_sanitizer, schema_manager, self.sanitizer, translator, config, dup_name_repo
         )
+        self.failed_metrics: list[dict[str, str]] = []
+        self.deployed_metric_names: list[str] = []
+        self.skipped_metric_names: list[str] = []
 
     def _precompute_suggestions(self, model: Any) -> dict[str, list[str]]:
         """
@@ -242,6 +245,9 @@ class SemanticViewBuilder:
         if metrics_lines: definitions.append("METRICS (\n" + ",\n".join(metrics_lines) + "\n)")
 
         final_ddl = lines[0] + "\n" + "\n".join(definitions) + ";"
+        self.failed_metrics = list(getattr(self.metrics_builder, "failed_metrics", []) or [])
+        self.deployed_metric_names = list(getattr(self.metrics_builder, "deployed_metric_names", []) or [])
+        self.skipped_metric_names = list(getattr(self.metrics_builder, "skipped_metric_names", []) or [])
         return fix_global_sums(final_ddl, self.translator)
 
     def _generate_semantic_view_from_osi(self, osi: OSIModel) -> str:
@@ -294,6 +300,9 @@ class SemanticViewBuilder:
         if metrics_lines: definitions.append("METRICS (\n" + ",\n".join(metrics_lines) + "\n)")
 
         final_ddl = lines[0] + "\n" + "\n".join(definitions) + ";"
+        self.failed_metrics = list(getattr(self.metrics_builder, "failed_metrics", []) or [])
+        self.deployed_metric_names = list(getattr(self.metrics_builder, "deployed_metric_names", []) or [])
+        self.skipped_metric_names = list(getattr(self.metrics_builder, "skipped_metric_names", []) or [])
         return fix_global_sums(final_ddl, self.translator)
 
     @staticmethod

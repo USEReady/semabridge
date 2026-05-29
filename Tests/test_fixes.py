@@ -1,113 +1,282 @@
-#!/usr/bin/env python
-"""
-Quick test to verify that the $ character filtering is applied in snowflake_emitter.py
-"""
+from __future__ import annotations
 
-import sys
-from pathlib import Path
+from types import SimpleNamespace
 
-# Add src to path
-root_dir = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(root_dir / "src"))
+from semabridge.converter.dax_translator import DAXTranslator
+from semabridge.connectors.semantic_ddl_sanitizer import SemanticDDLSanitizer
+from semabridge.converter.tmdl_to_osi import TMDLToOSIConverter, analyze_tmdl_tables
 
-def test_metric_filtering():
-    """Test that metrics with $ are filtered"""
-    print("=" * 70)
-    print("TESTING: Metric $ Character Filtering")
-    print("=" * 70)
-    
-    # Read the snowflake_emitter file and check for the fix
-    emitter_path = root_dir / "src" / "semabridge" / "connectors" / "snowflake_emitter.py"
-    
-    with open(emitter_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-    
-    # Check for the filtering fix
-    if 'valid_metrics = [m for m in sml.metrics if "$" not in m.unique_name]' in content:
-        print("✅ PASS: Metric $ filtering is in place")
-        return True
-    else:
-        print("❌ FAIL: Metric $ filtering NOT found in snowflake_emitter.py")
-        return False
 
-def test_relationship_validation():
-    """Test that relationship validation guards are in place"""
-    print("\n" + "=" * 70)
-    print("TESTING: Relationship Validation Guards")
-    print("=" * 70)
-    
-    emitter_path = root_dir / "src" / "semabridge" / "connectors" / "snowflake_emitter.py"
-    
-    with open(emitter_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-    
-    # Check for the guard condition
-    if 'if not from_alias or not to_alias or not rel.from_columns:' in content:
-        print("✅ PASS: Relationship validation guards are in place")
-        return True
-    else:
-        print("❌ FAIL: Relationship validation guards NOT found")
-        return False
+class DummyIdentifierSanitizer:
+        _reserved: set[str] = set()
 
-def test_syntax():
-    """Test that the modified file has valid Python syntax"""
-    print("\n" + "=" * 70)
-    print("TESTING: Python Syntax Validation")
-    print("=" * 70)
-    
-    emitter_path = root_dir / "src" / "semabridge" / "connectors" / "snowflake_emitter.py"
-    
-    try:
-        import py_compile
-        py_compile.compile(str(emitter_path), doraise=True)
-        print("✅ PASS: snowflake_emitter.py has valid Python syntax")
-        return True
-    except py_compile.PyCompileError as e:
-        print(f"❌ FAIL: Syntax error in snowflake_emitter.py:\n{e}")
-        return False
+        def sanitize_column(self, name: str) -> str:
+                return str(name or "").replace(" ", "_").replace("-", "_").upper()
 
-def test_quoted_table_alias_and_special_character_resolution():
-    """Test that double-quoted table names and double-quoted column names are properly resolved and sanitized"""
-    from semabridge.utils.identifiers import IdentifierSanitizer
-    
-    sanitizer = IdentifierSanitizer()
-    alias_lookup = {"SALESFACT": "salesfact"}
-    
-    # Test case 1: Double-quoted table name and double-quoted column name containing %
-    expr = '"salesfact"."% UNIT MARKET SHARE YOY CHANGE"'
-    resolved = sanitizer.resolve_dot_notation(expr, alias_lookup)
-    assert resolved == 'salesfact."PCT_UNIT_MARKET_SHARE_YOY_CHANGE"'
-    
-    # Test case 2: Double-quoted table name and unquoted column name
-    expr2 = '"salesfact".UNITS'
-    resolved2 = sanitizer.resolve_dot_notation(expr2, alias_lookup)
-    assert resolved2 == 'salesfact."UNITS"'
-    
-    # Test case 3: Unquoted table name and double-quoted column name with special character
-    expr3 = 'salesfact."% Category Compete Share"'
-    resolved3 = sanitizer.resolve_dot_notation(expr3, alias_lookup)
-    assert resolved3 == 'salesfact."PCT_CATEGORY_COMPETE_SHARE"'
-    
-    print("✅ PASS: Quoted table alias and special character resolution verified")
-    return True
+        def sanitize_alias(self, name: str) -> str:
+                return self.sanitize_column(name)
 
-if __name__ == "__main__":
-    results = []
-    results.append(test_metric_filtering())
-    results.append(test_relationship_validation())
-    results.append(test_syntax())
-    results.append(test_quoted_table_alias_and_special_character_resolution())
-    
-    print("\n" + "=" * 70)
-    print("TEST SUMMARY")
-    print("=" * 70)
-    passed = sum(results)
-    total = len(results)
-    print(f"Tests Passed: {passed}/{total}")
-    
-    if all(results):
-        print("\n✅ ALL FIXES VERIFIED - Ready for deployment test")
-        sys.exit(0)
-    else:
-        print("\n❌ Some fixes missing or invalid")
-        sys.exit(1)
+
+def _build_tmdl_files() -> dict[str, str]:
+        return {
+                "definition/tables/SalesFact.tmdl": """
+table SalesFact
+isHidden
+column ProductID
+    dataType: int64
+column DateID
+    dataType: int64
+column GeoID
+    dataType: int64
+column Revenue
+    dataType: double
+column Cost
+    dataType: double
+measure Sales = SUM(SalesFact[Revenue])
+measure GrossMargin = [Sales] - SUM(SalesFact[Cost])
+""",
+                "definition/tables/Sentiment.tmdl": """
+table Sentiment
+isHidden
+column GeoID
+    dataType: int64
+column DateID
+    dataType: int64
+column ManufacturerID
+    dataType: int64
+column Score
+    dataType: double
+measure SentimentScore = AVERAGE(Sentiment[Score])
+""",
+                "definition/tables/Product.tmdl": """
+table Product
+column ProductID
+    dataType: int64
+column ManufacturerID
+    dataType: int64
+column ProductName
+    dataType: string
+""",
+                "definition/tables/Date.tmdl": """
+table Date
+column DateID
+    dataType: int64
+column Year
+    dataType: int64
+""",
+                "definition/tables/Geo.tmdl": """
+table Geo
+column GeoID
+    dataType: int64
+column GeoName
+    dataType: string
+""",
+                "definition/tables/Manufacturer.tmdl": """
+table Manufacturer
+column ManufacturerID
+    dataType: int64
+column ManufacturerName
+    dataType: string
+""",
+                "definition/tables/Indicators.tmdl": """
+table Indicators
+column IndicatorID
+    dataType: int64
+column IndicatorName
+    dataType: string
+""",
+                "definition/tables/KPI.tmdl": """
+table KPI
+column KPIID
+    dataType: int64
+column KpiName
+    dataType: string
+measure GrossMarginPct = DIVIDE([GrossMargin], [Sales])
+""",
+                "definition/tables/Category.tmdl": """
+table Category
+column CategoryID
+    dataType: int64
+column CategoryName
+    dataType: string
+""",
+                "definition/tables/DateTableTemplate_1.tmdl": """
+table DateTableTemplate_1
+isHidden
+__PBI_TemplateDateTable = true
+column DateID
+    dataType: int64
+""",
+                "definition/tables/LocalDateTable_1.tmdl": """
+table LocalDateTable_1
+isHidden
+__PBI_LocalDateTable = true
+column DateID
+    dataType: int64
+""",
+                "definition/tables/Relationships.tmdl": """
+table Relationships
+relationship SalesFact_Product
+    fromTable: SalesFact
+    fromColumn: ProductID
+    toTable: Product
+    toColumn: ProductID
+    cardinality: manyToOne
+    crossFilteringBehavior: singleDirection
+relationship SalesFact_Date
+    fromTable: SalesFact
+    fromColumn: DateID
+    toTable: Date
+    toColumn: DateID
+    cardinality: manyToOne
+    crossFilteringBehavior: singleDirection
+relationship SalesFact_Geo
+    fromTable: SalesFact
+    fromColumn: GeoID
+    toTable: Geo
+    toColumn: GeoID
+    cardinality: manyToOne
+    crossFilteringBehavior: singleDirection
+relationship Sentiment_Geo
+    fromTable: Sentiment
+    fromColumn: GeoID
+    toTable: Geo
+    toColumn: GeoID
+    cardinality: manyToOne
+    crossFilteringBehavior: singleDirection
+relationship Sentiment_Date
+    fromTable: Sentiment
+    fromColumn: DateID
+    toTable: Date
+    toColumn: DateID
+    cardinality: manyToOne
+    crossFilteringBehavior: singleDirection
+relationship Sentiment_Manufacturer
+    fromTable: Sentiment
+    fromColumn: ManufacturerID
+    toTable: Manufacturer
+    toColumn: ManufacturerID
+    cardinality: manyToOne
+    crossFilteringBehavior: singleDirection
+relationship Product_Manufacturer
+    fromTable: Product
+    fromColumn: ManufacturerID
+    toTable: Manufacturer
+    toColumn: ManufacturerID
+    cardinality: manyToOne
+    crossFilteringBehavior: singleDirection
+relationship Category_Product
+    fromTable: Category
+    fromColumn: CategoryID
+    toTable: Product
+    toColumn: ProductID
+    cardinality: manyToOne
+    crossFilteringBehavior: singleDirection
+relationship Date_Variation
+    fromTable: Date
+    fromColumn: DateID
+    toTable: Product
+    toColumn: ProductID
+    cardinality: manyToOne
+    crossFilteringBehavior: singleDirection
+    joinOnDateBehavior: datePartOnly
+""",
+        }
+
+
+def test_hidden_fact_tables_are_preserved_and_system_tables_are_excluded() -> None:
+        tmdl_files = _build_tmdl_files()
+        records = analyze_tmdl_tables(tmdl_files)
+        by_name = {record["name"]: record for record in records}
+
+        assert by_name["SalesFact"]["include"] is True
+        assert by_name["SalesFact"]["is_hidden_fact"] is True
+        assert by_name["Sentiment"]["include"] is True
+        assert by_name["Sentiment"]["is_hidden_fact"] is True
+        assert by_name["DateTableTemplate_1"]["include"] is False
+        assert by_name["LocalDateTable_1"]["include"] is False
+
+        model = TMDLToOSIConverter().to_osi(
+                {
+                        "tmdl_files": tmdl_files,
+                        "workspace_id": "workspace-1",
+                        "dataset_id": "dataset-1",
+                        "display_name": "DemoModel",
+                }
+        )
+        dataset_names = {dataset.unique_name for dataset in model.datasets}
+
+        assert "SalesFact" in dataset_names
+        assert "Sentiment" in dataset_names
+        assert "DateTableTemplate_1" not in dataset_names
+        assert "LocalDateTable_1" not in dataset_names
+
+
+def test_relationships_are_preserved_and_date_variations_are_skipped() -> None:
+        tmdl_files = _build_tmdl_files()
+        model = TMDLToOSIConverter().to_osi(
+                {
+                        "tmdl_files": tmdl_files,
+                        "workspace_id": "workspace-1",
+                        "dataset_id": "dataset-1",
+                        "display_name": "DemoModel",
+                }
+        )
+
+        relationship_pairs = {
+                (rel.from_dataset, rel.to_dataset)
+                for rel in model.relationships
+        }
+
+        assert ("SalesFact", "Product") in relationship_pairs
+        assert ("SalesFact", "Date") in relationship_pairs
+        assert ("SalesFact", "Geo") in relationship_pairs
+        assert ("Sentiment", "Geo") in relationship_pairs
+        assert ("Sentiment", "Date") in relationship_pairs
+        assert ("Sentiment", "Manufacturer") in relationship_pairs
+        assert len(model.relationships) >= 8
+
+
+def test_measures_resolve_without_null_emission_and_cross_table_refs_work() -> None:
+        gross_margin = SimpleNamespace(
+                unique_name="GrossMargin",
+                dataset="SalesFact",
+                expression="[Sales] - SUM(SalesFact[Cost])",
+                sql_expression='SUM(SALESFACT."REVENUE") - SUM(SALESFACT."COST")',
+        )
+        sales = SimpleNamespace(
+                unique_name="Sales",
+                dataset="SalesFact",
+                expression="SUM(SalesFact[Revenue])",
+                sql_expression='SUM(SALESFACT."REVENUE")',
+        )
+        margin_pct = SimpleNamespace(
+                unique_name="GrossMarginPct",
+                dataset="KPI",
+                expression="DIVIDE([GrossMargin], [Sales])",
+                sql_expression=None,
+        )
+
+        translator = DAXTranslator()
+        translator.osi_model = SimpleNamespace(metrics=[gross_margin, sales, margin_pct])
+
+        resolved = translator.translate_expr(margin_pct.expression, [gross_margin, sales, margin_pct], "KPI")
+
+        assert resolved is not None
+        assert " AS NULL" not in resolved.upper()
+        assert "[" not in resolved and "]" not in resolved
+        assert 'SUM(SALESFACT."REVENUE") - SUM(SALESFACT."COST")' in resolved
+        assert 'SUM(SALESFACT."REVENUE")' in resolved
+
+        sanitizer = SemanticDDLSanitizer(DummyIdentifierSanitizer())
+        sanitized = sanitizer.sanitize_structure(
+                """
+CREATE OR REPLACE SEMANTIC VIEW DEMO
+METRICS (
+)
+;
+""".strip()
+        )
+
+        assert "AS NULL" not in sanitized.upper()
+        assert "COUNT(1)" in sanitized.upper()

@@ -92,6 +92,7 @@ class OSIToSMLConverter(BaseConverter):
             SMLModel object
         """
         try:
+            self.dax_translator.osi_model = osi_model
             # Runtime Diagnostics
             logger.debug(
                 "OSI model state - "
@@ -319,6 +320,22 @@ class OSIToSMLConverter(BaseConverter):
         # Propagate Cortex AI metadata from OSI layer
         metric.access_modifier = osi_metric.access_modifier
         metric.synonyms = list(osi_metric.synonyms)
+
+        # Trace Step 6 Outputs
+        translated_sql = getattr(metric, "sql_expression", None)
+        osi_metric_name = getattr(osi_metric, "name", osi_metric.unique_name)
+        sml_metric_name = getattr(metric, "name", metric.unique_name)
+        
+        logger.info(
+            f"🔍 STEP6 OUTPUT | "
+            f"{osi_metric_name} = "
+            f"{repr(translated_sql)}"
+        )
+        logger.info(
+            f"🔍 SMLMetric CREATED | "
+            f"{sml_metric_name} -> "
+            f"{repr(metric.sql_expression)}"
+        )
 
         return metric
 

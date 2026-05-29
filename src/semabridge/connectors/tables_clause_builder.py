@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Dict, List, Tuple, Set, Optional
 
 
@@ -190,15 +191,21 @@ class TablesClauseBuilder:
     def _get_unique_alias(self, name: str, registry: Any) -> str:
         alias = registry.get_alias(name)
         if not alias:
-            alias = self.identifier_sanitizer.sanitize_alias(name)
+            base_alias = self.identifier_sanitizer.sanitize_alias(name)
+            alias = base_alias
             if alias in registry.used_table_aliases:
-                idx = 2
-                while True:
-                    cand = f"{alias}_{idx}"
-                    if cand not in registry.used_table_aliases:
-                        alias = cand
-                        break
-                    idx += 1
+                digest = hashlib.sha1(str(name or "").encode("utf-8")).hexdigest()[:4].upper()
+                cand = f"{base_alias}__{digest}"
+                if cand not in registry.used_table_aliases:
+                    alias = cand
+                else:
+                    idx = 2
+                    while True:
+                        cand = f"{base_alias}__{digest}_{idx}"
+                        if cand not in registry.used_table_aliases:
+                            alias = cand
+                            break
+                        idx += 1
             registry.used_table_aliases.add(alias)
             registry.register_dataset_alias(name, alias)
         return alias

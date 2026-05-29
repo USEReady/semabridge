@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import re
 from typing import Any, Dict, List, Set, Tuple, Optional
 
 from semabridge.utils.logger import get_logger
 from semabridge.utils.identifiers import IdentifierSanitizer
+from semabridge.compiler.metric_classifier import MetricClassifier
 from semabridge.connectors.ddl_helpers import (
     deduplicate_metrics_lines,
     deduplicate_metrics_lines_osi,
@@ -36,6 +38,10 @@ class MetricsClauseBuilder:
         self.translator = translator
         self.config = config
         self.dup_name_repo = dup_name_repo
+        self.metric_classifier = MetricClassifier()
+        self.failed_metrics: list[dict[str, str]] = []
+        self.deployed_metric_names: list[str] = []
+        self.skipped_metric_names: list[str] = []
 
     def build_for_sml(
         self,
@@ -80,13 +86,37 @@ class MetricsClauseBuilder:
         emittable_metric_name_set: Set[str],
         is_osi: bool
     ) -> List[str]:
+        self.failed_metrics = []
+        self.deployed_metric_names = []
+        self.skipped_metric_names = []
         metrics_lines = []
         used_metric_names: Set[str] = set()
         skipped_metric_names: Set[str] = set()
         expected_metrics: List[Tuple[str, str, str]] = []
         
         valid_metrics = [m for m in model.metrics if "$" not in m.unique_name]
+        from semabridge.compiler.compiler import DAXCompiler
+
+        compiler = DAXCompiler()
+        dependency_plan = compiler.plan_metric_dependencies(valid_metrics, model=model)
+        metric_lookup = {
+            str(getattr(m, "unique_name", "") or "").casefold(): m
+            for m in valid_metrics
+            if getattr(m, "unique_name", None)
+        }
+        ordered_metrics: List[Any] = [
+            metric_lookup[name.casefold()]
+            for name in dependency_plan.ordered
+            if name.casefold() in metric_lookup
+        ]
+        ordered_seen = {str(getattr(metric, "unique_name", "") or "").casefold() for metric in ordered_metrics}
+        for metric in valid_metrics:
+            metric_key = str(getattr(metric, "unique_name", "") or "").casefold()
+            if metric_key not in ordered_seen:
+                ordered_metrics.append(metric)
+
         metric_name_set = {self.identifier_sanitizer.sanitize_alias(m.unique_name) for m in valid_metrics}
+        cyclic_metric_names = {name.casefold() for cycle in dependency_plan.cycles for name in cycle}
 
         # Build metric name to table alias mapping for qualifying bare cross-table metric references
         metric_to_alias: Dict[str, str] = {}
@@ -133,10 +163,64 @@ class MetricsClauseBuilder:
             logger.info(f"🔍 METRIC SANITIZATION: raw='{raw_name}' → sanitized='{sanitized_name}'")
         # ================================================================
 
-        for metric in valid_metrics:
+        for metric in ordered_metrics:
+            classification = self.metric_classifier.classify(metric)
+            if not classification.deploy:
+                self._record_failed_metric(metric, "; ".join(classification.reasons or [classification.category]))
+                logger.warning("Skipping non-deployable metric '%s' (%s)", metric.unique_name, classification.category)
+                self.skipped_metric_names.append(metric.unique_name)
+                continue
+
+            metric_key = str(getattr(metric, "unique_name", "") or "").casefold()
+            missing_deps = dependency_plan.missing_dependencies.get(metric.unique_name) or dependency_plan.missing_dependencies.get(str(getattr(metric, "unique_name", "") or "")) or []
+            if missing_deps:
+                reason = f"missing dependency: {', '.join(missing_deps)}"
+                self._record_failed_metric(metric, reason)
+                logger.warning("[SKIPPED_METRIC] %s missing dependency(s): %s", metric.unique_name, ", ".join(missing_deps))
+                skipped_metric_names.add(metric.unique_name)
+                self.skipped_metric_names.append(metric.unique_name)
+                continue
+            if metric_key in cyclic_metric_names:
+                reason = "circular dependency detected"
+                self._record_failed_metric(metric, reason)
+                logger.warning("[SKIPPED_METRIC] %s circular dependency detected", metric.unique_name)
+                skipped_metric_names.add(metric.unique_name)
+                self.skipped_metric_names.append(metric.unique_name)
+                continue
+
             alias = dataset_aliases.get(metric.dataset)
-            if not alias: continue
+            if not alias:
+                reason = f"missing dataset alias: {metric.dataset}"
+                self._record_failed_metric(metric, reason)
+                logger.warning("[SKIPPED_METRIC] %s reason=%s", metric.unique_name, reason)
+                skipped_metric_names.add(metric.unique_name)
+                self.skipped_metric_names.append(metric.unique_name)
+                continue
             
+            # Robust dictionary/object lookup for Step 7
+            if isinstance(metric, dict):
+                expr = metric.get("expression")
+                m_name = metric.get("name") or metric.get("unique_name")
+            else:
+                expr = getattr(metric, "sql_expression", None) or getattr(metric, "expression", None)
+                m_name = getattr(metric, "name", None) or getattr(metric, "unique_name", None)
+
+            logger.info(
+                f"🔍 STEP7 INPUT | "
+                f"{m_name} = {repr(expr)}"
+            )
+
+            if expr is None:
+                logger.error(
+                    f"❌ METRIC {m_name} "
+                    f"HAS NULL EXPRESSION"
+                )
+            elif not str(expr).strip():
+                logger.error(
+                    f"❌ METRIC {m_name} "
+                    f"HAS EMPTY EXPRESSION"
+                )
+
             metric_base_alias = self.identifier_sanitizer.sanitize_alias(metric.unique_name)
             metric_seen_idx = metric_base_seen.get(metric_base_alias, 0) + 1
             metric_base_seen[metric_base_alias] = metric_seen_idx
@@ -164,7 +248,7 @@ class MetricsClauseBuilder:
             expected_metrics.append((alias, metric_name, metric.unique_name))
             
             expr = self._generate_metric_expression(
-                metric, metric_name, alias, dataset_by_name, dataset_aliases, 
+                metric, metric_name, alias, model, dataset_by_name, dataset_aliases,
                 dataset_col_lookup, alias_by_raw, metric_name_set, 
                 all_physical_col_names, emittable_metric_name_set, skipped_metric_names, model_name, is_osi,
                 fact_aliases=fact_aliases,
@@ -184,6 +268,14 @@ class MetricsClauseBuilder:
                     f'  {metric_entity_alias}."{safe_metric_name}" AS {expr}'
                     f'{synonyms_clause(list(getattr(metric, "synonyms", []) or []))}'
                 )
+                self.deployed_metric_names.append(metric.unique_name)
+                logger.info("[DEPLOYED_METRIC] %s", metric.unique_name)
+            else:
+                skipped_metric_names.add(metric.unique_name)
+                self.skipped_metric_names.append(metric.unique_name)
+                if not any(fm.get("measure_name") == metric.unique_name for fm in self.failed_metrics):
+                    self._record_failed_metric(metric, "invalid or unresolved metric expression")
+                logger.warning("[SKIPPED_METRIC] %s reason=invalid or unresolved metric expression", metric.unique_name)
 
         # Pruning and Fallbacks...
         metrics_lines = self._prune_unresolved_metric_lines(metrics_lines, metric_name_set)
@@ -303,6 +395,7 @@ class MetricsClauseBuilder:
         metric: Any,
         metric_name: str,
         alias: str,
+        model: Any,
         dataset_by_name: Dict[str, Any],
         dataset_aliases: Dict[str, str],
         dataset_col_lookup: Dict[str, Set[str]],
@@ -316,11 +409,17 @@ class MetricsClauseBuilder:
         fact_aliases: Optional[Set[str]] = None,
         metric_to_alias: Optional[Dict[str, str]] = None
     ) -> Optional[str]:
-        if (metric.source_column and metric.aggregation and 
+        if (metric.source_column and metric.aggregation and
             (not getattr(metric, "sql_expression", None) or self._should_use_direct_metric_aggregation(metric))):
-            
-            col_name = (self.identifier_sanitizer.sanitize_column(metric.source_column) if is_osi 
-                        else self.schema_manager._resolve_physical_column_name(dataset_by_name.get(metric.dataset), metric.source_column))
+
+            lineage_column = self._resolve_metric_physical_lineage_column(metric, dataset_col_lookup)
+            if not lineage_column:
+                self._record_failed_metric(metric, "missing physical lineage column")
+                logger.warning("[SKIPPED_METRIC] %s reason=missing physical lineage column", metric.unique_name)
+                return None
+
+            col_name = (self.identifier_sanitizer.sanitize_column(lineage_column) if is_osi
+                        else self.schema_manager._resolve_physical_column_name(dataset_by_name.get(metric.dataset), lineage_column))
             agg = metric.aggregation.value.upper()
             
             # Check for physical owner
@@ -334,11 +433,16 @@ class MetricsClauseBuilder:
                     owner_col = self.translator._resolve_column_name_for_dataset(dataset_col_lookup.get(preferred_owner, set()), col_name) or col_name
                     if owner_alias:
                         if agg == "COUNT_DISTINCT":
-                            return f'COUNT(DISTINCT {self.sanitizer.format_physical_column_ref(owner_alias, owner_col, model_name=model_name)})'
+                            expr = f'COUNT(DISTINCT {self.sanitizer.format_physical_column_ref(owner_alias, owner_col, model_name=model_name)})'
                         elif agg == "NONE":
-                            return f'{self.sanitizer.format_physical_column_ref(owner_alias, owner_col, model_name=model_name)}'
+                            expr = f'{self.sanitizer.format_physical_column_ref(owner_alias, owner_col, model_name=model_name)}'
                         else:
-                            return f'{agg}({self.sanitizer.format_physical_column_ref(owner_alias, owner_col, model_name=model_name)})'
+                            expr = f'{agg}({self.sanitizer.format_physical_column_ref(owner_alias, owner_col, model_name=model_name)})'
+                        if self._is_self_referencing_metric_sql(metric, expr):
+                            self._record_failed_metric(metric, "self-referencing aggregate")
+                            logger.warning("[SKIPPED_METRIC] %s reason=self-referencing aggregate", metric.unique_name)
+                            return None
+                        return expr
             else:
                 # Column not found in live schema metadata — trust the source model's
                 # dataset assignment and emit directly against the metric's own alias.
@@ -360,11 +464,16 @@ class MetricsClauseBuilder:
                         metric.unique_name, col_name, alias
                     )
                     if agg == "COUNT_DISTINCT":
-                        return f'COUNT(DISTINCT {self.sanitizer.format_physical_column_ref(alias, col_name, model_name=model_name)})'
+                        expr = f'COUNT(DISTINCT {self.sanitizer.format_physical_column_ref(alias, col_name, model_name=model_name)})'
                     elif agg == "NONE":
-                        return f'{self.sanitizer.format_physical_column_ref(alias, col_name, model_name=model_name)}'
+                        expr = f'{self.sanitizer.format_physical_column_ref(alias, col_name, model_name=model_name)}'
                     else:
-                        return f'{agg}({self.sanitizer.format_physical_column_ref(alias, col_name, model_name=model_name)})'
+                        expr = f'{agg}({self.sanitizer.format_physical_column_ref(alias, col_name, model_name=model_name)})'
+                    if self._is_self_referencing_metric_sql(metric, expr):
+                        self._record_failed_metric(metric, "self-referencing aggregate")
+                        logger.warning("[SKIPPED_METRIC] %s reason=self-referencing aggregate", metric.unique_name)
+                        return None
+                    return expr
 
         # SQL Expression path
         sql_expr = getattr(metric, "sql_expression", None)
@@ -404,15 +513,41 @@ class MetricsClauseBuilder:
             )
             if not is_valid:
                 logger.warning(
-                    "Metric '%s': skipping invalid SQL expression after normalization: %s",
+                    "Metric '%s': validation failed and metric will be skipped: %s",
                     metric.unique_name,
                     reason or "unknown reference error",
                 )
+                self._record_failed_metric(metric, reason or "validation failed")
+                return None
+            if self._is_self_referencing_metric_sql(metric, expr):
+                self._record_failed_metric(metric, "self-referencing aggregate")
+                logger.warning("[SKIPPED_METRIC] %s reason=self-referencing aggregate", metric.unique_name)
                 return None
             return expr
         
         # If we have DAX expression, try to translate it
         if dax_expr:
+            try:
+                from semabridge.compiler.compiler import DAXCompiler
+
+                compiler = DAXCompiler()
+                compiled = compiler.compile_expression(
+                    dax_expr,
+                    model=model,
+                    metrics=list(model.metrics or []),
+                    metric_name=metric.unique_name,
+                    table_alias=alias,
+                    dataset_name=metric.dataset,
+                )
+                if compiled.is_success and compiled.sql:
+                    if self._is_self_referencing_metric_sql(metric, compiled.sql):
+                        self._record_failed_metric(metric, "self-referencing aggregate")
+                        logger.warning("[SKIPPED_METRIC] %s reason=self-referencing aggregate", metric.unique_name)
+                        return None
+                    return compiled.sql
+            except Exception as exc:
+                logger.debug("AST compiler fallback unavailable for metric '%s': %s", metric.unique_name, exc)
+
             # Try LLM fallback first when configured (OpenAI is preferred inside
             # the translator). This keeps complex Fabric DAX from being dropped
             # before provider-backed translation gets a chance.
@@ -447,10 +582,65 @@ class MetricsClauseBuilder:
                 "Skipping metric to prevent DDL compilation failure.",
                 metric.unique_name, dax_expr[:100]
             )
+            self._record_failed_metric(metric, "translation failed")
             return None
             
         return None
 
+    def _record_failed_metric(self, metric: Any, reason: str) -> None:
+        measure_name = str(getattr(metric, "unique_name", "") or getattr(metric, "name", "") or "")
+        if any(fm.get("measure_name") == measure_name and fm.get("error_message") == str(reason or "unknown failure") for fm in self.failed_metrics):
+            return
+        self.failed_metrics.append(
+            {
+                "measure_name": measure_name,
+                "dax_expression": str(getattr(metric, "expression", "") or ""),
+                "generated_sql": str(getattr(metric, "sql_expression", "") or ""),
+                "error_message": str(reason or "unknown failure"),
+                "captured_at": datetime.utcnow().isoformat(),
+            }
+        )
+
+
+    def _resolve_metric_physical_lineage_column(self, metric: Any, dataset_col_lookup: Dict[str, Set[str]]) -> Optional[str]:
+        raw_metric_name = str(getattr(metric, "unique_name", "") or "")
+        raw_source_column = str(getattr(metric, "source_column", "") or "").strip()
+        expression = str(getattr(metric, "expression", "") or "")
+        dataset_name = str(getattr(metric, "dataset", "") or "")
+
+        expr_match = re.match(
+            r"(?is)^\s*(SUM|AVERAGE|AVG|COUNT|DISTINCTCOUNT|MIN|MAX)\s*\(\s*(?:(?:'(?P<table_q>[^']+)'|(?P<table>[A-Za-z_][A-Za-z0-9_ ]*))\s*)?\[(?P<column>[^\]]+)\]\s*\)\s*$",
+            expression,
+        )
+        if expr_match:
+            expr_table = (expr_match.group("table_q") or expr_match.group("table") or "").strip()
+            expr_column = (expr_match.group("column") or "").strip()
+            if not expr_table or expr_table.casefold() == dataset_name.casefold():
+                return expr_column
+
+        if not raw_source_column:
+            return None
+
+        sanitized_source = self.identifier_sanitizer.sanitize_column(raw_source_column)
+        sanitized_metric = self.identifier_sanitizer.sanitize_column(raw_metric_name)
+        if sanitized_source != sanitized_metric:
+            return raw_source_column
+
+        dataset_columns = dataset_col_lookup.get(dataset_name, set())
+        resolved = self.translator._resolve_column_name_for_dataset(dataset_columns, sanitized_source)
+        if resolved:
+            return resolved
+
+        return None
+
+    def _is_self_referencing_metric_sql(self, metric: Any, sql_expr: str) -> bool:
+        metric_alias = self.identifier_sanitizer.sanitize_column(
+            str(getattr(metric, "unique_name", "") or getattr(metric, "name", "") or "")
+        )
+        if not metric_alias or not sql_expr:
+            return False
+        pattern = rf'\b(?:[A-Za-z_][A-Za-z0-9_$]*\.)?"{re.escape(metric_alias)}"\b|\b[A-Za-z_][A-Za-z0-9_$]*\.{re.escape(metric_alias)}\b'
+        return bool(re.search(pattern, sql_expr, flags=re.IGNORECASE))
 
 
     def _apply_osi_fallbacks(

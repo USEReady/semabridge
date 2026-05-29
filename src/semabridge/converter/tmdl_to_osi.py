@@ -25,67 +25,89 @@ SYSTEM_TABLE_PATTERNS = [
     r".*Template.*",
 ]
 
+
+def _table_header(content: str) -> str:
+    """Return the table header section before the first structural child."""
+    header_end = len(content)
+    first_marker = re.search(r"^\s*(column|measure|partition|hierarchy|change|lineageTag)\b", content, re.MULTILINE)
+    if first_marker:
+        header_end = first_marker.start()
+    return content[:header_end]
+
+
+def _table_is_hidden(content: str) -> bool:
+    header = _table_header(content)
+    return bool(re.search(r"^\s*isHidden\b", header, re.MULTILINE))
+
 def is_system_table(
     table_name: str,
-    is_hidden: bool
+    content: str = ""
 ) -> bool:
     """
     Detect Power BI auto-generated system tables.
     """
-
-    if is_hidden:
-        return True
-
     return any(
         re.search(pattern, table_name)
         for pattern in SYSTEM_TABLE_PATTERNS
+    ) or (
+        bool(content)
+        and (
+            "__PBI_TemplateDateTable" in content
+            or "__PBI_LocalDateTable" in content
+            or "showAsVariationsOnly" in _table_header(content)
+        )
     )
+
+
+def analyze_tmdl_tables(tmdl_files: Dict[str, str]) -> List[Dict[str, Any]]:
+    """Classify TMDL tables for diagnostics and deployability decisions."""
+    table_files = {
+        path: content
+        for path, content in tmdl_files.items()
+        if path.startswith("definition/tables/") and path.endswith(".tmdl")
+    }
+
+    relationship_counts: Dict[str, int] = {}
+    for content in table_files.values():
+        for rel in TMDLParser.parse_relationships(content):
+            from_table = str(rel.get("fromTable") or "").casefold()
+            to_table = str(rel.get("toTable") or "").casefold()
+            if from_table:
+                relationship_counts[from_table] = relationship_counts.get(from_table, 0) + 1
+            if to_table:
+                relationship_counts[to_table] = relationship_counts.get(to_table, 0) + 1
+
+    table_records: List[Dict[str, Any]] = []
+    for path, content in table_files.items():
+        table_name = TMDLParser.derive_table_name(path, content)
+        hidden = _table_is_hidden(content)
+        system = is_system_table(table_name, content)
+        measure_count = len(TMDLParser.parse_measures(content))
+        relationship_count = relationship_counts.get(table_name.casefold(), 0)
+        hidden_fact = hidden and not system and (relationship_count > 0 or measure_count > 0)
+        included = (not system) and (not hidden or hidden_fact)
+
+        table_records.append(
+            {
+                "path": path,
+                "name": table_name,
+                "is_hidden": hidden,
+                "is_system": system,
+                "measure_count": measure_count,
+                "relationship_count": relationship_count,
+                "is_hidden_fact": hidden_fact,
+                "include": included,
+            }
+        )
+
+    return table_records
 
 
 def get_all_user_tables(tmdl_files: Dict[str, str]) -> List[str]:
     """
-    Get all valid user table names, excluding system/template tables and hidden tables.
+    Get all valid user table names, excluding system/template tables and isolated hidden helpers.
     """
-    user_tables = []
-    for path, content in tmdl_files.items():
-        if not (path.startswith("definition/tables/") and path.endswith(".tmdl")):
-            continue
-        
-        table_name = TMDLParser.derive_table_name(path, content)
-        
-        # Determine table-level header (before first column/measure/partition/hierarchy/ref)
-        header_end = len(content)
-        first_marker = re.search(r"^\s*(column|measure|partition|hierarchy|change|lineageTag)\b", content, re.MULTILINE)
-        if first_marker:
-            header_end = first_marker.start()
-        header = content[:header_end]
-        
-        # Exclude: table-level isHidden
-        table_hidden = bool(re.search(r"^\s*isHidden\b", header, re.MULTILINE))
-        
-        # Exclude system tables
-        is_system = False
-        
-        # 1. Prefix checks
-        for pattern in SYSTEM_TABLE_PATTERNS:
-            if re.search(pattern, table_name):
-                is_system = True
-                break
-        
-        # 2. Annotation / property checks
-        if "DateHierarchy" in table_name or "Template" in table_name:
-            is_system = True
-            
-        if "__PBI_TemplateDateTable" in content or "__PBI_LocalDateTable" in content or "showAsVariationsOnly" in header:
-            is_system = True
-            
-        # 3. Private / Hidden table check
-        if table_hidden or is_system:
-            continue
-            
-        user_tables.append(table_name)
-        
-    return user_tables
+    return [record["name"] for record in analyze_tmdl_tables(tmdl_files) if record["include"]]
 
 
 class TMDLToOSIConverter(BaseConverter):
@@ -149,8 +171,15 @@ class TMDLToOSIConverter(BaseConverter):
                 # Derive table name
                 table_name = TMDLParser.derive_table_name(path, content)
 
-                if table_name not in user_tables_set:
+                record = next((item for item in analyze_tmdl_tables(tmdl_files) if item["name"] == table_name), None)
+                if not record or not record["include"]:
                     system_tables_count += 1
+                    if record and record["is_hidden_fact"]:
+                        logger.info("Including hidden fact table: %s", table_name)
+                    elif record and record["is_hidden"] and not record["is_system"]:
+                        logger.info("Excluding isolated hidden helper table: %s", table_name)
+                    elif record and record["is_system"]:
+                        logger.info("Excluding system table: %s", table_name)
                     continue
 
                 user_tables_count += 1
@@ -223,7 +252,7 @@ class TMDLToOSIConverter(BaseConverter):
         # Map relationships to correct datasets or skip missing ones
         for raw_rel in parsed_raw:
             if str(raw_rel.get("joinOnDateBehavior")).strip().casefold() == "datepartonly":
-                logger.debug(f"Skipping date variation relationship '{raw_rel.get('name')}'")
+                logger.info("Skipping date variation relationship: %s", raw_rel.get("name"))
                 continue
 
             from_dataset = valid_dataset_map.get(str(raw_rel["fromTable"]).casefold())
@@ -256,7 +285,7 @@ class TMDLToOSIConverter(BaseConverter):
                 
                 from_col = osi_rel.from_columns[0] if osi_rel.from_columns else ""
                 to_col = osi_rel.to_columns[0] if osi_rel.to_columns else ""
-                logger.info(f"Parsed relationship: {osi_rel.from_dataset}.{from_col} → {osi_rel.to_dataset}.{to_col}")
+                logger.info(f"Including relationship: {osi_rel.from_dataset}.{from_col} → {osi_rel.to_dataset}.{to_col}")
             else:
                 logger.debug(
                     f"Skipping relationship '{raw_rel.get('name')}': "

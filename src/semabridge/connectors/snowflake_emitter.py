@@ -19,6 +19,7 @@ from semabridge.utils.logger import get_logger
 from semabridge.core.interfaces import BaseEmitter
 from semabridge.core.exceptions import ConnectorError
 from semabridge.repository.duplicate_name_mapping_repository import DuplicateNameMappingRepository
+from semabridge.compiler.metric_classifier import MetricClassifier
 
 # Import domain managers
 from semabridge.connectors.connection_manager import SnowflakeConnectionManager
@@ -108,6 +109,7 @@ class SnowflakeEmitter(BaseEmitter):
             dup_name_repo=self._dup_name_repo,
             translator=self.translator,
         )
+        self.metric_classifier = MetricClassifier()
 
     # =========================================================================
     # ORCHESTRATION: DEPLOYMENT PIPELINE
@@ -281,6 +283,24 @@ class SnowflakeEmitter(BaseEmitter):
                     ddls = self.semantic_view_builder.generate_ddls_from_osi(model)
                 else:
                     ddls = self.semantic_view_builder.generate_ddls(model)
+
+                failed_measures = list(getattr(self.semantic_view_builder, "failed_metrics", []) or [])
+                deployed_metric_count = len(list(getattr(self.semantic_view_builder, "deployed_metric_names", []) or []))
+                skipped_metric_count = len(list(getattr(self.semantic_view_builder, "skipped_metric_names", []) or []))
+                total_metric_count = len(list(getattr(model, "metrics", []) or []))
+                if failed_measures:
+                    self._store_failed_measures(failed_measures)
+                    logger.info(
+                        "Semantic metric deployment summary: %s total, %s deployed, %s skipped/failed",
+                        total_metric_count,
+                        deployed_metric_count,
+                        skipped_metric_count or len(failed_measures),
+                    )
+                    if total_metric_count > 0 and deployed_metric_count == 0:
+                        error_msg = "All deployable metrics failed validation or translation; aborting deployment."
+                        logger.error(error_msg)
+                        self.last_deployment_error = error_msg
+                        raise ConnectorError(error_msg)
                 
                 # Step 2b: UPSERT preserve only skips existing base-table DDLs.
                 if preserve_existing and existing_tables:
@@ -298,6 +318,9 @@ class SnowflakeEmitter(BaseEmitter):
                 # Step 3: Execute DDLs  (generate_ddls returns list[str])
                 for idx, sql in enumerate(ddls):
                     if sql:
+                        logger.info(
+                            f"🔍 STEP8 FINAL DDL:\n{sql}"
+                        )
                         self.connection_manager._execute_sql(cur, sql, context=f"DDL[{idx}]")
 
                 # Step 5: Artifact Generation (Cortex YAML / Audit)
@@ -482,6 +505,40 @@ class SnowflakeEmitter(BaseEmitter):
 
     def generate_ddls_from_osi(self, osi: OSIModel) -> list[str]:
         return self.semantic_view_builder.generate_ddls_from_osi(osi)
+
+    def _store_failed_measures(self, failed_measures: list[dict[str, str]]) -> None:
+        if not failed_measures:
+            return
+        conn, owns_conn = self.connection_manager.get_connection()
+        try:
+            from semabridge.connectors.sql_validator import ensure_failed_measures_table
+
+            cur = conn.cursor()
+            db = self.config.database
+            schema = self.config.schema_name
+            ensure_failed_measures_table(cur, db, schema)
+
+            insert_sql = f'''
+            INSERT INTO "{db}"."{schema}"."_FAILED_MEASURES"
+            (measure_name, error_message)
+            VALUES (%s, %s)
+            '''
+            for fm in failed_measures:
+                cur.execute(
+                    insert_sql,
+                    (
+                        fm.get("measure_name", ""),
+                        fm.get("error_message", ""),
+                    ),
+                )
+            if hasattr(conn, "commit"):
+                conn.commit()
+            logger.info("Stored %s failed measures in _FAILED_MEASURES", len(failed_measures))
+        except Exception as exc:
+            logger.warning("Failed to persist translation diagnostics to _FAILED_MEASURES: %s", exc)
+        finally:
+            if owns_conn:
+                conn.close()
 
     def sync_all_measures(self, sml: SMLModel, fabric_extractor, dataset_id: str, grain_dimensions=None) -> dict:
         return self.measure_synchronizer.sync_all_measures(sml, fabric_extractor, dataset_id, grain_dimensions)
