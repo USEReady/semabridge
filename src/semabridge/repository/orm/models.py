@@ -301,9 +301,9 @@ class PasswordResetToken(Base):
         Index("ix_password_reset_tokens_token_hash", "token_hash", unique=True),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        ForeignKey("users.id"), nullable=False  # DuckDB does not support ON DELETE CASCADE
     )
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
