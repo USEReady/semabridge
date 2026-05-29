@@ -262,7 +262,8 @@ def _is_admin_user(user_id: str | None) -> bool:
                 select(User).where(User.id == int(normalized))
             ).scalar_one_or_none()
             return bool(user and user.role == "admin")
-    except Exception:
+    except Exception as exc:
+        logger.debug("Could not verify admin role for user_id=%s: %s", user_id, exc)
         return False
 
 
@@ -278,7 +279,8 @@ def _user_exists(user_id: str | None) -> bool:
                 select(User).where(User.id == int(normalized))
             ).scalar_one_or_none()
             return user is not None
-    except Exception:
+    except Exception as exc:
+        logger.debug("Could not verify existence of user_id=%s: %s", user_id, exc)
         return False
 
 

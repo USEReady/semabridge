@@ -103,8 +103,8 @@ def _resolve_models_path() -> Path:
             raw = (global_cfg or {}).get("core", {}).get("local_models_path")
             if raw:
                 return Path(raw).expanduser().resolve()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not read global config for models path: %s", exc)
 
     try:
         from semabridge.core.config_loader import get_default_config_path
@@ -115,8 +115,8 @@ def _resolve_models_path() -> Path:
             raw = source_cfg.get("pbix_folder") or source_cfg.get("repository_path")
             if raw:
                 return Path(raw).expanduser().resolve()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not read project config for models path: %s", exc)
 
     return Path.cwd()
 

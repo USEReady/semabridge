@@ -459,8 +459,13 @@ async def list_project_discovery_compat():
     return entries
 
 
-async def list_projects_compat():
-    """Compatibility: newfrontend expects a projects collection."""
+async def list_projects_compat(limit: int = 200, offset: int = 0):
+    """Compatibility: newfrontend expects a projects collection.
+
+    Args:
+        limit: Maximum number of projects to return (default 200 for backward compat).
+        offset: Number of projects to skip (default 0).
+    """
     await asyncio.to_thread(_compat_ensure_loaded)
     deduped: Dict[str, Dict[str, Any]] = {}
     
@@ -505,7 +510,11 @@ async def list_projects_compat():
         if new_ts >= cur_ts:
             deduped[semantic_key] = _project_with_semantic_models(p, pid)
 
-    return [_project_with_semantic_models(project, str(project.get("id") or project.get("project_id") or "")) for project in deduped.values()]
+    all_projects = [
+        _project_with_semantic_models(project, str(project.get("id") or project.get("project_id") or ""))
+        for project in deduped.values()
+    ]
+    return all_projects[offset: offset + limit]
 
 
 async def create_project_compat(request: dict):

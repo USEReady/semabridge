@@ -38,8 +38,8 @@ async def discover_fabric_models(
         if not resolved_workspace_id:
             try:
                 resolved_workspace_id = settings.fabric.workspace_id
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not read fabric.workspace_id from settings: %s", exc)
 
         if not resolved_workspace_id:
             raise HTTPException(

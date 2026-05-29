@@ -1,8 +1,11 @@
+import logging
 import tempfile
 import uuid
 from pathlib import Path
 
 import yaml
+
+logger = logging.getLogger(__name__)
 from fastapi import File, HTTPException, UploadFile
 
 from semabridge.api.services.project_domain_service import (
@@ -50,8 +53,8 @@ def _compat_set_project_pbix_path(project_id: str, pbix_path: str) -> None:
     _compat_project_configs[project_id] = rebuilt
     try:
         _compat_repo_yaml_path().write_text(rebuilt, encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Could not write PBIX config to repo YAML: %s", exc)
     _compat_save_store()
 
 

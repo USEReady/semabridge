@@ -1191,15 +1191,15 @@ export const api = {
     },
 
     // ── Projects ───────────────────────────────────────────────────────────
-    async listProjects() {
-        const cacheKey = 'projects:list';
+    async listProjects({ limit = 50, offset = 0 } = {}) {
+        const cacheKey = `projects:list:${limit}:${offset}`;
         const cached = getCachedApiValue(cacheKey);
         if (cached) return cached;
 
         return coalesceApiCall(cacheKey, async () => {
             try {
                 const res = await withSingleTimeoutRetry(() =>
-                    authFetch(`${API_BASE_URL}/projects`, { timeoutMs: PROJECT_LIST_REQUEST_TIMEOUT_MS })
+                    authFetch(`${API_BASE_URL}/projects?limit=${limit}&offset=${offset}`, { timeoutMs: PROJECT_LIST_REQUEST_TIMEOUT_MS })
                 );
                 const data = await handleResponse(res);
                 const normalized = dedupeProjects(data || []);

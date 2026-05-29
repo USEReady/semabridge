@@ -761,8 +761,8 @@ def resolve_workspace_id(
             val = cfg.get("fabric", {}).get("default_workspace_id")
             if val:
                 return val
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not read semabridge.yaml for workspace ID: %s", exc)
 
     # 3. Global config.yaml
     try:
@@ -773,23 +773,23 @@ def resolve_workspace_id(
             val = cfg.get("fabric", {}).get("default_workspace_id")
             if val:
                 return val
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not read global config.yaml for workspace ID: %s", exc)
 
     # 4. Env-var via FabricConfig
     try:
         s = get_settings()
         return s.fabric.resolved_default_workspace_id
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not read workspace ID from settings: %s", exc)
 
     # 5. Interactive prompt (only works in CLI context)
     if prompt_fallback:
         try:
             import typer
             return typer.prompt("No workspace ID configured. Enter Fabric Workspace ID")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Interactive workspace ID prompt failed: %s", exc)
 
     raise ValueError(
         "No workspace ID configured. Set FABRIC_WORKSPACE_ID in .env, "

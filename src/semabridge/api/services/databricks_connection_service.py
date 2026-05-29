@@ -61,8 +61,8 @@ async def databricks_native_oauth_login(request: Request, payload: Dict[str, Any
             user = get_current_user_optional(request, session)
             if user:
                 user_id = user.id
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Could not resolve user_id for Databricks OAuth session: %s", exc)
 
     with _poll_sessions_lock:
         _poll_sessions[flow_id] = {

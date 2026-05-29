@@ -323,8 +323,8 @@ def _step2_init_identifiers(
         if source == "fabric":
             try:
                 workspace_id = config.fabric.workspace_id
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not read fabric.workspace_id from config: %s", exc)
         elif source in ("pbix", "local"):
             workspace_id = "local"
 

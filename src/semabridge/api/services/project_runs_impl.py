@@ -172,8 +172,8 @@ def _compat_latest_sml_state(project_id: str, preferred_snapshot_id: str = "") -
             snap = db_manager.get_snapshot(sid)
             if snap and isinstance(getattr(snap, "sml_blob", None), dict):
                 return snap.sml_blob
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("ORM snapshot state load skipped for %s: %s", sid, exc)
 
     for run in _compat_project_runs.get(project_id, []):
         if not isinstance(run, dict):
@@ -568,8 +568,8 @@ async def list_project_snapshots_compat(
                     if row.sml_blob:
                         try:
                             state_val = json.loads(row.sml_blob) if isinstance(row.sml_blob, str) else row.sml_blob
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.debug("Could not parse sml_blob for snapshot row: %s", exc)
                     
                     # Default values
                     snap_role = "source"

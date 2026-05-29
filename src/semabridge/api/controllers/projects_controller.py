@@ -47,9 +47,13 @@ def _assert_project_access(project_id: str, user_id: str | None) -> None:
 
 
 @router.get("/api/projects")
-async def list_projects(request: Request):
+async def list_projects(
+    request: Request,
+    limit: int = Query(50, ge=1, le=200, description="Max projects to return"),
+    offset: int = Query(0, ge=0, description="Number of projects to skip"),
+):
     user_id = require_request_user_id(request)
-    projects = await list_projects_compat()
+    projects = await list_projects_compat(limit=limit, offset=offset)
     if auth_is_enabled():
         return [
             project

@@ -335,8 +335,8 @@ class ExecutionEngine:
             if hasattr(self, '_account_env_ctx') and self._account_env_ctx is not None:
                 try:
                     self._account_env_ctx.__exit__(None, None, None)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Error cleaning up account env context: %s", exc)
                 self._account_env_ctx = None
 
     def _record_step(

@@ -49,7 +49,7 @@ class FabricPublisher:
     def __init__(self, config: FabricConfig):
         """
         Initialize the publisher.
-        
+
         Args:
             config: Fabric configuration with credentials
         """
@@ -57,6 +57,24 @@ class FabricPublisher:
         self._access_token: Optional[str] = None
         self._token_expiry: float = 0
         self._resolved_workspace_id: Optional[str] = None
+        # Shared HTTP client — reused across all requests in this publisher instance.
+        # A new client is created lazily and cached; it is closed in __del__.
+        self._http_client: Optional[httpx.Client] = None
+
+    def _get_http_client(self) -> httpx.Client:
+        """Return (or lazily create) the shared httpx.Client for this instance."""
+        if self._http_client is None or self._http_client.is_closed:
+            from semabridge.core.settings import get_settings
+            proxy = get_settings().network.https_proxy
+            self._http_client = httpx.Client(timeout=60, proxy=proxy)
+        return self._http_client
+
+    def __del__(self) -> None:
+        try:
+            if self._http_client and not self._http_client.is_closed:
+                self._http_client.close()
+        except Exception:
+            pass
     
     def _get_access_token(self, force_refresh: bool = False) -> str:
         """Get a valid access token, refreshing if needed.
@@ -238,16 +256,13 @@ class FabricPublisher:
     def list_workspaces(self) -> list[dict[str, Any]]:
         """List Fabric workspaces visible to the authenticated principal."""
         url = f"{self.FABRIC_API_BASE}/workspaces"
-        from semabridge.core.settings import get_settings
-        proxy = get_settings().network.https_proxy
-        
         try:
-            with httpx.Client(timeout=30, proxy=proxy) as client:
-                response = client.get(url, headers=self._get_headers())
-                if response.status_code != 200:
-                    logger.warning("Workspace resolution: list failed with %s", response.status_code)
-                    return []
-                return response.json().get("value", [])
+            client = self._get_http_client()
+            response = client.get(url, headers=self._get_headers())
+            if response.status_code != 200:
+                logger.warning("Workspace resolution: list failed with %s", response.status_code)
+                return []
+            return response.json().get("value", [])
         except Exception as exc:
             logger.warning("Workspace resolution: failed to list workspaces: %s", exc)
             return []
@@ -440,40 +455,37 @@ class FabricPublisher:
 
         logger.info(f"Creating semantic model '{payload['displayName']}' in workspace {workspace_id} via Items API")
 
-        from semabridge.core.settings import get_settings
-        proxy = get_settings().network.https_proxy
-
         for attempt in range(2):  # 1 normal + 1 retry on 401
-            with httpx.Client(timeout=60, proxy=proxy) as client:
-                response = client.post(url, headers=self._get_headers(), json=item_payload)
+            client = self._get_http_client()
+            response = client.post(url, headers=self._get_headers(), json=item_payload)
 
-                if response.status_code == 202:
-                    return self._poll_operation(response)
-                elif response.status_code == 201:
-                    result = response.json()
-                    logger.info(f"Created semantic model: {result.get('displayName')} (ID: {result.get('id')})")
-                    return result
-                elif response.status_code == 401 and attempt == 0:
-                    logger.warning("Create got 401 — refreshing token and retrying...")
-                    self._access_token = None  # force re-acquire
-                    self._token_expiry = 0
-                    self._get_access_token(force_refresh=True)
-                    continue
-                elif response.status_code == 404:
-                    error_text = response.text
-                    logger.error("Create failed with 404 EntityNotFound: workspace=%s. This usually means the workspace is a Pro workspace and lacks a Fabric Capacity (F-SKU or PPU).", workspace_id)
-                    raise PublishError(
-                        f"Deployment Failed: The workspace '{workspace_id}' does not exist, or you do not have permission, "
-                        f"or it is NOT backed by a Fabric Capacity. Fabric's semantic model creation API strictly requires "
-                        f"a workspace with a Fabric Capacity (F-SKU) or Premium Per User (PPU). Error: {error_text}"
-                    )
-                else:
-                    error_text = response.text
-                    logger.error(
-                        "Create failed: workspace=%s status=%s body=%s",
-                        workspace_id, response.status_code, error_text,
-                    )
-                    raise PublishError(f"Failed to create model: {response.status_code} - {error_text}")
+            if response.status_code == 202:
+                return self._poll_operation(response)
+            elif response.status_code == 201:
+                result = response.json()
+                logger.info(f"Created semantic model: {result.get('displayName')} (ID: {result.get('id')})")
+                return result
+            elif response.status_code == 401 and attempt == 0:
+                logger.warning("Create got 401 — refreshing token and retrying...")
+                self._access_token = None  # force re-acquire
+                self._token_expiry = 0
+                self._get_access_token(force_refresh=True)
+                continue
+            elif response.status_code == 404:
+                error_text = response.text
+                logger.error("Create failed with 404 EntityNotFound: workspace=%s. This usually means the workspace is a Pro workspace and lacks a Fabric Capacity (F-SKU or PPU).", workspace_id)
+                raise PublishError(
+                    f"Deployment Failed: The workspace '{workspace_id}' does not exist, or you do not have permission, "
+                    f"or it is NOT backed by a Fabric Capacity. Fabric's semantic model creation API strictly requires "
+                    f"a workspace with a Fabric Capacity (F-SKU) or Premium Per User (PPU). Error: {error_text}"
+                )
+            else:
+                error_text = response.text
+                logger.error(
+                    "Create failed: workspace=%s status=%s body=%s",
+                    workspace_id, response.status_code, error_text,
+                )
+                raise PublishError(f"Failed to create model: {response.status_code} - {error_text}")
 
         raise PublishError("Failed to create model after 401 retry")
     
@@ -491,28 +503,25 @@ class FabricPublisher:
 
         update_payload = {"definition": payload["definition"]}
 
-        from semabridge.core.settings import get_settings
-        proxy = get_settings().network.https_proxy
-
         for attempt in range(2):
-            with httpx.Client(timeout=60, proxy=proxy) as client:
-                response = client.post(url, headers=self._get_headers(), json=update_payload)
+            client = self._get_http_client()
+            response = client.post(url, headers=self._get_headers(), json=update_payload)
 
-                if response.status_code == 202:
-                    return self._poll_operation(response)
-                elif response.status_code == 200:
-                    logger.info(f"Updated semantic model: {payload['displayName']} (ID: {model_id})")
-                    return {"id": model_id, "displayName": payload["displayName"], "status": "updated"}
-                elif response.status_code == 401 and attempt == 0:
-                    logger.warning("Update got 401 — refreshing token and retrying...")
-                    self._access_token = None
-                    self._token_expiry = 0
-                    self._get_access_token(force_refresh=True)
-                    continue
-                else:
-                    error_text = response.text
-                    logger.error(f"Update failed: {response.status_code} - {error_text}")
-                    raise PublishError(f"Failed to update model: {response.status_code} - {error_text}")
+            if response.status_code == 202:
+                return self._poll_operation(response)
+            elif response.status_code == 200:
+                logger.info(f"Updated semantic model: {payload['displayName']} (ID: {model_id})")
+                return {"id": model_id, "displayName": payload["displayName"], "status": "updated"}
+            elif response.status_code == 401 and attempt == 0:
+                logger.warning("Update got 401 — refreshing token and retrying...")
+                self._access_token = None
+                self._token_expiry = 0
+                self._get_access_token(force_refresh=True)
+                continue
+            else:
+                error_text = response.text
+                logger.error(f"Update failed: {response.status_code} - {error_text}")
+                raise PublishError(f"Failed to update model: {response.status_code} - {error_text}")
 
         raise PublishError("Failed to update model after 401 retry")
 
@@ -602,21 +611,18 @@ class FabricPublisher:
         """Trigger a refresh of the semantic model."""
         workspace_id = self._workspace_id()
         url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/semanticModels/{model_id}/refresh"
-        
-        logger.info(f"Triggering refresh for model: {model_id}")
-        
-        from semabridge.core.settings import get_settings
-        proxy = get_settings().network.https_proxy
 
-        with httpx.Client(timeout=30, proxy=proxy) as client:
-            response = client.post(url, headers=self._get_headers())
-            
-            if response.status_code == 202:
-                logger.info("Refresh initiated successfully")
-                return True
-            else:
-                logger.warning(f"Failed to trigger refresh: {response.status_code} - {response.text}")
-                return False
+        logger.info(f"Triggering refresh for model: {model_id}")
+
+        client = self._get_http_client()
+        response = client.post(url, headers=self._get_headers())
+
+        if response.status_code == 202:
+            logger.info("Refresh initiated successfully")
+            return True
+        else:
+            logger.warning(f"Failed to trigger refresh: {response.status_code} - {response.text}")
+            return False
     
     def _poll_operation(
         self,
@@ -637,35 +643,32 @@ class FabricPublisher:
         
         logger.debug(f"Polling operation: {operation_id}")
         
-        from semabridge.core.settings import get_settings
-        proxy = get_settings().network.https_proxy
-
         start_time = time.time()
-        
-        with httpx.Client(timeout=30, proxy=proxy) as client:
-            while time.time() - start_time < max_wait:
-                time.sleep(retry_after)
-                
-                response = client.get(operation_url, headers=self._get_headers())
-                
-                if response.status_code != 200:
-                    raise PublishError(f"Operation status check failed: {response.status_code}")
-                
-                result = response.json()
-                status = result.get("status", "").lower()
-                
-                if status == "succeeded":
-                    logger.info("Operation completed successfully")
-                    return result.get("result", result)
-                elif status == "failed":
-                    error = result.get("error", {})
-                    raise PublishError(f"Operation failed: {error.get('message', 'Unknown error')}")
-                elif status in ("running", "inprogress", "notstarted"):
-                    logger.debug(f"Operation status: {status}")
-                    continue
-                else:
-                    logger.warning(f"Unknown operation status: {status}")
-        
+
+        client = self._get_http_client()
+        while time.time() - start_time < max_wait:
+            time.sleep(retry_after)
+
+            response = client.get(operation_url, headers=self._get_headers())
+
+            if response.status_code != 200:
+                raise PublishError(f"Operation status check failed: {response.status_code}")
+
+            result = response.json()
+            status = result.get("status", "").lower()
+
+            if status == "succeeded":
+                logger.info("Operation completed successfully")
+                return result.get("result", result)
+            elif status == "failed":
+                error = result.get("error", {})
+                raise PublishError(f"Operation failed: {error.get('message', 'Unknown error')}")
+            elif status in ("running", "inprogress", "notstarted"):
+                logger.debug(f"Operation status: {status}")
+                continue
+            else:
+                logger.warning(f"Unknown operation status: {status}")
+
         raise PublishError(f"Operation timed out after {max_wait} seconds")
     
     def find_model_by_name(self, name: str) -> Optional[dict[str, Any]]:
@@ -674,24 +677,21 @@ class FabricPublisher:
         # Use Items API instead of legacy semanticModels path
         url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/items?type=SemanticModel"
         
-        from semabridge.core.settings import get_settings
-        proxy = get_settings().network.https_proxy
-
         try:
-            with httpx.Client(timeout=30, proxy=proxy) as client:
-                response = client.get(url, headers=self._get_headers())
-                
-                if response.status_code != 200:
-                    logger.warning(f"Could not list models: {response.status_code}")
-                    return None
-                
-                models = response.json().get("value", [])
-                
-                for model in models:
-                    if model.get("displayName", "").lower() == name.lower():
-                        return model
-                
+            client = self._get_http_client()
+            response = client.get(url, headers=self._get_headers())
+
+            if response.status_code != 200:
+                logger.warning(f"Could not list models: {response.status_code}")
                 return None
+
+            models = response.json().get("value", [])
+
+            for model in models:
+                if model.get("displayName", "").lower() == name.lower():
+                    return model
+
+            return None
         except Exception as e:
             logger.warning(f"Error finding model: {e}")
             return None
@@ -702,16 +702,13 @@ class FabricPublisher:
         # Use Items API instead of legacy semanticModels path
         url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/items?type=SemanticModel"
         
-        from semabridge.core.settings import get_settings
-        proxy = get_settings().network.https_proxy
+        client = self._get_http_client()
+        response = client.get(url, headers=self._get_headers())
 
-        with httpx.Client(timeout=30, proxy=proxy) as client:
-            response = client.get(url, headers=self._get_headers())
-            
-            if response.status_code != 200:
-                raise PublishError(f"Failed to list models: {response.status_code}")
-            
-            return response.json().get("value", [])
+        if response.status_code != 200:
+            raise PublishError(f"Failed to list models: {response.status_code}")
+
+        return response.json().get("value", [])
     
     def delete_model(self, model_id: str) -> bool:
         """Delete a semantic model."""
@@ -719,18 +716,15 @@ class FabricPublisher:
         # Use Items API rather than legacy path
         url = f"{self.FABRIC_API_BASE}/workspaces/{workspace_id}/items/{model_id}"
         
-        from semabridge.core.settings import get_settings
-        proxy = get_settings().network.https_proxy
+        client = self._get_http_client()
+        response = client.delete(url, headers=self._get_headers())
 
-        with httpx.Client(timeout=30, proxy=proxy) as client:
-            response = client.delete(url, headers=self._get_headers())
-            
-            if response.status_code in (200, 204):
-                logger.info(f"Deleted semantic model: {model_id}")
-                return True
-            else:
-                logger.error(f"Delete failed: {response.status_code}")
-                return False
+        if response.status_code in (200, 204):
+            logger.info(f"Deleted semantic model: {model_id}")
+            return True
+        else:
+            logger.error(f"Delete failed: {response.status_code}")
+            return False
     
     def test_connection(self) -> bool:
         """Test Fabric API connectivity."""

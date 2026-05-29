@@ -174,8 +174,8 @@ class SemabridgeInitializer:
                 from semabridge.repository.orm.session_factory import reset_engine
                 clear_db_config_cache()
                 reset_engine()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Could not reset DB engine after init: %s", exc)
             
             message = "Semabridge initialized successfully."
             if migrated:

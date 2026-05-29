@@ -57,9 +57,8 @@ export function WorkspaceProvider({ children }) {
                 const isStoredValid = storedId && merged.some(ws => ws.id === storedId);
 
                 if (!isStoredValid && merged.length > 0) {
-                    // Prefer 'My workspace' as fallback, otherwise first item
-                    const myWs = merged.find(w => w.name === 'My workspace');
-                    const defaultId = myWs ? myWs.id : merged[0].id;
+                    // Fall back to the first workspace in the list (no hardcoded name matching)
+                    const defaultId = merged[0].id;
                     setActiveWorkspaceId(defaultId);
                     localStorage.setItem(STORAGE_KEY, defaultId);
                     if (storedId) {

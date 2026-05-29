@@ -54,8 +54,8 @@ async def save_model(model_id: str, payload: Dict[str, Any]):
     ws_id = "local"
     try:
         ws_id = settings.fabric.workspace_id or "local"
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not read fabric.workspace_id for model save, using 'local': %s", exc)
 
     version_id = db_manager.insert_model_version(
         model_id=model_id,
