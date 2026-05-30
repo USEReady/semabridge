@@ -11,6 +11,25 @@ from semabridge.utils.identifiers import IdentifierSanitizer, SNOWFLAKE_RESERVED
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9]+")
 _MULTI_UNDERSCORE = re.compile(r"_+")
 _SNOWFLAKE_SANITIZER = IdentifierSanitizer(suppress_reserved=True)
+
+# Regex used to normalise source names for semantic identity comparison.
+# Strips all non-alphanumeric chars and lowercases so that:
+#   "Date Today", "date today", "date_today", "DATE_TODAY" → "datetoday"
+# This means two entities whose source names reduce to the same token are
+# treated as the *same concept*, not a name collision.
+_SEMANTIC_NORM = re.compile(r"[^a-z0-9]")
+
+
+def _semantic_name(name: str) -> str:
+    """Return a normalised token used only for semantic identity comparison.
+
+    All of: "Date Today", "date today", "date_today", "DATE TODAY"
+    reduce to the same string ("datetoday") so they are never flagged as
+    collisions against each other.  A real collision only occurs when two
+    *different* source names happen to produce the same sanitised target
+    name (e.g. "rev_total" and "revenue_total" both becoming REVENUE_TOTAL).
+    """
+    return _SEMANTIC_NORM.sub("", str(name or "").lower().strip())
 _METRIC_DAX_TABLE_REF = re.compile(r"(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_]*))\s*\[")
 _METRIC_SQL_QUOTED_REF = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*\"")
 _METRIC_SQL_PLAIN_REF = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*[A-Za-z_][A-Za-z0-9_]*")
@@ -273,7 +292,11 @@ def build_entity_mappings(
     normalized_target_connector = _normalize_connector_name(target_connector)
     entities = extract_model_entities(model)
     session = session_key or f"map-session-{uuid.uuid4().hex[:12]}"
-    claimed_names: Dict[str, Dict[str, str]] = {}
+    # claimed_names[scope][sanitized_key] = {"source_path": ..., "source_name": ...}
+    # Stores both the path and the original source name so we can distinguish
+    # a true collision (different concepts → same sanitised name) from an
+    # apparent collision (same concept, different platform naming conventions).
+    claimed_names: Dict[str, Dict[str, Dict[str, str]]] = {}
     generated: List[Dict[str, Any]] = []
     collisions: List[Dict[str, Any]] = []
 
@@ -288,7 +311,7 @@ def build_entity_mappings(
         scope = _scope_key(entity)
         claimed_names.setdefault(scope, {})
         collision_key = sanitized
-        prior_source_path = claimed_names[scope].get(collision_key)
+        prior_claim = claimed_names[scope].get(collision_key)
         existing_mapping = existing.get(source_path, {})
         is_manual = bool(existing_mapping.get("is_user_edited"))
         preferred_target_name = str(existing_mapping.get("target_name") or "").strip()
@@ -298,24 +321,42 @@ def build_entity_mappings(
         target_name = preferred_target_name or sanitized
 
         if not preferred_target_name:
-            if prior_source_path and prior_source_path != source_path:
-                collision_detected = True
-                entity_seed = str(entity.get("parent_source_path") or entity.get("model_name") or "").strip()
-                field_seed = source_name
-                target_name, hash_suffix = apply_collision_suffix(
-                    sanitized,
-                    fingerprint=f"{entity_seed}::{field_seed}",
-                )
-                collisions.append({
-                    "scope": scope,
-                    "sanitized_name": sanitized,
-                    "first_source_path": prior_source_path,
-                    "second_source_path": source_path,
-                    "resolved_target_name": target_name,
-                })
-            claimed_names[scope][collision_key] = source_path
+            if prior_claim and prior_claim["source_path"] != source_path:
+                # A prior entity already claimed this sanitised name.
+                # Only treat it as a REAL collision when the two source names
+                # are semantically different concepts.
+                #
+                # Examples that are NOT collisions (same concept, different conventions):
+                #   Power BI "Date Today"  vs Snowflake "date_today"
+                #   Power BI "Revenue_YTD" vs Snowflake "revenue_ytd"
+                #
+                # Examples that ARE real collisions (different concepts, same sanitised name):
+                #   "rev_total" vs "revenue_total"  → both → REVENUE_TOTAL
+                #   "SalesAmt"  vs "Sales_Amt"      → both → SALES_AMT (ambiguous abbreviation)
+                prior_semantic = _semantic_name(prior_claim["source_name"])
+                current_semantic = _semantic_name(source_name)
+                if prior_semantic != current_semantic:
+                    collision_detected = True
+                    entity_seed = str(entity.get("parent_source_path") or entity.get("model_name") or "").strip()
+                    field_seed = source_name
+                    target_name, hash_suffix = apply_collision_suffix(
+                        sanitized,
+                        fingerprint=f"{entity_seed}::{field_seed}",
+                    )
+                    collisions.append({
+                        "scope": scope,
+                        "sanitized_name": sanitized,
+                        "first_source_path": prior_claim["source_path"],
+                        "first_source_name": prior_claim["source_name"],
+                        "second_source_path": source_path,
+                        "second_source_name": source_name,
+                        "resolved_target_name": target_name,
+                    })
+                # else: same concept under different naming conventions — not a collision,
+                # keep the existing claimed slot and the same sanitised target name.
+            claimed_names[scope][collision_key] = {"source_path": source_path, "source_name": source_name}
         else:
-            claimed_names[scope][target_name] = source_path
+            claimed_names[scope][target_name] = {"source_path": source_path, "source_name": source_name}
 
         validation = _validate_target_name(
             target_name=target_name,
