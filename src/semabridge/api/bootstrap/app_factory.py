@@ -154,7 +154,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.error('ORM table setup failed: %s', exc)
 
     # Phase 3: Log multi-tenant enforcement status at startup.
-    auth_enabled = os.environ.get("AUTH_ENABLED", "true").lower() == "true"
+    auth_enabled = os.environ.get("AUTH_ENABLED", "").lower() == "true"
     if auth_enabled:
         logger.info(
             "AUTH_ENABLED=true — multi-tenant credential isolation ENFORCED. "

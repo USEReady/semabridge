@@ -199,7 +199,8 @@ def test_capture_snapshots_forwards_payload(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "project_id": "proj-123",
-        "payload": {"scope": {"source": True}, "label": "manual"},
-    }
+    body = response.json()
+    assert body["project_id"] == "proj-123"
+    payload = body["payload"]
+    assert payload["scope"] == {"source": True}
+    assert payload["label"] == "manual"

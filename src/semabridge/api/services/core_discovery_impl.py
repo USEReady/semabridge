@@ -18,13 +18,13 @@ async def discover_fabric_models(
 ):
     import anyio
     import httpx
-    from pydantic import ValidationError
+    from pydantic import ValidationError as _PydanticValidationError
 
     try:
         settings = get_settings()
         try:
             settings.fabric
-        except ValidationError:
+        except _PydanticValidationError:
             raise ValidationError((
                     "Fabric is not configured. "
                     "Set FABRIC_TENANT_ID, FABRIC_CLIENT_ID, and FABRIC_WORKSPACE_ID in .env or environment variables."
@@ -99,7 +99,7 @@ async def discover_fabric_models_by_workspace(
 
 def discover_snowflake(identity_id: Optional[str] = Query(None)):
     import time
-    from pydantic import ValidationError
+    from pydantic import ValidationError as _PydanticValidationError
     from semabridge.connectors.factory import make_source_extractor
     from sqlalchemy import select
     from semabridge.repository.orm.models import Account
@@ -141,7 +141,7 @@ def discover_snowflake(identity_id: Optional[str] = Query(None)):
             settings = get_settings()
             try:
                 snowflake_config = settings.snowflake
-            except ValidationError:
+            except _PydanticValidationError:
                 raise ValidationError((
                         "Snowflake is not configured. "
                         "Set SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, and SNOWFLAKE_PASSWORD in .env or environment variables."
@@ -177,7 +177,7 @@ def discover_snowflake(identity_id: Optional[str] = Query(None)):
         raise InternalError(f"Snowflake semantic view discovery failed: {e}")
 
 def _get_snowflake_extractor(identity_id: Optional[str] = None):
-    from pydantic import ValidationError
+    from pydantic import ValidationError as _PydanticValidationError
     from semabridge.connectors.factory import make_source_extractor
     from semabridge.repository.orm.models import Account
     from semabridge.repository.orm.session_factory import db_manager
@@ -207,7 +207,7 @@ def _get_snowflake_extractor(identity_id: Optional[str] = None):
         settings = get_settings()
         try:
             snowflake_config = settings.snowflake
-        except ValidationError:
+        except _PydanticValidationError:
             raise ValidationError((
                     "Snowflake is not configured. "
                     "Set SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, and SNOWFLAKE_PASSWORD in .env or environment variables."
@@ -215,7 +215,7 @@ def _get_snowflake_extractor(identity_id: Optional[str] = None):
         return make_source_extractor("snowflake", snowflake_config)
 
 def _execute_in_snowflake_context(func_name: str, identity_id: Optional[str] = None, *args, **kwargs):
-    from pydantic import ValidationError
+    from pydantic import ValidationError as _PydanticValidationError
     from semabridge.connectors.factory import make_source_extractor
     from semabridge.repository.orm.models import Account
     from semabridge.repository.orm.session_factory import db_manager

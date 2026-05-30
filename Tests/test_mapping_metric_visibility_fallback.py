@@ -20,14 +20,19 @@ if "psycopg2" not in sys.modules:
     sys.modules["psycopg2.extras"] = types.ModuleType("psycopg2.extras")
 
 from semabridge.api.services import project_runs_impl as pri
+from semabridge.api.services import mapping_service as ms
+from semabridge.api.services import snapshot_service as ss
 
 
 def test_build_project_entity_mappings_hydrates_manual_metrics(monkeypatch):
-    monkeypatch.setattr(pri, "_compat_ensure_loaded", lambda: None)
-    monkeypatch.setattr(pri, "_compat_projects", {"project-1": {"name": "Project 1", "source": "fabric"}})
-    monkeypatch.setattr(pri, "_compat_project_configs", {"project-1": "project_name: Project 1\n"})
+    # Patch via project_shared (the actual source of these module-level dicts)
+    from semabridge.api.services import project_shared as ps
+    monkeypatch.setattr(ps, "_compat_ensure_loaded", lambda: None)
+    monkeypatch.setattr(ms, "_compat_ensure_loaded", lambda: None)
+    monkeypatch.setattr(ms, "_compat_projects", {"project-1": {"name": "Project 1", "source": "fabric"}})
+    monkeypatch.setattr(ms, "_compat_project_configs", {"project-1": "project_name: Project 1\n"})
     monkeypatch.setattr(
-        pri,
+        ms,
         "_compat_mappings",
         {
             "project-1-metric": {
@@ -43,9 +48,9 @@ def test_build_project_entity_mappings_hydrates_manual_metrics(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        pri,
+        ss,
         "_compat_latest_sml_state",
-        lambda project_id: {
+        lambda project_id, preferred_snapshot_id="": {
             "unique_name": "Project 1",
             "datasets": [{"unique_name": "Device", "columns": []}],
             "metrics": [],

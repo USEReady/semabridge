@@ -83,7 +83,7 @@ def _prepare_projects_missing_connection_tag_schema(engine):
 
 
 def test_delete_account_detaches_linked_projects():
-    os.environ.pop('AUTH_ENABLED', None)
+    os.environ['AUTH_ENABLED'] = 'false'
     os.environ['SEMABRIDGE_DATABASE_URL'] = 'sqlite:///file::memory:?cache=shared&uri=true'
     os.environ['SEMABRIDGE_DB_BACKEND'] = 'orm'
 
@@ -127,7 +127,7 @@ def test_delete_account_detaches_linked_projects():
 
 
 def test_delete_account_repairs_legacy_projects_schema():
-    os.environ.pop('AUTH_ENABLED', None)
+    os.environ['AUTH_ENABLED'] = 'false'
     os.environ['SEMABRIDGE_DATABASE_URL'] = 'sqlite:///file::memory:?cache=shared&uri=true'
     os.environ['SEMABRIDGE_DB_BACKEND'] = 'orm'
 
@@ -165,7 +165,7 @@ def test_delete_account_repairs_legacy_projects_schema():
 
 
 def test_delete_account_with_projects_missing_connection_tag_column():
-    os.environ.pop('AUTH_ENABLED', None)
+    os.environ['AUTH_ENABLED'] = 'false'
     os.environ['SEMABRIDGE_DATABASE_URL'] = 'sqlite:///file::memory:?cache=shared&uri=true'
     os.environ['SEMABRIDGE_DB_BACKEND'] = 'orm'
 
@@ -220,7 +220,7 @@ def test_delete_account_with_projects_missing_connection_tag_column():
 
 
 def test_schema_compatibility_adds_missing_projects_connection_tag_column():
-    os.environ.pop('AUTH_ENABLED', None)
+    os.environ['AUTH_ENABLED'] = 'false'
     os.environ['SEMABRIDGE_DATABASE_URL'] = 'sqlite:///file::memory:?cache=shared&uri=true'
     os.environ['SEMABRIDGE_DB_BACKEND'] = 'orm'
 

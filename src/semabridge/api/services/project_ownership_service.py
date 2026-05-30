@@ -21,7 +21,7 @@ from semabridge.domain.exceptions import AuthenticationError, PermissionError, S
 
 
 def auth_is_enabled() -> bool:
-    return os.environ.get("AUTH_ENABLED", "true").lower() == "true"
+    return os.environ.get("AUTH_ENABLED", "").lower() == "true"
 
 
 def get_request_user_id(request: Request) -> str | None:

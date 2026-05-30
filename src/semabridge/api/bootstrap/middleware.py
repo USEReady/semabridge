@@ -87,8 +87,12 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         method = request.method.upper()
         path = request.url.path
 
+        # CSRF is only meaningful when auth (and cookies) are active.
+        # In single-user / dev mode (AUTH_ENABLED != "true"), skip enforcement.
+        auth_enabled = os.environ.get("AUTH_ENABLED", "").lower() == "true"
+
         # Always pass through safe methods and public paths without CSRF check.
-        if method not in _CSRF_SAFE_METHODS and path not in _CSRF_PUBLIC_PATHS:
+        if auth_enabled and method not in _CSRF_SAFE_METHODS and path not in _CSRF_PUBLIC_PATHS:
             cookie_token = request.cookies.get(_CSRF_COOKIE_NAME, "")
             header_token = request.headers.get(_CSRF_HEADER_NAME, "")
             if not cookie_token or not header_token or cookie_token != header_token:

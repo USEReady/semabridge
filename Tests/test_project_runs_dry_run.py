@@ -422,12 +422,19 @@ def test_capture_snapshots_strips_runtime_metadata(monkeypatch):
                     return True
         return False
 
-    monkeypatch.setattr(pri, "_compat_save_store", lambda: None)
-    monkeypatch.setattr(pri, "_compat_project_snapshots", {"project-1": []})
-    monkeypatch.setattr(pri, "_compat_snapshot_groups", {"project-1": []})
-    monkeypatch.setattr(pri, "_compat_selected_intermediate_format", lambda _project_cfg: "sml")
+    # Patch shared dicts and functions at their actual source modules
+    from semabridge.api.services import project_shared as ps
+    from semabridge.api.services import snapshot_service as ss
+
+    monkeypatch.setattr(ps, "_compat_save_store", lambda: None)
+    monkeypatch.setattr(ss, "_compat_save_store", lambda: None)
+    monkeypatch.setattr(ps, "_compat_project_snapshots", {"project-1": []})
+    monkeypatch.setattr(ss, "_compat_project_snapshots", {"project-1": []})
+    monkeypatch.setattr(ps, "_compat_snapshot_groups", {"project-1": []})
+    monkeypatch.setattr(ss, "_compat_snapshot_groups", {"project-1": []})
+    monkeypatch.setattr(ss, "_compat_selected_intermediate_format", lambda _project_cfg: "sml")
     monkeypatch.setattr(
-        pri,
+        ss,
         "_compat_latest_sml_state",
         lambda _project_id, _preferred_snapshot_id="": {
             "unique_name": "demo",
@@ -453,7 +460,7 @@ def test_capture_snapshots_strips_runtime_metadata(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        pri,
+        ss,
         "_compat_connector_descriptors",
         lambda _project_cfg: {
             "source": {"connector_type": "fabric", "connector_identifier": "source-1"},
@@ -474,6 +481,6 @@ def test_capture_snapshots_strips_runtime_metadata(monkeypatch):
     assert run["before_src_snapshot_id"]
     assert run["before_target_snapshot_ids"]
 
-    snapshots = pri._compat_project_snapshots["project-1"]
+    snapshots = ss._compat_project_snapshots["project-1"]
     assert snapshots
     assert all(not has_runtime_keys(snapshot.get("state")) for snapshot in snapshots)

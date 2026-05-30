@@ -279,7 +279,7 @@ def _assign_orphaned_accounts_to_dev_user() -> None:
     In production (``AUTH_ENABLED=true``), orphaned accounts remain unowned
     and are inaccessible until an admin assigns them.
     """
-    if os.environ.get("AUTH_ENABLED", "true").lower() == "true":
+    if os.environ.get("AUTH_ENABLED", "").lower() == "true":
         return  # Skip in production — admin must assign explicitly.
 
     from sqlalchemy import select, update

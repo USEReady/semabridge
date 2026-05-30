@@ -39,7 +39,7 @@ async def trigger_sync(request: Request, payload: TriggerSyncRequest) -> Any:
     sync flows can enforce direct project ownership.
     """
     payload_dict = payload.model_dump(exclude_none=False)
-    if os.environ.get("AUTH_ENABLED", "true").lower() == "true":
+    if os.environ.get("AUTH_ENABLED", "").lower() == "true":
         user_id = getattr(request.state, "user_id", None)
         if user_id:
             payload_dict["user_id"] = user_id
