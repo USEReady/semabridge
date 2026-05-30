@@ -1,11 +1,11 @@
 """
-Configuration settings for Semabridge.
+Connection configuration models (Pydantic).
 
-Uses Pydantic Settings for type-safe configuration loading from environment
-variables and .env files. Avoids the issues from semantic-sync by:
-1. Clear separation of config concerns (Snowflake, Fabric, Model)
-2. No nested Settings objects that cause attribute errors
-3. Explicit validation with helpful error messages
+Use this module when you need typed, validated connection config for
+Snowflake, Fabric, or Databricks connectors.  Settings are loaded from
+environment variables and .env files via ``pydantic-settings``.
+
+Do NOT import config_loader here — that module handles YAML files.
 """
 
 from __future__ import annotations

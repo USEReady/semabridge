@@ -213,6 +213,25 @@ version_control_service = VersionControlService(
 )
 
 
+# ---------------------------------------------------------------------------
+# In-memory write-through cache
+#
+# These dicts are the primary read path for all project operations.
+# They are populated at startup from:
+#   1. config/.semabridge_compat_store.json  (fast path)
+#   2. ORM / SQLAlchemy                      (fallback)
+#   3. Filesystem YAML files                 (last resort)
+#
+# On write, data is stored to BOTH the dict AND the ORM (write-through).
+# This means reads are fast (no DB query), but the process holds the
+# authoritative state — two processes cannot share it without a proper
+# external store.
+#
+# Future direction: replace with a proper ProjectCache class that exposes
+# typed accessors (get_snapshots, find_snapshot, etc.) and is injected
+# via ServiceContainer rather than being a module-level global.
+# ---------------------------------------------------------------------------
+
 # -------------------------------------------------------
 # Health
 # -------------------------------------------------------
@@ -236,6 +255,24 @@ _compat_job_config: Dict[str, Any] = {
     "mode": "local",
 }
 _compat_store_loaded: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Cache accessor helpers
+# ---------------------------------------------------------------------------
+
+def get_project_snapshots(project_id: str) -> List[Dict[str, Any]]:
+    """Return all valid snapshot dicts for a project (filters out corrupt entries)."""
+    return [r for r in _compat_project_snapshots.get(project_id, []) if isinstance(r, dict)]
+
+
+def find_project_snapshot(project_id: str, snapshot_id: str) -> Optional[Dict[str, Any]]:
+    """Return a single snapshot by ID, or None if not found."""
+    return next(
+        (r for r in get_project_snapshots(project_id)
+         if str(r.get("snapshot_id") or "") == snapshot_id),
+        None,
+    )
 
 
 def _compat_now_iso() -> str:

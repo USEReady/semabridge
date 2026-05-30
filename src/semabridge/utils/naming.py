@@ -20,30 +20,7 @@ import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set
 
-# ── Reserved words ────────────────────────────────────────────────────────────
-# Snowflake reserved words that cannot be used as unquoted identifiers.
-# If an alias collides, we prefix with ``l_`` (lowercase).
-SNOWFLAKE_RESERVED: Set[str] = {
-    # SQL Keywords
-    "table", "date", "group", "order", "join", "view", "select", "from", "where",
-    "and", "or", "not", "null", "true", "false", "as", "by", "on", "in", "is",
-    # Additional SQL clauses
-    "having", "limit", "offset", "union", "except", "intersect", "into",
-    "insert", "update", "delete", "create", "drop", "alter", "grant", "revoke",
-    # Aggregate functions
-    "count", "sum", "avg", "min", "max",
-    # Snowflake-specific
-    "current", "session", "account", "database", "schema", "user", "role",
-    "warehouse", "stage", "sequence", "stream", "task", "pipe",
-    # Data types
-    "integer", "varchar", "boolean", "float", "number", "string", "timestamp",
-    # Window functions
-    "over", "partition", "row", "rows", "range", "between",
-    # Other reserved
-    "all", "any", "some", "exists", "case", "when", "then", "else", "end",
-    "distinct", "unique", "primary", "foreign", "key", "references",
-    "constraint", "index", "default", "check", "like", "ilike",
-}
+from semabridge.utils.identifiers import SNOWFLAKE_RESERVED_WORDS as SNOWFLAKE_RESERVED
 
 # ── Illegal identifier characters ────────────────────────────────────────────
 _ILLEGAL_CHAR_RE = re.compile(r"[^A-Za-z0-9_]")
