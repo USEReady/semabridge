@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import zipfile
@@ -92,6 +93,7 @@ logger = logging.getLogger(__name__)
 
 
 def _assert_project_access(project_id: str, user_id: str | None) -> None:
+    """Synchronous access guard — call via asyncio.to_thread from async endpoints."""
     if auth_is_enabled() and not is_project_owned_by_user(project_id, user_id):
         raise HTTPException(status_code=403, detail="Forbidden: project access denied")
 
@@ -150,35 +152,35 @@ async def create_project(request: Request, payload: CreateProjectRequest):
 @router.get("/api/projects/{project_id}")
 async def get_project(project_id: str, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await get_project_compat(project_id)
 
 
 @router.patch("/api/projects/{project_id}")
 async def patch_project(project_id: str, payload: PatchProjectRequest, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await patch_project_compat(project_id, payload.model_dump(exclude_none=False))
 
 
 @router.delete("/api/projects/{project_id}")
 async def delete_project(project_id: str, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await delete_project_compat(project_id)
 
 
 @router.get("/api/projects/{project_id}/config")
 async def get_project_config(project_id: str, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await get_project_config_compat(project_id)
 
 
 @router.put("/api/projects/{project_id}/config")
 async def save_project_config(project_id: str, payload: SaveProjectConfigRequest, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await save_project_config_compat(project_id, payload.model_dump(exclude_none=False))
 
 
@@ -195,7 +197,7 @@ async def list_project_snapshots(
     limit: int = Query(200, ge=1, le=500),
 ):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await list_project_snapshots_compat(
         project_id,
         role=role,
@@ -211,7 +213,7 @@ async def list_project_snapshots(
 @router.delete("/api/projects/{project_id}/snapshots")
 async def delete_snapshots(project_id: str, snapshot_ids: List[str], request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await delete_project_snapshots_compat(project_id, snapshot_ids)
 
 
@@ -222,14 +224,14 @@ async def list_snapshot_groups(
     limit: int = Query(200, ge=1, le=500),
 ):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await list_snapshot_groups_compat(project_id, limit=limit)
 
 
 @router.post("/api/projects/{project_id}/snapshots/capture")
 async def capture_snapshots(project_id: str, payload: CaptureSnapshotsRequest, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await capture_manual_snapshots_compat(project_id, payload.model_dump(exclude_none=False))
 
 
@@ -273,7 +275,7 @@ async def compare_snapshots(
         )
 
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await compare_project_snapshots_compat(
         project_id,
         resolved_from_snapshot_id,
@@ -286,35 +288,35 @@ async def compare_snapshots(
 @router.post("/api/projects/{project_id}/restore-version")
 async def restore_project_version(project_id: str, payload: RestoreProjectVersionRequest, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await restore_project_version_compat(project_id, payload.model_dump(exclude_none=False))
 
 
 @router.get("/api/projects/{project_id}/runs")
 async def get_project_runs(project_id: str, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await get_project_runs_compat(project_id)
 
 
 @router.get("/api/projects/{project_id}/vc/stats")
 async def get_project_vc_stats(project_id: str, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await get_project_storage_stats(project_id)
 
 
 @router.post("/api/projects/{project_id}/vc/retention")
 async def run_project_retention(project_id: str, request: Request, days: int = 30):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await apply_project_retention_policy(project_id, days)
 
 
 @router.get("/api/projects/{project_id}/export")
 async def export_project(project_id: str, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     project = await get_project_config_compat(project_id)
     config_yaml = str(project.get("config_yaml") or "").strip()
     if not config_yaml:

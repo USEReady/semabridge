@@ -31,6 +31,7 @@ from semabridge.api.services.project_mapping_engine import (
     sanitize_identifier,
 )
 from semabridge.utils.identifiers import IdentifierSanitizer
+from semabridge.core.run_helpers import elapsed_ms, normalize_sync_mode, resolve_run_status
 
 
 AUTO_MAP_SNOWFLAKE_RESERVED = {
@@ -241,9 +242,8 @@ def _compat_version_metadata() -> Dict[str, Any]:
     return {"semabridge_version": "unknown", "connector_versions": {}, "rule_pack_version": "unknown"}
 
 
-def _compat_normalize_sync_mode(value: Any) -> Optional[str]:
-    sync_mode = str(value or "").strip().lower()
-    return sync_mode if sync_mode in {"copy", "upsert"} else None
+# Backward-compatible alias — callers within this module use the shared helper.
+_compat_normalize_sync_mode = normalize_sync_mode
 
 
 def _compat_sync_mode_for_restore_snapshot(project_id: str, snapshot_id: str, payload: Optional[Dict[str, Any]] = None) -> str:
@@ -928,10 +928,9 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
         sync_payload["sync_mode"] = sync_mode
         sync_payload["force"] = bool(run.get("force", False))
         sync_result = await sync_models(sync_payload)
-        run["duration_ms"] = int((_time.time() - started) * 1000)
+        run["duration_ms"] = elapsed_ms(started)
         run["completed_at"] = _compat_now_iso()
-        overall = str((sync_result or {}).get("status") or "").lower()
-        run["status"] = "success" if overall == "success" else "warning" if overall == "partial" else "failed"
+        run["status"] = resolve_run_status(sync_result or {})
         run["summary"] = (sync_result or {}).get("summary") or {}
         run["results"] = (sync_result or {}).get("results") or []
         run["models_synced"] = int((sync_result or {}).get("models_synced") or 0)

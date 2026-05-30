@@ -1,3 +1,4 @@
+import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -30,9 +31,14 @@ router.patch("/api/folders/{folder_id}")(rename_folder_compat)
 router.delete("/api/folders/{folder_id}")(delete_folder_compat)
 
 
+def _assert_folder_project_access(project_id: str, user_id: str | None) -> None:
+    """Synchronous access guard — call via asyncio.to_thread from async endpoints."""
+    if auth_is_enabled() and not is_project_owned_by_user(project_id, user_id, log_prefix="FolderProjectAuth"):
+        raise HTTPException(status_code=403, detail="Forbidden: project access denied")
+
+
 @router.patch("/api/projects/{project_id}/folder")
 async def move_project_to_folder(project_id: str, payload: MoveFolderRequest, request: Request):
     user_id = require_request_user_id(request)
-    if auth_is_enabled() and not is_project_owned_by_user(project_id, user_id, log_prefix="FolderProjectAuth"):
-        raise HTTPException(status_code=403, detail="Forbidden: project access denied")
+    await asyncio.to_thread(_assert_folder_project_access, project_id, user_id)
     return await move_project_to_folder_compat(project_id, payload.model_dump(exclude_none=False))

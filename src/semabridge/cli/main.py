@@ -37,6 +37,7 @@ from rich.table import Table
 
 from semabridge import __version__
 from semabridge.core.settings import get_settings, reload_settings
+from semabridge.core.run_helpers import elapsed_ms, normalize_sync_mode, resolve_run_status
 from semabridge.utils.logger import setup_logging, get_logger
 
 # Import reverse flow components (lazy loaded in command but good to have ready)
@@ -1088,7 +1089,7 @@ def rollback(
     
     if not snapshot_id and not tag:
         console.print("[red]Error: Must specify either --snapshot-id or --tag[/red]")
-        cmd_logger.log_failure(log_entry, "Missing target version", int((time.time() - start_time) * 1000))
+        cmd_logger.log_failure(log_entry, "Missing target version", elapsed_ms(start_time))
         raise typer.Exit(code=1)
     
     console.print(Panel.fit(
@@ -1112,7 +1113,7 @@ def rollback(
         current = db_manager.get_head(dataset_id)
         if not current:
             console.print(f"[red]Error: No snapshots found for '{dataset_id}'[/red]")
-            cmd_logger.log_failure(log_entry, "No snapshots found", int((time.time() - start_time) * 1000))
+            cmd_logger.log_failure(log_entry, "No snapshots found", elapsed_ms(start_time))
             raise typer.Exit(code=1)
         
         # Find target snapshot
@@ -1120,13 +1121,13 @@ def rollback(
             target = db_manager.get_snapshot_by_tag(dataset_id, tag)
             if not target:
                 console.print(f"[red]Error: No snapshot found with tag '{tag}'[/red]")
-                cmd_logger.log_failure(log_entry, f"Tag not found: {tag}", int((time.time() - start_time) * 1000))
+                cmd_logger.log_failure(log_entry, f"Tag not found: {tag}", elapsed_ms(start_time))
                 raise typer.Exit(code=1)
         else:
             target = db_manager.get_snapshot(snapshot_id)
             if not target:
                 console.print(f"[red]Error: Snapshot '{snapshot_id}' not found[/red]")
-                cmd_logger.log_failure(log_entry, f"Snapshot not found: {snapshot_id}", int((time.time() - start_time) * 1000))
+                cmd_logger.log_failure(log_entry, f"Snapshot not found: {snapshot_id}", elapsed_ms(start_time))
                 raise typer.Exit(code=1)
         
         console.print(f"  Current (HEAD): {current.version_tag or current.snapshot_id[:12]} ({current.timestamp[:19]})")
@@ -1135,7 +1136,7 @@ def rollback(
         # Check if already at target
         if current.snapshot_id == target.snapshot_id:
             console.print("\n[yellow]Already at target version. Nothing to rollback.[/yellow]")
-            cmd_logger.log_success(log_entry, int((time.time() - start_time) * 1000), {"result": "no_change"})
+            cmd_logger.log_success(log_entry, elapsed_ms(start_time), {"result": "no_change"})
             return
         
         # ================================================================
@@ -1179,7 +1180,7 @@ def rollback(
         if dry_run:
             console.print("\n[yellow]Dry run mode - rollback not executed.[/yellow]")
             cmd_logger.log_phase(log_entry, "preview", {"result": "dry_run"})
-            cmd_logger.log_success(log_entry, int((time.time() - start_time) * 1000), {"result": "dry_run"})
+            cmd_logger.log_success(log_entry, elapsed_ms(start_time), {"result": "dry_run"})
             return
         
         # ================================================================
@@ -1190,7 +1191,7 @@ def rollback(
         # If no real changes, skip confirmation
         if real_change_count == 0:
             console.print("  [green]✓ No changes to apply. Versions are identical.[/green]")
-            cmd_logger.log_success(log_entry, int((time.time() - start_time) * 1000), {"result": "no_changes"})
+            cmd_logger.log_success(log_entry, elapsed_ms(start_time), {"result": "no_changes"})
             return
         
         if not yes:
@@ -1210,7 +1211,7 @@ def rollback(
             
             if not confirm:
                 console.print("\n[yellow]Rollback aborted by user.[/yellow]")
-                cmd_logger.log_aborted(log_entry, "User cancelled", int((time.time() - start_time) * 1000))
+                cmd_logger.log_aborted(log_entry, "User cancelled", elapsed_ms(start_time))
                 raise typer.Exit(code=0)
         
         # User confirmed
@@ -1257,7 +1258,7 @@ def rollback(
         else:
             console.print(f"  [yellow]No changes needed (already at target state)[/yellow]")
         
-        duration_ms = int((time.time() - start_time) * 1000)
+        duration_ms = elapsed_ms(start_time)
         console.print(f"\n[green][OK] Rollback complete![/green]")
         console.print(f"[dim]Duration: {duration_ms}ms[/dim]")
         
@@ -1272,7 +1273,7 @@ def rollback(
     except typer.Exit:
         raise  # Re-raise Exit to preserve exit code
     except Exception as e:
-        duration_ms = int((time.time() - start_time) * 1000)
+        duration_ms = elapsed_ms(start_time)
         console.print(f"\n[red]Error: Rollback execution failed[/red]")
         console.print(f"[yellow]Cause:[/yellow] {str(e)}")
         console.print(f"[blue]Fix:[/blue] Verify the target snapshot ID and your database connectivity.")
@@ -1705,13 +1706,13 @@ def _run_snowflake_to_fabric(
             )
             console.print(f"  [green][OK][/green] Published to Fabric (ID: {result.get('id')})")
             
-        duration = int((time.time() - start_time) * 1000)
+        duration = elapsed_ms(start_time)
         db_manager.commit_model(project_id=model_name, sml_json=sml_dict, status="success", duration_ms=duration, run_id=run_id)
         cmd_logger.log_success(log_entry, duration, {"snapshot_id": snapshot_id})
         console.print(f"\n[green][OK] Deploy complete![/green]")
 
     except Exception as e:
-        duration = int((time.time() - start_time) * 1000)
+        duration = elapsed_ms(start_time)
         console.print(f"\n[red]Error: Snowflake -> Fabric deployment failed[/red]")
         console.print(f"[yellow]Cause:[/yellow] {str(e)}")
         console.print(f"[blue]Fix:[/blue] Check network connectivity and verify Fabric API permissions.")
@@ -1829,7 +1830,7 @@ def _run_fabric_to_snowflake(settings, dataset_id, workspace_id, tag, sync, para
         db_manager.ensure_project(dataset_id, sml_model.label, ws_id, adapter="fabric")
         
         sml_dict = sml_model.model_dump(mode='json')
-        duration = int((time.time() - start_time) * 1000)
+        duration = elapsed_ms(start_time)
         committed, snapshot_id = db_manager.commit_model(
             project_id=dataset_id,
             sml_json=sml_dict,
@@ -1894,12 +1895,12 @@ def _run_fabric_to_snowflake(settings, dataset_id, workspace_id, tag, sync, para
         else:
              console.print("  [yellow]Skipping sync (use --dry-run=false to execute, default is sync)[/yellow]")
              
-        duration = int((time.time() - start_time) * 1000)
+        duration = elapsed_ms(start_time)
         cmd_logger.log_success(log_entry, duration, {"snapshot_id": snapshot_id})
         console.print(f"\n[green][OK] Deploy complete![/green]")
         
     except Exception as e:
-        duration = int((time.time() - start_time) * 1000)
+        duration = elapsed_ms(start_time)
         console.print(f"\n[red]Error: Fabric -> Snowflake deployment failed[/red]")
         console.print(f"[yellow]Cause:[/yellow] {str(e)}")
         console.print(f"[blue]Fix:[/blue] Check Snowflake warehouse status and verify Fabric workspace accessibility.")

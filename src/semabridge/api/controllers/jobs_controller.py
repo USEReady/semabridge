@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any, Dict, Optional
 
@@ -52,6 +53,7 @@ logger = logging.getLogger(__name__)
 
 
 def _assert_project_access(project_id: str, user_id: str | None) -> None:
+    """Synchronous access guard — call via asyncio.to_thread from async endpoints."""
     if auth_is_enabled() and not is_project_owned_by_user(project_id, user_id, log_prefix="JobProjectAuth"):
         raise HTTPException(status_code=403, detail="Forbidden: project access denied")
 
@@ -107,21 +109,21 @@ async def list_job_schedules(request: Request):
 @router.get("/api/projects/{project_id}/schedule")
 async def get_project_schedule(project_id: str, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await get_project_schedule_compat(project_id)
 
 
 @router.post("/api/projects/{project_id}/schedule")
 async def save_project_schedule(project_id: str, payload: SaveScheduleRequest, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await save_project_schedule_compat(project_id, payload.model_dump(exclude_none=False))
 
 
 @router.delete("/api/projects/{project_id}/schedule")
 async def delete_project_schedule(project_id: str, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await delete_project_schedule_compat(project_id)
 
 
@@ -137,7 +139,7 @@ async def trigger_job(payload: TriggerJobRequest, background_tasks: BackgroundTa
     project_id = str(body.get("project_id") or "").strip()
     if not project_id:
         raise HTTPException(status_code=400, detail="project_id is required")
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     if user_id:
         body["user_id"] = user_id
     return await trigger_job_compat(body, background_tasks)
