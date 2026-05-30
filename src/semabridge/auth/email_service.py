@@ -37,12 +37,18 @@ def send_password_reset_email(to_email: str, reset_token: str, username: str) ->
             to_email,
             reset_token[:8] + "...",
         )
-        # In dev mode, log the full reset token so it can be used manually.
+        # In dev mode, print the full reset token directly to stdout so it
+        # is never truncated by Rich's line-wrapping logger.
         if os.environ.get("AUTH_ENABLED", "true").lower() == "false":
-            logger.info(
-                "[EmailService] DEV MODE reset token for %s: %s",
-                to_email,
-                reset_token,
+            frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+            reset_url = f"{frontend_url}/auth/reset-password/{reset_token}"
+            print(
+                f"\n{'='*60}\n"
+                f"[DEV] PASSWORD RESET TOKEN for {to_email}\n"
+                f"Token : {reset_token}\n"
+                f"URL   : {reset_url}\n"
+                f"{'='*60}\n",
+                flush=True,
             )
         return False
 
