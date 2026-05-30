@@ -91,16 +91,20 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES):
             return await call_next(request)
 
-        # Extract and validate the bearer token
+        # Extract token: prefer Authorization header, fall back to HttpOnly cookie
+        token = None
         auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
+        if auth_header.startswith("Bearer "):
+            token = auth_header[len("Bearer "):].strip()
+        if not token:
+            token = request.cookies.get("access_token")
+
+        if not token:
             return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={"detail": "Missing or invalid Authorization header"},
                 headers={"WWW-Authenticate": "Bearer"},
             )
-
-        token = auth_header.removeprefix("Bearer ").strip()
         try:
             payload = decode_access_token(token)
             # Attach user info to request state for downstream handlers

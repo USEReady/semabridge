@@ -1,7 +1,6 @@
 // ...existing code...
 // (Removed duplicate export of api. Only export once at the end of the file, with getDatabricksSources included as a method.)
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
-const TOKEN_KEY = 'semabridge-token';
 // Fabric MSAL token is kept in memory only — not persisted to localStorage.
 // This prevents XSS exfiltration of the Fabric OAuth token. On page reload the
 // token is re-acquired via the MSAL device-code / refresh flow.
@@ -276,8 +275,8 @@ function normalizeLocalFolder(folder) {
 }
 
 function getAuthHeaders() {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (token) return { Authorization: `Bearer ${token}` };
+    // Access token is now stored in an HttpOnly cookie sent automatically by the browser.
+    // No Authorization header is injected here; credentials: 'include' in authFetch handles it.
     return {};
 }
 
@@ -339,11 +338,10 @@ const REFRESH_FAILURE_COOLDOWN_MS = 5000;
 const AUTH_EXPIRED_EVENT_COOLDOWN_MS = 5000;
 
 function hasJwtToken() {
-    try {
-        return Boolean(localStorage.getItem(TOKEN_KEY));
-    } catch {
-        return false;
-    }
+    // Token is in an HttpOnly cookie — we can't read it from JS.
+    // Assume a token exists if the user has been authenticated (checked via /auth/me on bootstrap).
+    // This function is used only for logging/diagnostics; always return true as a safe default.
+    return true;
 }
 
 function readPersistentListCache(key) {
@@ -391,7 +389,7 @@ export async function tryRefreshToken() {
             if (res.ok) {
                 const data = await res.json();
                 if (data.access_token) {
-                    localStorage.setItem(TOKEN_KEY, data.access_token);
+                    // Backend sets the new access_token cookie; just notify listeners
                     window.dispatchEvent(new CustomEvent('semabridge:token-refreshed', { detail: data.access_token }));
                     _lastRefreshFailureAt = 0;
                     return data.access_token;
@@ -490,13 +488,12 @@ async function authFetch(url, options = {}) {
     const retryDelayMs = 250;
     // Inject X-Fabric-Context header if workspace ID is available
     let workspaceId = null;
-    let tokenPresent = false;
+    // tokenPresent is always true when using HttpOnly cookie auth (can't be read from JS)
+    const tokenPresent = true;
     try {
         workspaceId = localStorage.getItem('FABRIC_WORKSPACE_ID');
-        tokenPresent = Boolean(localStorage.getItem(TOKEN_KEY));
     } catch {
         workspaceId = null;
-        tokenPresent = false;
     }
     const headers = { ...getAuthHeaders(), ...restOptions.headers };
     if (workspaceId) {

@@ -285,10 +285,21 @@ def login(
         key=_REFRESH_COOKIE,
         value=raw_refresh,
         httponly=True,
-        secure=False,  # Set True in production with HTTPS
+        secure=os.getenv("COOKIE_SECURE", "true").lower() == "true",
         samesite="lax",
         max_age=7 * 24 * 60 * 60,  # 7 days
         path="/auth",
+    )
+
+    # Set access token as HttpOnly cookie (mitigates XSS token theft)
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=os.getenv("COOKIE_SECURE", "true").lower() == "true",
+        samesite="lax",
+        max_age=int(os.getenv("ACCESS_TOKEN_EXPIRY_SECONDS", "900")),
+        path="/",
     )
 
     logger.info("User logged in: %s", user.username)
@@ -370,6 +381,17 @@ def refresh(
         path="/auth",
     )
 
+    # Refresh the access token cookie as well
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=os.getenv("COOKIE_SECURE", "true").lower() == "true",
+        samesite="lax",
+        max_age=int(os.getenv("ACCESS_TOKEN_EXPIRY_SECONDS", "900")),
+        path="/",
+    )
+
     logger.info("Token refreshed for user: %s", user.username)
     return TokenResponse(access_token=access_token)
 
@@ -391,6 +413,7 @@ def logout(
         db.commit()
 
     response.delete_cookie(key=_REFRESH_COOKIE, path="/auth")
+    response.delete_cookie(key="access_token", path="/")
     logger.info("User logged out")
 
 
