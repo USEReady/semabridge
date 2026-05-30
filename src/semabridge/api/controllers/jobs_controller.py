@@ -1,5 +1,34 @@
 import logging
+from typing import Any, Dict, Optional
+
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from pydantic import BaseModel
+
+
+class SaveScheduleRequest(BaseModel):
+    cron: Optional[str] = None
+    enabled: Optional[bool] = None
+    timezone: Optional[str] = None
+
+    class Config:
+        extra = "allow"
+
+
+class UpdateJobsConfigRequest(BaseModel):
+    max_concurrent_jobs: Optional[int] = None
+    default_timeout_seconds: Optional[int] = None
+
+    class Config:
+        extra = "allow"
+
+
+class TriggerJobRequest(BaseModel):
+    project_id: str
+    user_id: Optional[str] = None
+    sync_mode: Optional[str] = None
+
+    class Config:
+        extra = "allow"
 
 from semabridge.api.services.jobs_service import (
     clear_job_runs_compat,
@@ -83,10 +112,10 @@ async def get_project_schedule(project_id: str, request: Request):
 
 
 @router.post("/api/projects/{project_id}/schedule")
-async def save_project_schedule(project_id: str, payload: dict, request: Request):
+async def save_project_schedule(project_id: str, payload: SaveScheduleRequest, request: Request):
     user_id = require_request_user_id(request)
     _assert_project_access(project_id, user_id)
-    return await save_project_schedule_compat(project_id, payload)
+    return await save_project_schedule_compat(project_id, payload.model_dump(exclude_none=False))
 
 
 @router.delete("/api/projects/{project_id}/schedule")
@@ -97,14 +126,14 @@ async def delete_project_schedule(project_id: str, request: Request):
 
 
 @router.put("/api/jobs/config")
-async def update_jobs_config(payload: dict, request: Request):
-    return await update_jobs_config_compat(payload)
+async def update_jobs_config(payload: UpdateJobsConfigRequest, request: Request):
+    return await update_jobs_config_compat(payload.model_dump(exclude_none=False))
 
 
 @router.post("/api/jobs/trigger")
-async def trigger_job(payload: dict, background_tasks: BackgroundTasks, request: Request):
+async def trigger_job(payload: TriggerJobRequest, background_tasks: BackgroundTasks, request: Request):
     user_id = require_request_user_id(request)
-    body = dict(payload or {})
+    body = payload.model_dump(exclude_none=False)
     project_id = str(body.get("project_id") or "").strip()
     if not project_id:
         raise HTTPException(status_code=400, detail="project_id is required")

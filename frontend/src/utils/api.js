@@ -13,7 +13,7 @@ const FABRIC_TOKEN_EXPIRES_KEY = 'semabridge-fabric-token-expires';
 // page refreshes — intentional: re-authentication is required after reload).
 let _fabricTokenMemory = null;
 let _fabricTokenExpiresAt = 0;
-const API_CACHE_TTL_MS = 2 * 60 * 1000;
+const API_CACHE_TTL_MS = Number(import.meta.env.VITE_CACHE_TTL_MS) || 2 * 60 * 1000;
 const API_REQUEST_TIMEOUT_MS = 60000;
 const UI_LIST_REQUEST_TIMEOUT_MS = 30000;
 const PROJECT_LIST_REQUEST_TIMEOUT_MS = parseInt(import.meta.env.VITE_API_TIMEOUT_MS ?? '60000', 10);
@@ -23,7 +23,7 @@ const UI_LIST_CACHE_TTL_MS = 20000;
 const apiCache = new Map();
 const inFlightApiCalls = new Map();
 // Prevent unbounded growth of in-memory caches. Keep a simple LRU-ish cap.
-const API_CACHE_MAX_ITEMS = 200;
+const API_CACHE_MAX_ITEMS = Number(import.meta.env.VITE_CACHE_MAX_ITEMS) || 200;
 
 function ensureCacheSize() {
     try {

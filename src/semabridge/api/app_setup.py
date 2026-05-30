@@ -8,6 +8,18 @@ import contextlib
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
+# Error tracking — activate by setting SENTRY_DSN in your environment
+_SENTRY_DSN = os.environ.get("SENTRY_DSN")
+if _SENTRY_DSN:
+    try:
+        import sentry_sdk
+        sentry_sdk.init(
+            dsn=_SENTRY_DSN,
+            traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+        )
+    except ImportError:
+        pass  # sentry-sdk not installed — silently skip
+
 import uuid
 
 from fastapi import FastAPI, Request
@@ -564,6 +576,67 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+_CSRF_PUBLIC_PATHS = {
+    "/api/health",
+    "/api/health/live",
+    "/api/health/ready",
+    "/auth/register",
+    "/auth/login",
+    "/auth/auto-login",
+    "/auth/refresh",
+    "/auth/logout",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+}
+_CSRF_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+_CSRF_COOKIE_NAME = "csrf_token"
+_CSRF_HEADER_NAME = "x-csrf-token"
+
+
+class CSRFMiddleware(BaseHTTPMiddleware):
+    """Double Submit Cookie CSRF protection.
+
+    - Safe methods (GET, HEAD, OPTIONS) are always allowed.
+    - Public paths (login, health, docs) are always allowed.
+    - For all other requests: the ``X-CSRF-Token`` header must match
+      the ``csrf_token`` cookie value. If either is absent or they do
+      not match, the request is rejected with HTTP 403.
+    - On every response that does not already carry the cookie, a new
+      random token is set so that the frontend can pick it up.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        method = request.method.upper()
+        path = request.url.path
+
+        # Always pass through safe methods and public paths without CSRF check.
+        if method not in _CSRF_SAFE_METHODS and path not in _CSRF_PUBLIC_PATHS:
+            cookie_token = request.cookies.get(_CSRF_COOKIE_NAME, "")
+            header_token = request.headers.get(_CSRF_HEADER_NAME, "")
+            if not cookie_token or not header_token or cookie_token != header_token:
+                return Response(
+                    content='{"detail":"CSRF token missing or invalid"}',
+                    status_code=403,
+                    media_type="application/json",
+                )
+
+        response = await call_next(request)
+
+        # Ensure every client receives a CSRF token cookie they can echo back.
+        if _CSRF_COOKIE_NAME not in request.cookies:
+            token = str(uuid.uuid4())
+            response.set_cookie(
+                _CSRF_COOKIE_NAME,
+                token,
+                httponly=False,  # Must be readable by JS to set the header
+                samesite="strict",
+                secure=os.environ.get("HTTPS_ENABLED", "false").lower() == "true",
+            )
+
+        return response
+
+
 class RequestResponseLoggingMiddleware:
     """Pure ASGI logging middleware.
 
@@ -642,6 +715,7 @@ def configure_app(app: FastAPI) -> FastAPI:
     app.add_middleware(RequestResponseLoggingMiddleware)
     app.add_middleware(ContentSizeLimitMiddleware)
     app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(CSRFMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     _cors_raw = os.environ.get(
         "CORS_ORIGINS",
@@ -653,6 +727,6 @@ def configure_app(app: FastAPI) -> FastAPI:
         allow_origins=_cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization", "X-Request-ID", "X-Fabric-Context"],
+        allow_headers=["Content-Type", "Authorization", "X-Request-ID", "X-Fabric-Context", "X-CSRF-Token"],
     )
     return app

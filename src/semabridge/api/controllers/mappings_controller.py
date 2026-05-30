@@ -4,6 +4,16 @@ import yaml
 import logging
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
+
+
+class AutoMapRequest(BaseModel):
+    project_id: Optional[str] = None
+    source: Optional[Dict[str, Any]] = None
+    targets: Optional[List[Any]] = None
+    user_id: Optional[str] = None
+
+    class Config:
+        extra = "allow"
 from fastapi import APIRouter, Request, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 
@@ -572,9 +582,9 @@ async def deploy_mappings(
 
 # Keep old endpoint for backwards compatibility for now
 @router.post('/api/mappings/auto')
-async def auto_map_with_user_context(request: Request, payload: Dict[str, Any]):
+async def auto_map_with_user_context(request: Request, payload: AutoMapRequest):
     from semabridge.api.services.project_domain_service import auto_map_compat
-    body = dict(payload or {})
+    body = payload.model_dump(exclude_none=False)
     user_id = require_request_user_id(request)
     if user_id:
         body["user_id"] = user_id

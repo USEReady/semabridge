@@ -15,9 +15,11 @@ const WS_URL = (() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${protocol}//${window.location.host}/ws/alerts`;
 })();
-const RECONNECT_STEPS_MS = [5000, 10000, 30000];
+const RECONNECT_STEPS_MS = import.meta.env.VITE_WS_RECONNECT_DELAYS
+  ? import.meta.env.VITE_WS_RECONNECT_DELAYS.split(',').map(Number)
+  : [5000, 10000, 30000];
 const TOAST_DURATION_MS = 6000;
-const WS_PING_INTERVAL_MS = 30000;
+const WS_PING_INTERVAL_MS = Number(import.meta.env.VITE_WS_PING_INTERVAL_MS) || 30000;
 const MAX_WS_RETRIES = 10;
 
 export function LogsProvider({ children }) {
