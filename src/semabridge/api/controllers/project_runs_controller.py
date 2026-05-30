@@ -7,7 +7,7 @@ from semabridge.api.services.project_ownership_service import (
     is_project_owned_by_user,
     require_request_user_id,
 )
-from semabridge.api.services.project_runs_service import (
+from semabridge.api.services.project_domain_service import (
     get_audit_logs_compat,
     get_model_history_compat,
     get_project_lineage_compat,

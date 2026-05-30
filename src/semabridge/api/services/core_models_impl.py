@@ -1,5 +1,5 @@
 from semabridge.api.services.core_shared import *
-
+from semabridge.domain.exceptions import NotFoundError, ValidationError
 
 async def get_model(model_id: str):
     with db_manager.get_session() as session:
@@ -14,7 +14,7 @@ async def get_model(model_id: str):
         ).scalar_one_or_none()
 
         if not row:
-            raise HTTPException(status_code=404, detail="Model not found")
+            raise NotFoundError("Model not found")
 
         snapshot_data = row.snapshot
         if isinstance(snapshot_data, str):
@@ -33,7 +33,6 @@ async def get_model(model_id: str):
             "path": f"duckdb://{model_id}",
         }
 
-
 async def save_model(model_id: str, payload: Dict[str, Any]):
     content = payload.get("content", "")
     author = payload.get("author", "ui")
@@ -41,7 +40,7 @@ async def save_model(model_id: str, payload: Dict[str, Any]):
     version_tag = payload.get("version_tag", None)
 
     if not content.strip():
-        raise HTTPException(status_code=400, detail="content is required")
+        raise ValidationError("content is required")
 
     try:
         parsed = yaml.safe_load(content) or {}

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import yaml
-from fastapi import HTTPException, Query
+from fastapi import Query
 from starlette.responses import Response
 
 from semabridge.api.services.project_shared import (
@@ -34,7 +34,7 @@ from semabridge.api.services.project_shared import (
     db_manager,
     logger,
 )
-
+from semabridge.domain.exceptions import NotFoundError, ValidationError
 
 def _resolve_project_account_id(payload: dict) -> str | None:
     source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
@@ -52,7 +52,6 @@ def _resolve_project_account_id(payload: dict) -> str | None:
     )
     token = str(account_id or "").strip()
     return token or None
-
 
 def _upsert_project_in_orm(project_id: str, project: Dict[str, Any], payload: dict) -> None:
     pid = str(project_id or "").strip()
@@ -94,7 +93,6 @@ def _upsert_project_in_orm(project_id: str, project: Dict[str, Any], payload: di
             session.commit()
     except Exception as exc:
         logger.warning("Failed to upsert ORM project %s: %s", pid, exc)
-
 
 def _backfill_project_metadata(project_id: str, project: Dict[str, Any]) -> None:
     pid = str(project_id or "").strip()
@@ -189,7 +187,6 @@ def _clear_project_mapping_cache(project_id: str) -> None:
     if removed:
         logger.info("Cleared %s cached mapping row(s) for project %s after config write", removed, pid)
 
-
 def _delete_project_config_files(project_id: str) -> None:
     pid = str(project_id or "").strip()
     if not pid:
@@ -209,7 +206,6 @@ def _delete_project_config_files(project_id: str) -> None:
         details = "; ".join(failures + [f"still exists: {path}" for path in remaining])
         raise RuntimeError(f"Failed to delete project config file(s) for {pid}: {details}")
 
-
 def _delete_project_from_orm(project_id: str) -> None:
     pid = str(project_id or "").strip()
     if not pid:
@@ -227,7 +223,6 @@ def _delete_project_from_orm(project_id: str) -> None:
     except Exception as exc:
         logger.warning("Failed to delete ORM project %s: %s", pid, exc)
 
-
 def _project_display_name_from_cfg(project_cfg: Dict[str, Any], fallback: str) -> str:
     if not isinstance(project_cfg, dict):
         return fallback
@@ -237,7 +232,6 @@ def _project_display_name_from_cfg(project_cfg: Dict[str, Any], fallback: str) -
         fallback,
     )
 
-
 def _project_semantic_name(project: Dict[str, Any], fallback: str = "") -> str:
     if not isinstance(project, dict):
         return fallback
@@ -246,10 +240,8 @@ def _project_semantic_name(project: Dict[str, Any], fallback: str = "") -> str:
         fallback,
     )
 
-
 def _project_semantic_key(project: Dict[str, Any], fallback: str = "") -> str:
     return _project_semantic_name(project, fallback).strip().casefold()
-
 
 def _project_semantic_models_from_yaml(project_cfg: Dict[str, Any]) -> List[str]:
     if not isinstance(project_cfg, dict):
@@ -283,7 +275,6 @@ def _project_semantic_models_from_yaml(project_cfg: Dict[str, Any]) -> List[str]
             add_name(top_level_model)
 
     return names
-
 
 def _project_semantic_models(project: Dict[str, Any], project_id: str = "") -> List[str]:
     if not isinstance(project, dict):
@@ -352,14 +343,12 @@ def _project_semantic_models(project: Dict[str, Any], project_id: str = "") -> L
 
     return names
 
-
 def _project_with_semantic_models(project: Dict[str, Any], project_id: str = "") -> Dict[str, Any]:
     enriched = dict(project or {})
     semantic_models = _project_semantic_models(enriched, project_id or str(enriched.get("id") or enriched.get("project_id") or ""))
     enriched["semantic_models"] = semantic_models
     enriched["model_count"] = len(semantic_models)
     return enriched
-
 
 def _normalize_project_config_yaml(
     project_id: str,
@@ -370,10 +359,10 @@ def _normalize_project_config_yaml(
     try:
         parsed = yaml.safe_load(yaml_text) or {}
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid YAML content: {exc}")
+        raise ValidationError(f"Invalid YAML content: {exc}")
 
     if not isinstance(parsed, dict):
-        raise HTTPException(status_code=400, detail="Project YAML must be an object mapping")
+        raise ValidationError("Project YAML must be an object mapping")
 
     display_name = _project_display_name_from_cfg(parsed, default_name)
     if not display_name:
@@ -390,7 +379,6 @@ def _normalize_project_config_yaml(
         metadata["owner_user_id"] = normalized_owner
         parsed["project_metadata"] = metadata
     return yaml.safe_dump(parsed, sort_keys=False, allow_unicode=False)
-
 
 def _project_discovery_entry(project_id: str, file_path: Path, project_cfg: Dict[str, Any]) -> Dict[str, Any]:
     source = project_cfg.get("source") if isinstance(project_cfg.get("source"), dict) else {}
@@ -417,7 +405,6 @@ def _project_discovery_entry(project_id: str, file_path: Path, project_cfg: Dict
     }
     return entry
 
-
 def _project_id_exists_anywhere(project_id: str) -> bool:
     pid = str(project_id or "").strip()
     if not pid:
@@ -427,7 +414,6 @@ def _project_id_exists_anywhere(project_id: str) -> bool:
     if str(_compat_load_project_yaml_text(pid) or "").strip():
         return True
     return any(path.exists() for path in _compat_project_yaml_paths(pid))
-
 
 async def list_project_discovery_compat():
     await asyncio.to_thread(_compat_ensure_loaded)
@@ -457,7 +443,6 @@ async def list_project_discovery_compat():
             except Exception as exc:
                 logger.warning("Failed to load project discovery entry %s: %s", file_path, exc)
     return entries
-
 
 async def list_projects_compat(limit: int = 200, offset: int = 0):
     """Compatibility: newfrontend expects a projects collection.
@@ -515,7 +500,6 @@ async def list_projects_compat(limit: int = 200, offset: int = 0):
         for project in deduped.values()
     ]
     return all_projects[offset: offset + limit]
-
 
 async def create_project_compat(request: dict):
     """Compatibility: create in-memory project for UI continuity."""
@@ -597,21 +581,19 @@ async def create_project_compat(request: dict):
     await asyncio.to_thread(_compat_save_store)
     return project
 
-
 async def get_project_compat(project_id: str):
     await asyncio.to_thread(_compat_ensure_loaded)
     project = _compat_projects.get(project_id)
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise NotFoundError("Project not found")
     await asyncio.to_thread(_backfill_project_metadata, project_id, project)
     return project
-
 
 async def patch_project_compat(project_id: str, payload: dict):
     await asyncio.to_thread(_compat_ensure_loaded)
     project = _compat_projects.get(project_id)
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise NotFoundError("Project not found")
 
     for key in ("name", "display_name", "description", "folder_id", "status"):
         if key in (payload or {}):
@@ -679,7 +661,6 @@ async def patch_project_compat(project_id: str, payload: dict):
     await asyncio.to_thread(_compat_save_store)
     return project
 
-
 async def delete_project_compat(project_id: str):
     await asyncio.to_thread(_compat_ensure_loaded)
     _compat_deleted_project_ids.add(project_id)
@@ -698,12 +679,11 @@ async def delete_project_compat(project_id: str):
     await asyncio.to_thread(_compat_save_store)
     return Response(status_code=204)
 
-
 async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(default=False)):
     await asyncio.to_thread(_compat_ensure_loaded)
     project = _compat_projects.get(project_id)
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise NotFoundError("Project not found")
     await asyncio.to_thread(_backfill_project_metadata, project_id, project)
     # IMPORTANT: default behavior prefers per-project config so "Copy Presets"
     # can load different YAMLs for different projects. Some UI flows (for
@@ -735,15 +715,14 @@ async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(d
         "yaml_path": str(_compat_project_yaml_path(project_id).resolve()).replace('\\\\', '/'),
     }
 
-
 async def save_project_config_compat(project_id: str, payload: dict):
     await asyncio.to_thread(_compat_ensure_loaded)
     project = _compat_projects.get(project_id)
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise NotFoundError("Project not found")
     yaml_text = str((payload or {}).get("config_yaml") or "").strip()
     if not yaml_text:
-        raise HTTPException(status_code=400, detail="config_yaml is required")
+        raise ValidationError("config_yaml is required")
     yaml_text = _normalize_project_config_yaml(
         project_id,
         yaml_text,
@@ -765,7 +744,6 @@ async def save_project_config_compat(project_id: str, payload: dict):
         "yaml_path": str(_compat_project_yaml_path(project_id).resolve()).replace('\\\\', '/'),
         "warnings": [],
     }
-
 
 def _extract_snapshot_connectors(snapshot_obj: Any) -> List[str]:
     """Extract source/target connector names from snapshot SML payload."""
@@ -799,7 +777,6 @@ def _extract_snapshot_connectors(snapshot_obj: Any) -> List[str]:
         seen.add(key)
         deduped.append(c)
     return deduped
-
 
 def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_tables: bool = False) -> Dict[str, Any]:
     """Build React-Flow compatible graph payload from a snapshot object."""
@@ -1058,7 +1035,6 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
         },
     }
 
-
 async def graph_snapshots_compat(model_name: str):
     """Snapshot history for Explore time-machine (newest first)."""
     try:
@@ -1081,7 +1057,6 @@ async def graph_snapshots_compat(model_name: str):
     except Exception as exc:
         logger.debug("Failed to list snapshots for %s: %s", model_name, exc)
         return []
-
 
 async def graph_snapshot_compat(model_name: str, snapshot_id: str, include_system_tables: bool = False):
     """Load graph for a single snapshot."""
@@ -1108,7 +1083,6 @@ async def graph_snapshot_compat(model_name: str, snapshot_id: str, include_syste
     except Exception as exc:
         logger.debug("Failed to load snapshot graph %s: %s", snapshot_id, exc)
         return {"nodes": [], "edges": [], "snapshot_id": snapshot_id, "model": model_name}
-
 
 async def compare_graph_snapshots_compat(
     model_name: str,

@@ -135,9 +135,9 @@ def _has_fabric_identity_auth(self, identity_id: str) -> bool:
     if not identity_id:
         return False
     try:
-        from semabridge.api.services.connection_domain_service import _resolve_fabric_access_token
+        from semabridge.auth.token_resolver import resolve_fabric_access_token
 
-        token = _resolve_fabric_access_token(None, identity_id)
+        token = resolve_fabric_access_token(None, identity_id)
         return bool(token)
     except Exception as exc:
         logger.warning("_has_fabric_identity_auth: identity lookup failed for %s: %s", identity_id, exc)

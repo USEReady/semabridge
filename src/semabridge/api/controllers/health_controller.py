@@ -2,7 +2,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from semabridge.api.services.health_service import health_check
+from semabridge.api.services.core_domain_service import health_check
 
 router = APIRouter()
 router.get('/api/health')(health_check)

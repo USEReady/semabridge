@@ -6,7 +6,7 @@ from pathlib import Path
 import yaml
 
 logger = logging.getLogger(__name__)
-from fastapi import File, HTTPException, UploadFile
+from fastapi import File, UploadFile
 
 from semabridge.api.services.project_domain_service import (
     _compat_default_project_yaml,
@@ -20,14 +20,14 @@ from semabridge.api.services.project_domain_service import (
     browse_pbix_files,
     import_pbix,
 )
-
+from semabridge.domain.exceptions import NotFoundError, ValidationError
 
 def _compat_set_project_pbix_path(project_id: str, pbix_path: str) -> None:
     """Persist PBIX path in project metadata and cached project YAML."""
     _compat_ensure_loaded()
     project = _compat_projects.get(project_id)
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise NotFoundError("Project not found")
 
     normalized_pbix_path = str(Path(pbix_path).resolve()).replace("\\", "/")
     project["pbix_file_path"] = normalized_pbix_path
@@ -57,12 +57,11 @@ def _compat_set_project_pbix_path(project_id: str, pbix_path: str) -> None:
         logger.warning("Could not write PBIX config to repo YAML: %s", exc)
     _compat_save_store()
 
-
 def _save_uploaded_pbix_file(upload: UploadFile, target_dir: Path) -> Path:
     """Store an uploaded PBIX file in the target directory."""
     filename = str(upload.filename or "").strip()
     if not filename.lower().endswith(".pbix"):
-        raise HTTPException(status_code=400, detail="Only .pbix files are supported")
+        raise ValidationError("Only .pbix files are supported")
 
     safe_name = Path(filename).name
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -70,17 +69,15 @@ def _save_uploaded_pbix_file(upload: UploadFile, target_dir: Path) -> Path:
 
     content = upload.file.read()
     if not content:
-        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+        raise ValidationError("Uploaded file is empty")
 
     destination.write_bytes(content)
     return destination.resolve()
-
 
 async def upload_pbix_temp(file: UploadFile = File(...)):
     temp_root = Path(tempfile.gettempdir()) / "semabridge" / "uploads"
     saved = _save_uploaded_pbix_file(file, temp_root)
     return {"path": str(saved).replace("\\", "/")}
-
 
 async def upload_project_pbix(project_id: str, file: UploadFile = File(...)):
     project_root = Path(tempfile.gettempdir()) / "semabridge" / "projects" / project_id

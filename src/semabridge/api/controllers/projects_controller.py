@@ -66,7 +66,7 @@ from semabridge.api.services.project_ownership_service import (
     require_request_user_id,
     validate_project_connector_accounts_belong_to_user,
 )
-from semabridge.api.services.project_runs_service import (
+from semabridge.api.services.project_domain_service import (
     apply_project_retention_policy,
     capture_manual_snapshots_compat,
     compare_project_snapshots_compat,

@@ -4,7 +4,7 @@ import os
 from typing import Any, Dict, Iterable, Optional
 
 import yaml
-from fastapi import HTTPException, Request
+from fastapi import Request
 from sqlalchemy import select
 
 from semabridge.api.services.project_shared import (
@@ -17,6 +17,7 @@ from semabridge.api.services.project_shared import (
     logger,
 )
 from semabridge.repository.orm.session_factory import db_manager
+from semabridge.domain.exceptions import AuthenticationError, PermissionError, SemaBridgeError
 
 
 def auth_is_enabled() -> bool:
@@ -34,7 +35,7 @@ def get_request_user_id(request: Request) -> str | None:
 def require_request_user_id(request: Request) -> str | None:
     user_id = get_request_user_id(request)
     if auth_is_enabled() and not user_id:
-        raise HTTPException(status_code=401, detail="Authentication required")
+        raise AuthenticationError("Authentication required")
     return user_id
 
 
@@ -381,7 +382,4 @@ def validate_project_connector_accounts_belong_to_user(user_id: str | None, payl
         if owner_id is not None and str(owner_id).strip() != normalized_user_id
     ]
     if mismatched:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Forbidden: connector identities belong to another user: {', '.join(sorted(mismatched))}",
-        )
+        raise PermissionError(f"Forbidden: connector identities belong to another user: {', '.join(sorted(mismatched))}")

@@ -6,11 +6,10 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_compl
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import HTTPException
-
 from semabridge.core.execution_engine import ExecutionEngine
 from semabridge.core.settings import get_settings, reload_settings
 from semabridge.repository.model_repository import ModelRepository
+from semabridge.domain.exceptions import NotFoundError, ValidationError
 
 logger = logging.getLogger("semabridge.api")
 
@@ -28,11 +27,9 @@ DEFAULT_MAX_PARALLEL_FABRIC_JOBS = 3
 DEFAULT_PROCESS_MAX_WORKERS = 8
 DEFAULT_EXECUTOR = "thread"
 
-
 def _normalize_connector_type(raw_type: Any, default: str) -> str:
     key = str(raw_type or "").strip().lower()
     return _TYPE_ALIASES.get(key, key or default)
-
 
 def _resolve_models_path() -> Path:
     candidates = [
@@ -44,7 +41,6 @@ def _resolve_models_path() -> Path:
         if candidate.exists() and candidate.is_dir():
             return candidate.resolve()
     return Path.cwd().resolve()
-
 
 def _build_console_details(summary_data: Dict[str, Any]) -> Dict[str, Any]:
     steps = summary_data.get("steps_completed") or []
@@ -71,7 +67,6 @@ def _build_console_details(summary_data: Dict[str, Any]) -> Dict[str, Any]:
         "lines": lines,
         "text": "\n".join(lines),
     }
-
 
 def _log_model_console_trace(result: Dict[str, Any]) -> None:
     """Emit a compact per-model console trace into the main terminal log.
@@ -100,7 +95,6 @@ def _log_model_console_trace(result: Dict[str, Any]) -> None:
     for line in lines:
         logger.info("  %s", line)
 
-
 def _load_config(payload: Dict[str, Any], normalize_yaml_windows_path_fields) -> tuple[str, Dict[str, Any]]:
     from semabridge.core.config_loader import get_default_config_path, load_yaml_file, get_config
     import yaml
@@ -116,7 +110,7 @@ def _load_config(payload: Dict[str, Any], normalize_yaml_windows_path_fields) ->
         try:
             config = yaml.safe_load(normalized_content) or {}
         except Exception as parse_err:
-            raise HTTPException(status_code=400, detail=f"Invalid YAML content: {parse_err}")
+            raise ValidationError(f"Invalid YAML content: {parse_err}")
         return "(payload.content)", config
 
     if project_id:
@@ -125,18 +119,12 @@ def _load_config(payload: Dict[str, Any], normalize_yaml_windows_path_fields) ->
             return f"config/projects/{project_id}.yaml", config
         except Exception as e:
             logger.warning(f"Project config load failed for %s: %s", project_id, e)
-            raise HTTPException(
-                status_code=404,
-                detail=f"Project config not found for project_id '{project_id}' in Config/projects.",
-            ) from e
+            raise NotFoundError(f"Project config not found for project_id '{project_id}' in Config/projects.") from e
 
     config_path = get_default_config_path() or ""
 
     if not config_path:
-        raise HTTPException(
-            status_code=400,
-            detail="Configuration is required. Provide project_id or content.",
-        )
+        raise ValidationError("Configuration is required. Provide project_id or content.")
 
     try:
         config = load_yaml_file(config_path)
@@ -150,7 +138,6 @@ def _load_config(payload: Dict[str, Any], normalize_yaml_windows_path_fields) ->
             raise parse_err
 
     return str(config_path), config
-
 
 def _resolve_target_config(config: Dict[str, Any]) -> Dict[str, Any]:
     target_cfg = config.get("target") or {}
@@ -169,7 +156,6 @@ def _resolve_target_config(config: Dict[str, Any]) -> Dict[str, Any]:
             target_cfg = {"type": scalar_target}
 
     return target_cfg
-
 
 def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str, str, Dict[str, Any], Dict[str, Any]]:
     source_cfg = config.get("source", {}) or {}
@@ -198,7 +184,7 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
                     else:
                         model_list = [single]
             if not model_list:
-                raise HTTPException(status_code=400, detail="No models specified in source.models")
+                raise ValidationError("No models specified in source.models")
             for model_id in model_list:
                 resolved_id = str(model_id).strip()
                 if resolved_id:
@@ -261,13 +247,10 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
                         pbix_path = str(all_pbix[0])
 
                 if not pbix_path:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
+                    raise ValidationError((
                             f"No .pbix file found for model '{model_name}'. "
                             "Ensure a .pbix file exists in source.pbix_folder or set source.pbix_path."
-                        ),
-                    )
+                        ))
 
                 sync_jobs.append(
                     {
@@ -293,13 +276,10 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
                     model_list = [single]
 
         if not model_list:
-            raise HTTPException(
-                status_code=400,
-                detail=(
+            raise ValidationError((
                     "No models specified for Snowflake source. "
                     "Add source.models: [...] or set model_name in semabridge.yaml."
-                ),
-            )
+                ))
 
         for raw_model in model_list:
             if isinstance(raw_model, dict):
@@ -310,16 +290,12 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
                 sync_jobs.append({"dataset_id": view_name, "pbix_path": None, "model_label": view_name})
 
     if not sync_jobs:
-        raise HTTPException(status_code=400, detail="No sync jobs resolved from config.")
+        raise ValidationError("No sync jobs resolved from config.")
 
     if len(sync_jobs) > MAX_BATCH_MODELS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Batch sync currently supports up to {MAX_BATCH_MODELS} models per request.",
-        )
+        raise ValidationError(f"Batch sync currently supports up to {MAX_BATCH_MODELS} models per request.")
 
     return sync_jobs, source_type, target_type, source_cfg, target_cfg
-
 
 def _persist_model_version(
     repository: ModelRepository,
@@ -343,7 +319,6 @@ def _persist_model_version(
         change_summary=f"Sync run {summary_data.get('run_id', '')}".strip(),
         version_tag=str(config.get("version_tag", "") or "") or None,
     )
-
 
 def _run_single_job(
     job: Dict[str, Any],
@@ -420,7 +395,6 @@ def _run_single_job(
             "run_id": summary_data.get("run_id"),
         }
 
-
 def _resolve_requested_parallelism(payload: Dict[str, Any]) -> int:
     if "max_parallel_models" in payload:
         requested_parallelism = payload.get("max_parallel_models")
@@ -432,7 +406,6 @@ def _resolve_requested_parallelism(payload: Dict[str, Any]) -> int:
         return max(1, min(int(requested_parallelism), DEFAULT_MAX_PARALLEL_MODELS))
     except (TypeError, ValueError):
         return DEFAULT_MAX_PARALLEL_MODELS
-
 
 def _resolve_executor_kind(payload: Dict[str, Any], is_fabric_bound: bool) -> str:
     # Process workers are disabled for Fabric-bound runs to avoid auth token/session
@@ -451,7 +424,6 @@ def _resolve_executor_kind(payload: Dict[str, Any], is_fabric_bound: bool) -> st
         return "thread"
 
     return requested
-
 
 def _resolve_effective_parallelism(
     *,
@@ -484,7 +456,6 @@ def _resolve_effective_parallelism(
         effective_parallelism = min(effective_parallelism, max(1, min(cpu_count, process_ceiling)))
 
     return max(1, effective_parallelism)
-
 
 def _run_parallel_jobs(
     *,
@@ -603,7 +574,6 @@ def _run_parallel_jobs(
                 _log_model_console_trace(per_model_results[-1])
 
     return per_model_results
-
 
 def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fields, account_id: Optional[str] = None, force: bool = False) -> Dict[str, Any]:
     _config_path, config = _load_config(payload, normalize_yaml_windows_path_fields)

@@ -1,1 +1,0 @@
-from semabridge.api.services.core_domain_service import health_check

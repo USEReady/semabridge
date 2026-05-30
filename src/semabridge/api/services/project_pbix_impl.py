@@ -1,4 +1,5 @@
 from semabridge.api.services.project_shared import *
+from semabridge.domain.exceptions import ConfigurationError, InternalError, ValidationError
 
 async def import_pbix(payload: Dict[str, Any]):
     """Import a local .pbix file and extract its semantic model.
@@ -14,7 +15,7 @@ async def import_pbix(payload: Dict[str, Any]):
 
     pbix_path = payload.get("pbix_path", "")
     if not pbix_path:
-        raise HTTPException(status_code=400, detail="pbix_path is required")
+        raise ValidationError("pbix_path is required")
 
     try:
         connector = LocalPBIXConnector({"pbix_path": pbix_path})
@@ -34,11 +35,10 @@ async def import_pbix(payload: Dict[str, Any]):
             "metadata": result.get("metadata", {}),
         }
     except PBIXParsingError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise ConfigurationError(str(e))
     except Exception as e:
         logger.exception(f"PBIX import failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
+        raise InternalError(str(e))
 
 async def browse_pbix_files(directory: str = ""):
     """List .pbix files in a directory for the file picker.
@@ -64,5 +64,4 @@ async def browse_pbix_files(directory: str = ""):
     ]
 
     return {"files": pbix_files, "directory": str(scan_dir)}
-
 

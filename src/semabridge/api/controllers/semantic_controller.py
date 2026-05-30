@@ -23,7 +23,7 @@ class TriggerSyncRequest(BaseModel):
     class Config:
         extra = "allow"
 
-from semabridge.api.services.semantic_service import semantic_refresh, semantic_sync, sync_models
+from semabridge.api.services.core_domain_service import semantic_refresh, semantic_sync, sync_models
 
 router = APIRouter()
 router.post('/api/semantic/sync', response_model=None)(semantic_sync)

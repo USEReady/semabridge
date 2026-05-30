@@ -1,4 +1,5 @@
 from semabridge.api.services.project_shared import *
+from semabridge.domain.exceptions import InternalError
 
 async def register_composite_report(payload: Dict[str, Any]):
     """Register a report and its composite model dependencies.
@@ -24,7 +25,7 @@ async def register_composite_report(payload: Dict[str, Any]):
         return {"status": "registered", "report_id": report_id}
     except Exception as e:
         logger.exception(f"Composite registration failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise InternalError(str(e))
 
 
 async def get_impact_analysis(model_guid: str):
@@ -43,7 +44,7 @@ async def get_impact_analysis(model_guid: str):
         impacted = resolver.get_impacted_reports(model_guid)
         return {"model_guid": model_guid, "impacted_reports": impacted}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise InternalError(str(e))
 
 
 async def get_all_composite_links():
@@ -55,6 +56,4 @@ async def get_all_composite_links():
         links = resolver.list_all_links()
         return {"links": links, "total": len(links)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
+        raise InternalError(str(e))

@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
-from semabridge.api.services.history_service import compare_versions, get_history, rollback_version
+from semabridge.api.services.core_domain_service import get_history
+from semabridge.api.services.project_domain_service import compare_versions, rollback_version
 
 router = APIRouter()
 router.get('/api/history')(get_history)
