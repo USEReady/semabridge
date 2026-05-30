@@ -55,13 +55,6 @@ class CredentialSaveRequest(BaseModel):
 
 # ── Response Schemas ─────────────────────────────────────────────────────
 
-class TokenResponse(BaseModel):
-    """Response from ``POST /auth/login``."""
-
-    access_token: str
-    token_type: str = "bearer"
-
-
 class UserResponse(BaseModel):
     """Public-facing user representation."""
 
@@ -73,6 +66,14 @@ class UserResponse(BaseModel):
     created_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
+
+
+class TokenResponse(BaseModel):
+    """Response from ``POST /auth/login`` and ``POST /auth/auto-login``."""
+
+    access_token: str
+    token_type: str = "bearer"
+    user: Optional[UserResponse] = None  # Inlined on auto-login so frontend skips /auth/me
 
 
 class CredentialListItem(BaseModel):

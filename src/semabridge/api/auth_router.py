@@ -163,7 +163,11 @@ def auto_login(
     )
 
     logger.info("Auto-login issued for dev user (id=%s)", dev_user.id)
-    return TokenResponse(access_token=access_token)
+    from semabridge.auth.schemas import UserResponse
+    return TokenResponse(
+        access_token=access_token,
+        user=UserResponse.model_validate(dev_user),
+    )
 
 
 # ── Public endpoints ─────────────────────────────────────────────────────
