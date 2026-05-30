@@ -7,7 +7,7 @@ export function shortDeterministicHash(value) {
     hash ^= text.charCodeAt(i);
     hash = Math.imul(hash, 16777619);
   }
-  return (hash >>> 0).toString(16).padStart(8, '0').slice(0, 4);
+  return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
 export function sanitizeMappingName(value) {

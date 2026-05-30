@@ -49,7 +49,7 @@ def sanitize_identifier(value: str, *, max_length: int = 120) -> str:
     return sanitized[:max_length].rstrip("_") or "UNNAMED"
 
 
-def deterministic_hash_suffix(*parts: str, size: int = 4) -> str:
+def deterministic_hash_suffix(*parts: str, size: int = 8) -> str:
     joined = "::".join(str(part or "").strip() for part in parts)
     digest = hashlib.sha1(joined.encode("utf-8")).hexdigest().upper()
     return digest[: max(1, size)]
@@ -60,11 +60,13 @@ def apply_collision_suffix(
     *,
     fingerprint: str,
     max_length: int = 120,
-    size: int = 4,
+    size: int = 8,
 ) -> Tuple[str, str]:
     suffix = deterministic_hash_suffix(fingerprint, size=size)
-    stem_max = max_length - size - 1
-    stem = sanitized_name[:stem_max].rstrip("_") or sanitized_name[:stem_max] or "UNNAMED"
+    # stem_max must be at least 1 so we always produce a valid identifier even
+    # when max_length is pathologically small (e.g. max_length <= size + 1).
+    stem_max = max(1, max_length - size - 1)
+    stem = sanitized_name[:stem_max].rstrip("_") or sanitized_name[:1] or "X"
     return f"{stem}_{suffix}", suffix
 
 
@@ -356,6 +358,26 @@ def build_entity_mappings(
                 # keep the existing claimed slot and the same sanitised target name.
             claimed_names[scope][collision_key] = {"source_path": source_path, "source_name": source_name}
         else:
+            # User provided a manual override. Check whether it collides with a name
+            # already claimed in this scope by a *different* entity.  If it does,
+            # flag the collision so the user can see the conflict — but do NOT
+            # auto-resolve it (the user made an explicit choice; inform, don't override).
+            manual_prior = claimed_names[scope].get(preferred_target_name)
+            if manual_prior and manual_prior["source_path"] != source_path:
+                prior_semantic = _semantic_name(manual_prior["source_name"])
+                current_semantic = _semantic_name(source_name)
+                if prior_semantic != current_semantic:
+                    collision_detected = True
+                    collisions.append({
+                        "scope": scope,
+                        "sanitized_name": preferred_target_name,
+                        "first_source_path": manual_prior["source_path"],
+                        "first_source_name": manual_prior["source_name"],
+                        "second_source_path": source_path,
+                        "second_source_name": source_name,
+                        "resolved_target_name": preferred_target_name,
+                        "manual_override_conflict": True,
+                    })
             claimed_names[scope][target_name] = {"source_path": source_path, "source_name": source_name}
 
         validation = _validate_target_name(
