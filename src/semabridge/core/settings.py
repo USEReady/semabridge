@@ -162,8 +162,14 @@ class FabricConfig(BaseSettings):
     
     @field_validator("tenant_id", "client_id", "workspace_id")
     @classmethod
-    def validate_guid(cls, v: str, info) -> str:
-        """Validate GUID format. 'organizations' is accepted as a valid tenant."""
+    def validate_guid(cls, v, info) -> str:
+        """Validate GUID format. 'organizations' is accepted as a valid tenant.
+
+        None is allowed — it signals identity-based (Account table) auth where
+        these fields are resolved at runtime from the Account record, not env vars.
+        """
+        if v is None:
+            return v  # Identity-based auth — env vars not required
         if not v or v.startswith("your-"):
             raise ValueError(f"FABRIC_{info.field_name.upper()} must be set to a valid value")
         return v.strip()
