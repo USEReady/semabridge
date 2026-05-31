@@ -33,8 +33,11 @@ class SnowflakeConfig(BaseSettings):
         extra="ignore",
     )
     
-    account: str = Field(..., description="Snowflake account identifier (e.g., abc123.us-east-1)")
-    user: str = Field(..., description="Snowflake username")
+    # All connection fields are Optional so that identity-based (Account table)
+    # auth works without SNOWFLAKE_* env vars. Credentials are resolved at
+    # runtime from the Account record when identity_id is present.
+    account: Optional[str] = Field(default=None, description="Snowflake account identifier (e.g., abc123.us-east-1)")
+    user: Optional[str] = Field(default=None, description="Snowflake username")
     password: Optional[SecretStr] = Field(default=None, description="Snowflake password (required for password auth)")
     auth_type: str = Field(default="password", description="Auth method: password | oauth | keypair")
     private_key: Optional[str] = Field(default=None, description="PEM-encoded private key for Key Pair auth")
@@ -45,8 +48,8 @@ class SnowflakeConfig(BaseSettings):
     oauth_client_secret: Optional[SecretStr] = Field(default=None, description="OAuth client secret for External OAuth S2S auth")
     oauth_token_endpoint: Optional[str] = Field(default=None, description="OAuth token endpoint URL (e.g. https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token)")
     oauth_scope: Optional[str] = Field(default=None, description="OAuth scope for token request")
-    warehouse: str = Field(..., description="Snowflake warehouse name")
-    database: str = Field(..., description="Snowflake database name")
+    warehouse: Optional[str] = Field(default=None, description="Snowflake warehouse name")
+    database: Optional[str] = Field(default=None, description="Snowflake database name")
     schema_name: str = Field(default="PUBLIC", validation_alias="SNOWFLAKE_SCHEMA", description="Snowflake schema name")
     role: Optional[str] = Field(default=None, description="Snowflake role (optional)")
 
@@ -84,12 +87,17 @@ class SnowflakeConfig(BaseSettings):
     
     @field_validator("account")
     @classmethod
-    def validate_account(cls, v: str) -> str:
+    def validate_account(cls, v) -> str:
         """Ensure account identifier is properly formatted.
 
         Accepts full URLs like https://abc123.snowflakecomputing.com and
         strips them down to just the account identifier (abc123).
+
+        None is allowed — it signals identity-based (Account table) auth where
+        the account is resolved at runtime, not from env vars.
         """
+        if v is None:
+            return v  # Identity-based auth — env vars not required
         if not v or v == "your-account.region":
             raise ValueError("SNOWFLAKE_ACCOUNT must be set to your actual Snowflake account")
         v = v.strip()
@@ -695,10 +703,15 @@ class Settings(BaseSettings):
         return self._behavior
 
     def validate_snowflake(self) -> bool:
-        """Validate Snowflake configuration is complete."""
+        """Validate Snowflake configuration is complete (env-var path only).
+
+        Returns True only when the required connection fields are populated from
+        env vars. Returns False when credentials come from the Account table
+        (identity-based path) — Stage 3 handles that separately.
+        """
         try:
-            _ = self.snowflake
-            return True
+            cfg = self.snowflake
+            return bool(cfg.account and cfg.user)
         except Exception:
             return False
     
