@@ -308,8 +308,36 @@ class SnowflakeEmitter(BaseEmitter):
 
                 # Step 3: Execute DDLs  (generate_ddls returns list[str])
                 for idx, sql in enumerate(ddls):
-                    if sql:
+                    if not sql:
+                        continue
+                    try:
                         self.connection_manager._execute_sql(cur, sql, context=f"DDL[{idx}]")
+                    except Exception as ddl_exc:
+                        # Auto-remediate invalid identifier errors by quoting the
+                        # offending token and retrying once.
+                        exc_str = str(ddl_exc)
+                        invalid_id = self.connection_manager._extract_invalid_identifier(ddl_exc)
+                        if invalid_id:
+                            try:
+                                from semabridge.connectors.semantic_ddl_sanitizer import SemanticDDLSanitizer
+                                sanitizer = SemanticDDLSanitizer()
+                                remediated_sql, was_changed = sanitizer.remediate_invalid_identifier(sql, invalid_id)
+                                if was_changed:
+                                    logger.warning(
+                                        "DDL[%d] failed with invalid identifier '%s'; "
+                                        "retrying after auto-remediation",
+                                        idx, invalid_id,
+                                    )
+                                    self.connection_manager._execute_sql(
+                                        cur, remediated_sql, context=f"DDL[{idx}] (remediated)"
+                                    )
+                                    continue  # retry succeeded — move on to next DDL
+                            except Exception as rem_exc:
+                                logger.warning(
+                                    "DDL[%d] auto-remediation failed for '%s': %s",
+                                    idx, invalid_id, rem_exc,
+                                )
+                        raise  # re-raise original exception if remediation not possible
 
                 # Step 5: Artifact Generation (Cortex YAML / Audit)
                 if not is_osi:
