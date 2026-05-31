@@ -26,11 +26,10 @@ from time import monotonic
 from typing import Deque, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session
 
-from semabridge.auth.deps import get_current_user
-from semabridge.api.deps import get_db
+from semabridge.api.deps import get_db, get_current_user
 from semabridge.auth.passwords import hash_password, verify_password
 from semabridge.auth.schemas import (
     CredentialListItem,
@@ -204,9 +203,11 @@ def register(
             detail="Username or email already registered",
         )
 
-    # First user → admin
-    user_count = db.execute(select(User.id)).scalars().all()
-    role = "admin" if len(user_count) == 0 else "viewer"
+    # First real user → admin. In dev mode (AUTH_ENABLED=false) the synthetic
+    # dev account already exists, so count only non-dev accounts to decide role.
+    all_users = db.execute(select(User)).scalars().all()
+    real_users = [u for u in all_users if not u.email.endswith("@semabridge.local")]
+    role = "admin" if len(real_users) == 0 else "viewer"
 
     user = User(
         username=body.username,
@@ -247,7 +248,9 @@ def login(
     _enforce_rate_limit("auth-login-user", username_key, limit=5, window_seconds=300)
 
     user = db.execute(
-        select(User).where(User.username == body.username)
+        select(User).where(
+            or_(User.username == body.username, User.email == body.username)
+        )
     ).scalar_one_or_none()
 
     if user is None or not verify_password(body.password, user.password_hash):
@@ -289,7 +292,7 @@ def login(
         key=_REFRESH_COOKIE,
         value=raw_refresh,
         httponly=True,
-        secure=os.getenv("COOKIE_SECURE", "true").lower() == "true",
+        secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
         samesite="lax",
         max_age=7 * 24 * 60 * 60,  # 7 days
         path="/auth",
@@ -300,7 +303,7 @@ def login(
         key="access_token",
         value=access_token,
         httponly=True,
-        secure=os.getenv("COOKIE_SECURE", "true").lower() == "true",
+        secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
         samesite="lax",
         max_age=int(os.getenv("ACCESS_TOKEN_EXPIRY_SECONDS", "900")),
         path="/",
@@ -390,7 +393,7 @@ def refresh(
         key="access_token",
         value=access_token,
         httponly=True,
-        secure=os.getenv("COOKIE_SECURE", "true").lower() == "true",
+        secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
         samesite="lax",
         max_age=int(os.getenv("ACCESS_TOKEN_EXPIRY_SECONDS", "900")),
         path="/",
@@ -469,9 +472,10 @@ def forgot_password(
         db.add(reset_token)
         db.commit()
 
-        # Send email — never raise on failure
-        send_password_reset_email(user.email, raw_token, user.username)
+        # Send email — never raise on failure; returns (sent, dev_reset_url)
+        _, dev_reset_url = send_password_reset_email(user.email, raw_token, user.username)
         logger.info("[Auth] Password reset requested for user_id=%s", user.id)
+        return ForgotPasswordResponse(reset_url=dev_reset_url)
     else:
         # Constant-time response to prevent timing-based account enumeration
         _time.sleep(0.1)
@@ -523,6 +527,36 @@ def reset_password(
     db.commit()
     logger.info("[Auth] Password reset completed for user_id=%s", user.id)
     return {"message": "Password reset successfully. Please log in with your new password."}
+
+
+# ── Dev-only: promote self to admin ─────────────────────────────────────
+
+@router.post("/dev/promote-admin", include_in_schema=False)
+def dev_promote_admin(
+    body: LoginRequest,
+    db: Session = Depends(get_db),
+) -> Dict[str, str]:
+    """Dev-only endpoint to promote a user to admin role.
+
+    Only available when AUTH_ENABLED is not 'true'.
+    Requires username + current password to prevent accidental misuse.
+    """
+    if os.environ.get("AUTH_ENABLED", "").lower() == "true":
+        raise HTTPException(status_code=404)
+
+    user = db.execute(
+        select(User).where(
+            or_(User.username == body.username, User.email == body.username)
+        )
+    ).scalar_one_or_none()
+
+    if not user or not verify_password(body.password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Invalid credentials")
+
+    user.role = "admin"
+    db.commit()
+    logger.info("[Auth] Dev promote-admin: user_id=%s promoted to admin", user.id)
+    return {"message": f"User '{user.username}' promoted to admin"}
 
 
 # ── Protected endpoints ──────────────────────────────────────────────────

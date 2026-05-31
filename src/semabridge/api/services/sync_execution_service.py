@@ -582,11 +582,17 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
     sync_jobs, source_type, target_type, source_cfg, target_cfg = _build_sync_jobs(config)
     settings = get_settings()
 
+    _fabric_env_workspace_id = ""
+    try:
+        _fabric_env_workspace_id = settings.fabric.workspace_id or ""
+    except Exception:
+        pass  # Fabric not configured in .env — credentials come from Account table via identity_id
+
     resolved_workspace_id = str(
         source_cfg.get("workspace_id")
         or (target_cfg.get("workspace_id") if isinstance(target_cfg, dict) else None)
         or (config.get("fabric", {}) or {}).get("workspace_id")
-        or settings.fabric.workspace_id
+        or _fabric_env_workspace_id
         or "default"
     )
     deploy_enabled = bool((target_cfg or {}).get("deploy", True))

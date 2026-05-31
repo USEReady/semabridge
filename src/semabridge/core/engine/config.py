@@ -187,25 +187,35 @@ def _step1_load_config(
             source_cfg = raw_config.get("source") if isinstance(raw_config.get("source"), dict) else {}
             target_cfg: dict[str, Any] = {}
             raw_target = raw_config.get("target")
+            targets_cfg = raw_config.get("targets")
+            targets_first: dict[str, Any] = (
+                targets_cfg[0] if isinstance(targets_cfg, list) and targets_cfg and isinstance(targets_cfg[0], dict) else {}
+            )
             if isinstance(raw_target, dict):
-                target_cfg = raw_target
-            elif not raw_target:
-                targets_cfg = raw_config.get("targets")
-                if isinstance(targets_cfg, list) and targets_cfg and isinstance(targets_cfg[0], dict):
-                    target_cfg = targets_cfg[0]
+                target_cfg = {**targets_first, **raw_target}  # targets[0] fills in missing fields (e.g. identity_id)
+            elif not raw_target and targets_first:
+                target_cfg = targets_first
 
             if source_cfg:
                 object.__setattr__(config, "source", SimpleNamespace(**source_cfg))
                 if source == "fabric":
                     source_workspace_id = str(source_cfg.get("workspace_id") or "").strip()
                     if source_workspace_id:
-                        config.fabric.workspace_id = source_workspace_id
+                        try:
+                            config.fabric.workspace_id = source_workspace_id
+                        except Exception:
+                            # Fabric not configured in .env — extraction will use identity_id
+                            pass
             if target_cfg:
                 object.__setattr__(config, "target", SimpleNamespace(**target_cfg))
                 if target == "fabric":
                     target_workspace_id = str(target_cfg.get("workspace_id") or "").strip()
                     if target_workspace_id:
-                        config.fabric.workspace_id = target_workspace_id
+                        try:
+                            config.fabric.workspace_id = target_workspace_id
+                        except Exception:
+                            # Fabric not configured in .env — deployment will use identity_id
+                            pass
 
             # We intentionally DO NOT override the semantic view name with the project name.
             # This ensures that if a project has multiple models (e.g. continent, annual),

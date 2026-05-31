@@ -5,7 +5,7 @@ import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import delete, inspect, select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
@@ -287,16 +287,10 @@ def delete_account(request: Request, account_id: str, db: Session = Depends(get_
 
     connector_type = account.connector_type
 
-    bind = db.get_bind()
-    has_project_account_link = False
-    if bind is not None:
-        inspector = inspect(bind)
-        has_project_account_link = (
-            inspector.has_table('projects')
-            and any(col.get('name') == 'account_id' for col in inspector.get_columns('projects'))
-        )
-
-    if has_project_account_link:
+    # Unlink projects that reference this account (if the column exists on the ORM model).
+    # Use hasattr instead of inspector.get_columns() — DuckDB's pg_catalog doesn't support
+    # pg_collation which causes SQLAlchemy reflection to crash.
+    if hasattr(Project, 'account_id'):
         db.execute(
             update(Project)
             .where(Project.account_id == account.id)

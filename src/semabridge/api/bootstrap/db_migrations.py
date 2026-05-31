@@ -7,6 +7,41 @@ import os
 logger = logging.getLogger('semabridge.api')
 
 
+def _get_column_names(engine, table_name: str) -> set[str]:
+    """Return the column names for *table_name* using information_schema.
+
+    Uses information_schema.columns instead of SQLAlchemy's inspector
+    reflection, which fires pg_catalog.pg_collation queries that DuckDB
+    does not support.
+    """
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = :tbl"
+            ),
+            {"tbl": table_name},
+        ).fetchall()
+    return {row[0] for row in rows}
+
+
+def _table_exists(engine, table_name: str) -> bool:
+    """Check whether *table_name* exists using information_schema."""
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_name = :tbl LIMIT 1"
+            ),
+            {"tbl": table_name},
+        ).fetchone()
+    return row is not None
+
+
 def _apply_schema_compatibility_fixes() -> None:
     """Apply lightweight column-level compatibility fixes for existing DBs.
 
@@ -14,13 +49,12 @@ def _apply_schema_compatibility_fixes() -> None:
     existing tables. Older repositories may therefore miss recently introduced
     columns and fail at runtime when ORM models select them.
     """
-    from sqlalchemy import inspect, text
+    from sqlalchemy import text
 
     from semabridge.repository.orm.session_factory import get_engine
     from semabridge.repository.schema_compat import widen_project_id_columns
 
     engine = get_engine()
-    inspector = inspect(engine)
 
     dialect = engine.dialect.name
     if dialect == "postgresql":
@@ -28,13 +62,12 @@ def _apply_schema_compatibility_fixes() -> None:
     elif dialect == "duckdb":
         expires_type = "TIMESTAMPTZ"
     else:
-        # SQLite and generic fallback
         expires_type = "TIMESTAMP"
 
     pending_alters: list[str] = []
 
-    if "accounts" in set(inspector.get_table_names()):
-        existing_columns = {col["name"] for col in inspector.get_columns("accounts")}
+    if _table_exists(engine, "accounts"):
+        existing_columns = _get_column_names(engine, "accounts")
         if "refresh_token" not in existing_columns:
             pending_alters.append("ALTER TABLE accounts ADD COLUMN refresh_token TEXT")
         if "token_expires_at" not in existing_columns:
@@ -46,8 +79,8 @@ def _apply_schema_compatibility_fixes() -> None:
         if "owner_id" not in existing_columns:
             pending_alters.append("ALTER TABLE accounts ADD COLUMN owner_id INTEGER")
 
-    if "projects" in set(inspector.get_table_names()):
-        project_columns = {col["name"] for col in inspector.get_columns("projects")}
+    if _table_exists(engine, "projects"):
+        project_columns = _get_column_names(engine, "projects")
         if "account_id" not in project_columns:
             if dialect == "postgresql":
                 pending_alters.append("ALTER TABLE projects ADD COLUMN account_id VARCHAR(36)")
@@ -58,20 +91,20 @@ def _apply_schema_compatibility_fixes() -> None:
         if "connection_tag" not in project_columns:
             pending_alters.append("ALTER TABLE projects ADD COLUMN connection_tag VARCHAR(255)")
 
-    if "snapshots" in set(inspector.get_table_names()):
-        snapshot_columns = {col["name"] for col in inspector.get_columns("snapshots")}
+    if _table_exists(engine, "snapshots"):
+        snapshot_columns = _get_column_names(engine, "snapshots")
         if "deleted_at" not in snapshot_columns:
             pending_alters.append(f"ALTER TABLE snapshots ADD COLUMN deleted_at {expires_type}")
         if "sync_mode" not in snapshot_columns:
             pending_alters.append("ALTER TABLE snapshots ADD COLUMN sync_mode VARCHAR(20) NOT NULL DEFAULT 'copy'")
 
-    if "model_versions" in set(inspector.get_table_names()):
-        mv_columns = {col["name"] for col in inspector.get_columns("model_versions")}
+    if _table_exists(engine, "model_versions"):
+        mv_columns = _get_column_names(engine, "model_versions")
         if "deleted_at" not in mv_columns:
             pending_alters.append(f"ALTER TABLE model_versions ADD COLUMN deleted_at {expires_type}")
 
-    if "runs" in set(inspector.get_table_names()):
-        run_columns = {col["name"] for col in inspector.get_columns("runs")}
+    if _table_exists(engine, "runs"):
+        run_columns = _get_column_names(engine, "runs")
         if "run_type" not in run_columns:
             pending_alters.append("ALTER TABLE runs ADD COLUMN run_type VARCHAR(50)")
         if "sync_mode" not in run_columns:
@@ -87,18 +120,15 @@ def _apply_schema_compatibility_fixes() -> None:
         if "after_target_snapshot_ids" not in run_columns:
             pending_alters.append("ALTER TABLE runs ADD COLUMN after_target_snapshot_ids TEXT")
 
-    # In PostgreSQL, we must gracefully migrate the unique constraint from `tag` to `(owner_id, tag)`
-    # This prevents the "Account with tag 'su' already exists" bug for multi-tenant accounts
+    # In PostgreSQL, migrate the unique constraint from `tag` to `(owner_id, tag)`
     if dialect == "postgresql":
+        from sqlalchemy import inspect
         try:
+            inspector = inspect(engine)
             constraints = inspector.get_unique_constraints("accounts")
             constraint_names = {c.get("name") for c in constraints if c.get("name")}
-
-            # Drop the old global constraint if it exists
             if "accounts_tag_key" in constraint_names:
                 pending_alters.append("ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_tag_key CASCADE")
-
-            # Add the new composite constraint if it doesn't exist
             if "uq_account_owner_tag" not in constraint_names:
                 pending_alters.append("ALTER TABLE accounts ADD CONSTRAINT uq_account_owner_tag UNIQUE (owner_id, tag)")
         except Exception as e:
@@ -111,8 +141,8 @@ def _apply_schema_compatibility_fixes() -> None:
         for ddl in pending_alters:
             conn.execute(text(ddl))
         # Backfill ORM canonical column from legacy column when both exist.
-        if "runs" in set(inspector.get_table_names()):
-            run_columns = {col["name"] for col in inspector.get_columns("runs")}
+        if _table_exists(engine, "runs"):
+            run_columns = _get_column_names(engine, "runs")
             if "restored_from_snapshot_id" in run_columns and "restore_snapshot_id" in run_columns:
                 conn.execute(
                     text(
@@ -134,7 +164,7 @@ def _migrate_credentials_table() -> None:
     Safe to run multiple times. Checks for the ``owner_id`` column before
     executing any DDL so that subsequent restarts are a pure no-op.
     """
-    from sqlalchemy import inspect, text
+    from sqlalchemy import text
     from semabridge.repository.orm.session_factory import get_engine
 
     engine = get_engine()
@@ -142,12 +172,11 @@ def _migrate_credentials_table() -> None:
         logger.debug("Credentials migration skipped for dialect: %s", engine.dialect.name)
         return
 
-    inspector = inspect(engine)
-    if "semabridge_credentials" not in set(inspector.get_table_names()):
+    if not _table_exists(engine, "semabridge_credentials"):
         # Table doesn't exist yet — create_all() will create it with the new schema.
         return
 
-    existing_cols = {col["name"] for col in inspector.get_columns("semabridge_credentials")}
+    existing_cols = _get_column_names(engine, "semabridge_credentials")
     if "owner_id" in existing_cols:
         return  # Already migrated — nothing to do.
 
@@ -158,18 +187,13 @@ def _migrate_credentials_table() -> None:
 
     if dialect == "postgresql":
         ddl_steps = [
-            # 1. Add column with default 0 — existing rows become system/global automatically.
             "ALTER TABLE semabridge_credentials ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0",
-            # 2. Drop the old (service, key) primary key.
             "ALTER TABLE semabridge_credentials DROP CONSTRAINT IF EXISTS semabridge_credentials_pkey",
-            # 3. Create new (owner_id, service, key) primary key.
             "ALTER TABLE semabridge_credentials ADD PRIMARY KEY (owner_id, service, key)",
-            # 4. Supporting index for per-user, per-service range scans.
             "CREATE INDEX IF NOT EXISTS ix_credential_owner_service "
             "ON semabridge_credentials (owner_id, service)",
         ]
     elif dialect == "sqlite":
-        # SQLite can't ALTER PRIMARY KEY — recreate the table.
         ddl_steps = [
             "ALTER TABLE semabridge_credentials RENAME TO _semabridge_credentials_old",
             """
@@ -213,24 +237,7 @@ def _migrate_credentials_table() -> None:
 
 
 def _apply_rls_policies() -> None:
-    """Apply PostgreSQL Row Level Security policies on tenant-scoped tables.
-
-    RLS is Layer 2 defense-in-depth: even if application code forgets to
-    filter by ``owner_id``, the database refuses to return other users' rows.
-
-    The policy uses the session variable ``app.current_user_id`` which is
-    set by :func:`semabridge.api.deps.get_scoped_db` at the start of each
-    request via ``SET LOCAL``.
-
-    Policy logic:
-        - When ``app.current_user_id`` is set → only rows where
-          ``owner_id = current_user_id`` OR ``owner_id IS NULL`` are visible.
-        - When ``app.current_user_id`` is not set (CLI/internal) → all rows
-          are visible (policy evaluates to ``true``).
-
-    This is idempotent — ``CREATE POLICY ... IF NOT EXISTS`` is not supported
-    by all PG versions, so we use ``DROP POLICY IF EXISTS`` + ``CREATE POLICY``.
-    """
+    """Apply PostgreSQL Row Level Security policies on tenant-scoped tables."""
     from sqlalchemy import text
     from semabridge.repository.orm.session_factory import get_engine
 
@@ -239,13 +246,8 @@ def _apply_rls_policies() -> None:
         return  # RLS is PostgreSQL-specific.
 
     rls_statements = [
-        # Enable RLS on accounts table (idempotent)
         "ALTER TABLE accounts ENABLE ROW LEVEL SECURITY",
-        # Drop existing policy if present (idempotent re-creation)
         "DROP POLICY IF EXISTS account_owner_isolation ON accounts",
-        # Create the policy:
-        #   - When app.current_user_id is '' (not set) → allow all (CLI/internal)
-        #   - When set → only owner's rows + orphaned rows (owner_id IS NULL)
         """
         CREATE POLICY account_owner_isolation ON accounts
         FOR ALL
@@ -256,8 +258,6 @@ def _apply_rls_policies() -> None:
             OR owner_id = current_setting('app.current_user_id', true)::integer
         )
         """,
-        # Ensure the application role can still see rows through RLS
-        # (superusers bypass RLS by default, but the application role does not)
         "ALTER TABLE accounts FORCE ROW LEVEL SECURITY",
     ]
 
@@ -269,16 +269,7 @@ def _apply_rls_policies() -> None:
 
 
 def _assign_orphaned_accounts_to_dev_user() -> None:
-    """Assign accounts with NULL owner_id to the first active user.
-
-    This handles the dev-to-multi-user transition. Accounts created before
-    the ``owner_id`` column was added (or before ``AUTH_ENABLED=true``) have
-    ``owner_id IS NULL``.  In development mode, this assigns them to the
-    first active user so they appear correctly in the UI.
-
-    In production (``AUTH_ENABLED=true``), orphaned accounts remain unowned
-    and are inaccessible until an admin assigns them.
-    """
+    """Assign accounts with NULL owner_id to the first active user."""
     if os.environ.get("AUTH_ENABLED", "").lower() == "true":
         return  # Skip in production — admin must assign explicitly.
 

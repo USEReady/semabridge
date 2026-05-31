@@ -44,6 +44,7 @@ class ForgotPasswordResponse(BaseModel):
     """Response from ``POST /auth/forgot-password``."""
 
     message: str = "If that email is registered, you will receive a reset link shortly."
+    reset_url: Optional[str] = None  # Populated only when SMTP is not configured (dev mode)
 
 
 class CredentialSaveRequest(BaseModel):

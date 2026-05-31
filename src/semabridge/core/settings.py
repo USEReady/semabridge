@@ -85,10 +85,22 @@ class SnowflakeConfig(BaseSettings):
     @field_validator("account")
     @classmethod
     def validate_account(cls, v: str) -> str:
-        """Ensure account identifier is properly formatted."""
+        """Ensure account identifier is properly formatted.
+
+        Accepts full URLs like https://abc123.snowflakecomputing.com and
+        strips them down to just the account identifier (abc123).
+        """
         if not v or v == "your-account.region":
             raise ValueError("SNOWFLAKE_ACCOUNT must be set to your actual Snowflake account")
-        return v.strip()
+        v = v.strip()
+        # Strip protocol
+        for prefix in ("https://", "http://"):
+            if v.lower().startswith(prefix):
+                v = v[len(prefix):]
+        # Strip .snowflakecomputing.com suffix and any trailing path
+        if ".snowflakecomputing.com" in v.lower():
+            v = v.lower().split(".snowflakecomputing.com")[0]
+        return v
 
 
 class FabricConfig(BaseSettings):

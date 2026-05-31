@@ -1130,10 +1130,55 @@ async def get_connections_status(user_id: int = 0):
         user_id: Authenticated user ID.  ``0`` returns global/system status.
     """
     from semabridge.repository.credential_manager import CredentialManager
+    from semabridge.repository.orm.session_factory import db_manager
+    from semabridge.repository.orm.models import Account
+    from sqlalchemy import select
 
     try:
         cm = CredentialManager()
-        return cm.get_connection_status(user_id=user_id)
+        status = cm.get_connection_status(user_id=user_id)
+
+        # Augment with Account table — accounts stored via the Connections UI
+        # are the primary credential store; CredentialManager is the legacy store.
+        _CONNECTOR_MAP = {"FABRIC": "fabric", "SNOWFLAKE": "snowflake", "DATABRICKS": "databricks"}
+        try:
+            with db_manager.get_session() as session:
+                accounts = session.execute(select(Account)).scalars().all()
+                for acct in accounts:
+                    svc = _CONNECTOR_MAP.get(acct.connector_type.upper())
+                    if not svc:
+                        continue
+                    svc_status = status.get(svc, {})
+                    # Mark as configured if a valid account exists
+                    svc_status["has_account"] = True
+                    svc_status["account_tag"] = acct.tag
+                    svc_status["account_id"] = str(acct.id)
+                    svc_status["identity_email"] = acct.identity_email or ""
+                    # Resolve missing fields from account bundle
+                    if acct.encrypted_token:
+                        try:
+                            import json
+                            from semabridge.auth.encryption import decrypt_token
+                            bundle = json.loads(decrypt_token(acct.encrypted_token))
+                            if isinstance(bundle, dict):
+                                remaining_missing = [f for f in svc_status.get("missing_fields", []) if f not in bundle]
+                                svc_status["missing_fields"] = remaining_missing
+                                if not remaining_missing and (svc != "fabric" or svc_status.get("has_auth") or bundle.get("access_token") or bundle.get("client_secret")):
+                                    svc_status["configured"] = True
+                                    svc_status["status"] = "connected"
+                        except Exception:
+                            pass
+                    # Fabric: if account exists with a valid token, mark as configured
+                    if svc == "fabric" and acct.encrypted_token:
+                        svc_status["configured"] = True
+                        svc_status["status"] = "connected"
+                        svc_status["has_auth"] = True
+                        svc_status["auth_method"] = "interactive"
+                    status[svc] = svc_status
+        except Exception as acc_err:
+            logger.warning("Could not load Account table for status: %s", acc_err)
+
+        return status
     except Exception as e:
         logger.exception(f"Failed to fetch connection status: {e}")
         # Keep the Settings page usable even when credential storage is unavailable.

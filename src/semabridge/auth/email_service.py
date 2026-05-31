@@ -22,7 +22,7 @@ def _get_smtp_config() -> dict:
     }
 
 
-def send_password_reset_email(to_email: str, reset_token: str, username: str) -> bool:
+def send_password_reset_email(to_email: str, reset_token: str, username: str) -> "tuple[bool, str | None]":
     """Send a password reset email.
 
     Returns True on success, False on failure.  Never raises — email
@@ -31,26 +31,24 @@ def send_password_reset_email(to_email: str, reset_token: str, username: str) ->
     config = _get_smtp_config()
 
     if not config["host"] or not config["user"]:
-        logger.warning(
-            "[EmailService] SMTP not configured (SMTP_HOST/SMTP_USER missing). "
-            "Password reset email NOT sent to %s. Token prefix: %s",
-            to_email,
-            reset_token[:8] + "...",
+        frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+        reset_url = f"{frontend_url}/auth/reset-password/{reset_token}"
+        # Always print full reset URL when SMTP is not configured so the
+        # developer can complete the flow without reading truncated logs.
+        print(
+            f"\n{'='*60}\n"
+            f"[DEV] PASSWORD RESET — SMTP not configured\n"
+            f"User  : {to_email}\n"
+            f"Token : {reset_token}\n"
+            f"URL   : {reset_url}\n"
+            f"{'='*60}\n",
+            flush=True,
         )
-        # In dev mode, print the full reset token directly to stdout so it
-        # is never truncated by Rich's line-wrapping logger.
-        if os.environ.get("AUTH_ENABLED", "true").lower() == "false":
-            frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")
-            reset_url = f"{frontend_url}/auth/reset-password/{reset_token}"
-            print(
-                f"\n{'='*60}\n"
-                f"[DEV] PASSWORD RESET TOKEN for {to_email}\n"
-                f"Token : {reset_token}\n"
-                f"URL   : {reset_url}\n"
-                f"{'='*60}\n",
-                flush=True,
-            )
-        return False
+        logger.warning(
+            "[EmailService] SMTP not configured — reset URL printed to stdout for %s",
+            to_email,
+        )
+        return False, reset_url
 
     frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")
     reset_url = f"{frontend_url}/auth/reset-password/{reset_token}"
@@ -101,9 +99,9 @@ def send_password_reset_email(to_email: str, reset_token: str, username: str) ->
             smtp.sendmail(config["from_address"], [to_email], msg.as_string())
 
         logger.info("[EmailService] Password reset email sent to %s", to_email)
-        return True
+        return True, None
     except Exception as exc:
         logger.error(
             "[EmailService] Failed to send reset email to %s: %s", to_email, exc
         )
-        return False
+        return False, None

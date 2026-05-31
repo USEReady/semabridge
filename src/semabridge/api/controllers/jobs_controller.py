@@ -24,7 +24,7 @@ class UpdateJobsConfigRequest(BaseModel):
 
 
 class TriggerJobRequest(BaseModel):
-    project_id: str
+    project_id: Optional[str] = None
     user_id: Optional[str] = None
     sync_mode: Optional[str] = None
 
@@ -137,9 +137,8 @@ async def trigger_job(payload: TriggerJobRequest, background_tasks: BackgroundTa
     user_id = require_request_user_id(request)
     body = payload.model_dump(exclude_none=False)
     project_id = str(body.get("project_id") or "").strip()
-    if not project_id:
-        raise HTTPException(status_code=400, detail="project_id is required")
-    await asyncio.to_thread(_assert_project_access, project_id, user_id)
+    if project_id:
+        await asyncio.to_thread(_assert_project_access, project_id, user_id)
     if user_id:
         body["user_id"] = user_id
     return await trigger_job_compat(body, background_tasks)

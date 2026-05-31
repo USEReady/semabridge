@@ -76,6 +76,25 @@ class AuthMiddleware(BaseHTTPMiddleware):
     ) -> Response:
         # Feature flag — on by default; set AUTH_ENABLED=false explicitly for dev/single-user mode
         if os.environ.get("AUTH_ENABLED", "true").lower() != "true":
+            # Still populate request.state so get_current_user deps don't fail.
+            # Try to resolve from Bearer token; fall back to dev user id=1.
+            token = None
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                token = auth_header[len("Bearer "):].strip()
+            if not token:
+                token = request.cookies.get("access_token")
+            if token:
+                try:
+                    payload = decode_access_token(token)
+                    request.state.user_id = payload.get("sub")
+                    request.state.user_role = payload.get("role", "admin")
+                except Exception:
+                    request.state.user_id = "1"
+                    request.state.user_role = "admin"
+            else:
+                request.state.user_id = "1"
+                request.state.user_role = "admin"
             return await call_next(request)
 
         path = request.url.path.rstrip("/")

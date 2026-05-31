@@ -7,6 +7,10 @@ from typing import Any, Dict, List
 
 from fastapi import BackgroundTasks
 
+from semabridge.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
 from semabridge.api.services.project_shared import (
     _compat_ensure_loaded,
     _compat_job_config,
@@ -118,14 +122,36 @@ async def update_jobs_config_compat(payload: dict):
 
 async def trigger_job_compat(payload: dict, background_tasks: BackgroundTasks):
     _compat_ensure_loaded()
-    project_id = str((payload or {}).get("project_id") or "").strip()
-    if not project_id and _compat_projects:
-        project_id = next(iter(_compat_projects.keys()))
-    if not project_id:
-        raise ValidationError("project_id is required")
-    # Import here to avoid circular dependency
     from semabridge.api.services.run_service import _create_project_run, _run_project_background
-    run, project_cfg, started = _create_project_run(project_id, "Manual")
-    run["message"] = "Job trigger accepted."
-    background_tasks.add_task(_run_project_background, run, project_cfg, started)
-    return run
+
+    project_id = str((payload or {}).get("project_id") or "").strip()
+
+    if project_id:
+        # Trigger a specific project
+        run, project_cfg, started = _create_project_run(project_id, "Manual")
+        run["message"] = "Job trigger accepted."
+        background_tasks.add_task(_run_project_background, run, project_cfg, started)
+        return run
+
+    # No project_id — trigger all scheduled projects
+    scheduled_ids = [
+        pid for pid, proj in _compat_projects.items()
+        if proj.get("schedule") or proj.get("schedule_type")
+    ]
+    if not scheduled_ids:
+        # Fall back to all projects if none are explicitly scheduled
+        scheduled_ids = list(_compat_projects.keys())
+
+    if not scheduled_ids:
+        return {"status": "no_projects", "message": "No projects available to trigger.", "triggered": 0}
+
+    triggered = []
+    for pid in scheduled_ids:
+        try:
+            run, project_cfg, started = _create_project_run(pid, "Manual")
+            background_tasks.add_task(_run_project_background, run, project_cfg, started)
+            triggered.append(run)
+        except Exception as exc:
+            logger.warning("Failed to trigger project %s: %s", pid, exc)
+
+    return {"status": "triggered", "triggered": len(triggered), "runs": triggered}

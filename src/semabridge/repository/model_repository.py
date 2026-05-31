@@ -26,7 +26,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import inspect, select, update, delete, and_
+from sqlalchemy import select, update, delete, and_
 from sqlalchemy.orm import Session, sessionmaker
 
 from semabridge.repository.orm.base import Base
@@ -231,14 +231,30 @@ class ModelRepository:
                 return
             try:
                 with engine.begin() as conn:
+                    from sqlalchemy import text as _text
                     Base.metadata.create_all(bind=conn)
-                    inspector = inspect(conn)
-                    if "snapshots" in inspector.get_table_names():
-                        snapshot_columns = {col["name"] for col in inspector.get_columns("snapshots")}
-                        if "ix_snapshots_trigger" in {idx["name"] for idx in inspector.get_indexes("snapshots")}:
-                            conn.exec_driver_sql("DROP INDEX IF EXISTS ix_snapshots_trigger")
-                        if "ix_snapshots_connector" in {idx["name"] for idx in inspector.get_indexes("snapshots")}:
-                            conn.exec_driver_sql("DROP INDEX IF EXISTS ix_snapshots_connector")
+
+                    def _col_names(tbl: str) -> set:
+                        rows = conn.execute(
+                            _text("SELECT column_name FROM information_schema.columns WHERE table_name = :t"),
+                            {"t": tbl},
+                        ).fetchall()
+                        return {r[0] for r in rows}
+
+                    def _tbl_exists(tbl: str) -> bool:
+                        return conn.execute(
+                            _text("SELECT 1 FROM information_schema.tables WHERE table_name = :t LIMIT 1"),
+                            {"t": tbl},
+                        ).fetchone() is not None
+
+                    if _tbl_exists("snapshots"):
+                        snapshot_columns = _col_names("snapshots")
+                        # Drop stale indexes (ignore errors — DuckDB IF EXISTS is safest)
+                        for idx in ("ix_snapshots_trigger", "ix_snapshots_connector"):
+                            try:
+                                conn.exec_driver_sql(f"DROP INDEX IF EXISTS {idx}")
+                            except Exception:
+                                pass
                         if "initiated_by" in snapshot_columns:
                             conn.exec_driver_sql("ALTER TABLE snapshots DROP COLUMN initiated_by")
                             snapshot_columns.discard("initiated_by")
@@ -250,8 +266,8 @@ class ModelRepository:
                             snapshot_columns.discard("trigger")
                         if "sync_mode" not in snapshot_columns:
                             conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN sync_mode VARCHAR(20) NOT NULL DEFAULT 'copy'")
-                    if "runs" in inspector.get_table_names():
-                        run_columns = {col["name"] for col in inspector.get_columns("runs")}
+                    if _tbl_exists("runs"):
+                        run_columns = _col_names("runs")
                         if "sync_mode" not in run_columns:
                             conn.exec_driver_sql("ALTER TABLE runs ADD COLUMN sync_mode VARCHAR(20) NOT NULL DEFAULT 'copy'")
                 cls._schema_initialized_urls.add(url_key)

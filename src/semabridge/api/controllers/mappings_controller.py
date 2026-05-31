@@ -145,7 +145,7 @@ async def dry_run_mapping(
     WITHOUT deployment, then return the real field-level mappings (columns + measures).
     """
     from semabridge.api.services.core_domain_service import sync_models
-    from semabridge.api.services.project_runs_impl import (
+    from semabridge.api.services.mapping_service import (
         _compat_build_project_entity_mappings,
         _compat_preferred_snapshot_id_from_sync_result,
         _compat_serialize_auto_map_entity_mappings,
@@ -259,7 +259,7 @@ async def dry_run_mapping(
         # is stored under the Fabric dataset_id (e.g. "d32e8900-..."), not our
         # preview project ID — so the project_id lookup would return an empty model.
         from semabridge.api.services.project_mapping_engine import build_entity_mappings
-        from semabridge.api.services.project_runs_impl import db_manager as _db_manager
+        from semabridge.api.services.project_shared import db_manager as _db_manager
 
         sml_blob: Dict[str, Any] = {}
 

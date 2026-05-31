@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Hexagon, AlertCircle, Mail } from 'lucide-react';
 import { api } from '../utils/api';
 
@@ -7,6 +7,7 @@ import { api } from '../utils/api';
  * ForgotPasswordPage — request a password reset link by email.
  */
 export default function ForgotPasswordPage() {
+  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
@@ -18,7 +19,12 @@ export default function ForgotPasswordPage() {
     setError('');
     setSuccessMsg('');
     try {
-      await api.requestPasswordReset(email.trim().toLowerCase());
+      const data = await api.requestPasswordReset(email.trim().toLowerCase());
+      if (data?.reset_url) {
+        // Dev mode: SMTP not configured — navigate directly to the reset page
+        navigate(new URL(data.reset_url).pathname);
+        return;
+      }
       setSuccessMsg('Check your email for a reset link. It may take a few minutes to arrive.');
     } catch (err) {
       setError(err?.message || 'Something went wrong. Please try again.');

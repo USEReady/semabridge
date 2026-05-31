@@ -22,22 +22,27 @@ async def discover_fabric_models(
 
     try:
         settings = get_settings()
-        try:
-            settings.fabric
-        except _PydanticValidationError:
-            raise ValidationError((
-                    "Fabric is not configured. "
-                    "Set FABRIC_TENANT_ID, FABRIC_CLIENT_ID, and FABRIC_WORKSPACE_ID in .env or environment variables."
-                ))
 
         resolved_workspace_id = (workspace_id or "").strip()
+
+        # When no workspace_id is in the path, fall back to env / base config.
+        # Only require base Fabric config when no identity_id is provided —
+        # identity_id-based requests resolve credentials from the Account table.
         if not resolved_workspace_id:
+            if not identity_id:
+                try:
+                    settings.fabric
+                except _PydanticValidationError:
+                    raise ValidationError((
+                        "Fabric is not configured. "
+                        "Set FABRIC_TENANT_ID, FABRIC_CLIENT_ID, and FABRIC_WORKSPACE_ID in .env or environment variables."
+                    ))
             resolved_workspace_id = os.environ.get("FABRIC_WORKSPACE_ID", "").strip()
-        if not resolved_workspace_id:
-            try:
-                resolved_workspace_id = settings.fabric.workspace_id
-            except Exception as exc:
-                logger.debug("Could not read fabric.workspace_id from settings: %s", exc)
+            if not resolved_workspace_id:
+                try:
+                    resolved_workspace_id = settings.fabric.workspace_id
+                except Exception as exc:
+                    logger.debug("Could not read fabric.workspace_id from settings: %s", exc)
 
         if not resolved_workspace_id:
             raise ValidationError("No Fabric workspace configured. Select a workspace in Settings -> Connections.")
@@ -99,12 +104,11 @@ async def discover_fabric_models_by_workspace(
 
 def discover_snowflake(identity_id: Optional[str] = Query(None)):
     import time
-    from pydantic import ValidationError as _PydanticValidationError
     from semabridge.connectors.factory import make_source_extractor
     from sqlalchemy import select
     from semabridge.repository.orm.models import Account
     from semabridge.repository.orm.session_factory import db_manager
-    from semabridge.auth.account_credential_resolver import scoped_account_env
+    from semabridge.auth.credential_builder import build_snowflake_config
 
     global _snowflake_discovery_cache
     if "_snowflake_discovery_cache" not in globals():
@@ -127,30 +131,31 @@ def discover_snowflake(identity_id: Optional[str] = Query(None)):
                 ).scalars().first()
 
                 if not account:
-                    raise ValidationError((
-                            f"No Snowflake account found for identity_id '{identity_id}'. "
-                            "Link this account in Settings -> Connections or POST to /api/accounts with connector_type 'SNOWFLAKE'."
-                        ))
-                    
-                with scoped_account_env(account, session):
-                    from semabridge.core.settings import reload_settings
-                    scoped_settings = reload_settings()
-                    extractor = make_source_extractor("snowflake", scoped_settings.snowflake)
-                    views = extractor.discover_semantic_views()
+                    raise ValidationError(
+                        f"No Snowflake account found for identity_id '{identity_id}'. "
+                        "Link this account in Settings → Connections."
+                    )
+
+                try:
+                    base_cfg = get_settings().snowflake
+                except Exception:
+                    from semabridge.core.settings import SnowflakeConfig
+                    base_cfg = SnowflakeConfig(account="placeholder", user="placeholder", warehouse="placeholder", database="placeholder")
+
+                snowflake_cfg = build_snowflake_config(account, session, base_cfg)
+                extractor = make_source_extractor("snowflake", snowflake_cfg)
+                views = extractor.discover_semantic_views()
         else:
-            settings = get_settings()
             try:
-                snowflake_config = settings.snowflake
-            except _PydanticValidationError:
-                raise ValidationError((
-                        "Snowflake is not configured. "
-                        "Set SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, and SNOWFLAKE_PASSWORD in .env or environment variables."
-                    ))
-            extractor = make_source_extractor("snowflake", snowflake_config)
+                snowflake_cfg = get_settings().snowflake
+            except Exception:
+                raise ValidationError(
+                    "Snowflake is not configured. "
+                    "Add a Snowflake connection in Settings → Connections."
+                )
+            extractor = make_source_extractor("snowflake", snowflake_cfg)
             views = extractor.discover_semantic_views()
 
-        # Build final view format
-        snowflake_cfg_to_use = scoped_settings.snowflake if identity_id and 'scoped_settings' in locals() else snowflake_config
         final_results = sorted([
             {
                 "id": v["name"],
@@ -159,8 +164,8 @@ def discover_snowflake(identity_id: Optional[str] = Query(None)):
                 "status": "Available",
                 "description": v.get("comment") or "",
                 "created_on": v.get("created_on"),
-                "schema": v.get("schema", snowflake_cfg_to_use.schema_name),
-                "database": v.get("database", snowflake_cfg_to_use.database),
+                "schema": v.get("schema", snowflake_cfg.schema_name),
+                "database": v.get("database", snowflake_cfg.database),
             }
             for v in views
         ], key=lambda x: x["name"])
@@ -177,11 +182,10 @@ def discover_snowflake(identity_id: Optional[str] = Query(None)):
         raise InternalError(f"Snowflake semantic view discovery failed: {e}")
 
 def _get_snowflake_extractor(identity_id: Optional[str] = None):
-    from pydantic import ValidationError as _PydanticValidationError
     from semabridge.connectors.factory import make_source_extractor
     from semabridge.repository.orm.models import Account
     from semabridge.repository.orm.session_factory import db_manager
-    from semabridge.auth.account_credential_resolver import scoped_account_env
+    from semabridge.auth.credential_builder import build_snowflake_config
     from sqlalchemy import select
 
     if identity_id:
@@ -194,32 +198,33 @@ def _get_snowflake_extractor(identity_id: Optional[str] = None):
             ).scalars().first()
 
             if not account:
-                raise ValidationError((
-                        f"No Snowflake account found for identity_id '{identity_id}'. "
-                        "Link this account in Settings -> Connections or POST to /api/accounts with connector_type 'SNOWFLAKE'."
-                    ))
-                
-            with scoped_account_env(account, session):
-                from semabridge.core.settings import reload_settings
-                scoped_settings = reload_settings()
-                return make_source_extractor("snowflake", scoped_settings.snowflake)
+                raise ValidationError(
+                    f"No Snowflake account found for identity_id '{identity_id}'. "
+                    "Link this account in Settings → Connections."
+                )
+
+            try:
+                base_cfg = get_settings().snowflake
+            except Exception:
+                from semabridge.core.settings import SnowflakeConfig
+                base_cfg = SnowflakeConfig(account="placeholder", user="placeholder", warehouse="placeholder", database="placeholder")
+
+            return make_source_extractor("snowflake", build_snowflake_config(account, session, base_cfg))
     else:
-        settings = get_settings()
         try:
-            snowflake_config = settings.snowflake
-        except _PydanticValidationError:
-            raise ValidationError((
-                    "Snowflake is not configured. "
-                    "Set SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, and SNOWFLAKE_PASSWORD in .env or environment variables."
-                ))
+            snowflake_config = get_settings().snowflake
+        except Exception:
+            raise ValidationError(
+                "Snowflake is not configured. "
+                "Add a Snowflake connection in Settings → Connections."
+            )
         return make_source_extractor("snowflake", snowflake_config)
 
 def _execute_in_snowflake_context(func_name: str, identity_id: Optional[str] = None, *args, **kwargs):
-    from pydantic import ValidationError as _PydanticValidationError
     from semabridge.connectors.factory import make_source_extractor
     from semabridge.repository.orm.models import Account
     from semabridge.repository.orm.session_factory import db_manager
-    from semabridge.auth.account_credential_resolver import scoped_account_env
+    from semabridge.auth.credential_builder import build_snowflake_config
     from sqlalchemy import select
 
     logger.info("Starting Snowflake discovery context for action: %s, identity_id: %s", func_name, identity_id)
@@ -234,30 +239,41 @@ def _execute_in_snowflake_context(func_name: str, identity_id: Optional[str] = N
             ).scalars().first()
 
             if not account:
-                logger.error("No Snowflake account found for identity_id '%s'", identity_id)
-                raise ValidationError((
-                        f"No Snowflake account found for identity_id '{identity_id}'. "
-                        "Link this account in Settings -> Connections or POST to /api/accounts with connector_type 'SNOWFLAKE'."
-                    ))
-                
-            logger.info("Initializing SnowflakeExtractor inside scoped_account_env for account tag: %s", account.tag)
-            with scoped_account_env(account, session):
-                from semabridge.core.settings import reload_settings
-                scoped_settings = reload_settings()
-                extractor = make_source_extractor("snowflake", scoped_settings.snowflake)
-                func = getattr(extractor, func_name)
-                return func(*args, **kwargs)
+                raise ValidationError(
+                    f"No Snowflake account found for identity_id '{identity_id}'. "
+                    "Link this account in Settings → Connections."
+                )
+
+            # Build a scoped SnowflakeConfig from the account bundle without
+            # mutating os.environ (thread-safe for concurrent API requests).
+            try:
+                base_cfg = get_settings().snowflake
+            except Exception:
+                # No base Snowflake config in .env — use a minimal placeholder;
+                # credential_builder will override all required fields from the account.
+                from semabridge.core.settings import SnowflakeConfig
+                base_cfg = SnowflakeConfig(
+                    account="placeholder",
+                    user="placeholder",
+                    warehouse="placeholder",
+                    database="placeholder",
+                )
+
+            snowflake_cfg = build_snowflake_config(account, session, base_cfg)
+            extractor = make_source_extractor("snowflake", snowflake_cfg)
+            func = getattr(extractor, func_name)
+            return func(*args, **kwargs)
     else:
         logger.info("No identity_id provided, using default system settings for SnowflakeExtractor")
-        settings = get_settings()
         try:
-            snowflake_config = settings.snowflake
-        except ValidationError as ve:
+            snowflake_config = get_settings().snowflake
+        except Exception as ve:
             logger.error("Snowflake config validation failed: %s", ve)
-            raise ValidationError((
-                    "Snowflake is not configured. "
-                    "Set SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, and SNOWFLAKE_PASSWORD in .env or environment variables."
-                ))
+            raise ValidationError(
+                "Snowflake is not configured. "
+                "Add a Snowflake connection in Settings → Connections, or set "
+                "SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, and SNOWFLAKE_PASSWORD in .env."
+            )
         extractor = make_source_extractor("snowflake", snowflake_config)
         func = getattr(extractor, func_name)
         return func(*args, **kwargs)

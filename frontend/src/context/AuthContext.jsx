@@ -36,8 +36,7 @@ export function AuthProvider({ children }) {
   // ── helpers ──────────────────────────────────────────────────
 
   const saveToken = useCallback((jwt) => {
-    // Token is now stored in an HttpOnly cookie set by the backend.
-    // Keep an in-memory copy so proactive refresh scheduling can read the exp claim.
+    previousTokenRef.current = jwt;
     setToken(jwt);
   }, []);
 
@@ -46,11 +45,14 @@ export function AuthProvider({ children }) {
     setUser(null);
   }, []);
 
-  /** Fetch /auth/me — relies on the HttpOnly access_token cookie */
-  const fetchMe = useCallback(async () => {
+  /** Fetch /auth/me — sends Bearer token if available, falls back to HttpOnly cookie */
+  const fetchMe = useCallback(async (jwt) => {
     try {
+      const currentToken = jwt || previousTokenRef.current;
+      const headers = currentToken ? { Authorization: `Bearer ${currentToken}` } : {};
       const res = await fetchWithTimeout(`${AUTH_BASE}/me`, {
         credentials: 'include',
+        headers,
       }, AUTH_REQUEST_TIMEOUT_MS);
       if (!res.ok) {
         return false;
@@ -169,7 +171,7 @@ export function AuthProvider({ children }) {
           const data = await res.json();
           if (data.access_token) {
             saveToken(data.access_token);
-            await fetchMe();
+            await fetchMe(data.access_token);
             scheduleProactiveRefresh(data.access_token);
             return; // Success — UI state preserved
           }
@@ -345,11 +347,10 @@ export function AuthProvider({ children }) {
       scheduleProactiveRefresh(data.access_token);
     }
     // Use inline user data from login response to skip the blocking /auth/me round trip.
-    // This saves 50-100ms by eliminating a sequential network request.
     if (data.user) {
       setUser(data.user);
     } else {
-      await fetchMe();
+      await fetchMe(data.access_token);
     }
     return data;
   }, [saveToken, fetchMe, scheduleProactiveRefresh]);

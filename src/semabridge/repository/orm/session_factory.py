@@ -294,24 +294,21 @@ class DatabaseManager:
                         poolclass=StaticPool,
                     )
                 else:
-                    # DuckDB on Windows: exclusive file locking prevents
-                    # multiple simultaneous connections (NullPool fails).
-                    # StaticPool shares ONE connection across all threads,
-                    # causing "transaction within transaction" crashes.
-                    #
-                    # QueuePool(pool_size=1, max_overflow=0) keeps exactly
-                    # one persistent connection and threads queue up to use
-                    # it serially — no file-lock conflicts, no shared-state
-                    # transaction collisions.
+                    # DuckDB (>=0.8) supports concurrent in-process connections
+                    # via its internal WAL. Use a small QueuePool (size=5) with
+                    # a short pool_timeout so concurrent requests get connections
+                    # quickly at startup without serializing on a single slot.
+                    # max_overflow=5 allows burst headroom; pool_timeout=5 lets
+                    # callers fail fast instead of hanging for 30s.
                     from sqlalchemy.pool import QueuePool
                     engine = create_engine(
                         url,
                         echo=echo,
                         future=True,
                         poolclass=QueuePool,
-                        pool_size=1,
-                        max_overflow=0,
-                        pool_timeout=30,
+                        pool_size=5,
+                        max_overflow=5,
+                        pool_timeout=5,
                         pool_pre_ping=True,
                     )
             else:

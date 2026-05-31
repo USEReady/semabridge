@@ -236,18 +236,20 @@ def _create_project_run(
         or _compat_load_repo_yaml_text()
         or _compat_default_project_yaml(_compat_projects[project_id])
     )
+    project_meta = _compat_projects[project_id]
     run = {
         "run_id": run_id,
         "id": run_id,
         "project_id": project_id,
-        "project_name": _compat_projects[project_id].get("name", project_id),
+        "project_name": project_meta.get("name", project_id),
         "run_type": str(run_type or "SYNC").upper(),
         "schedule": schedule_label,
         "status": "running",
         "sync_mode": sync_mode,
+        "account_id": project_meta.get("account_id") or project_meta.get("source_account_id"),
         "source_type": _extract_source_type_from_project_cfg(
             project_cfg,
-            fallback=str(_compat_projects[project_id].get("source") or "fabric").lower(),
+            fallback=str(project_meta.get("source") or "fabric").lower(),
         ),
         "message": "Execution started.",
         "logs": ["LIVE Run queued. Waiting for execution engine..."],
@@ -287,6 +289,9 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
             # execute_sync_request does not skip Stage 8/9.
             "deploy": True,
         }
+        account_id = run.get("account_id")
+        if account_id:
+            sync_payload["account_id"] = account_id
         user_id = run.get("user_id")
         if user_id is not None and str(user_id).strip():
             sync_payload["user_id"] = user_id
