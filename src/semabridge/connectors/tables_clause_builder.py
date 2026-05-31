@@ -58,12 +58,14 @@ class TablesClauseBuilder:
                 date_dataset.unique_name,
                 date_dataset.source_table or date_dataset.unique_name,
             )
-            safe_table = self.identifier_sanitizer.sanitize_table_name(resolved_source_table)
+            _unq = resolved_source_table.rsplit(".", 1)[-1] if "." in resolved_source_table else resolved_source_table
+            safe_table = self.identifier_sanitizer.sanitize_table_name(_unq)
             date_table_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
             resolved_date_col = self.schema_manager._resolve_physical_column_name(date_dataset, date_col)
             resolved_fiscal_col = self.schema_manager._resolve_physical_column_name(date_dataset, fiscal_col)
         else:
-            safe_table = self.identifier_sanitizer.sanitize_table_name(date_table)
+            _unq_dt = date_table.rsplit(".", 1)[-1] if "." in date_table else date_table
+            safe_table = self.identifier_sanitizer.sanitize_table_name(_unq_dt)
             date_table_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
             resolved_date_col = self.identifier_sanitizer.sanitize_column(date_col)
             resolved_fiscal_col = self.identifier_sanitizer.sanitize_column(fiscal_col)
@@ -127,13 +129,18 @@ class TablesClauseBuilder:
                 modeled_cols = set(self.schema_manager._collect_physical_source_columns(dataset).keys())
             
             source_table = source_table_mapping.get(dataset.unique_name, dataset.source_table or dataset.unique_name)
-            source_key = self.identifier_sanitizer.sanitize_table_name(source_table).upper()
+            _unq_src = source_table.rsplit(".", 1)[-1] if "." in source_table else source_table
+            source_key = self.identifier_sanitizer.sanitize_table_name(_unq_src).upper()
             live_cols = self.live_schema_metadata.get(source_key, set())
             dataset_col_lookup[dataset.unique_name] = set(live_cols) if live_cols else modeled_cols
 
         for dataset in datasets:
             source_table = source_table_mapping.get(dataset.unique_name, dataset.source_table or dataset.unique_name)
-            safe_table = self.identifier_sanitizer.sanitize_table_name(source_table)
+            # Strip any existing schema/database prefix (e.g. "db.schema.TableName" → "TableName")
+            # so sanitize_table_name doesn't replace dots with underscores and produce a
+            # double-prefixed name like "SEMABRIDGE_PUBLIC_SALESFACT_ENRICHED".
+            unqualified_table = source_table.rsplit(".", 1)[-1] if "." in source_table else source_table
+            safe_table = self.identifier_sanitizer.sanitize_table_name(unqualified_table)
             full_table = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
 
             alias = self._get_unique_alias(dataset.unique_name, registry)
