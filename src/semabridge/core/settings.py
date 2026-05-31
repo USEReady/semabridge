@@ -113,15 +113,18 @@ class FabricConfig(BaseSettings):
         extra="ignore",
     )
     
-    tenant_id: str = Field(..., description="Azure AD tenant ID")
-    client_id: str = Field(..., description="Azure AD application (client) ID")
+    # All fields are Optional so that identity-based (Account table) auth works
+    # without any FABRIC_* env vars. When env vars are absent the extractor
+    # resolves credentials from the Account record at runtime.
+    tenant_id: Optional[str] = Field(default=None, description="Azure AD tenant ID")
+    client_id: Optional[str] = Field(default=None, description="Azure AD application (client) ID")
     # client_secret is only required for service-principal (client-credentials) flow.
-    # Leave unset when using interactive device-code flow.
+    # Leave unset when using interactive device-code / identity-based flow.
     client_secret: Optional[SecretStr] = Field(
         default=None,
         description="Azure AD client secret (not required for device-code / delegated flow)",
     )
-    workspace_id: str = Field(..., description="Primary Fabric workspace ID")
+    workspace_id: Optional[str] = Field(default=None, description="Primary Fabric workspace ID")
     
     # Multi-workspace support
     workspace_ids: List[str] = Field(
@@ -694,10 +697,16 @@ class Settings(BaseSettings):
             return False
     
     def validate_fabric(self) -> bool:
-        """Validate Fabric configuration is complete."""
+        """Validate Fabric configuration is complete (env-var path only).
+
+        Returns True only when the *required* fields are populated from env vars.
+        This intentionally returns False when credentials come from the Account
+        table (identity-based path) — Stage 3 handles that via
+        _has_fabric_identity_auth() / fabric_account_ctx_ok.
+        """
         try:
-            _ = self.fabric
-            return True
+            cfg = self.fabric
+            return bool(cfg.client_id and cfg.workspace_id)
         except Exception:
             return False
 
