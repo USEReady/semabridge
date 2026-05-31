@@ -79,10 +79,13 @@ def _step3_resolve_auth(self, context: RunContext) -> None:
             fabric_env_ok = config.validate_fabric()
             identity_id = str(getattr(getattr(config, "source", None), "identity_id", "") or "").strip()
             fabric_identity_ok = self._has_fabric_identity_auth(identity_id)
+            # If scoped_account_env injected credentials for a Fabric account,
+            # context.account_id is set — treat that as proof of identity auth.
+            fabric_account_ctx_ok = bool(getattr(context, "account_id", None)) and not fabric_env_ok
             fabric_ui_ok = self._has_fabric_interactive_auth()
-            if not (fabric_env_ok or fabric_identity_ok or fabric_ui_ok):
+            if not (fabric_env_ok or fabric_identity_ok or fabric_account_ctx_ok or fabric_ui_ok):
                 missing.append("Fabric credentials (FABRIC_*)")
-            elif fabric_identity_ok:
+            elif fabric_identity_ok or fabric_account_ctx_ok:
                 auth_sources.append("DB identity")
             elif fabric_ui_ok:
                 auth_sources.append("UI token")
