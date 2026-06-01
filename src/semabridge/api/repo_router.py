@@ -396,6 +396,7 @@ def _build_graph(
                     "source_type": table["source_type"],
                     "columns": table["columns"],
                     "nodeType": "table",
+                    "model_id": mid,
                     "status": "valid",
                 },
             })
@@ -420,6 +421,7 @@ def _build_graph(
                     "expression": measure["expression"],
                     "data_type": measure["data_type"],
                     "parent_model": mid,
+                    "model_id": mid,
                     "nodeType": "measure",
                 },
             })

@@ -901,6 +901,7 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
                 "source_type": str(ds.get("source_type") or "snapshot"),
                 "columns": columns,
                 "nodeType": "table",
+                "model_id": detected_model,
                 "status": "valid",
             },
         })
@@ -931,6 +932,7 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
                 "expression": str(measure.get("expression") or ""),
                 "data_type": str(measure.get("data_type") or measure.get("format_string") or ""),
                 "parent_model": detected_model,
+                "model_id": detected_model,
                 "nodeType": "measure",
             },
         })
@@ -952,8 +954,16 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
 
         from_schema = rel.get("from_schema") or rel.get("source_schema") or ""
         to_schema = rel.get("to_schema") or rel.get("target_schema") or ""
-        from_table = rel.get("from_table") or rel.get("from_model") or rel.get("from") or rel.get("source")
-        to_table = rel.get("to_table") or rel.get("to_model") or rel.get("to") or rel.get("target")
+        # SMLRelationship serialises as from_dataset/to_dataset; also accept
+        # legacy from_table/to_table and other aliases used by older snapshots.
+        from_table = (
+            rel.get("from_dataset") or rel.get("from_table") or
+            rel.get("from_model") or rel.get("from") or rel.get("source")
+        )
+        to_table = (
+            rel.get("to_dataset") or rel.get("to_table") or
+            rel.get("to_model") or rel.get("to") or rel.get("target")
+        )
 
         from_key = _qualify(from_schema, str(from_table or "")).strip()
         to_key = _qualify(to_schema, str(to_table or "")).strip()
@@ -1000,8 +1010,10 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
             })
 
         cardinality = str(rel.get("cardinality") or rel.get("relationship_type") or rel.get("type") or "many-to-one")
-        from_col = str(rel.get("from_column") or (rel.get("from_columns") or [""])[0] or rel.get("join_key") or "")
-        to_col = str(rel.get("to_column") or (rel.get("to_columns") or [""])[0] or "")
+        _from_cols = rel.get("from_columns") or []
+        _to_cols = rel.get("to_columns") or []
+        from_col = str(rel.get("from_column") or (_from_cols[0] if _from_cols else "") or rel.get("join_key") or "")
+        to_col = str(rel.get("to_column") or (_to_cols[0] if _to_cols else "") or "")
         join_label = f"{from_col} → {to_col}" if from_col and to_col else from_col
 
         edges.append({
