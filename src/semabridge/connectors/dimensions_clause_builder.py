@@ -115,8 +115,15 @@ class DimensionsClauseBuilder:
             if not alias:
                 continue
                 
+            # Synthetic/projected columns injected by the enriched-view builder —
+            # these are scalar subqueries, not physical base-table columns, and
+            # Snowflake rejects them in semantic view DIMENSIONS clauses.
+            _SYNTHETIC_COLS = {"MAX_DATE", "_CURRENT_FISCAL_PERIOD", "TOTAL_UNITS_ALL"}
+
             for col in dataset.columns:
                 if col.unique_name.startswith("RowNumber") or col.unique_name.startswith("_"):
+                    continue
+                if col.unique_name.upper() in _SYNTHETIC_COLS:
                     continue
                 
                 source_expr = getattr(col, 'source_expression', None)
