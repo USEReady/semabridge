@@ -73,18 +73,10 @@ async def list_job_runs(request: Request):
 
 
 @router.delete("/api/jobs/runs")
-async def clear_job_runs(request: Request):
+async def clear_job_runs(request: Request, before: Optional[str] = None):
+    """Delete job runs. Optional ?before=<ISO-datetime> deletes only runs on or before that timestamp."""
     user_id = require_request_user_id(request)
-    if auth_is_enabled():
-        from semabridge.api.services.project_shared import _compat_project_runs, _compat_save_store
-
-        for project_id in list(_compat_project_runs.keys()):
-            if is_project_owned_by_user(project_id, user_id, log_denied=False, log_prefix="JobProjectAuth"):
-                _compat_project_runs[project_id] = []
-        _compat_save_store()
-        return {"status": "success", "message": "Scoped job runs cleared."}
-
-    return await clear_job_runs_compat()
+    return await clear_job_runs_compat(before=before, user_id=user_id if auth_is_enabled() else None)
 
 
 @router.get("/api/jobs/config")

@@ -585,26 +585,102 @@ async def get_project_lineage_compat(project_id: str) -> Dict[str, Any]:
     return {"nodes": nodes, "edges": edges}
 
 
-async def clear_job_runs_compat():
-    """Clear all job runs across all projects."""
+async def clear_job_runs_compat(before: Optional[str] = None, user_id: Optional[str] = None):
+    """Clear job runs, optionally filtered by date and/or user ownership.
+
+    Args:
+        before: ISO-8601 datetime string (e.g. "2026-05-31T06:23:53"). When
+                provided, only runs whose started_at/created_at is on or before
+                this timestamp are deleted.
+        user_id: When provided (auth mode), only delete runs belonging to
+                 projects owned by this user.
+    """
     import logging
+    from datetime import datetime, timezone
+
     logger = logging.getLogger(__name__)
 
     _compat_ensure_loaded()
 
+    # Parse the cutoff timestamp
+    cutoff_dt: Optional[datetime] = None
+    if before:
+        try:
+            # Accept both "2026-05-31T06:23:53" and "2026-05-31 06:23:53" forms
+            cutoff_dt = datetime.fromisoformat(before.replace(" ", "T"))
+            if cutoff_dt.tzinfo is None:
+                cutoff_dt = cutoff_dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            logger.warning("clear_job_runs_compat: invalid 'before' value '%s' — ignoring filter", before)
+
+    deleted_db = 0
     try:
         from semabridge.repository.orm.models import Run
-        from sqlalchemy import delete, select
+        from sqlalchemy import select
         from semabridge.repository.orm.session_factory import db_manager
 
         with db_manager.get_session() as session:
             runs = session.execute(select(Run)).scalars().all()
             for r in runs:
+                # Date filter
+                if cutoff_dt is not None:
+                    run_ts = getattr(r, "started_at", None) or getattr(r, "created_at", None)
+                    if run_ts is not None:
+                        if isinstance(run_ts, str):
+                            try:
+                                run_ts = datetime.fromisoformat(run_ts.replace("Z", "+00:00"))
+                            except ValueError:
+                                run_ts = None
+                        if run_ts is not None:
+                            if run_ts.tzinfo is None:
+                                run_ts = run_ts.replace(tzinfo=timezone.utc)
+                            if run_ts > cutoff_dt:
+                                continue  # newer than cutoff — keep
+                # Owner filter
+                if user_id:
+                    from semabridge.api.services.project_ownership_service import is_project_owned_by_user
+                    if not is_project_owned_by_user(str(r.project_id or ""), user_id,
+                                                    log_denied=False, log_prefix="ClearRuns"):
+                        continue
                 session.delete(r)
+                deleted_db += 1
             session.commit()
     except Exception as exc:
         logger.error("Failed to connect to ORM to clear runs: %s", exc)
 
-    _compat_project_runs.clear()
+    # Mirror filter on the in-memory compat store
+    deleted_compat = 0
+    for project_id in list(_compat_project_runs.keys()):
+        if user_id:
+            from semabridge.api.services.project_ownership_service import is_project_owned_by_user
+            if not is_project_owned_by_user(project_id, user_id, log_denied=False, log_prefix="ClearRuns"):
+                continue
+        if cutoff_dt is not None:
+            kept = []
+            for run in _compat_project_runs.get(project_id, []):
+                run_ts_str = run.get("started_at") or run.get("created_at") or run.get("timestamp") or ""
+                if run_ts_str:
+                    try:
+                        run_ts = datetime.fromisoformat(str(run_ts_str).replace("Z", "+00:00"))
+                        if run_ts.tzinfo is None:
+                            run_ts = run_ts.replace(tzinfo=timezone.utc)
+                        if run_ts > cutoff_dt:
+                            kept.append(run)
+                            continue
+                    except ValueError:
+                        pass
+                deleted_compat += 1
+            _compat_project_runs[project_id] = kept
+        else:
+            deleted_compat += len(_compat_project_runs.get(project_id, []))
+            _compat_project_runs[project_id] = []
+
     _compat_save_store()
-    return {"status": "success", "message": "All runs cleared."}
+
+    label = f"on or before {before}" if before else "all"
+    return {
+        "status": "success",
+        "message": f"Cleared runs {label}.",
+        "deleted_db": deleted_db,
+        "deleted_compat": deleted_compat,
+    }
