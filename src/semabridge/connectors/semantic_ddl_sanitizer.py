@@ -881,10 +881,27 @@ class SemanticDDLSanitizer:
                 idx += 1
                 continue
             start = idx + 1
+            # Track paren depth so multi-line inline subqueries inside TABLES
+            # (e.g. "SALESFACT AS (\n  SELECT ...\n) PRIMARY KEY (...)") are
+            # not mistaken for the closing paren of the clause itself.
             end = start
-            while end < len(all_lines) and not all_lines[end].strip().startswith(")"):
+            depth = 1  # we are one level inside "CLAUSE_HEADER ("
+            while end < len(all_lines):
+                line_stripped = all_lines[end].strip()
+                depth += line_stripped.count('(') - line_stripped.count(')')
+                if depth <= 0:
+                    break
                 end += 1
-            item_idxs = [j for j in range(start, end) if all_lines[j].strip()]
+            # Only normalise top-level items (depth==1 lines, i.e. not nested
+            # inside an inline subquery).  A top-level item line is one where
+            # the running depth before that line is exactly 1.
+            item_idxs = []
+            d = 1
+            for j in range(start, end):
+                line_stripped = all_lines[j].strip()
+                if d == 1 and line_stripped:
+                    item_idxs.append(j)
+                d += line_stripped.count('(') - line_stripped.count(')')
             for pos, line_idx in enumerate(item_idxs):
                 base = re.sub(r',\s*$', '', all_lines[line_idx].rstrip())
                 all_lines[line_idx] = f"{base}," if pos < len(item_idxs) - 1 else base
