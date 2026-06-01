@@ -277,13 +277,22 @@ class SnowflakeConnectionManager:
 
     @staticmethod
     def _extract_invalid_identifier(exc: Exception) -> Optional[str]:
-        """Extract invalid identifier token from Snowflake error text."""
-        match = re.search(
-            r"invalid identifier '([^']+)'",
-            str(exc or ""),
-            flags=re.IGNORECASE,
-        )
-        return match.group(1) if match else None
+        """Extract invalid identifier token from Snowflake error text.
+
+        Handles both:
+        - 000904: invalid identifier 'FOO'
+        - 010220: Invalid metric definition for 'ALIAS.METRIC_NAME': ...
+        """
+        msg = str(exc or "")
+        # Standard invalid-identifier error
+        m = re.search(r"invalid identifier '([^']+)'", msg, flags=re.IGNORECASE)
+        if m:
+            return m.group(1)
+        # Semantic-view metric definition error (cross-metric reference)
+        m = re.search(r"[Ii]nvalid metric definition for '([^']+)'", msg)
+        if m:
+            return m.group(1)
+        return None
 
     @staticmethod
     def _quote_ident(value: str) -> str:
