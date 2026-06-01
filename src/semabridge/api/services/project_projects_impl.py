@@ -826,6 +826,7 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
 
     detected_model = str(sml.get("model_name") or model_name or getattr(snapshot_obj, "project_id", "") or "model").strip()
     model_node_id = f"model-{_safe_id(detected_model)}"
+    detected_schema = "PUBLIC"  # updated below as we encounter dataset schemas
 
     nodes: List[Dict[str, Any]] = [{
         "id": model_node_id,
@@ -866,6 +867,7 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
         if not isinstance(ds, dict):
             continue
         schema = str(ds.get("source_schema") or ds.get("schema") or ds.get("database_schema") or "PUBLIC")
+        detected_schema = schema  # remember the most recently seen schema for relationship resolver
         table = str(
             ds.get("source_table")
             or ds.get("table")
@@ -973,6 +975,34 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
         if (not include_system_tables) and (_is_system_table(from_key) or _is_system_table(to_key)):
             continue
 
+        def _resolve_table_key(key: str, schema: str) -> str:
+            """Return the key already present in table_nodes, trying qualified
+            and unqualified forms so relationship edges connect to the existing
+            table nodes rather than creating orphaned duplicates."""
+            if key in table_nodes:
+                return key
+            # Try with default schema prefix if key is unqualified
+            for candidate_schema in (schema, "PUBLIC", detected_schema):
+                if candidate_schema:
+                    q = f"{candidate_schema}.{key}"
+                    if q in table_nodes:
+                        return q
+            # Try stripping schema from key to match unqualified existing node
+            unqualified = key.rsplit(".", 1)[-1] if "." in key else key
+            if unqualified in table_nodes:
+                return unqualified
+            # Try unqualified against all keys via case-insensitive suffix match
+            key_upper = key.upper()
+            unq_upper = unqualified.upper()
+            for existing_key in table_nodes:
+                existing_upper = existing_key.upper()
+                if existing_upper == key_upper or existing_upper.endswith("." + unq_upper):
+                    return existing_key
+            return key  # Not found — caller will create a new node
+
+        from_key = _resolve_table_key(from_key, from_schema)
+        to_key = _resolve_table_key(to_key, to_schema)
+
         if from_key not in table_nodes:
             nid = f"table-{_safe_id(from_key)}"
             table_nodes[from_key] = nid
@@ -987,6 +1017,7 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
                     "source_type": "snapshot",
                     "columns": [],
                     "nodeType": "table",
+                    "model_id": detected_model,
                     "status": "broken",
                 },
             })
@@ -1005,6 +1036,7 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
                     "source_type": "snapshot",
                     "columns": [],
                     "nodeType": "table",
+                    "model_id": detected_model,
                     "status": "broken",
                 },
             })
