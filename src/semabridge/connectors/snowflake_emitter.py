@@ -328,7 +328,7 @@ class SnowflakeEmitter(BaseEmitter):
                         if invalid_id:
                             try:
                                 from semabridge.connectors.semantic_ddl_sanitizer import SemanticDDLSanitizer
-                                sanitizer = SemanticDDLSanitizer()
+                                sanitizer = SemanticDDLSanitizer(self._id)
                                 remediated_sql, was_changed = sanitizer.remediate_invalid_identifier(sql, invalid_id)
                                 logger.warning(
                                     "DDL[%d] remediation attempt for '%s': was_changed=%s\n"
