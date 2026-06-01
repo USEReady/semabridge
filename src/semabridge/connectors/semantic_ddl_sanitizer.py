@@ -785,7 +785,11 @@ class SemanticDDLSanitizer:
                 in_tables = in_relationships = in_dimensions = False
                 remediated_lines.append(line)
                 continue
-            if (in_tables or in_relationships or in_dimensions or in_metrics) and line.strip().startswith(")"):
+            # A bare ")" line closes the current clause — but only if it is
+            # truly a clause-closing paren (i.e. the stripped line is exactly
+            # ")" or ");").  Inner parentheses inside multi-line expressions
+            # start with ")" but are followed by more content.
+            if (in_tables or in_relationships or in_dimensions or in_metrics) and re.match(r'^\s*\)\s*;?\s*$', line):
                 in_tables = in_relationships = in_dimensions = in_metrics = False
                 remediated_lines.append(line)
                 continue
@@ -826,13 +830,26 @@ class SemanticDDLSanitizer:
                 continue
 
             if in_metrics and contains_invalid:
+                # Replace the metric expression with a NULL placeholder so the
+                # metric declaration survives but produces no data.  The
+                # metric_line_pattern extracts the alias/name prefix; if it
+                # doesn't match (e.g. synonym suffix or unusual formatting)
+                # we still drop the whole line so the clause stays valid.
                 metric_match = metric_line_pattern.match(line)
                 if metric_match:
                     prefix = metric_match.group(1)
-                    comma = metric_match.group("comma") or ""
-                    remediated_lines.append(f"{prefix}CAST(NULL AS DOUBLE){comma}")
-                    changed = True
-                    continue
+                    # Strip any trailing synonym clause from the original line
+                    # so we can reconstruct a clean replacement.
+                    raw_after_as = line[metric_match.end(1):]
+                    # Detect trailing comma (before optional WITH SYNONYMS or $)
+                    trailing_comma = "," if raw_after_as.rstrip().endswith(",") or "," in raw_after_as else ""
+                    remediated_lines.append(f"{prefix}CAST(NULL AS DOUBLE){trailing_comma}")
+                else:
+                    # Continuation line or unrecognised format — drop it entirely;
+                    # _normalize_all_clause_commas will fix up trailing commas.
+                    pass
+                changed = True
+                continue
 
             remediated_lines.append(line)
 

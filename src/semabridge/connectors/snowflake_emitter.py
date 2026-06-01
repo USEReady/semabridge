@@ -311,6 +311,14 @@ class SnowflakeEmitter(BaseEmitter):
                     if not sql:
                         continue
                     try:
+                        # Dump DDL to tmp file for debugging
+                        try:
+                            import tempfile, os as _os
+                            _dbg = _os.path.join(tempfile.gettempdir(), f"semabridge_ddl_{idx}.sql")
+                            open(_dbg, "w").write(sql)
+                            logger.warning("DDL[%d] written to %s", idx, _dbg)
+                        except Exception:
+                            pass
                         self.connection_manager._execute_sql(cur, sql, context=f"DDL[{idx}]")
                     except Exception as ddl_exc:
                         # Auto-remediate invalid identifier errors by quoting the
@@ -322,6 +330,12 @@ class SnowflakeEmitter(BaseEmitter):
                                 from semabridge.connectors.semantic_ddl_sanitizer import SemanticDDLSanitizer
                                 sanitizer = SemanticDDLSanitizer()
                                 remediated_sql, was_changed = sanitizer.remediate_invalid_identifier(sql, invalid_id)
+                                logger.warning(
+                                    "DDL[%d] remediation attempt for '%s': was_changed=%s\n"
+                                    "--- DDL (first 60 lines) ---\n%s\n--- END ---",
+                                    idx, invalid_id, was_changed,
+                                    "\n".join(sql.splitlines()[:60]),
+                                )
                                 if was_changed:
                                     logger.warning(
                                         "DDL[%d] failed with invalid identifier '%s'; "
