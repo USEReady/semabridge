@@ -713,6 +713,18 @@ class SemanticDDLSanitizer:
             return ddl, False
 
         invalid_norm = invalid_identifier.upper().replace('"', "")
+
+        # Special case: MAX_DATE is a synthetic anchor that the translator
+        # injected by replacing CURRENT_DATE().  Snowflake semantic views do
+        # not have this column in scope, but CURRENT_DATE() is valid.  Replace
+        # all bare MAX_DATE tokens globally rather than nulling out metrics.
+        if invalid_norm == "MAX_DATE":
+            # Replace bare MAX_DATE (not inside quotes) with CURRENT_DATE()
+            fixed = re.sub(r'(?<!["\w])MAX_DATE(?!["\w])', 'CURRENT_DATE()', ddl)
+            if fixed != ddl:
+                return fixed, True
+            return ddl, False
+
         invalid_alias: Optional[str] = None
         invalid_col: Optional[str] = None
         if "." in invalid_norm:

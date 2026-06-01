@@ -348,9 +348,12 @@ class SnowflakeEmitter(BaseEmitter):
                                     continue  # retry succeeded — move on to next DDL
                             except Exception as rem_exc:
                                 logger.warning(
-                                    "DDL[%d] auto-remediation failed for '%s': %s",
+                                    "DDL[%d] auto-remediation failed for '%s': %s\n"
+                                    "--- Remediated DDL ---\n%s\n--- END ---",
                                     idx, invalid_id, rem_exc,
+                                    "\n".join(remediated_sql.splitlines()[:80]),
                                 )
+                                raise rem_exc from ddl_exc
                         raise  # re-raise original exception if remediation not possible
 
                 # Step 5: Artifact Generation (Cortex YAML / Audit)

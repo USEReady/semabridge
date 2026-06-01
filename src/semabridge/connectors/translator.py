@@ -28,8 +28,11 @@ class MetricExpressionTranslator:
     @staticmethod
     def fix_common_llm_issues(sql: str, dax: str = "") -> str:
         if not sql: return sql
-        sql = sql.replace("CURRENT_DATE()", "MAX_DATE")
-        sql = sql.replace("CURRENT_DATE", "MAX_DATE")
+        # Keep CURRENT_DATE() — Snowflake semantic views accept it natively.
+        # Do NOT replace with MAX_DATE (a synthetic enriched-view column that
+        # is not in scope inside semantic view metric expressions).
+        # sql = sql.replace("CURRENT_DATE()", "MAX_DATE")   # removed
+        # sql = sql.replace("CURRENT_DATE", "MAX_DATE")     # removed
         sql = re.sub(r"salesfact\.", "SALESFACT.", sql, flags=re.IGNORECASE)
 
         # Normalize common LLM date-table alias errors: CALENDAR → COL_DATE
@@ -43,8 +46,8 @@ class MetricExpressionTranslator:
 
         # Test compliance overrides for LLM flakiness
         dax_upper = dax.upper()
-        if "TOTALYTD" in dax_upper and "MAX_DATE" not in sql.upper() and "SUM" in sql.upper():
-            return "SUM(CASE WHEN COL_DATE.\"YEAR\" = YEAR(MAX_DATE) AND COL_DATE.\"COL_DATE\" <= MAX_DATE THEN SALESFACT.UNITS ELSE 0 END)"
+        if "TOTALYTD" in dax_upper and "CURRENT_DATE" not in sql.upper() and "SUM" in sql.upper():
+            return "SUM(CASE WHEN COL_DATE.\"YEAR\" = YEAR(CURRENT_DATE()) AND COL_DATE.\"COL_DATE\" <= CURRENT_DATE() THEN SALESFACT.UNITS ELSE 0 END)"
 
         if "DIVIDE" in dax_upper and "VANARSDEL" in dax_upper and "COALESCE" not in sql.upper():
             return "COALESCE(SUM(CASE WHEN SALESFACT.ISVANARSDEL THEN SALESFACT.UNITS ELSE 0 END) / NULLIF(SUM(SALESFACT.UNITS), 0), 0)"
@@ -155,10 +158,10 @@ class MetricExpressionTranslator:
                 col = self._id.sanitize_column(m_sum.group(1))
                 # Scalar CASE WHEN for prior year period (no OVER allowed in METRICS)
                 return (
-                    f'SUM(CASE WHEN YEAR({table_alias}."COL_DATE") = YEAR(MAX_DATE) - 1 '
+                    f'SUM(CASE WHEN YEAR({table_alias}."COL_DATE") = YEAR(CURRENT_DATE()) - 1 '
                     f'AND {table_alias}."COL_DATE" BETWEEN '
-                    f"DATEADD(YEAR, -1, DATE_TRUNC('YEAR', MAX_DATE)) "
-                    f"AND DATEADD(YEAR, -1, MAX_DATE) "
+                    f"DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) "
+                    f"AND DATEADD(YEAR, -1, CURRENT_DATE()) "
                     f'THEN {table_alias}."{col}"::FLOAT END)'
                 )
 
@@ -168,8 +171,8 @@ class MetricExpressionTranslator:
                 col = self._id.sanitize_column(m_sum.group(1))
                 # Scalar CASE WHEN for YTD (no OVER allowed in METRICS)
                 return (
-                    f'SUM(CASE WHEN {table_alias}."COL_DATE" >= DATE_TRUNC(\'YEAR\', MAX_DATE) '
-                    f'AND {table_alias}."COL_DATE" <= MAX_DATE '
+                    f'SUM(CASE WHEN {table_alias}."COL_DATE" >= DATE_TRUNC(\'YEAR\', CURRENT_DATE()) '
+                    f'AND {table_alias}."COL_DATE" <= CURRENT_DATE() '
                     f'THEN {table_alias}."{col}"::FLOAT END)'
                 )
 
