@@ -99,18 +99,23 @@ export default function TableNode({ data, selected }) {
             }}>
                 {data.columns && data.columns.length > 0 ? (
                     <>
-                        {data.columns.slice(0, 6).map((col, i) => (
-                            <span key={i} style={{
-                                background: '#18181b',
-                                color: '#22c55e',
-                                borderRadius: 4,
-                                border: '1px solid #22c55e33',
-                                padding: '2px 8px',
-                                fontWeight: 600,
-                                fontSize: 10,
-                                letterSpacing: '.01em',
-                            }}>{col.name}</span>
-                        ))}
+                        {data.columns.slice(0, 6).map((col, i) => {
+                            const colLabel = typeof col === 'string'
+                                ? col
+                                : (col.unique_name || col.label || col.name || col.column_name || '');
+                            return (
+                                <span key={i} style={{
+                                    background: '#18181b',
+                                    color: '#22c55e',
+                                    borderRadius: 4,
+                                    border: '1px solid #22c55e33',
+                                    padding: '2px 8px',
+                                    fontWeight: 600,
+                                    fontSize: 10,
+                                    letterSpacing: '.01em',
+                                }}>{colLabel}</span>
+                            );
+                        })}
                         {data.columns.length > 6 && (
                             <span style={{ color: '#64748b', fontWeight: 600, fontSize: 10 }}>+{data.columns.length - 6} more</span>
                         )}

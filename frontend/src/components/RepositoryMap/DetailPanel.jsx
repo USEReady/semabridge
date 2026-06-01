@@ -333,15 +333,21 @@ export default function DetailPanel({ filePreview, selectedNode, onClose }) {
                                         }}>
                                             <div style={{ fontWeight: 700, fontSize: 10, color: 'var(--text-tertiary)', padding: '4px 0' }}>Name</div>
                                             <div style={{ fontWeight: 700, fontSize: 10, color: 'var(--text-tertiary)', padding: '4px 0' }}>Type</div>
-                                            {selectedNode.columns.map((col, i) => (
-                                                <div
-                                                    key={col.id || col.name || i}
-                                                    style={{ display: 'contents' }}
-                                                >
-                                                    <span style={{ color: 'var(--text-primary)', padding: '4px 0', wordBreak: 'break-word' }}>{col.name}</span>
-                                                    <span style={{ color: 'var(--text-secondary)', fontFamily: 'monospace', fontSize: 10, padding: '4px 0' }}>{col.data_type}</span>
-                                                </div>
-                                            ))}
+                                            {selectedNode.columns.map((col, i) => {
+                                                const colName = typeof col === 'string'
+                                                    ? col
+                                                    : (col.unique_name || col.label || col.name || col.column_name || '');
+                                                const colType = col.data_type || col.type || '';
+                                                return (
+                                                    <div
+                                                        key={col.id || colName || i}
+                                                        style={{ display: 'contents' }}
+                                                    >
+                                                        <span style={{ color: 'var(--text-primary)', padding: '4px 0', wordBreak: 'break-word' }}>{colName}</span>
+                                                        <span style={{ color: 'var(--text-secondary)', fontFamily: 'monospace', fontSize: 10, padding: '4px 0' }}>{colType}</span>
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
                                     </Section>
                                 </CollapsibleSection>
