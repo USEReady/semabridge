@@ -330,7 +330,23 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         if (nodeData?.nodeType === 'table' && nodeData?.id) {
             setSelectedTableId(String(nodeData.id));
         }
-        setSelectedNode(nodeData);
+
+        // Enrich table nodes with their associated measures so DetailPanel
+        // can display the "Measures/Metrics" section. Measures are separate
+        // graph nodes connected to the model node via edges (source=modelNode,
+        // target=measureNode). We find all measure nodes whose parent_model
+        // matches this table's model_id, or fall back to all measure nodes.
+        let enrichedNode = nodeData;
+        if (nodeData?.nodeType === 'table') {
+            const allNodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
+            const measureNodes = allNodes
+                .filter(n => n.data?.nodeType === 'measure')
+                .map(n => n.data);
+            if (measureNodes.length > 0 && !nodeData.measures?.length) {
+                enrichedNode = { ...nodeData, measures: measureNodes };
+            }
+        }
+        setSelectedNode(enrichedNode);
     };
 
     const handleCloseDetail = () => {
