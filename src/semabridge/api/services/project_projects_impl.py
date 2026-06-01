@@ -935,6 +935,7 @@ def _snapshot_graph_payload(snapshot_obj: Any, model_name: str, include_system_t
                 "data_type": str(measure.get("data_type") or measure.get("format_string") or ""),
                 "parent_model": detected_model,
                 "model_id": detected_model,
+                "dataset": str(measure.get("dataset") or measure.get("source_dataset") or ""),
                 "nodeType": "measure",
             },
         })

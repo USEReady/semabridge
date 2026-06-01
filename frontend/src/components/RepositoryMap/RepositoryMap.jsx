@@ -331,19 +331,40 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             setSelectedTableId(String(nodeData.id));
         }
 
-        // Enrich table nodes with their associated measures so DetailPanel
-        // can display the "Measures/Metrics" section. Measures are separate
-        // graph nodes connected to the model node via edges (source=modelNode,
-        // target=measureNode). We find all measure nodes whose parent_model
-        // matches this table's model_id, or fall back to all measure nodes.
+        // Enrich table nodes with only the measures that belong to this table.
+        // Each measure node carries a `dataset` field (from SMLMetric.dataset)
+        // that matches the dataset's unique_name. We match against table_name,
+        // label, and the unqualified part of the qualified label (e.g.
+        // "PUBLIC.SalesFact" → "SalesFact") so the lookup is robust to
+        // schema-prefixed node labels.
         let enrichedNode = nodeData;
         if (nodeData?.nodeType === 'table') {
             const allNodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
-            const measureNodes = allNodes
+            const allMeasures = allNodes
                 .filter(n => n.data?.nodeType === 'measure')
                 .map(n => n.data);
-            if (measureNodes.length > 0 && !nodeData.measures?.length) {
-                enrichedNode = { ...nodeData, measures: measureNodes };
+
+            if (allMeasures.length > 0) {
+                // Candidate names for this table (unqualified + qualified)
+                const tableLabel = String(nodeData.label || nodeData.table_name || '');
+                const unqualified = tableLabel.includes('.')
+                    ? tableLabel.split('.').pop()
+                    : tableLabel;
+                const candidates = new Set(
+                    [tableLabel, unqualified, nodeData.table_name].filter(Boolean).map(s => s.toLowerCase())
+                );
+
+                const tableMeasures = allMeasures.filter(m => {
+                    const ds = String(m.dataset || '').toLowerCase();
+                    return ds && candidates.has(ds);
+                });
+
+                // Fall back to all measures only when no measure has dataset info
+                const hasDsInfo = allMeasures.some(m => m.dataset);
+                enrichedNode = {
+                    ...nodeData,
+                    measures: hasDsInfo ? tableMeasures : allMeasures,
+                };
             }
         }
         setSelectedNode(enrichedNode);
