@@ -311,50 +311,46 @@ class SnowflakeEmitter(BaseEmitter):
                     if not sql:
                         continue
                     try:
-                        # Dump DDL to tmp file for debugging
-                        try:
-                            import tempfile, os as _os
-                            _dbg = _os.path.join(tempfile.gettempdir(), f"semabridge_ddl_{idx}.sql")
-                            open(_dbg, "w").write(sql)
-                            logger.warning("DDL[%d] written to %s", idx, _dbg)
-                        except Exception:
-                            pass
                         self.connection_manager._execute_sql(cur, sql, context=f"DDL[{idx}]")
                     except Exception as ddl_exc:
-                        # Auto-remediate invalid identifier errors by quoting the
-                        # offending token and retrying once.
-                        exc_str = str(ddl_exc)
-                        invalid_id = self.connection_manager._extract_invalid_identifier(ddl_exc)
-                        if invalid_id:
+                        # Auto-remediate invalid identifier errors iteratively.
+                        # Each pass fixes one invalid identifier; we retry up to
+                        # MAX_REMEDIATION_PASSES times so chained bad identifiers
+                        # (e.g. MAX_DATE → fixed, then cross-metric reference → fixed)
+                        # are all resolved before giving up.
+                        from semabridge.connectors.semantic_ddl_sanitizer import SemanticDDLSanitizer
+                        _sanitizer = SemanticDDLSanitizer(self._id)
+                        _current_sql = sql
+                        _current_exc = ddl_exc
+                        _MAX_PASSES = 10
+                        _remediated = False
+                        for _pass in range(_MAX_PASSES):
+                            _invalid_id = self.connection_manager._extract_invalid_identifier(_current_exc)
+                            if not _invalid_id:
+                                break
+                            _fixed_sql, _changed = _sanitizer.remediate_invalid_identifier(_current_sql, _invalid_id)
+                            if not _changed:
+                                logger.warning(
+                                    "DDL[%d] pass %d: sanitizer could not fix '%s' — giving up",
+                                    idx, _pass + 1, _invalid_id,
+                                )
+                                break
+                            logger.warning(
+                                "DDL[%d] pass %d: fixing invalid identifier '%s'",
+                                idx, _pass + 1, _invalid_id,
+                            )
+                            _current_sql = _fixed_sql
                             try:
-                                from semabridge.connectors.semantic_ddl_sanitizer import SemanticDDLSanitizer
-                                sanitizer = SemanticDDLSanitizer(self._id)
-                                remediated_sql, was_changed = sanitizer.remediate_invalid_identifier(sql, invalid_id)
-                                logger.warning(
-                                    "DDL[%d] remediation attempt for '%s': was_changed=%s\n"
-                                    "--- DDL (first 60 lines) ---\n%s\n--- END ---",
-                                    idx, invalid_id, was_changed,
-                                    "\n".join(sql.splitlines()[:60]),
+                                self.connection_manager._execute_sql(
+                                    cur, _current_sql, context=f"DDL[{idx}] pass {_pass + 1}"
                                 )
-                                if was_changed:
-                                    logger.warning(
-                                        "DDL[%d] failed with invalid identifier '%s'; "
-                                        "retrying after auto-remediation",
-                                        idx, invalid_id,
-                                    )
-                                    self.connection_manager._execute_sql(
-                                        cur, remediated_sql, context=f"DDL[{idx}] (remediated)"
-                                    )
-                                    continue  # retry succeeded — move on to next DDL
-                            except Exception as rem_exc:
-                                _rem_preview = "\n".join(remediated_sql.splitlines()[:80]) if 'remediated_sql' in dir() else "<not generated>"
-                                logger.warning(
-                                    "DDL[%d] auto-remediation failed for '%s': %s\n"
-                                    "--- Remediated DDL ---\n%s\n--- END ---",
-                                    idx, invalid_id, rem_exc, _rem_preview,
-                                )
-                                raise rem_exc from ddl_exc
-                        raise  # re-raise original exception if remediation not possible
+                                _remediated = True
+                                break
+                            except Exception as _retry_exc:
+                                _current_exc = _retry_exc
+                        if _remediated:
+                            continue  # DDL succeeded after remediation
+                        raise _current_exc  # re-raise last failure
 
                 # Step 5: Artifact Generation (Cortex YAML / Audit)
                 if not is_osi:
