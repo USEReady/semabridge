@@ -869,8 +869,13 @@ class SemanticDDLSanitizer:
         return "\n".join(remediated_lines), changed
 
     def _normalize_all_clause_commas(self, all_lines: list[str]) -> None:
-        """Normalize trailing commas inside semantic-view clause blocks."""
-        clauses = ["TABLES (", "RELATIONSHIPS (", "DIMENSIONS (", "METRICS ("]
+        """Normalize trailing commas inside semantic-view clause blocks.
+
+        TABLES is intentionally excluded — its items may span multiple lines
+        (inline subqueries) and the sanitizer never removes TABLES entries,
+        so comma normalization there is both unnecessary and dangerous.
+        """
+        clauses = ["RELATIONSHIPS (", "DIMENSIONS (", "METRICS ("]
         for clause in clauses:
             self._normalize_clause_commas(all_lines, clause)
 
