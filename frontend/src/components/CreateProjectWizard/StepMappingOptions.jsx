@@ -132,8 +132,8 @@ export function StepMappingOptions({
   }, [dryRunData, rows.length]);
 
   const readyToProceed = autoMappingMode
-    ? blockingCount === 0
-    : dryRunCompleted && blockingCount === 0;
+    ? blockingCount === 0 && (compatScore === null || compatScore >= 70)
+    : dryRunCompleted && blockingCount === 0 && (compatScore === null || compatScore >= 70);
 
   useEffect(() => {
     onProceedStateChange?.(readyToProceed);
@@ -213,33 +213,52 @@ export function StepMappingOptions({
   const readiness = (() => {
     if (mappingLoading || dryRunStatus === 'running' || dryRunStatus === 'loading') {
       return {
-        message: 'Dry Run in Progress / Validating Schema...',
+        message: 'Dry run in progress — validating schema…',
         background: 'rgba(245, 158, 11, 0.12)',
         border: '1px solid rgba(245, 158, 11, 0.35)',
         color: 'var(--accent-orange)',
       };
     }
-    if (dryRunCompleted && blockingCount === 0) {
+    if (dryRunCompleted && hasIssues) {
+      const parts = [];
+      if (blockingCount > 0) parts.push(`${blockingCount} collision${blockingCount !== 1 ? 's' : ''}`);
+      if (schemaIssues > 0) parts.push(`${schemaIssues} schema gap${schemaIssues !== 1 ? 's' : ''}`);
+      const detail = parts.length ? ` — ${parts.join(', ')}` : '';
       return {
-        message: 'Ready to proceed — mapping validation complete',
+        message: `Issues detected${detail}. Review before proceeding.`,
+        background: 'rgba(239, 68, 68, 0.10)',
+        border: '1px solid rgba(239, 68, 68, 0.35)',
+        color: '#ef4444',
+      };
+    }
+    if (dryRunCompleted && !hasIssues) {
+      return {
+        message: compatScore !== null
+          ? `${compatScore}% compatible — ready to proceed`
+          : 'Ready to proceed — mapping validation complete',
         background: 'rgba(34, 197, 94, 0.12)',
         border: '1px solid rgba(34, 197, 94, 0.35)',
         color: 'var(--color-success)',
       };
     }
     return {
-      message: 'Ready for Dry Run',
+      message: 'Run the check to validate your schema mappings before proceeding.',
       background: 'rgba(59, 130, 246, 0.12)',
       border: '1px solid rgba(59, 130, 246, 0.35)',
       color: 'var(--accent-blue)',
     };
   })();
+  // Real signals from the dry-run result
+  const compatScore    = typeof dryRunData?.compatibility_score === 'number' ? dryRunData.compatibility_score : null;
+  const schemaIssues   = Array.isArray(dryRunData?.schema_conflicts) ? dryRunData.schema_conflicts.length : 0;
+  const hasIssues      = blockingCount > 0 || dryRunFailed || schemaIssues > 0 || (compatScore !== null && compatScore < 90);
+
   const checkState = useMemo(() => {
     if (mappingLoading || dryRunStatus === 'running' || dryRunStatus === 'loading') return 'running';
     if (!dryRunCompleted) return 'pending';
-    if (blockingCount > 0 || dryRunFailed) return 'issues';
+    if (hasIssues) return 'issues';
     return 'success';
-  }, [mappingLoading, dryRunStatus, dryRunCompleted, blockingCount, dryRunFailed]);
+  }, [mappingLoading, dryRunStatus, dryRunCompleted, hasIssues]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -367,11 +386,20 @@ export function StepMappingOptions({
                 <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Simulate sync and validate schema mappings before writing data.</div>
               </div>
               <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 11, color: 'var(--accent-blue)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  {checkState === 'pending' && 'Status: Pending'}
-                  {checkState === 'running' && 'Status: Validating...'}
-                  {checkState === 'issues' && `Status: ${counts.collision} Conflict${counts.collision === 1 ? '' : 's'}`}
-                  {checkState === 'success' && 'Status: Ready'}
+                <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em',
+                  color: checkState === 'success' ? 'var(--color-success)' : checkState === 'issues' ? '#ef4444' : 'var(--accent-blue)' }}>
+                  {checkState === 'pending' && 'Status: Not checked'}
+                  {checkState === 'running' && 'Status: Checking…'}
+                  {checkState === 'issues' && (
+                    compatScore !== null
+                      ? `${compatScore}% compatible — ${
+                          blockingCount > 0 ? `${blockingCount} collision${blockingCount !== 1 ? 's' : ''}` : ''
+                        }${blockingCount > 0 && schemaIssues > 0 ? ', ' : ''}${
+                          schemaIssues > 0 ? `${schemaIssues} schema gap${schemaIssues !== 1 ? 's' : ''}` : ''
+                        }` || 'Issues detected'
+                      : `${blockingCount} conflict${blockingCount !== 1 ? 's' : ''} detected`
+                  )}
+                  {checkState === 'success' && (compatScore !== null ? `${compatScore}% — Ready` : 'Status: Ready')}
                 </div>
                 <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 2 }}>
                   {explicitTables.length || 1} Sources · {primaryTargetConnector ? 1 : 0} Target
@@ -394,10 +422,16 @@ export function StepMappingOptions({
                   }} />
                 )}
                 {checkState === 'success' && (
-                  <div style={{ position: 'absolute', inset: 0, background: 'rgba(34,197,94,0.85)', borderRadius: 999 }} />
+                  <div style={{ position: 'absolute', inset: 0, background: 'rgba(34,197,94,0.85)', borderRadius: 999, transition: 'width 0.6s ease' }} />
                 )}
                 {checkState === 'issues' && (
-                  <div style={{ position: 'absolute', inset: 0, background: 'rgba(239,68,68,0.75)', borderRadius: 999 }} />
+                  <div style={{
+                    position: 'absolute', top: 0, left: 0, height: '100%',
+                    width: compatScore !== null ? `${compatScore}%` : '100%',
+                    background: compatScore !== null && compatScore >= 70 ? 'rgba(245,158,11,0.85)' : 'rgba(239,68,68,0.75)',
+                    borderRadius: 999,
+                    transition: 'width 0.6s ease',
+                  }} />
                 )}
               </div>
             </div>
