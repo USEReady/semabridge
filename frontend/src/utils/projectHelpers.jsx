@@ -69,8 +69,14 @@ export function applyHashDeduplication(mappings) {
       if (duplicates.length < 2) {
         return { ...column, status: normalizeTargetStatus(column), collision_detected: false };
       }
-      const hash = shortDeterministicHash(buildSourceFingerprint(mapping, column));
-      const resolved = `${baseTarget}_${hash}`;
+      // Prefer table-prefix (SALES_AMOUNT) over a meaningless hash.
+      // Fall back to hash only when the table name is identical to the field name.
+      const tbl = sanitizeMappingName(
+        column?.source_table_name || column?.parent_table || mapping?.source || ''
+      );
+      const resolved = (tbl && tbl !== baseTarget)
+        ? `${tbl}_${baseTarget}`
+        : `${baseTarget}_${shortDeterministicHash(buildSourceFingerprint(mapping, column)).slice(0, 6)}`;
       return {
         ...column,
         target: resolved,
@@ -89,6 +95,55 @@ export function applyHashDeduplication(mappings) {
       collision_detected: false,
     };
   });
+}
+
+/**
+ * Given a collision row and the full flat list of rows, return:
+ *  - peers: the other rows that share the same target name (what we're colliding with)
+ *  - suggestions: ordered list of rename options, best-first
+ */
+export function suggestCollisionResolutions(row, allRows) {
+  const baseTarget = sanitizeMappingName(row?.target_field || row?.source_field || '');
+  const tbl        = sanitizeMappingName(row?.source_table_name || '');
+  const field      = sanitizeMappingName(row?.source_field || '');
+
+  const peers = (allRows || []).filter(
+    r => r.id !== row.id &&
+         sanitizeMappingName(r.target_field || r.source_field || '') === baseTarget
+  );
+
+  const suggestions = [];
+
+  // Option A: table_prefix — SALES_AMOUNT (most readable, preferred)
+  if (tbl && tbl !== baseTarget) {
+    suggestions.push({
+      id: 'table_prefix',
+      label: `${tbl}_${field}`,
+      description: `Prefix with source table "${tbl}"`,
+    });
+  }
+
+  // Option B: kind_prefix — COL_AMOUNT or MSR_AMOUNT
+  const kind = String(row?.entity_kind || row?.field_type || 'col').toUpperCase();
+  const kindPrefix = kind === 'MEASURE' || kind === 'METRIC' ? 'MSR' : 'COL';
+  const kindLabel = `${kindPrefix}_${field}`;
+  if (kindLabel !== suggestions[0]?.label) {
+    suggestions.push({
+      id: 'kind_prefix',
+      label: kindLabel,
+      description: `Prefix with entity type (${kindPrefix})`,
+    });
+  }
+
+  // Option C: short hash fallback — always last
+  const hash = shortDeterministicHash(buildSourceFingerprint({}, row)).slice(0, 6);
+  suggestions.push({
+    id: 'hash',
+    label: `${baseTarget}_${hash}`,
+    description: 'Append short unique hash (last resort)',
+  });
+
+  return { suggestions, peers };
 }
 
 export function TypeBadge({ type }) {

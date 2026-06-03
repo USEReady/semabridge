@@ -10,12 +10,13 @@
  *   relationships : Array<{ source, target, joinType, condition, confidence }>
  */
 import { useState, useMemo, useCallback } from 'react';
-import { Edit2, GitMerge, Zap, CheckCircle, Tags, AlertTriangle, PlusCircle, SkipForward } from 'lucide-react';
+import { Edit2, GitMerge, Zap, CheckCircle, Tags, AlertTriangle, PlusCircle, SkipForward, X, ChevronRight } from 'lucide-react';
 import StatusBadge from './common/StatusBadge';
 import SmartSearchBar from './common/SmartSearchBar';
 import { matchesSmartQuery } from './common/smartSearchQuery.js';
 import { api } from '../utils/api';
 import SynonymEditModal from './SynonymEditModal';
+import { suggestCollisionResolutions, sanitizeMappingName } from '../utils/projectHelpers';
 
 // ─── Filter tab definitions ───────────────────────────────────────────────────
 const MAPPING_FILTERS = [
@@ -113,20 +114,21 @@ function TableHeader() {
 }
 
 // ─── Single mapping row ───────────────────────────────────────────────────────
-function MappingRow({ row, onEdit, onSynonymEdit }) {
+function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpandedCollision, allRows, pendingRenames, setPendingRenames, applyingRename, onApplyRename }) {
   const badgeCfg = STATUS_BADGE_MAP[String(row.status || '').toLowerCase()]
     ?? { status: 'draft', label: row.status };
   const isCollision = String(row.status || '').toLowerCase() === 'collision';
   const isMeasure = String(row.field_type || row.entity_kind || '').toLowerCase() === 'measure';
+  const isPanelOpen = isCollision && expandedCollision === row.id;
 
   return (
+    <div style={{ borderBottom: '1px solid var(--border-main)' }}>
     <div
       style={{
         display: 'grid',
         gridTemplateColumns: '1.5fr 1.5fr minmax(180px, 0.8fr) 120px 100px',
         gap: '1rem',
         padding: '10px 14px',
-        borderBottom: '1px solid var(--border-main)',
         alignItems: 'center',
         background: isCollision ? 'rgba(239, 68, 68, 0.04)' : 'transparent',
       }}
@@ -251,33 +253,71 @@ function MappingRow({ row, onEdit, onSynonymEdit }) {
 
       {/* Action */}
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <button
-          type="button"
-          onClick={() => onEdit?.(row.id)}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 5,
-            padding: '4px 10px',
-            borderRadius: 6,
-            border: isCollision
-              ? '1px solid rgba(239, 68, 68, 0.45)'
-              : '1px solid var(--border-main)',
-            background: isCollision
-              ? 'rgba(239, 68, 68, 0.10)'
-              : 'var(--bg-surface-raised)',
-            color: isCollision ? 'var(--color-error)' : 'var(--text-secondary)',
-            fontSize: 11,
-            fontWeight: 600,
-            cursor: 'pointer',
-            whiteSpace: 'nowrap',
-            transition: 'all 0.2s',
-          }}
-        >
-          <Edit2 size={11} />
-          {row.target_field ? 'Edit' : 'Map'}
-        </button>
+        {isCollision ? (
+          <button
+            type="button"
+            onClick={() => setExpandedCollision(isPanelOpen ? null : row.id)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 5,
+              padding: '4px 10px',
+              borderRadius: 6,
+              border: isPanelOpen
+                ? '1px solid rgba(251,191,36,0.55)'
+                : '1px solid rgba(239, 68, 68, 0.45)',
+              background: isPanelOpen
+                ? 'rgba(251,191,36,0.12)'
+                : 'rgba(239, 68, 68, 0.10)',
+              color: isPanelOpen ? '#fbbf24' : 'var(--color-error)',
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+              transition: 'all 0.2s',
+            }}
+          >
+            {isPanelOpen ? <><X size={11} /> Close</> : <><ChevronRight size={11} /> Fix</>}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onEdit?.(row.id)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 5,
+              padding: '4px 10px',
+              borderRadius: 6,
+              border: '1px solid var(--border-main)',
+              background: 'var(--bg-surface-raised)',
+              color: 'var(--text-secondary)',
+              fontSize: 11,
+              fontWeight: 600,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+              transition: 'all 0.2s',
+            }}
+          >
+            <Edit2 size={11} />
+            {row.target_field ? 'Edit' : 'Map'}
+          </button>
+        )}
       </div>
+    </div>
+    {/* ── Inline collision fix panel ── */}
+    {isPanelOpen && (
+      <div style={{ padding: '0 14px 10px' }}>
+        <CollisionPanel
+          row={row}
+          allRows={allRows}
+          pendingRename={pendingRenames[row.id] ?? ''}
+          onRenameChange={val => setPendingRenames(prev => ({ ...prev, [row.id]: val }))}
+          onApply={() => onApplyRename(row.id)}
+          applying={applyingRename === row.id}
+        />
+      </div>
+    )}
     </div>
   );
 }
@@ -398,6 +438,129 @@ function RelationshipsSection({ relationships }) {
   );
 }
 
+// ─── Collision resolution panel ───────────────────────────────────────────────
+function CollisionPanel({ row, allRows, pendingRename, onRenameChange, onApply, applying }) {
+  const { suggestions, peers } = suggestCollisionResolutions(row, allRows);
+  const peerLabel = peers.length > 0
+    ? peers.map(p => `${p.source_table_name ? p.source_table_name + '.' : ''}${p.source_field}`).join(', ')
+    : 'another field';
+
+  const inputValid = pendingRename.trim().length > 0 &&
+    /^[A-Za-z_][A-Za-z0-9_]*$/.test(pendingRename.trim());
+
+  return (
+    <div style={{
+      gridColumn: '1 / -1',
+      margin: '0 0 4px',
+      padding: '14px 16px',
+      borderRadius: 8,
+      background: 'rgba(251,191,36,0.06)',
+      border: '1px solid rgba(251,191,36,0.30)',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 12,
+    }}>
+      {/* ── Why is this a collision? ── */}
+      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+        <span style={{ fontWeight: 700, color: '#fbbf24' }}>Naming conflict</span>
+        {' '}— <code style={{ fontSize: 11, background: 'rgba(0,0,0,0.25)', padding: '1px 5px', borderRadius: 3 }}>{row.target_field || row.source_field}</code>
+        {' '}is also claimed by{' '}
+        <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{peerLabel}</span>.
+        {' '}Choose a unique target name for this field:
+      </div>
+
+      {/* ── Suggestion chips ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>Suggestions:</span>
+        {suggestions.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            title={s.description}
+            onClick={() => onRenameChange(s.label)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              padding: '4px 10px',
+              borderRadius: 6,
+              border: pendingRename === s.label
+                ? '1px solid #fbbf24'
+                : '1px solid rgba(251,191,36,0.35)',
+              background: pendingRename === s.label
+                ? 'rgba(251,191,36,0.20)'
+                : 'rgba(251,191,36,0.07)',
+              color: pendingRename === s.label ? '#fbbf24' : 'var(--text-secondary)',
+              fontSize: 11,
+              fontWeight: 700,
+              fontFamily: 'monospace',
+              cursor: 'pointer',
+              transition: 'all 0.15s',
+            }}
+          >
+            {s.id === 'table_prefix' && <ChevronRight size={10} />}
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Manual input + Apply ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <input
+          type="text"
+          value={pendingRename}
+          onChange={e => onRenameChange(sanitizeMappingName(e.target.value) || e.target.value.toUpperCase())}
+          placeholder="Or type a custom name…"
+          style={{
+            flex: 1,
+            padding: '6px 10px',
+            borderRadius: 6,
+            border: pendingRename && !inputValid
+              ? '1px solid rgba(239,68,68,0.6)'
+              : '1px solid var(--border-main)',
+            background: 'var(--bg-main)',
+            color: 'var(--text-primary)',
+            fontSize: 12,
+            fontFamily: 'monospace',
+            outline: 'none',
+          }}
+        />
+        <button
+          type="button"
+          disabled={!inputValid || applying}
+          onClick={onApply}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '6px 14px',
+            borderRadius: 6,
+            border: '1px solid rgba(34,197,94,0.45)',
+            background: inputValid && !applying ? 'rgba(34,197,94,0.12)' : 'rgba(34,197,94,0.04)',
+            color: inputValid && !applying ? 'var(--color-success)' : 'var(--text-tertiary)',
+            fontSize: 12,
+            fontWeight: 700,
+            cursor: inputValid && !applying ? 'pointer' : 'not-allowed',
+            whiteSpace: 'nowrap',
+            transition: 'all 0.15s',
+          }}
+        >
+          {applying
+            ? <span style={{ width: 11, height: 11, border: '2px solid currentColor', borderTopColor: 'transparent', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' }} />
+            : <CheckCircle size={12} />}
+          {applying ? 'Applying…' : 'Apply rename'}
+        </button>
+      </div>
+
+      {pendingRename && !inputValid && (
+        <div style={{ fontSize: 11, color: 'var(--color-error)' }}>
+          Use only letters, numbers, and underscores. Must start with a letter or underscore.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function DryRunMappingTable({
   mappings = [],
@@ -420,6 +583,10 @@ export default function DryRunMappingTable({
   const [synonymModal, setSynonymModal] = useState(null);
   const [schemaFixing, setSchemaFixing] = useState({}); // { conflictId: 'pending'|'done'|'error' }
   const [schemaToast, setSchemaToast] = useState(null);
+  // ── Per-collision inline fix panel ─────────────────────────────────────────
+  const [expandedCollision, setExpandedCollision] = useState(null); // rowId
+  const [pendingRenames, setPendingRenames]       = useState({});   // { rowId: newName }
+  const [applyingRename, setApplyingRename]       = useState(null); // rowId
 
   // ── Split columns vs measures ───────────────────────────────────────────────
   const { columns, measures } = useMemo(() => {
@@ -471,44 +638,54 @@ export default function DryRunMappingTable({
     }
   }, [projectId, onReSync]);
 
-  // ── Bulk resolve handler ─────────────────────────────────────────────────────
-  const handleBulkResolve = useCallback(async () => {
-    const collisions = mappings
-      .filter(r => String(r?.status || '').toLowerCase() === 'collision')
-      .map(r => ({
-        entity_name:    r.source_table_name || '',
-        field_name:     r.source_field      || '',
-        current_target: r.target_field      || r.source_field || '',
-      }));
+  // ── Per-collision apply rename ───────────────────────────────────────────────
+  const applyRename = useCallback(async (rowId) => {
+    const newName = (pendingRenames[rowId] || '').trim();
+    if (!newName) return;
+    setApplyingRename(rowId);
+    try {
+      await onEdit?.(rowId, {
+        target_field: newName,
+        target_name:  newName,
+        status:       'manual',
+        collision_detected: false,
+      });
+      setExpandedCollision(null);
+      setPendingRenames(prev => { const n = { ...prev }; delete n[rowId]; return n; });
+    } finally {
+      setApplyingRename(null);
+    }
+  }, [pendingRenames, onEdit]);
 
-    if (!collisions.length) return;
+  // ── Bulk resolve handler — uses table-prefix names, not hashes ──────────────
+  const handleBulkResolve = useCallback(() => {
+    const collisionRows = mappings.filter(
+      r => String(r?.status || '').toLowerCase() === 'collision'
+    );
+    if (!collisionRows.length) return;
 
     setBulkResolving(true);
     setBulkToast(null);
-    try {
-      const data = await api.bulkResolve(collisions);
 
-      // Build a map from field identity → suggested target for the parent to consume
+    try {
+      // Compute table-prefix suggestions client-side — no API call needed
       const resolvedMap = {};
-      const resolvedList = data.resolved || [];
-      resolvedList.forEach((resolved) => {
-        // Match by entity + field name back to the row
-        const matchedRow = mappings.find(
-          r => r.source_table_name === resolved.entity_name
-            && r.source_field      === resolved.field_name
-        );
-        if (matchedRow?.id) {
-          resolvedMap[matchedRow.id] = resolved.suggested_target;
-        }
+      collisionRows.forEach(row => {
+        const { suggestions } = suggestCollisionResolutions(row, mappings);
+        // Pick the first suggestion (table_prefix when available, else kind_prefix, else hash)
+        resolvedMap[row.id] = suggestions[0]?.label || row.target_field;
       });
 
       onBulkResolved?.(resolvedMap);
-      setBulkToast({ type: 'success', msg: `${resolvedList.length} collision${resolvedList.length !== 1 ? 's' : ''} resolved with deterministic hashes.` });
+      setBulkToast({
+        type: 'success',
+        msg: `${collisionRows.length} collision${collisionRows.length !== 1 ? 's' : ''} resolved — table-prefix names applied. Review each field to confirm.`,
+      });
     } catch (err) {
       setBulkToast({ type: 'error', msg: `Resolve failed: ${err.message}` });
     } finally {
       setBulkResolving(false);
-      setTimeout(() => setBulkToast(null), 4000);
+      setTimeout(() => setBulkToast(null), 6000);
     }
   }, [mappings, onBulkResolved]);
 
@@ -811,7 +988,19 @@ export default function DryRunMappingTable({
                 </div>
               ) : (
                 filteredColumns.map(row => (
-                  <MappingRow key={row.id} row={row} onEdit={onEdit} onSynonymEdit={openSynonymModal} />
+                  <MappingRow
+                    key={row.id}
+                    row={row}
+                    onEdit={onEdit}
+                    onSynonymEdit={openSynonymModal}
+                    allRows={mappings}
+                    expandedCollision={expandedCollision}
+                    setExpandedCollision={setExpandedCollision}
+                    pendingRenames={pendingRenames}
+                    setPendingRenames={setPendingRenames}
+                    applyingRename={applyingRename}
+                    onApplyRename={applyRename}
+                  />
                 ))
               )}
             </div>
@@ -843,7 +1032,19 @@ export default function DryRunMappingTable({
                 </div>
               ) : (
                 filteredMeasures.map(row => (
-                  <MappingRow key={row.id} row={row} onEdit={onEdit} onSynonymEdit={openSynonymModal} />
+                  <MappingRow
+                    key={row.id}
+                    row={row}
+                    onEdit={onEdit}
+                    onSynonymEdit={openSynonymModal}
+                    allRows={mappings}
+                    expandedCollision={expandedCollision}
+                    setExpandedCollision={setExpandedCollision}
+                    pendingRenames={pendingRenames}
+                    setPendingRenames={setPendingRenames}
+                    applyingRename={applyingRename}
+                    onApplyRename={applyRename}
+                  />
                 ))
               )}
             </div>
