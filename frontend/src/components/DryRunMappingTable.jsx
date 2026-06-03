@@ -187,11 +187,17 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
             <TypeBadge type={row.target_type} />
           </div>
         )}
-        {isCollision && row.suggested_target_name && (
-          <div style={{ fontSize: 10, color: 'var(--color-error)', fontWeight: 600, marginLeft: 8 }}>
-            (Suggestion: {row.suggested_target_name})
-          </div>
-        )}
+        {isCollision && (() => {
+          // Only show a suggestion chip if it differs from the conflicting target name
+          const { suggestions } = suggestCollisionResolutions(row, allRows);
+          const best = suggestions.find(s => s.id !== 'hash');
+          if (!best || best.label === row.target_field) return null;
+          return (
+            <div style={{ fontSize: 10, color: '#fbbf24', fontWeight: 600, marginLeft: 8, whiteSpace: 'nowrap' }}>
+              → {best.label}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Synonyms */}
