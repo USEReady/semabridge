@@ -293,7 +293,58 @@ class SnowflakeEmitter(BaseEmitter):
                 else:
                     ddls = self.semantic_view_builder.generate_ddls(model)
                 
-                # Step 2b: UPSERT preserve only skips existing base-table DDLs.
+                # Step 2b: Surface columns present in the source model but absent from the
+                # Snowflake physical schema (excluded from DIMENSIONS to prevent DDL errors).
+                # Offer to add them via ALTER TABLE ADD COLUMN when auto_add_missing_dims=True.
+                _missing_dims = getattr(self.semantic_view_builder, "missing_dims", {})
+                if _missing_dims:
+                    for _ds_name, _cols in _missing_dims.items():
+                        _col_list = ", ".join(_cols)
+                        logger.warning(
+                            "⚠️  Missing dimension columns: table '%s' has columns [%s] in the "
+                            "source model but they were NOT found in the Snowflake physical schema. "
+                            "These columns are excluded from DIMENSIONS in the semantic view. "
+                            "To include them, run: ALTER TABLE \"<schema>\".\"%s\" ADD COLUMN <col> <type>  "
+                            "for each of: [%s]",
+                            _ds_name, _col_list, _ds_name, _col_list,
+                        )
+                    _auto_add = getattr(getattr(self, "sf_behavior", None), "auto_add_missing_dims", False)
+                    if _auto_add:
+                        logger.info("auto_add_missing_dims=True — attempting ALTER TABLE ADD COLUMN for missing dimensions")
+                        _added_any = False
+                        for _ds_name, _cols in list(_missing_dims.items()):
+                            _src_tbl = _ds_name  # use dataset name as table name fallback
+                            for _ds_obj in (model.datasets if is_osi else getattr(model, "datasets", [])):
+                                if getattr(_ds_obj, "unique_name", None) == _ds_name:
+                                    _src_tbl = getattr(_ds_obj, "source_table", None) or _ds_name
+                                    break
+                            _safe_tbl = _src_tbl.rsplit(".", 1)[-1] if "." in _src_tbl else _src_tbl
+                            for _col in _cols:
+                                _alter_sql = (
+                                    f'ALTER TABLE "{self.connection_manager.config.database}"'
+                                    f'."{self.connection_manager.config.schema_name}"'
+                                    f'."{_safe_tbl}" ADD COLUMN IF NOT EXISTS "{_col}" VARCHAR'
+                                )
+                                try:
+                                    self.connection_manager._execute_sql(cur, _alter_sql, context="add-missing-dim")
+                                    logger.info("Added missing dimension column '%s' to table '%s'", _col, _safe_tbl)
+                                    _added_any = True
+                                except Exception as _alter_exc:
+                                    logger.warning("Could not add missing dim column '%s.%s': %s", _safe_tbl, _col, _alter_exc)
+                        if _added_any:
+                            # Refresh live schema so the re-generated DDL picks up the new columns
+                            logger.info("Refreshing live schema after adding missing dimension columns")
+                            _fresh_meta = self.schema_manager._fetch_schema_metadata(cur)
+                            self.semantic_view_builder.live_schema_metadata.update(_fresh_meta or {})
+                            self.semantic_view_builder.missing_dims.clear()
+                            # Regenerate DDLs with the updated schema
+                            if is_osi:
+                                ddls = self.semantic_view_builder.generate_ddls_from_osi(model)
+                            else:
+                                ddls = self.semantic_view_builder.generate_ddls(model)
+                            logger.info("Regenerated %d DDL statement(s) after schema update", len(ddls))
+
+                # Step 2c: UPSERT preserve only skips existing base-table DDLs.
                 if preserve_existing and existing_tables:
                     logger.info("Filtering DDLs to skip existing tables")
                     ddls = self._filter_ddls_for_existing_tables(ddls, existing_tables)
@@ -307,6 +358,28 @@ class SnowflakeEmitter(BaseEmitter):
                 logger.info("[%s] generated %s DDL statement(s) for model=%s", path_type, len(ddls), model_name)
 
                 # Step 3: Execute DDLs  (generate_ddls returns list[str])
+                # Pre-pass: DROP existing semantic views before (re)creating them.
+                # Snowflake error 002057 fires when a CREATE OR REPLACE SEMANTIC VIEW
+                # changes the number of declared columns vs the existing view definition.
+                # Dropping first eliminates that constraint entirely.
+                import re as _re_drop
+                for _s in ddls:
+                    if not _s:
+                        continue
+                    _upper = _s.upper()
+                    if "CREATE" in _upper and "SEMANTIC VIEW" in _upper:
+                        _vm = _re_drop.search(
+                            r'CREATE\s+(?:OR\s+REPLACE\s+)?SEMANTIC\s+VIEW\s+"?(\w+)"?',
+                            _s, _re_drop.IGNORECASE,
+                        )
+                        if _vm:
+                            _drop_sql = f'DROP SEMANTIC VIEW IF EXISTS "{_vm.group(1)}"'
+                            try:
+                                self.connection_manager._execute_sql(cur, _drop_sql, context="pre-drop-semantic-view")
+                                logger.info("Pre-dropped semantic view '%s' before recreation", _vm.group(1))
+                            except Exception as _drop_exc:
+                                logger.warning("Pre-drop of semantic view '%s' failed (non-fatal): %s", _vm.group(1), _drop_exc)
+
                 for idx, sql in enumerate(ddls):
                     if not sql:
                         continue
@@ -441,7 +514,8 @@ class SnowflakeEmitter(BaseEmitter):
     def emit(self, sml: Any) -> Dict[str, Any]:
         """Emit SML model to Snowflake."""
         success = self.deploy(sml)
-        return {"success": success}
+        missing = dict(getattr(self.semantic_view_builder, "missing_dims", {}) or {})
+        return {"success": success, "missing_dims": missing}
 
     @property
     def max_concurrency(self) -> int:

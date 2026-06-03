@@ -820,9 +820,9 @@ async def auto_map_compat(payload: dict):
     # For project-scoped dry runs, use project-backed mappings so measure rows
     # from the latest model state are preserved.
     preview_mode = (not project_id) and dry_run and (bool(config_yaml) or bool(selected_model_names))
+    sync_result: Dict[str, Any] = {}  # populated in project-backed branch; empty otherwise
     if project_id and not preview_mode:
         from semabridge.api.services.core_domain_service import sync_models
-        sync_result: Dict[str, Any] = {}
         preferred_snapshot_id = ""
         try:
             sync_result = await sync_models({
@@ -902,6 +902,103 @@ async def auto_map_compat(payload: dict):
         if mapping.get("collision_detected")
     ]
     collision_names = [name for name in collision_names if name]
+
+    # ── Schema conflict detection (dimension gaps + compatibility score) ──────
+    schema_conflicts: list = []
+    # Pull missing_dims surfaced by the DDL builder during the dry-run sync.
+    _missing_dims: dict = {}
+    if isinstance(sync_result, dict):
+        for _row in (sync_result.get("results") or []):
+            if isinstance(_row, dict):
+                _md = _row.get("missing_dims") or {}
+                for _ds, _cols in (_md.items() if isinstance(_md, dict) else []):
+                    _missing_dims.setdefault(_ds, [])
+                    for _c in (_cols if isinstance(_cols, list) else []):
+                        if _c not in _missing_dims[_ds]:
+                            _missing_dims[_ds].append(_c)
+    # Also check model columns against known synthetic date-intelligence patterns
+    # (these are flagged regardless of whether a Snowflake connection was made).
+    _LIVE_ONLY_COLS = {"MONTHINDEX", "YEARINDEX", "QUARTERINDEX", "WEEKINDEX",
+                       "MAX_MONTHINDEX", "MAX_YEARINDEX", "MAX_DATE"}
+    _model_cols = data.get("source_fields") or []
+    for _field in _model_cols:
+        _col_name = str(_field.get("name") or _field.get("unique_name") or "").upper() if isinstance(_field, dict) else str(_field).upper()
+        _dataset = str(_field.get("dataset") or _field.get("table") or "") if isinstance(_field, dict) else ""
+        if _col_name in _LIVE_ONLY_COLS:
+            _missing_dims.setdefault(_dataset or _col_name, [])
+            if _col_name not in _missing_dims[_dataset or _col_name]:
+                _missing_dims[_dataset or _col_name].append(_col_name)
+
+    for _ds_name, _cols in _missing_dims.items():
+        for _col in _cols:
+            schema_conflicts.append({
+                "conflict_id": f"dim_missing_{_ds_name}_{_col}",
+                "type": "dimension_missing",
+                "severity": "warning",
+                "model_name": _ds_name,
+                "column_name": _col,
+                "description": (
+                    f"Column '{_col}' exists in the source model (dataset '{_ds_name}') "
+                    f"but was not found in the Snowflake physical table. "
+                    f"It has been excluded from the semantic view DIMENSIONS clause."
+                ),
+                "resolution_options": [
+                    {
+                        "id": "skip",
+                        "label": "Skip — exclude from Snowflake view",
+                        "description": "Leave as-is. The column will be absent from Snowflake queries.",
+                    },
+                    {
+                        "id": "auto_add",
+                        "label": "Auto-add to Snowflake table",
+                        "description": (
+                            f"Run ALTER TABLE ADD COLUMN '{_col}' VARCHAR on the Snowflake "
+                            f"physical table and re-sync so the column is included in DIMENSIONS."
+                        ),
+                    },
+                ],
+            })
+
+    # ── Compatibility score ──────────────────────────────────────────────────────
+    # Only compute a meaningful score when the dry-run actually ran against a
+    # real project (sync_result is populated). In preview/no-project mode there
+    # is nothing to measure, so leave it null — the UI should not show a bar.
+    compatibility_score: Optional[float] = None
+    _did_run = bool(sync_result and isinstance(sync_result, dict) and sync_result.get("results"))
+    if _did_run:
+        # Start from 100 and deduct points for each real problem signal.
+        score_deductions: float = 0.0
+
+        # Signal 1: Failed / conflicted model syncs (each -20, max -60)
+        _model_results = sync_result.get("results") or []
+        _failed_models = sum(
+            1 for r in _model_results
+            if isinstance(r, dict) and r.get("status") not in ("success",)
+        )
+        score_deductions += min(60.0, _failed_models * 20.0)
+
+        # Signal 2: Schema conflicts — each warning -5, each critical -20
+        for _sc in schema_conflicts:
+            _sev = _sc.get("severity", "warning")
+            score_deductions += 20.0 if _sev == "critical" else 5.0
+
+        # Signal 3: Field mapping collisions — each -2 (capped at -20)
+        _collision_count = sum(
+            1 for m in entity_mappings
+            if m.get("collision_detected") or m.get("status") in ("collision", "unmapped")
+        )
+        score_deductions += min(20.0, _collision_count * 2.0)
+
+        # Signal 4: Untranslated measures (sync_disabled flag or status=failed on metrics)
+        _untranslated = sum(
+            1 for m in entity_mappings
+            if m.get("entity_kind") in ("measure", "metric")
+            and (m.get("sync_disabled") or m.get("translation_failed"))
+        )
+        score_deductions += min(15.0, _untranslated * 5.0)
+
+        compatibility_score = round(max(0.0, 100.0 - score_deductions), 1)
+
     return {
         "project_id": data.get("project_id") or project_id,
         "source_fields": data.get("source_fields", []),
@@ -910,6 +1007,8 @@ async def auto_map_compat(payload: dict):
         "entity_mappings": entity_mappings,
         "collisions": collision_names,
         "diagnostics": diagnostics,
+        "schema_conflicts": schema_conflicts,
+        "compatibility_score": compatibility_score,
         "status": "ok",
     }
 

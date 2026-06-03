@@ -427,7 +427,12 @@ async function handleResponse(res) {
         try {
             const cloned = res.clone();
             const data = await cloned.json();
-            if (data?.error === 'reauth_required' || data?.detail?.error === 'reauth_required') {
+            const detailStr = typeof data?.detail === 'string' ? data.detail : '';
+            const isReauth = data?.error === 'reauth_required'
+                || data?.detail?.error === 'reauth_required'
+                || detailStr.includes('reauth_required')
+                || data?.error_type === 'AuthenticationError';
+            if (isReauth) {
                 return data.detail || data;
             }
         } catch {
@@ -1303,6 +1308,7 @@ export const api = {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
+            timeoutMs: PROJECT_RUN_REQUEST_TIMEOUT_MS,
         });
         const created = await handleResponse(res);
         return normalizeProject(created?.project ?? created);
@@ -1497,6 +1503,7 @@ export const api = {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
+                timeoutMs: PROJECT_RUN_REQUEST_TIMEOUT_MS,
             });
             
             // Handle non-200 responses
@@ -1517,18 +1524,48 @@ export const api = {
             if (!data.entity_mappings) {
                 data.entity_mappings = [];
             }
-            
+
             if (!Array.isArray(data.entity_mappings)) {
                 console.warn('[API] entity_mappings is not an array, fixing...');
                 data.entity_mappings = [];
             }
-            
+
+            // Normalise schema_conflicts
+            if (!Array.isArray(data.schema_conflicts)) {
+                data.schema_conflicts = [];
+            }
+            // compatibility_score comes from the backend only when a real dry-run
+            // executed. If the backend returns null/undefined we leave it as null so
+            // the UI does NOT show a score bar at all — a fake 100% is misleading.
+            if (typeof data.compatibility_score !== 'number') {
+                data.compatibility_score = null;
+            }
+
             return data;
             
         } catch (error) {
             console.error('[API] runProjectDryRun error:', error);
             throw error;
         }
+    },
+
+    /**
+     * Auto-add a missing dimension column to the Snowflake physical table.
+     * Called from the dry-run conflict UI when the user clicks "Auto-add to Snowflake".
+     * After this succeeds the caller should trigger a re-sync.
+     */
+    async addMissingDimensionColumn(projectId, datasetName, columnName, columnType = 'VARCHAR') {
+        const res = await authFetch(`${API_BASE_URL.replace('/api', '')}/sync/schema/add-missing-column`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                project_id: String(projectId),
+                dataset_name: datasetName,
+                column_name: columnName,
+                column_type: columnType,
+            }),
+        });
+        return handleResponse(res);
     },
 
     async updateMapping(projectId, mappingId, targetNameOrPayload) {
@@ -1860,6 +1897,8 @@ export const api = {
     // ── Discovery ─────────────────────────────────────────────────────────
 
     async discoverFabricWorkspaces() {
+        // Skip entirely when no Fabric token is available — avoids a guaranteed 400.
+        if (!hasValidFabricToken()) return [];
         const cacheKey = 'discovery:fabric:workspaces';
         const cached = getCachedApiValue(cacheKey);
         if (cached) return cached;

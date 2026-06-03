@@ -27,12 +27,20 @@ class DimensionsClauseBuilder:
         dataset_aliases: Dict[str, str],
         dataset_by_name: Dict[str, Any],
         dataset_col_lookup: Dict[str, Set[str]],
-        measure_columns: Set[Tuple[str, str]]
-    ) -> List[str]:
-        """Build DIMENSIONS clause for SML model."""
+        measure_columns: Set[Tuple[str, str]],
+        live_col_lookup: Optional[Dict[str, Set[str]]] = None,
+    ) -> Tuple[List[str], Dict[str, List[str]]]:
+        """Build DIMENSIONS clause for SML model.
+
+        Returns (dims_lines, missing_dims) where missing_dims maps
+        dataset_name → [physical_col_name, ...] for columns that exist in
+        the source model but could not be confirmed in the Snowflake physical
+        schema and were therefore excluded from DIMENSIONS.
+        """
         return self._build_dimensions(
-            sml.dimensions, sml.datasets, dataset_aliases, dataset_by_name, 
-            dataset_col_lookup, measure_columns, sml.unique_name or sml.label, is_osi=False
+            sml.dimensions, sml.datasets, dataset_aliases, dataset_by_name,
+            dataset_col_lookup, measure_columns, sml.unique_name or sml.label,
+            is_osi=False, live_col_lookup=live_col_lookup or {},
         )
 
     def build_for_osi(
@@ -41,12 +49,17 @@ class DimensionsClauseBuilder:
         dataset_aliases: Dict[str, str],
         dataset_by_name: Dict[str, Any],
         dataset_col_lookup: Dict[str, Set[str]],
-        measure_columns: Set[Tuple[str, str]]
-    ) -> List[str]:
-        """Build DIMENSIONS clause for OSI model."""
+        measure_columns: Set[Tuple[str, str]],
+        live_col_lookup: Optional[Dict[str, Set[str]]] = None,
+    ) -> Tuple[List[str], Dict[str, List[str]]]:
+        """Build DIMENSIONS clause for OSI model.
+
+        Returns (dims_lines, missing_dims).  See build_for_sml for details.
+        """
         return self._build_dimensions(
-            osi.dimensions, osi.datasets, dataset_aliases, dataset_by_name, 
-            dataset_col_lookup, measure_columns, osi.unique_name or osi.label, is_osi=True
+            osi.dimensions, osi.datasets, dataset_aliases, dataset_by_name,
+            dataset_col_lookup, measure_columns, osi.unique_name or osi.label,
+            is_osi=True, live_col_lookup=live_col_lookup or {},
         )
 
     def _build_dimensions(
@@ -58,9 +71,14 @@ class DimensionsClauseBuilder:
         dataset_col_lookup: Dict[str, Set[str]],
         measure_columns: Set[Tuple[str, str]],
         model_name: str,
-        is_osi: bool
-    ) -> List[str]:
-        dims_lines = []
+        is_osi: bool,
+        live_col_lookup: Optional[Dict[str, Set[str]]] = None,
+    ) -> Tuple[List[str], Dict[str, List[str]]]:
+        dims_lines: List[str] = []
+        # Tracks columns present in the source model but skipped because they
+        # were not confirmed in the live Snowflake physical schema.
+        # Structure: { dataset_unique_name: [phys_col, ...] }
+        missing_dims: Dict[str, List[str]] = {}
         added_dimensions = set()
         added_physical_dimensions = set()
         used_dimension_aliases: Set[str] = set()
@@ -81,10 +99,19 @@ class DimensionsClauseBuilder:
                         continue
                     phys_col = self.schema_manager._resolve_physical_column_name(dataset_obj, raw_col)
                 
-                known_phys = dataset_col_lookup.get(attr.dataset, set())
-                if known_phys and phys_col not in known_phys:
-                    continue
-                    
+                # Prefer live (confirmed Snowflake) schema over modeled fallback.
+                _live = (live_col_lookup or {}).get(attr.dataset)
+                if _live is not None:
+                    if phys_col not in _live:
+                        missing_dims.setdefault(attr.dataset, [])
+                        if phys_col not in missing_dims[attr.dataset]:
+                            missing_dims[attr.dataset].append(phys_col)
+                        continue
+                else:
+                    known_phys = dataset_col_lookup.get(attr.dataset, set())
+                    if known_phys and phys_col not in known_phys:
+                        continue
+
                 semantic_name = self.sanitizer.sanitize_semantic_name(attr.unique_name)
                 dim_key = (alias, semantic_name, phys_col)
                 physical_dim_key = (alias, phys_col)
@@ -118,12 +145,37 @@ class DimensionsClauseBuilder:
             # Synthetic/projected columns injected by the enriched-view builder —
             # these are scalar subqueries, not physical base-table columns, and
             # Snowflake rejects them in semantic view DIMENSIONS clauses.
-            _SYNTHETIC_COLS = {"MAX_DATE", "_CURRENT_FISCAL_PERIOD", "TOTAL_UNITS_ALL"}
+            # Also exclude date-intelligence anchor columns (MAX_MONTHINDEX, MONTHINDEX
+            # when used as a synthetic rolling-period anchor) — these are computed at
+            # runtime in enriched views via scalar subqueries, not base table columns.
+            # MONTHINDEX is a valid *real* column name too, so it is only excluded here
+            # when the live schema is unknown (modeled_cols fallback path); when live_cols
+            # are available the known_phys filter below handles it correctly.
+            # When live Snowflake schema confirms a column exists, it will pass
+            # the _live filter above. _SYNTHETIC_COLS only blocks columns that are
+            # NEVER real physical columns in target tables.
+            _SYNTHETIC_COLS = {
+                "MAX_DATE", "_CURRENT_FISCAL_PERIOD", "TOTAL_UNITS_ALL",
+                "MAX_MONTHINDEX", "MAX_YEARINDEX", "MAX_QUARTERINDEX", "MAX_WEEKINDEX",
+            }
+            # Columns that are synthetic date-intelligence anchors NOT present in
+            # physical base tables.  Only skip these when live schema is absent (we
+            # can't confirm they exist).  If live schema confirms them, the _live
+            # filter above will allow them through.
+            _LIVE_ONLY_COLS = {"MONTHINDEX", "YEARINDEX", "QUARTERINDEX", "WEEKINDEX"}
+            _has_live = dataset.unique_name in (live_col_lookup or {})
 
             for col in dataset.columns:
                 if col.unique_name.startswith("RowNumber") or col.unique_name.startswith("_"):
                     continue
                 if col.unique_name.upper() in _SYNTHETIC_COLS:
+                    continue
+                # Synthetic date-intelligence columns (MONTHINDEX etc.) are only safe
+                # to emit when the live Snowflake schema confirms they exist.
+                if not _has_live and col.unique_name.upper() in _LIVE_ONLY_COLS:
+                    missing_dims.setdefault(dataset.unique_name, [])
+                    if phys_col not in missing_dims[dataset.unique_name]:
+                        missing_dims[dataset.unique_name].append(phys_col)
                     continue
                 
                 source_expr = getattr(col, 'source_expression', None)
@@ -137,9 +189,18 @@ class DimensionsClauseBuilder:
                 else:
                     phys_col = self.schema_manager._resolve_physical_column_name(dataset, col.unique_name)
                 
-                known_phys = dataset_col_lookup.get(dataset.unique_name, set())
-                if known_phys and phys_col not in known_phys:
-                    continue
+                # Prefer live (confirmed Snowflake) schema when available.
+                _live = (live_col_lookup or {}).get(dataset.unique_name)
+                if _live is not None:
+                    if phys_col not in _live:
+                        missing_dims.setdefault(dataset.unique_name, [])
+                        if phys_col not in missing_dims[dataset.unique_name]:
+                            missing_dims[dataset.unique_name].append(phys_col)
+                        continue
+                else:
+                    known_phys = dataset_col_lookup.get(dataset.unique_name, set())
+                    if known_phys and phys_col not in known_phys:
+                        continue
 
                 dim_key = (alias, semantic_name, phys_col)
                 physical_dim_key = (alias, phys_col)
@@ -169,7 +230,7 @@ class DimensionsClauseBuilder:
         if not dims_lines and datasets:
             self._apply_fallback(datasets[0], dataset_aliases, dataset_col_lookup, measure_columns, used_dimension_aliases, dims_lines, model_name, is_osi)
 
-        return dims_lines
+        return dims_lines, missing_dims
 
     def _is_measure_column(self, attr: Any, phys_col: str, measure_columns: Set[Tuple[str, str]], is_osi: bool) -> bool:
         if is_osi:

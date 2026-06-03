@@ -10,7 +10,7 @@
  *   relationships : Array<{ source, target, joinType, condition, confidence }>
  */
 import { useState, useMemo, useCallback } from 'react';
-import { Edit2, GitMerge, Zap, CheckCircle, Tags } from 'lucide-react';
+import { Edit2, GitMerge, Zap, CheckCircle, Tags, AlertTriangle, PlusCircle, SkipForward } from 'lucide-react';
 import StatusBadge from './common/StatusBadge';
 import SmartSearchBar from './common/SmartSearchBar';
 import { matchesSmartQuery } from './common/smartSearchQuery.js';
@@ -19,11 +19,12 @@ import SynonymEditModal from './SynonymEditModal';
 
 // ─── Filter tab definitions ───────────────────────────────────────────────────
 const MAPPING_FILTERS = [
-  { id: 'all',       label: 'All' },
-  { id: 'auto',      label: 'Auto' },
-  { id: 'manual',    label: 'Manual' },
-  { id: 'unmapped',  label: 'Unmapped' },
-  { id: 'collision', label: 'Collision' },
+  { id: 'all',            label: 'All' },
+  { id: 'auto',           label: 'Auto' },
+  { id: 'manual',         label: 'Manual' },
+  { id: 'unmapped',       label: 'Unmapped' },
+  { id: 'collision',      label: 'Collision' },
+  { id: 'schema_issues',  label: 'Schema Issues' },
 ];
 
 // ─── Shared helper ────────────────────────────────────────────────────────────
@@ -407,6 +408,9 @@ export default function DryRunMappingTable({
   onBulkResolved,     // (resolvedMap: Record<rowId, suggestedTarget>) => void
   summary,
   relationships = [],
+  schemaConflicts = [],       // DIMENSION_MISSING conflicts from backend
+  compatibilityScore = null,  // 0–100 float from backend
+  onReSync,                   // () => void — trigger a re-sync after auto-add
 }) {
   const [activeFilter, setActiveFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -414,6 +418,8 @@ export default function DryRunMappingTable({
   const [bulkResolving, setBulkResolving] = useState(false);
   const [bulkToast, setBulkToast] = useState(null); // { type: 'success'|'error', msg }
   const [synonymModal, setSynonymModal] = useState(null);
+  const [schemaFixing, setSchemaFixing] = useState({}); // { conflictId: 'pending'|'done'|'error' }
+  const [schemaToast, setSchemaToast] = useState(null);
 
   // ── Split columns vs measures ───────────────────────────────────────────────
   const { columns, measures } = useMemo(() => {
@@ -430,15 +436,40 @@ export default function DryRunMappingTable({
     return { columns: cols, measures: meas };
   }, [mappings]);
 
-  // ── Derived counts (over all mappings) ──────────────────────────────────────
+  // ── Derived counts (over all mappings + schema issues) ──────────────────────
   const counts = useMemo(() => {
-    const c = { all: mappings.length, auto: 0, manual: 0, unmapped: 0, collision: 0 };
+    const c = { all: mappings.length, auto: 0, manual: 0, unmapped: 0, collision: 0, schema_issues: schemaConflicts.length };
     mappings.forEach((row) => {
       const s = String(row?.status || '').toLowerCase();
       if (c[s] !== undefined) c[s] += 1;
     });
     return c;
-  }, [mappings]);
+  }, [mappings, schemaConflicts]);
+
+  // ── Auto-add handler ─────────────────────────────────────────────────────────
+  const handleAutoAdd = useCallback(async (conflict) => {
+    const cid = conflict.conflict_id;
+    setSchemaFixing(prev => ({ ...prev, [cid]: 'pending' }));
+    setSchemaToast(null);
+    try {
+      await api.addMissingDimensionColumn(
+        projectId,
+        conflict.model_name,
+        conflict.column_name,
+        'VARCHAR',
+      );
+      setSchemaFixing(prev => ({ ...prev, [cid]: 'done' }));
+      setSchemaToast({ type: 'success', msg: `Column '${conflict.column_name}' added. Re-running sync…` });
+      setTimeout(() => {
+        setSchemaToast(null);
+        onReSync?.();
+      }, 1500);
+    } catch (err) {
+      setSchemaFixing(prev => ({ ...prev, [cid]: 'error' }));
+      setSchemaToast({ type: 'error', msg: `Failed: ${err.message}` });
+      setTimeout(() => setSchemaToast(null), 5000);
+    }
+  }, [projectId, onReSync]);
 
   // ── Bulk resolve handler ─────────────────────────────────────────────────────
   const handleBulkResolve = useCallback(async () => {
@@ -534,9 +565,61 @@ export default function DryRunMappingTable({
   const autoMapped   = summary?.auto_mapped   ?? counts.auto;
   const unmappedCnt  = summary?.unmapped      ?? counts.unmapped;
   const collisionCnt = summary?.collisions    ?? counts.collision;
+  const score = typeof compatibilityScore === 'number' ? compatibilityScore : null;
+  const scoreColor = score === null ? 'var(--text-tertiary)'
+    : score >= 90 ? 'var(--color-success)'
+    : score >= 70 ? '#f59e0b'
+    : '#ef4444';
+
+  // Build a plain-English breakdown to show next to the score
+  const totalIssues = counts.collision + counts.unmapped + schemaConflicts.length;
+  const scoreLabel = score === null ? null
+    : score === 100 ? 'All checks passed'
+    : totalIssues === 0 ? (score >= 90 ? 'Minor issues detected' : 'Issues detected')
+    : `${totalIssues} issue${totalIssues !== 1 ? 's' : ''} found — ${
+        counts.collision > 0 ? `${counts.collision} collision${counts.collision !== 1 ? 's' : ''}` : ''
+      }${counts.collision > 0 && (counts.unmapped > 0 || schemaConflicts.length > 0) ? ', ' : ''}${
+        counts.unmapped > 0 ? `${counts.unmapped} unmapped` : ''
+      }${counts.unmapped > 0 && schemaConflicts.length > 0 ? ', ' : ''}${
+        schemaConflicts.length > 0 ? `${schemaConflicts.length} schema gap${schemaConflicts.length !== 1 ? 's' : ''}` : ''
+      }`;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+
+      {/* ── Compatibility score bar ─────────────────────────────────────────── */}
+      {score !== null && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '10px 14px',
+          borderRadius: 8,
+          background: 'var(--bg-surface)',
+          border: `1px solid ${scoreColor}40`,
+        }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+            Sync Compatibility
+          </span>
+          <div style={{ flex: 1, height: 8, borderRadius: 4, background: 'var(--bg-main)', overflow: 'hidden' }}>
+            <div style={{
+              height: '100%',
+              width: `${score}%`,
+              borderRadius: 4,
+              background: scoreColor,
+              transition: 'width 0.6s ease',
+            }} />
+          </div>
+          <span style={{ fontSize: 13, fontWeight: 800, color: scoreColor, minWidth: 46, textAlign: 'right' }}>
+            {score}%
+          </span>
+          {scoreLabel && (
+            <span style={{ fontSize: 11, color: score === 100 ? 'var(--color-success)' : 'var(--text-tertiary)' }}>
+              {scoreLabel}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* ── Summary bar ──────────────────────────────────────────────────────── */}
       <div style={{
@@ -575,6 +658,14 @@ export default function DryRunMappingTable({
             <span style={{ color: 'var(--text-tertiary)' }}>·</span>
             <span style={{ color: 'var(--color-error)', fontWeight: 600 }}>
               {collisionCnt} collision{collisionCnt !== 1 ? 's' : ''}
+            </span>
+          </>
+        )}
+        {schemaConflicts.length > 0 && (
+          <>
+            <span style={{ color: 'var(--text-tertiary)' }}>·</span>
+            <span style={{ color: '#f59e0b', fontWeight: 600 }}>
+              {schemaConflicts.length} schema issue{schemaConflicts.length !== 1 ? 's' : ''}
             </span>
           </>
         )}
@@ -760,8 +851,143 @@ export default function DryRunMappingTable({
         </>
       )}
 
+      {/* ── Schema Issues panel (DIMENSION_MISSING conflicts) ───────────────── */}
+      {activeFilter === 'schema_issues' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {schemaToast && (
+            <div style={{
+              padding: '8px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+              background: schemaToast.type === 'success' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
+              border: `1px solid ${schemaToast.type === 'success' ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}`,
+              color: schemaToast.type === 'success' ? '#4ade80' : '#f87171',
+            }}>
+              {schemaToast.msg}
+            </div>
+          )}
+          {schemaConflicts.length === 0 ? (
+            <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+              ✓ No schema issues detected
+            </div>
+          ) : schemaConflicts.map((conflict) => {
+            const fixState = schemaFixing[conflict.conflict_id];
+            const isDone = fixState === 'done';
+            const isPending = fixState === 'pending';
+            return (
+              <div key={conflict.conflict_id} style={{
+                padding: '14px 16px',
+                borderRadius: 8,
+                background: 'var(--bg-surface)',
+                border: `1px solid ${isDone ? 'rgba(34,197,94,0.4)' : 'rgba(245,158,11,0.35)'}`,
+                opacity: isDone ? 0.6 : 1,
+                transition: 'all 0.2s',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <AlertTriangle size={15} style={{ color: '#f59e0b', flexShrink: 0, marginTop: 2 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                      <span style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>
+                        {conflict.column_name}
+                      </span>
+                      <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: 'rgba(245,158,11,0.15)', color: '#f59e0b', fontWeight: 700, border: '1px solid rgba(245,158,11,0.3)' }}>
+                        DIMENSION MISSING
+                      </span>
+                      {conflict.model_name && (
+                        <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                          in <span style={{ fontFamily: 'monospace' }}>{conflict.model_name}</span>
+                        </span>
+                      )}
+                    </div>
+                    <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                      {conflict.description}
+                    </p>
+                    {/* Resolution options */}
+                    <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                      {/* Option A: Skip */}
+                      <div style={{
+                        padding: '8px 12px',
+                        borderRadius: 6,
+                        border: '1px solid var(--border-main)',
+                        background: 'var(--bg-main)',
+                        flex: '1 1 200px',
+                        minWidth: 180,
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                          <SkipForward size={12} style={{ color: 'var(--text-tertiary)' }} />
+                          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)' }}>
+                            Option A — Skip
+                          </span>
+                        </div>
+                        <p style={{ margin: 0, fontSize: 11, color: 'var(--text-tertiary)' }}>
+                          Exclude from Snowflake DIMENSIONS. Column absent from semantic queries.
+                        </p>
+                        <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                          Default behaviour (no action needed)
+                        </div>
+                      </div>
+                      {/* Option B: Auto-add */}
+                      <div style={{
+                        padding: '8px 12px',
+                        borderRadius: 6,
+                        border: isDone ? '1px solid rgba(34,197,94,0.45)' : '1px solid rgba(56,189,248,0.35)',
+                        background: isDone ? 'rgba(34,197,94,0.08)' : 'rgba(56,189,248,0.08)',
+                        flex: '1 1 200px',
+                        minWidth: 180,
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                          <PlusCircle size={12} style={{ color: isDone ? '#4ade80' : '#7dd3fc' }} />
+                          <span style={{ fontSize: 11, fontWeight: 700, color: isDone ? '#4ade80' : '#7dd3fc' }}>
+                            Option B — Auto-add to Snowflake
+                          </span>
+                        </div>
+                        <p style={{ margin: 0, fontSize: 11, color: 'var(--text-secondary)' }}>
+                          Run <code style={{ fontSize: 10 }}>ALTER TABLE ADD COLUMN</code> on the physical table, then re-sync to include in DIMENSIONS.
+                        </p>
+                        <button
+                          type="button"
+                          disabled={isPending || isDone}
+                          onClick={() => handleAutoAdd(conflict)}
+                          style={{
+                            marginTop: 8,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 5,
+                            padding: '5px 12px',
+                            borderRadius: 5,
+                            border: 'none',
+                            background: isDone ? 'rgba(34,197,94,0.2)' : isPending ? 'rgba(56,189,248,0.1)' : 'rgba(56,189,248,0.2)',
+                            color: isDone ? '#4ade80' : '#7dd3fc',
+                            fontSize: 11,
+                            fontWeight: 700,
+                            cursor: (isPending || isDone) ? 'not-allowed' : 'pointer',
+                            opacity: (isPending || isDone) ? 0.8 : 1,
+                            transition: 'all 0.15s',
+                          }}
+                        >
+                          {isPending ? (
+                            <>
+                              <span style={{ width: 10, height: 10, border: '2px solid #7dd3fc', borderTopColor: 'transparent', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' }} />
+                              Adding…
+                            </>
+                          ) : isDone ? (
+                            <>✓ Added — re-syncing</>
+                          ) : (
+                            <><PlusCircle size={11} /> Add Column &amp; Re-sync</>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* ── Relationships section ─────────────────────────────────────────────── */}
-      <RelationshipsSection relationships={relationships} />
+      {activeFilter !== 'schema_issues' && (
+        <RelationshipsSection relationships={relationships} />
+      )}
       <SynonymEditModal
         open={Boolean(synonymModal)}
         onClose={() => setSynonymModal(null)}

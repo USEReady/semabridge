@@ -80,6 +80,12 @@ class RunSummary(BaseModel):
     target_artifact_path: Optional[str] = None
     routing_summary: Optional[Dict[str, Any]] = None
     
+    # Schema evolution warnings surfaced during DDL generation
+    missing_dims: Dict[str, List[str]] = Field(
+        default_factory=dict,
+        description="Columns absent from the Snowflake physical table but present in the model DIMENSIONS",
+    )
+
     # Error details for FAILED/PARTIAL
     errors: List[ErrorDetail] = Field(default_factory=list)
     

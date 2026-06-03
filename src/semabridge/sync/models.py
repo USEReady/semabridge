@@ -88,6 +88,7 @@ class SchemaChangeType(str, Enum):
     RELATIONSHIP_MODIFIED = "relationship_modified"
     HIERARCHY_ADDED = "hierarchy_added"
     HIERARCHY_REMOVED = "hierarchy_removed"
+    DIMENSION_MISSING = "dimension_missing"  # Column in source model absent from Snowflake physical table
 
 
 class ConflictSeverity(str, Enum):

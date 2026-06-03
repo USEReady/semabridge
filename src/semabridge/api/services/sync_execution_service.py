@@ -373,6 +373,7 @@ def _run_single_job(
             "routing_summary": summary_data.get("routing_summary") if isinstance(summary_data, dict) else None,
             "console": _build_console_details(summary_data),
             "run_id": summary_data.get("run_id"),
+            "missing_dims": summary_data.get("missing_dims") or {},
         }
     except Exception as exc:
         logger.error("Sync failed for model '%s': %s", model_label, exc)

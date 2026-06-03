@@ -500,6 +500,9 @@ export function StepMappingOptions({
             onBulkResolved={onBulkResolved}
             onSynonymUpdate={onSynonymUpdate}
             projectId={projectId}
+            schemaConflicts={dryRunData?.schema_conflicts || []}
+            compatibilityScore={dryRunData?.compatibility_score ?? null}
+            onReSync={onRunDryRun}
           />
         </div>
       )}

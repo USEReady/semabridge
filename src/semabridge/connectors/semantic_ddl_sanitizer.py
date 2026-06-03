@@ -725,6 +725,20 @@ class SemanticDDLSanitizer:
                 return fixed, True
             return ddl, False
 
+        if invalid_norm == "MAX_MONTHINDEX":
+            # MAX_MONTHINDEX is a synthetic anchor column for rolling-period metrics.
+            # Replace with EXTRACT(MONTH FROM CURRENT_DATE()) * 12 + EXTRACT(YEAR FROM CURRENT_DATE())
+            # as a close semantic approximation (months since epoch).  This keeps the
+            # metric alive with a sensible current-period value.
+            fixed = re.sub(
+                r'(?<!["\w])MAX_MONTHINDEX(?!["\w])',
+                '(EXTRACT(YEAR FROM CURRENT_DATE()) * 12 + EXTRACT(MONTH FROM CURRENT_DATE()))',
+                ddl
+            )
+            if fixed != ddl:
+                return fixed, True
+            return ddl, False
+
         invalid_alias: Optional[str] = None
         invalid_col: Optional[str] = None
         if "." in invalid_norm:

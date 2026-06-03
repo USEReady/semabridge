@@ -83,7 +83,7 @@ class TablesClauseBuilder:
         registry: Any,
         metric_counts_by_dataset: dict[str, int],
         related_datasets: set[str],
-    ) -> Tuple[List[str], Dict[str, List[str]], Dict[tuple, str], Dict[str, set[str]], Dict[str, Any]]:
+    ) -> Tuple[List[str], Dict[str, List[str]], Dict[tuple, str], Dict[str, set[str]], Dict[str, Any], Dict[str, set[str]]]:
         self._current_model = sml
         return self._build(sml.datasets, sml.relationships, registry, metric_counts_by_dataset, related_datasets, is_osi=False)
 
@@ -93,7 +93,7 @@ class TablesClauseBuilder:
         registry: Any,
         metric_counts_by_dataset: dict[str, int],
         related_datasets: set[str],
-    ) -> Tuple[List[str], Dict[str, List[str]], Dict[tuple, str], Dict[str, set[str]], Dict[str, Any]]:
+    ) -> Tuple[List[str], Dict[str, List[str]], Dict[tuple, str], Dict[str, set[str]], Dict[str, Any], Dict[str, set[str]]]:
         self._current_model = osi
         return self._build(osi.datasets, osi.relationships, registry, metric_counts_by_dataset, related_datasets, is_osi=True)
 
@@ -105,7 +105,7 @@ class TablesClauseBuilder:
         metric_counts_by_dataset: dict[str, int],
         related_datasets: set[str],
         is_osi: bool
-    ) -> Tuple[List[str], Dict[str, List[str]], Dict[tuple, str], Dict[str, set[str]], Dict[str, Any]]:
+    ) -> Tuple[List[str], Dict[str, List[str]], Dict[tuple, str], Dict[str, set[str]], Dict[str, Any], Dict[str, set[str]]]:
         tables_lines: List[str] = []
         relationship_target_alias: dict[tuple[str, str], str] = {}
         declared_pk_by_alias: dict[str, list[str]] = {}
@@ -120,6 +120,11 @@ class TablesClauseBuilder:
                         relationship_pk_map[rel.to_dataset].append(col)
 
         dataset_col_lookup: dict[str, set[str]] = {}
+        # live_col_lookup contains ONLY confirmed-live columns from Snowflake schema
+        # metadata.  Unlike dataset_col_lookup it is NEVER populated with modeled_cols
+        # as a fallback, so downstream code can use it to distinguish "physically
+        # confirmed" from "modelled assumption".  Empty entry = schema unknown.
+        live_col_lookup: dict[str, set[str]] = {}
         dataset_by_name: dict[str, Any] = {d.unique_name: d for d in datasets}
         source_table_mapping = getattr(self.behavior.snowflake, "source_table_mapping", {}) or {}
         for dataset in datasets:
@@ -127,12 +132,14 @@ class TablesClauseBuilder:
                 modeled_cols = {self.identifier_sanitizer.sanitize_column(c.unique_name) for c in dataset.columns}
             else:
                 modeled_cols = set(self.schema_manager._collect_physical_source_columns(dataset).keys())
-            
+
             source_table = source_table_mapping.get(dataset.unique_name, dataset.source_table or dataset.unique_name)
             _unq_src = source_table.rsplit(".", 1)[-1] if "." in source_table else source_table
             source_key = self.identifier_sanitizer.sanitize_table_name(_unq_src).upper()
             live_cols = self.live_schema_metadata.get(source_key, set())
             dataset_col_lookup[dataset.unique_name] = set(live_cols) if live_cols else modeled_cols
+            if live_cols:
+                live_col_lookup[dataset.unique_name] = set(live_cols)
 
         for dataset in datasets:
             source_table = source_table_mapping.get(dataset.unique_name, dataset.source_table or dataset.unique_name)
@@ -197,7 +204,7 @@ class TablesClauseBuilder:
                 declared_pk_by_alias[rel_alias] = [rel_pk]
                 relationship_target_alias[(dataset.unique_name, rel_pk.upper())] = rel_alias
 
-        return tables_lines, declared_pk_by_alias, relationship_target_alias, dataset_col_lookup, dataset_by_name
+        return tables_lines, declared_pk_by_alias, relationship_target_alias, dataset_col_lookup, dataset_by_name, live_col_lookup
 
     def _get_unique_alias(self, name: str, registry: Any) -> str:
         alias = registry.get_alias(name)

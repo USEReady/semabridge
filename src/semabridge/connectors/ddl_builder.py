@@ -56,6 +56,10 @@ class SemanticViewBuilder:
         self.schema_manager = schema_manager
         self.dup_name_repo = dup_name_repo
         self.translator = translator
+        # Populated after generate_ddls() — maps dataset_name → [phys_col, ...]
+        # for columns present in the source model but absent from the Snowflake
+        # physical schema.  Callers can surface these as warnings/conflicts.
+        self.missing_dims: Dict[str, List[str]] = {}
         
         # Modular components
         self.sanitizer = SemanticDDLSanitizer(identifier_sanitizer)
@@ -261,7 +265,7 @@ class SemanticViewBuilder:
 
         # TABLES
         tbuilder = TablesClauseBuilder(self.identifier_sanitizer, self.schema_manager, self.config, self.behavior, self.live_schema_metadata)
-        tables_lines, declared_pk, rel_pk_map, ds_lookup, ds_by_name = tbuilder.build_for_sml(sml, registry, metric_counts, related_ds)
+        tables_lines, declared_pk, rel_pk_map, ds_lookup, ds_by_name, live_ds_lookup = tbuilder.build_for_sml(sml, registry, metric_counts, related_ds)
         if tables_lines: definitions.append("TABLES (\n" + ",\n".join(tables_lines) + "\n)")
 
         # RELATIONSHIPS
@@ -270,7 +274,12 @@ class SemanticViewBuilder:
 
         # DIMENSIONS
         measure_cols = self._collect_measure_columns(sml, ds_lookup)
-        dims_lines = self.dimensions_builder.build_for_sml(sml, registry.dataset_aliases, ds_by_name, ds_lookup, measure_cols)
+        dims_lines, _missing = self.dimensions_builder.build_for_sml(sml, registry.dataset_aliases, ds_by_name, ds_lookup, measure_cols, live_col_lookup=live_ds_lookup)
+        for _ds, _cols in _missing.items():
+            self.missing_dims.setdefault(_ds, [])
+            for _c in _cols:
+                if _c not in self.missing_dims[_ds]:
+                    self.missing_dims[_ds].append(_c)
         dimensions_block_idx = None
         if dims_lines:
             dimensions_block_idx = len(definitions)
@@ -281,9 +290,9 @@ class SemanticViewBuilder:
         alias_by_raw = IdentifierNormalizer(self.identifier_sanitizer).build_alias_lookup(sml.datasets, registry.dataset_aliases)
         all_phys = {c for cols in ds_lookup.values() for c in cols}
         emittable = {self.identifier_sanitizer.sanitize_alias(m.unique_name) for m in sml.metrics if (m.source_column and m.aggregation) or m.sql_expression or getattr(m, "expression", None)}
-        
+
         metrics_lines = self.metrics_builder.build_for_sml(sml, registry.dataset_aliases, ds_by_name, ds_lookup, alias_by_raw, all_phys, emittable)
-        
+
         # CROSS-CLAUSE DEDUPLICATION
         if dims_lines and metrics_lines and dimensions_block_idx is not None:
             metrics_lines, definitions[dimensions_block_idx] = self._deduplicate_cross_clause(metrics_lines, dims_lines, definitions[dimensions_block_idx])
@@ -314,7 +323,7 @@ class SemanticViewBuilder:
 
         # TABLES
         tbuilder = TablesClauseBuilder(self.identifier_sanitizer, self.schema_manager, self.config, self.behavior, self.live_schema_metadata)
-        tables_lines, declared_pk, rel_pk_map, ds_lookup, ds_by_name = tbuilder.build_for_osi(osi, registry, metric_counts, related_ds)
+        tables_lines, declared_pk, rel_pk_map, ds_lookup, ds_by_name, live_ds_lookup = tbuilder.build_for_osi(osi, registry, metric_counts, related_ds)
         if tables_lines: definitions.append("TABLES (\n" + ",\n".join(tables_lines) + "\n)")
 
         # RELATIONSHIPS
@@ -323,7 +332,12 @@ class SemanticViewBuilder:
 
         # DIMENSIONS
         measure_cols = self._collect_measure_columns(osi, ds_lookup)
-        dims_lines = self.dimensions_builder.build_for_osi(osi, registry.dataset_aliases, ds_by_name, ds_lookup, measure_cols)
+        dims_lines, _missing = self.dimensions_builder.build_for_osi(osi, registry.dataset_aliases, ds_by_name, ds_lookup, measure_cols, live_col_lookup=live_ds_lookup)
+        for _ds, _cols in _missing.items():
+            self.missing_dims.setdefault(_ds, [])
+            for _c in _cols:
+                if _c not in self.missing_dims[_ds]:
+                    self.missing_dims[_ds].append(_c)
         dimensions_block_idx = None
         if dims_lines:
             dimensions_block_idx = len(definitions)
