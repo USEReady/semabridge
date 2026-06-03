@@ -131,6 +131,11 @@ export function StepMappingOptions({
     return `${totalFields} mapped fields`;
   }, [dryRunData, rows.length]);
 
+  // Real signals from the dry-run result — must be declared before readyToProceed / readiness / checkState
+  const compatScore  = typeof dryRunData?.compatibility_score === 'number' ? dryRunData.compatibility_score : null;
+  const schemaIssues = Array.isArray(dryRunData?.schema_conflicts) ? dryRunData.schema_conflicts.length : 0;
+  const hasIssues    = blockingCount > 0 || dryRunFailed || schemaIssues > 0 || (compatScore !== null && compatScore < 90);
+
   const readyToProceed = autoMappingMode
     ? blockingCount === 0 && (compatScore === null || compatScore >= 70)
     : dryRunCompleted && blockingCount === 0 && (compatScore === null || compatScore >= 70);
@@ -248,10 +253,6 @@ export function StepMappingOptions({
       color: 'var(--accent-blue)',
     };
   })();
-  // Real signals from the dry-run result
-  const compatScore    = typeof dryRunData?.compatibility_score === 'number' ? dryRunData.compatibility_score : null;
-  const schemaIssues   = Array.isArray(dryRunData?.schema_conflicts) ? dryRunData.schema_conflicts.length : 0;
-  const hasIssues      = blockingCount > 0 || dryRunFailed || schemaIssues > 0 || (compatScore !== null && compatScore < 90);
 
   const checkState = useMemo(() => {
     if (mappingLoading || dryRunStatus === 'running' || dryRunStatus === 'loading') return 'running';
