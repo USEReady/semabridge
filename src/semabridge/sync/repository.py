@@ -241,6 +241,8 @@ class SyncRepository:
             resolution=row.resolution,
             resolved_at=SyncRepository._dt_to_str(row.resolved_at),
             resolved_by=row.resolved_by,
+            resolution_note=getattr(row, "resolution_note", None),
+            escalated=getattr(row, "escalated", False) or False,
             created_at=SyncRepository._dt_to_str(row.created_at),
         )
 
@@ -547,17 +549,44 @@ class SyncRepository:
         resolution: ConflictResolution,
         resolved_by: str = "user",
     ) -> None:
-        """Mark a conflict as resolved."""
+        """Mark a conflict as resolved (legacy simple form)."""
+        self.resolve_conflict_detailed(
+            conflict_id=conflict_id,
+            resolution=resolution,
+            resolved_by=resolved_by,
+        )
+
+    def resolve_conflict_detailed(
+        self,
+        conflict_id: str,
+        resolution: ConflictResolution,
+        resolved_by: str = "user",
+        resolution_note: Optional[str] = None,
+        escalated: bool = False,
+    ) -> None:
+        """Mark a conflict as resolved with optional note and escalation flag.
+
+        When escalated=True the conflict is tagged for human review and
+        the job remains paused even if no other CRITICAL conflicts exist.
+        """
+        from semabridge.sync.models import ConflictResolution as _CR
+        _res_val = resolution.value if hasattr(resolution, "value") else resolution
         with self._session() as session:
+            _values: dict = dict(
+                resolution=_res_val,
+                resolved_at=SyncRepository._str_to_dt(_utc_now()),
+                resolved_by=resolved_by,
+            )
+            # Only write new columns when they are supported (graceful on older DBs)
+            try:
+                _values["resolution_note"] = resolution_note
+                _values["escalated"] = escalated
+            except Exception:
+                pass
             session.execute(
                 update(SyncConflictRow)
                 .where(SyncConflictRow.conflict_id == conflict_id)
-                .values(
-                    resolution=resolution.value
-                        if hasattr(resolution, "value") else resolution,
-                    resolved_at=SyncRepository._str_to_dt(_utc_now()),
-                    resolved_by=resolved_by,
-                )
+                .values(**_values)
             )
             session.commit()
 

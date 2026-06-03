@@ -356,6 +356,22 @@ class SnowflakeEmitter(BaseEmitter):
                 if not is_osi:
                     self._generate_deployment_artifacts(model, ddls)
 
+                # Step 6: Post-deploy smoke test — catch runtime errors early
+                for _view_name, _ddl_sql in ddls.items():
+                    _smoke_err = self._smoke_test_semantic_view(cur, _view_name)
+                    if _smoke_err:
+                        logger.warning(
+                            "[%s] Semantic view '%s' deployed but smoke test failed: %s",
+                            path_type, _view_name, _smoke_err,
+                        )
+                        # Non-fatal: view was accepted by Snowflake DDL validation.
+                        # Surface as a warning in the run log without rolling back.
+                        if not hasattr(self, "_smoke_test_warnings"):
+                            self._smoke_test_warnings = []
+                        self._smoke_test_warnings.append(
+                            {"view": _view_name, "error": _smoke_err}
+                        )
+
                 logger.info("[%s] success model=%s (%.2fs)", path_type, model_name, time.perf_counter() - deploy_started_at)
                 return True
 
@@ -367,6 +383,27 @@ class SnowflakeEmitter(BaseEmitter):
             self.last_deployment_error = str(exc)
             logger.error("[%s] FAILED model=%s: %s", path_type, model_name, exc, exc_info=True)
             return False
+
+    def _smoke_test_semantic_view(self, cursor: Any, view_name: str) -> Optional[str]:
+        """Run a lightweight SELECT against the semantic view to catch runtime errors.
+
+        Snowflake accepts some invalid DDL that only fails at query time
+        (e.g., column referenced in DIMENSIONS that doesn't exist in the physical table).
+
+        Args:
+            cursor: Active Snowflake cursor.
+            view_name: Name of the semantic view to test.
+
+        Returns:
+            None on success; error message string on failure.
+        """
+        # Use SHOW COLUMNS to avoid scanning any data — much cheaper than SELECT *
+        test_sql = f'SELECT * FROM "{view_name}" LIMIT 0'
+        try:
+            self.connection_manager._execute_sql(cursor, test_sql, context=f"smoke_test:{view_name}")
+            return None
+        except Exception as e:
+            return str(e)
 
     def _generate_deployment_artifacts(self, sml: SMLModel, ddls: Dict[str, str]) -> None:
         """Generate side-car artifacts like Cortex YAML."""

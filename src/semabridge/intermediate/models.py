@@ -166,6 +166,8 @@ class OSIColumn(OSIBaseModel):
     is_enum: bool = Field(default=False, description="Exhaustive categorical values indicator")
     cortex_search_service: Optional[str] = Field(default=None, description="Linked Cortex Search Service name")
     sample_values: List[str] = Field(default_factory=list, description="Representative sample values")
+    source_type: Optional[str] = None             # Original platform type string (e.g. "NUMERIC(10,2)")
+    folder: Optional[str] = None                   # Display folder (Fabric organizes measures in folders)
 
     @field_validator("unique_name")
     @classmethod
@@ -218,6 +220,8 @@ class OSIDataset(OSIBaseModel):
     )
     is_fact: bool = Field(default=False, description="Fact table indicator")
     is_hidden: bool = Field(default=False, description="Hidden from end users")
+    source_database: Optional[str] = None         # Database name (Snowflake-specific)
+    row_count: Optional[int] = None               # Approx row count for fact/dim hinting
 
     @field_validator("columns")
     @classmethod
@@ -304,6 +308,9 @@ class OSIMetric(OSIBaseModel):
         description="Cortex Analyst access: 'public_access' or 'private_access'"
     )
     synonyms: List[str] = Field(default_factory=list, description="Alternative names for NLP matching")
+    sql_expression: Optional[str] = None          # Pre-translated SQL (from Snowflake extract)
+    complexity_tier: int = 0                       # 0=unknown, 1-5 from DAX analysis
+    depends_on_measures: List[str] = Field(default_factory=list)  # Dependency graph
 
     @field_validator("unique_name")
     @classmethod
@@ -315,11 +322,20 @@ class OSIMetric(OSIBaseModel):
 
     @model_validator(mode="after")
     def validate_source_or_expression(self) -> "OSIMetric":
-        """Ensure either source_column or expression is provided."""
+        """Ensure either source_column or expression is provided.
+
+        For Snowflake-sourced metrics, sql_expression is the canonical form.
+        If expression is not set but sql_expression is, copy it across so that
+        downstream converters (e.g. TMSLGenerator) have a usable expression field.
+        """
         if not self.source_column and not self.expression:
-            raise ValueError(
-                "Metric must have either source_column or expression defined"
-            )
+            if self.sql_expression:
+                # Snowflake-extracted metric: use SQL as the expression so validators pass
+                object.__setattr__(self, "expression", self.sql_expression)
+            else:
+                raise ValueError(
+                    "Metric must have either source_column or expression defined"
+                )
         return self
 
     def model_post_init(self, __context: Any) -> None:
@@ -537,6 +553,8 @@ class OSIModel(OSIBaseModel):
     metadata: Dict[str, Any] = Field(
         default_factory=dict, description="Additional metadata"
     )
+    platform_metadata: Dict[str, Any] = Field(default_factory=dict)
+    # Platform-specific hints namespace e.g. {"fabric": {"lineageTag": "..."}, "snowflake": {"warehouse": "..."}}
 
     model_config = {
         "strict": False,  # Allow datetime serialization

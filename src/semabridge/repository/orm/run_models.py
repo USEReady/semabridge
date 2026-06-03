@@ -98,6 +98,8 @@ class SyncConflictRow(Base):
     resolution: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     resolved_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
     resolved_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    resolution_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    escalated: Mapped[bool] = mapped_column(default=False, nullable=False, server_default="false")
     created_at: Mapped[Optional[datetime]] = mapped_column(
         _UTC_DT, server_default=func.now(), nullable=True
     )

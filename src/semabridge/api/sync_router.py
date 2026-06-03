@@ -10,7 +10,8 @@ Endpoints:
     POST   /sync/jobs/{id}/cancel   — Cancel a running job
     POST   /sync/jobs/{id}/resume   — Resolve conflicts and resume
     GET    /sync/jobs/{id}/conflicts — Get conflicts for a job
-    POST   /sync/conflicts/{id}/resolve — Resolve a single conflict
+    POST   /sync/conflicts/{id}/resolve — Resolve a single conflict (bulk)
+    PATCH  /sync/jobs/{id}/conflicts/{cid} — Approve/reject/escalate a single conflict
     GET    /sync/mappings      — List model mappings
     GET    /sync/schema/{model}/history — Schema version history
 """
@@ -81,10 +82,24 @@ class StartSyncRequest(BaseModel):
 
 
 class ResolveConflictRequest(BaseModel):
-    """Request to resolve a single conflict."""
+    """Request to resolve a single conflict (bulk endpoint)."""
 
     resolution: ConflictResolution
     resolved_by: str = "user"
+
+
+class PatchConflictRequest(BaseModel):
+    """Per-conflict approval/rejection request (fine-grained PATCH endpoint).
+
+    resolution must be one of: source_wins, target_wins, merge, human_review.
+    human_review blocks the deploy until a user with admin access clears it.
+    """
+
+    resolution: ConflictResolution
+    resolved_by: str = "user"
+    resolution_note: Optional[str] = Field(
+        default=None, description="Optional explanation for audit trail"
+    )
 
 
 class ResumeJobRequest(BaseModel):
@@ -217,13 +232,74 @@ def get_conflicts(job_id: str) -> List[Dict[str, Any]]:
 def resolve_conflict(
     conflict_id: str, request: ResolveConflictRequest
 ) -> Dict[str, str]:
-    """Resolve a single conflict."""
+    """Resolve a single conflict (legacy bulk-style endpoint)."""
     try:
         repo = _get_repo()
         repo.resolve_conflict(
             conflict_id, request.resolution, request.resolved_by
         )
         return {"conflict_id": conflict_id, "status": "resolved"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.patch("/jobs/{job_id}/conflicts/{conflict_id}")
+def patch_conflict(
+    job_id: str,
+    conflict_id: str,
+    request: PatchConflictRequest,
+) -> Dict[str, Any]:
+    """Approve, reject, or escalate a single conflict.
+
+    - resolution=source_wins / target_wins / merge  →  resolve and potentially auto-resume
+    - resolution=human_review  →  escalate (sets escalated=True); blocks deploy until cleared
+
+    Returns:
+        conflict_id, status, auto_resumed (True if all criticals are now resolved).
+    """
+    from semabridge.sync.models import ConflictResolution, ConflictSeverity
+
+    try:
+        repo = _get_repo()
+
+        # Resolve with note + escalated flag
+        is_escalated = request.resolution == ConflictResolution.HUMAN_REVIEW
+        repo.resolve_conflict_detailed(
+            conflict_id=conflict_id,
+            resolution=request.resolution,
+            resolved_by=request.resolved_by,
+            resolution_note=request.resolution_note,
+            escalated=is_escalated,
+        )
+
+        # Check if all CRITICAL conflicts for this job are now resolved
+        # (auto-resume when no more critical blockers remain)
+        remaining_criticals = [
+            c for c in repo.get_unresolved_conflicts(job_id)
+            if c.severity == ConflictSeverity.CRITICAL
+        ]
+        auto_resumed = False
+        if not remaining_criticals:
+            # No critical blockers — check if job is paused and resume it
+            try:
+                job = repo.get_job(job_id)
+                from semabridge.sync.models import SyncJobStatus
+                if job and job.status == SyncJobStatus.PAUSED:
+                    repo.update_job_status(job_id, SyncJobStatus.PENDING)
+                    auto_resumed = True
+                    logger.info(
+                        f"Job {job_id} auto-resumed: all critical conflicts resolved"
+                    )
+            except Exception as resume_err:
+                logger.warning(f"Could not auto-resume job {job_id}: {resume_err}")
+
+        return {
+            "conflict_id": conflict_id,
+            "job_id": job_id,
+            "status": "escalated" if is_escalated else "resolved",
+            "auto_resumed": auto_resumed,
+            "remaining_critical_conflicts": len(remaining_criticals),
+        }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
