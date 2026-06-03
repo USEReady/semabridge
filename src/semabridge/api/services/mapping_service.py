@@ -13,6 +13,7 @@ from fastapi import Response
 
 from semabridge.api.services.project_mapping_engine import (
     _extract_metric_source_tables,
+    _semantic_name,
     build_entity_mappings,
     sanitize_identifier,
     deterministic_hash_suffix,
@@ -709,6 +710,18 @@ def _compat_serialize_auto_map_entity_mappings(
             continue
         if target_key in seen:
             first = seen[target_key]
+            # Only flag as a real collision when the two source names are
+            # semantically different (e.g. "rev_total" vs "revenue_total" both
+            # producing REVENUE_TOTAL). If they are the same concept written
+            # differently (e.g. "Level" and "level" from two tables), the
+            # primary mapping engine already handles de-duplication; flagging
+            # here would produce a false-positive collision in the UI.
+            prior_semantic = _semantic_name(str(first.get("source_name") or ""))
+            current_semantic = _semantic_name(str(mapping.get("source_name") or ""))
+            if prior_semantic == current_semantic:
+                # Same concept — not a true collision; skip
+                seen[target_key] = mapping
+                continue
             first["collision_detected"] = True
             first["validation_status"] = "invalid"
             first["validation_code"] = "COLLISION"
