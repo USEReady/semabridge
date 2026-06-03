@@ -357,7 +357,16 @@ class SnowflakeEmitter(BaseEmitter):
                     self._generate_deployment_artifacts(model, ddls)
 
                 # Step 6: Post-deploy smoke test — catch runtime errors early
-                for _view_name, _ddl_sql in ddls.items():
+                # ddls is list[str]; extract view name from each DDL for the test.
+                import re as _re_smoke
+                for _ddl_sql in ddls:
+                    _m = _re_smoke.search(
+                        r'CREATE\s+(?:OR\s+REPLACE\s+)?SEMANTIC\s+VIEW\s+"?(\w+)"?',
+                        _ddl_sql, _re_smoke.IGNORECASE,
+                    )
+                    if not _m:
+                        continue
+                    _view_name = _m.group(1)
                     _smoke_err = self._smoke_test_semantic_view(cur, _view_name)
                     if _smoke_err:
                         logger.warning(
