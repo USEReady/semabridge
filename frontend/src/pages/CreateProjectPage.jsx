@@ -2035,6 +2035,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
                 }}
                 onDeploy={handleDeployMapping}
                 onProceedStateChange={setMappingReadyToProceed}
+                onProceed={goNext}
                 primaryTargetConnector={[...targetConnectors][0] || ''}
                 dryRunData={dryRunData}
                 editingRow={editingRow}

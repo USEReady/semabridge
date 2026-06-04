@@ -43,6 +43,7 @@ export function StepMappingOptions({
   onBulkResolved,
   onSynonymUpdate,
   projectId,
+  onProceed,
 }) {
   const [autoMappingMode, setAutoMappingMode] = useState(true);
   const [rows, setRows] = useState([]);
@@ -466,7 +467,7 @@ export function StepMappingOptions({
                   <button
                     type="button"
                     disabled={!readyToProceed}
-                    onClick={() => onProceedStateChange?.(true)}
+                    onClick={() => { onProceedStateChange?.(true); onProceed?.(); }}
                     style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 16px', minWidth: 160, borderRadius: 8, border: '1px solid var(--accent-blue)', background: 'var(--accent-blue)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: !readyToProceed ? 'not-allowed' : 'pointer', opacity: !readyToProceed ? 0.6 : 1 }}
                   >
                     Proceed
