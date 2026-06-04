@@ -164,6 +164,8 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     const [projects, setProjects] = useState([]);
     // Override snapshot when user picks a workspace model — null means use prop
     const [overrideSnapshotId, setOverrideSnapshotId] = useState(null);
+    // Tracks the raw dropdown value for the model select (may be 'discovered:xxx')
+    const [modelDropdownValue, setModelDropdownValue] = useState('__all__');
     // Workspace selection (Fabric only — Snowflake has no workspace concept)
     const [availableWorkspaces, setAvailableWorkspaces] = useState([]);
     const [selectedWorkspaceId, setSelectedWorkspaceId] = usePageCache('explore:selectedWorkspaceId', '__all__');
@@ -675,6 +677,8 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             setAvailableModels([]);
             setSelectedWorkspaceId('__all__');
             setUnsyncedModel(null);
+            setModelDropdownValue('__all__');
+            setOverrideSnapshotId(null);
             return;
         }
         const account = accounts.find(a => String(a.id || a.tag || '') === selectedConnector);
@@ -689,6 +693,8 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             setAvailableModels([]);
             setSelectedWorkspaceId('__all__');
             setUnsyncedModel(null);
+            setModelDropdownValue('__all__');
+            setOverrideSnapshotId(null);
             api.fabricListWorkspaces(String(account.id || '')).then(resp => {
                 const list = Array.isArray(resp) ? resp : (resp?.workspaces || []);
                 setAvailableWorkspaces(list.map(ws => ({
@@ -704,6 +710,8 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             setModelsLoading(true);
             setAvailableModels([]);
             setUnsyncedModel(null);
+            setModelDropdownValue('__all__');
+            setOverrideSnapshotId(null);
             api.discoverSnowflakeModels(String(account.id || '')).then(resp => {
                 const list = Array.isArray(resp) ? resp : [];
                 setAvailableModels(list.map(m => ({
@@ -729,6 +737,8 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         setModelsLoading(true);
         setAvailableModels([]);
         setUnsyncedModel(null);
+        setModelDropdownValue('__all__');
+        setOverrideSnapshotId(null);
         api.discoverFabricModels(selectedWorkspaceId, String(account.id || '')).then(resp => {
             const list = Array.isArray(resp) ? resp : [];
             setAvailableModels(list.map(m => ({
@@ -777,14 +787,17 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                 const latestSnap = sorted[0];
                 if (latestSnap?.snapshot_id) {
                     setOverrideSnapshotId(latestSnap.snapshot_id);
+                    setModelDropdownValue(`discovered:${modelId}`);
                     setUnsyncedModel(null);
                     return;
                 }
             } catch { /* fall through */ }
         }
 
-        // 2. No matching project or no snapshot yet — mark unsynced
-        setSelectedModelId('__all__');
+        // 2. No matching project or no snapshot yet — clear graph and mark unsynced
+        setOverrideSnapshotId(null);
+        setModelDropdownValue(`discovered:${modelId}`);
+        setGraphData({ nodes: [], edges: [], meta: {} });
         setUnsyncedModel({ id: model.id, name: model.name });
     }, [availableModels, projects, selectedWorkspaceId]);
 
@@ -907,6 +920,8 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                                 setAvailableWorkspaces([]);
                                 setAvailableModels([]);
                                 setUnsyncedModel(null);
+                                setModelDropdownValue('__all__');
+                                setOverrideSnapshotId(null);
                             }}
                             style={dropdownStyle}
                             title="Choose connector filter"
@@ -933,6 +948,8 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                                         setSelectedModelId('__all__');
                                         setSelectedTableId('__all__');
                                         setUnsyncedModel(null);
+                                        setModelDropdownValue('__all__');
+                                        setOverrideSnapshotId(null);
                                     }}
                                     style={dropdownStyle}
                                     disabled={workspacesLoading}
@@ -954,16 +971,17 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                                     Model
                                 </span>
                                 <select
-                                    value={selectedModelId}
+                                    value={modelDropdownValue !== '__all__' ? modelDropdownValue : selectedModelId}
                                     onChange={(e) => {
                                         const val = e.target.value;
-                                        // If value starts with 'discovered:' it's from live discovery
+                                        setModelDropdownValue(val);
                                         if (val.startsWith('discovered:')) {
                                             handleDiscoveredModelSelect(val.slice('discovered:'.length));
                                         } else {
                                             setSelectedModelId(val);
                                             setSelectedTableId('__all__');
                                             setUnsyncedModel(null);
+                                            setOverrideSnapshotId(null);
                                         }
                                     }}
                                     style={dropdownStyle}
