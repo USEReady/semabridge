@@ -90,6 +90,8 @@ def _apply_schema_compatibility_fixes() -> None:
                 pending_alters.append("ALTER TABLE projects ADD COLUMN account_id TEXT")
         if "connection_tag" not in project_columns:
             pending_alters.append("ALTER TABLE projects ADD COLUMN connection_tag VARCHAR(255)")
+        if "notification_email" not in project_columns:
+            pending_alters.append("ALTER TABLE projects ADD COLUMN notification_email VARCHAR(255)")
 
     if _table_exists(engine, "snapshots"):
         snapshot_columns = _get_column_names(engine, "snapshots")
