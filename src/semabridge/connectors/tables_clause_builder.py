@@ -70,8 +70,33 @@ class TablesClauseBuilder:
             resolved_date_col = self.identifier_sanitizer.sanitize_column(date_col)
             resolved_fiscal_col = self.identifier_sanitizer.sanitize_column(fiscal_col)
 
+        # Guard: only inject the anchor when the fiscal column is confirmed to
+        # exist in the live Snowflake schema.  If the calendar table doesn't
+        # have MONTHINDEX (or whichever column was resolved), emitting a
+        # subquery that references it produces Snowflake error 000904 inside a
+        # multi-line TABLE subquery — a position the DDL sanitizer cannot reach.
+        if self.live_schema_metadata:
+            # live_schema_metadata keys may be bare table names or fully-qualified;
+            # try bare sanitized name first, then the full FQ path.
+            _live_cols = (
+                self.live_schema_metadata.get(safe_table)
+                or self.live_schema_metadata.get(safe_table.upper())
+                or self.live_schema_metadata.get(date_table)
+                or self.live_schema_metadata.get(date_table.upper())
+                or set()
+            )
+            if _live_cols and resolved_fiscal_col not in _live_cols:
+                # Fiscal column confirmed absent from live schema — skip anchor.
+                import logging as _log
+                _log.getLogger(__name__).warning(
+                    "Skipping _CURRENT_FISCAL_PERIOD anchor: column '%s' not found "
+                    "in live Snowflake schema for table '%s'.",
+                    resolved_fiscal_col, safe_table,
+                )
+                return source_fq
+
         return f"""(
-    SELECT 
+    SELECT
         f.*,
         (SELECT MAX("{resolved_fiscal_col}") FROM {date_table_ref} WHERE "{resolved_date_col}" = CURRENT_DATE()) AS "_CURRENT_FISCAL_PERIOD"
     FROM {source_fq} f
