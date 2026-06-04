@@ -209,7 +209,10 @@ def extract_model_entities(model: Dict[str, Any]) -> List[Dict[str, Any]]:
 def _scope_key(entity: Dict[str, Any]) -> str:
     kind = str(entity.get("entity_kind") or "").lower()
     if kind == "column":
-        return f"column::{entity.get('parent_source_path') or 'root'}"
+        # Use a flat column scope so columns from DIFFERENT tables compete for the
+        # same namespace — matching Snowflake's flat DIMENSIONS namespace where all
+        # columns from all tables share a single identifier space.
+        return f"column::{entity.get('model_name') or 'model'}"
     if kind == "table":
         return f"table::{entity.get('model_name') or 'model'}"
     if kind == "metric":
@@ -300,6 +303,7 @@ def build_entity_mappings(
     # apparent collision (same concept, different platform naming conventions).
     claimed_names: Dict[str, Dict[str, Dict[str, str]]] = {}
     generated: List[Dict[str, Any]] = []
+    generated_index: Dict[str, int] = {}  # source_path → index in generated list
     collisions: List[Dict[str, Any]] = []
 
     for entity in entities:
@@ -346,7 +350,12 @@ def build_entity_mappings(
                 #   "SalesAmt"  vs "Sales_Amt"      → both → SALES_AMT (ambiguous abbreviation)
                 prior_semantic = _semantic_name(prior_claim["source_name"])
                 current_semantic = _semantic_name(source_name)
-                if prior_semantic != current_semantic:
+                # Same-named columns from DIFFERENT tables are always real collisions
+                # because Snowflake semantic views use a flat DIMENSIONS namespace.
+                _prior_parent = str(prior_claim.get("parent_source_path") or "")
+                _curr_parent = str(entity.get("parent_source_path") or "")
+                _different_tables = bool(_prior_parent and _curr_parent and _prior_parent != _curr_parent)
+                if prior_semantic != current_semantic or _different_tables:
                     collision_detected = True
                     # Derive table name for prefix: "datasets.TERRITORY" → "TERRITORY"
                     _parent_path = str(entity.get("parent_source_path") or entity.get("source_path") or "").strip()
@@ -380,7 +389,11 @@ def build_entity_mappings(
                     })
                 # else: same concept under different naming conventions — not a collision,
                 # keep the existing claimed slot and the same sanitised target name.
-            claimed_names[scope][collision_key] = {"source_path": source_path, "source_name": source_name}
+            claimed_names[scope][collision_key] = {
+                "source_path": source_path,
+                "source_name": source_name,
+                "parent_source_path": str(entity.get("parent_source_path") or ""),
+            }
         else:
             # User provided a manual override. Check whether it collides with a name
             # already claimed in this scope by a *different* entity.  If it does,
@@ -411,6 +424,33 @@ def build_entity_mappings(
             target_connector=normalized_target_connector,
         )
 
+        # Back-patch the first conflicting entry with table-prefix when a new collision is detected
+        if collision_detected and prior_claim:
+            _prior_sp = prior_claim["source_path"]
+            _prior_idx = generated_index.get(_prior_sp)
+            if _prior_idx is not None:
+                _prior_entry = generated[_prior_idx]
+                if not _prior_entry.get("is_user_edited") and not _prior_entry.get("collision_detected"):
+                    # Compute table-prefix for the prior entry
+                    _prior_parent = str(prior_claim.get("parent_source_path") or "").strip()
+                    _prior_table = ""
+                    if _prior_parent:
+                        _prior_stripped = re.sub(r"^datasets\.", "", _prior_parent, flags=re.IGNORECASE).split(".")[0]
+                        _prior_table = sanitize_identifier(_prior_stripped)
+                    _prior_sanitized = _prior_entry.get("sanitized_name") or _prior_entry.get("target_name") or ""
+                    if _prior_table and _prior_table.upper() != str(_prior_sanitized).upper():
+                        _prior_resolved = f"{_prior_table}_{_prior_sanitized}"
+                    else:
+                        _prior_resolved = _prior_entry.get("target_name") or _prior_sanitized
+                    _prior_entry["target_name"] = _prior_resolved
+                    _prior_entry["suggested_target_name"] = _prior_resolved
+                    _prior_entry["collision_detected"] = True
+                    _prior_entry["collision_group"] = f"{scope}:{sanitized}"
+                    _prior_entry["validation_status"] = "collision"
+                    _prior_entry["validation_code"] = "NAME_COLLISION"
+                    _prior_entry["validation_message"] = "Name collision resolved with table prefix."
+
+        generated_index[source_path] = len(generated)
         generated.append({
             "id": mapping_id,
             "project_id": project_id,

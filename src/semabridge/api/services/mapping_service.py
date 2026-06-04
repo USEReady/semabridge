@@ -726,20 +726,43 @@ def _compat_serialize_auto_map_entity_mappings(
             first["validation_status"] = "invalid"
             first["validation_code"] = "COLLISION"
             first["validation_message"] = "Duplicate target name detected."
-            first["suggested_target_name"] = (
-                str(first.get("suggested_target_name") or first.get("target_name") or "").strip()
-                or _compat_collision_fallback_name(str(first.get("source_name") or ""))
-            )
-            entity_seed = str(mapping.get("parent_source_path") or mapping.get("source_table") or "").strip()
-            field_seed = str(mapping.get("source_name") or "").strip()
-            suffix = _compat_hash_suffix(f"{entity_seed}::{field_seed}")
+            # Apply table-prefix to the first mapping too
+            import re as _re_first
+            _fp_path = str(first.get("parent_source_path") or first.get("source_path") or "").strip()
+            _fp_table = ""
+            if _fp_path:
+                _fp_stripped = _re_first.sub(r"^datasets\.", "", _fp_path, flags=_re_first.IGNORECASE).split(".")[0]
+                _fp_table = sanitize_identifier(_fp_stripped)
+            _first_base = sanitize_identifier(str(first.get("target_name") or first.get("source_name") or "").strip())
+            if _fp_table and _fp_table.upper() != _first_base.upper():
+                first["target_name"] = f"{_fp_table}_{_first_base}".upper()
+                first["suggested_target_name"] = first["target_name"]
+            else:
+                first["suggested_target_name"] = (
+                    str(first.get("suggested_target_name") or first.get("target_name") or "").strip()
+                    or _compat_collision_fallback_name(str(first.get("source_name") or ""))
+                )
+            # Derive table name for prefix: "datasets.TERRITORY" → "TERRITORY"
+            _parent_path = str(mapping.get("parent_source_path") or mapping.get("source_path") or "").strip()
+            _table_name = ""
+            if _parent_path:
+                import re as _re
+                _stripped = _re.sub(r"^datasets\.", "", _parent_path, flags=_re.IGNORECASE).split(".")[0]
+                _table_name = sanitize_identifier(_stripped)
             base_target = sanitize_identifier(str(mapping.get("target_name") or "").strip())
-            mapping["target_name"] = f"{base_target}_{suffix}".upper()
+            if _table_name and _table_name.upper() != base_target.upper():
+                resolved = f"{_table_name}_{base_target}".upper()
+            else:
+                entity_seed = str(mapping.get("parent_source_path") or mapping.get("source_table") or "").strip()
+                field_seed = str(mapping.get("source_name") or "").strip()
+                suffix = _compat_hash_suffix(f"{entity_seed}::{field_seed}")
+                resolved = f"{base_target}_{suffix}".upper()
+            mapping["target_name"] = resolved
             mapping["collision_detected"] = True
             mapping["validation_status"] = "invalid"
             mapping["validation_code"] = "COLLISION"
-            mapping["validation_message"] = "Duplicate target name resolved with hash suffix."
-            mapping["suggested_target_name"] = mapping["target_name"]
+            mapping["validation_message"] = "Duplicate target name resolved with table prefix."
+            mapping["suggested_target_name"] = resolved
         else:
             seen[target_key] = mapping
 
