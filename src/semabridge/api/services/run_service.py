@@ -305,6 +305,19 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
         run["duration_ms"] = elapsed_ms(started)
         run["completed_at"] = _compat_now_iso()
         run["status"] = resolve_run_status(sync_result or {})
+        # Propagate run result back to in-memory project so the Projects page
+        # shows the real status instead of the initial "draft" placeholder.
+        _run_final_status = run["status"]
+        _project_status_map = {
+            "success": "active",
+            "warning": "warning",
+            "partial": "warning",
+            "failed": "failed",
+        }
+        if project_id in _compat_projects:
+            _compat_projects[project_id]["status"] = _project_status_map.get(
+                _run_final_status, _run_final_status
+            )
         run["summary"] = (sync_result or {}).get("summary") or {}
         run["results"] = (sync_result or {}).get("results") or []
         run["models_synced"] = int((sync_result or {}).get("models_synced") or 0)

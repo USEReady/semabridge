@@ -156,10 +156,33 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     const [diffLoading, setDiffLoading] = useState(false);
     const [diffReport, setDiffReport] = useState(null);
     const [inspectorResetToken, setInspectorResetToken] = useState(0);
+    // Map of workspace_id → display name for the Explore detail panel
+    const [workspaceNames, setWorkspaceNames] = useState({});
+    // Configured Account records for the connector dropdown
+    const [accounts, setAccounts] = useState([]);
 
     // ── initial load ────────────────────────────────
     const loadData = useCallback(async () => {
         setLoading(true);
+        // Preload workspace names so the Detail panel can show human-readable names instead of raw GUIDs.
+        // Uses the fabric workspaces endpoint — requires a bearer token; silently skips if unavailable.
+        // Load configured accounts for the connector dropdown
+        api.getAccounts().then((resp) => {
+            const list = Array.isArray(resp) ? resp : (resp?.accounts || resp?.items || []);
+            setAccounts(list);
+        }).catch(() => { /* accounts optional */ });
+
+        api.discoverFabricWorkspaces().then((resp) => {
+            const wsList = Array.isArray(resp) ? resp : (resp?.workspaces || []);
+            if (!wsList.length) return;
+            const nameMap = {};
+            wsList.forEach((ws) => {
+                const wsId = ws?.id || ws?.workspace_id;
+                const wsName = ws?.name || ws?.displayName || ws?.display_name;
+                if (wsId && wsName) nameMap[wsId] = wsName;
+            });
+            setWorkspaceNames(nameMap);
+        }).catch(() => { /* workspace names are optional — fall back to raw IDs silently */ });
         setTreeLoading(true);
         setGraphLoading(true);
         try {
@@ -506,6 +529,15 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     }, [diffMode, diffReport, graphStructureKey, erMode]);
 
     const connectorOptions = useMemo(() => {
+        // Prefer configured Account records — they show the user's actual named connections
+        if (accounts.length > 0) {
+            return accounts.map(a => ({
+                id: String(a.id || a.account_id || a.tag || ''),
+                label: String(a.tag || a.name || a.identity_email || a.id || 'Account'),
+                subtitle: String(a.connector_type || a.type || ''),
+            })).filter(a => a.id).sort((a, b) => a.label.localeCompare(b.label));
+        }
+        // Fallback: derive connector types from graph node metadata
         const nodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
         const connectors = new Set();
         nodes.forEach(n => {
@@ -515,12 +547,13 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             }
         });
         return Array.from(connectors)
-            .map(c => ({ 
-                id: c, 
-                label: c.charAt(0).toUpperCase() + c.slice(1).toLowerCase() 
+            .map(c => ({
+                id: c,
+                label: c.charAt(0).toUpperCase() + c.slice(1).toLowerCase(),
+                subtitle: '',
             }))
-            .sort((a,b) => a.label.localeCompare(b.label));
-    }, [graphData]);
+            .sort((a, b) => a.label.localeCompare(b.label));
+    }, [accounts, graphData]);
 
     const modelOptions = useMemo(() => {
         const nodes = Array.isArray(renderedGraphData?.nodes) ? renderedGraphData.nodes : [];
@@ -571,8 +604,20 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         });
 
         if (selectedConnector === '__all__') return byId;
-        return byId.filter(m => m.connector === selectedConnector);
-    }, [renderedGraphData, selectedConnector]);
+        // If connectorOptions are Account records, match by account_id on the node or by connector type string
+        const selectedAccount = accounts.find(a => String(a.id || a.account_id || a.tag || '') === selectedConnector);
+        return byId.filter(m => {
+            if (selectedAccount) {
+                const node = nodes.find(n => n.id === m.id || n.data?.model_id === m.id);
+                const nodeAccountId = node?.data?.account_id;
+                if (nodeAccountId) return String(nodeAccountId) === String(selectedAccount.id || selectedAccount.account_id || '');
+                // Fallback: match by connector_type
+                const connType = String(selectedAccount.connector_type || selectedAccount.type || '').toLowerCase();
+                return (m.connector || '').toLowerCase() === connType;
+            }
+            return m.connector === selectedConnector;
+        });
+    }, [renderedGraphData, selectedConnector, accounts]);
 
     const tableOptions = useMemo(() => {
         const nodes = Array.isArray(renderedGraphData?.nodes) ? renderedGraphData.nodes : [];
@@ -726,7 +771,9 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                         >
                             <option value="__all__">Select connector</option>
                             {connectorOptions.map(c => (
-                                <option key={c.id} value={c.id}>{c.label}</option>
+                                <option key={c.id} value={c.id}>
+                                    {c.label}{c.subtitle ? ` (${c.subtitle})` : ''}
+                                </option>
                             ))}
                         </select>
 
@@ -1040,6 +1087,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                             <DetailPanel
                                 filePreview={filePreview}
                                 selectedNode={selectedNode}
+                                workspaceNames={workspaceNames}
                                 onClose={handleCloseDetail}
                             />
                         </div>

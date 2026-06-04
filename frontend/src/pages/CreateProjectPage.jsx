@@ -377,7 +377,7 @@ function normalizeRows(data) {
         measure_expression: isMeasure ? resolveMeasureExpression(row) : '',
         target_field: targetName,
         target_type: String(row?.target_data_type || row?.source_data_type || row?.data_type || 'unknown'),
-        status: normalizeStatus({ ...row, target_field: targetName }),
+        status: row?.collision_detected ? 'collision' : normalizeStatus({ ...row, target_field: targetName }),
         validation_status: String(row?.validation_status || ''),
         validation_code: String(row?.validation_code || ''),
         validation_message: String(row?.validation_message || ''),
