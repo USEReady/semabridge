@@ -697,12 +697,38 @@ def _compat_bootstrap_projects_from_orm() -> None:
 
     try:
         from semabridge.repository.orm.models import Project
-        from sqlalchemy import select
+        from semabridge.repository.orm.run_models import Run
+        from sqlalchemy import select, func
 
         with db_manager.get_session() as session:
             rows = session.execute(
                 select(Project).order_by(Project.last_updated.desc().nullslast()).limit(500)
             ).scalars().all()
+
+            # Derive project status from the most recent completed run per project.
+            # This ensures that after a server restart, projects with prior successful
+            # runs show "active" instead of always reverting to "draft".
+            project_ids = [str(r.project_id) for r in rows if r.project_id]
+            last_run_status: dict = {}
+            if project_ids:
+                try:
+                    # Subquery: most recent completed_at per project
+                    max_ts_sq = (
+                        select(Run.project_id, func.max(Run.completed_at).label("max_ts"))
+                        .where(Run.project_id.in_(project_ids))
+                        .where(Run.status.in_(["success", "failed", "warning", "partial"]))
+                        .group_by(Run.project_id)
+                        .subquery()
+                    )
+                    run_rows = session.execute(
+                        select(Run.project_id, Run.status)
+                        .join(max_ts_sq, (Run.project_id == max_ts_sq.c.project_id) & (Run.completed_at == max_ts_sq.c.max_ts))
+                    ).all()
+                    _run_map = {"success": "active", "warning": "warning", "partial": "warning", "failed": "failed"}
+                    for rr in run_rows:
+                        last_run_status[str(rr.project_id)] = _run_map.get(str(rr.status).lower(), "draft")
+                except Exception as run_exc:
+                    logger.debug("Could not derive project statuses from runs: %s", run_exc)
 
         for row in rows:
             pid = str(row.project_id or "").strip()
@@ -718,7 +744,7 @@ def _compat_bootstrap_projects_from_orm() -> None:
                 "workspace_id": row.workspace_id or "",
                 "target_type": "snowflake",
                 "folder_id": None,
-                "status": "draft",
+                "status": last_run_status.get(pid, "draft"),
                 "created_at": _compat_now_iso(),
                 "updated_at": _compat_now_iso(),
                 "notification_email": row.notification_email or None,

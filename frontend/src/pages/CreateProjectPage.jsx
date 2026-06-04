@@ -1607,6 +1607,18 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         return;
       }
 
+      // If the extraction pipeline failed (e.g. auth expired, connection error),
+      // the response is technically "success" but contains no fields.
+      // Surface a meaningful warning so the user knows to check their connection.
+      if (response?.extraction_failed || response?.summary?.extraction_failed) {
+        setMappingError(
+          'Could not load model fields — the source extraction failed. ' +
+          'Check that your connection is active and re-run the check.'
+        );
+        setMappingDryRunStatus('error');
+        return;
+      }
+
       const rows = normalizeRows(response);
       setDetectedMappings(rows);
       setDryRunData(response);

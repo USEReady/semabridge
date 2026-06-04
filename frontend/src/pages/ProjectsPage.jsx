@@ -452,6 +452,13 @@ export default function ProjectsPage() {
       }
       const status = String(result?.status || '').toLowerCase();
       if (result?.run_id || result?.id || status === 'running') {
+        // Optimistically mark the project as "running" so the badge updates immediately,
+        // then schedule a re-fetch after the run is likely to have completed so the
+        // Projects page shows the real final status when the user returns.
+        setProjects(prev => prev.map(p =>
+          (p.id === projectId || p.project_id === projectId) ? { ...p, status: 'running' } : p
+        ));
+        setTimeout(() => refetchProjects(), 8000);
         openRunsPage();
         return result;
       }
@@ -471,7 +478,7 @@ export default function ProjectsPage() {
         return next;
       });
     }
-  }, [setProjects]);
+  }, [setProjects, refetchProjects, openRunsPage]);
 
   /* ── Render ── */
   if (loadFailed) {

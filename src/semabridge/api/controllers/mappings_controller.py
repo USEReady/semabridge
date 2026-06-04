@@ -291,8 +291,10 @@ async def dry_run_mapping(
                 except Exception:
                     continue
 
-        if not sml_blob:
-            print(f"[DryRun] WARNING: No SML blob found — returning empty mappings")
+        extraction_failed = not sml_blob
+        if extraction_failed:
+            sync_status = str((sync_result or {}).get("status") or "unknown")
+            logger.warning("[DryRun] No SML blob found for project=%s sync_status=%s — extraction may have failed", preview_project_id, sync_status)
 
         # Scope to selected sources if specified
         if sml_blob and request.selected_sources:
@@ -385,11 +387,13 @@ async def dry_run_mapping(
             "project_id": preview_project_id,
             "model_name": model_name,
             "entity_mappings": filtered_mappings,
+            "extraction_failed": extraction_failed,
             "summary": {
                 "total_fields": len(filtered_mappings),
                 "auto_mapped": auto_count,
                 "unmapped": unmapped_count,
                 "collisions": collision_count,
+                "extraction_failed": extraction_failed,
             },
         }
 
