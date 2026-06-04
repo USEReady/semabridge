@@ -753,7 +753,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
 
       if (mappingMode === 'saved' && Array.isArray(initialData.mappings) && initialData.mappings.length > 0) {
         setDetectedMappings(initialData.mappings);
-        setMappingDryRunStatus('success');
+        // Loading saved mappings does NOT mean the integrity check has passed —
+        // keep status idle so the user is required to run the check explicitly.
+        setMappingDryRunStatus('idle');
       } else if (mappingMode === 'auto') {
         setDetectedMappings([]);
         setMappingDryRunStatus('idle');
@@ -1611,8 +1613,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       setMappingDryRunStatus('success');
       setMappingDryRunSignature(currentMappingSignature);
       setUnmappedAcknowledged(false);
-      // Dry run succeeded — unlock the Continue button so the user can proceed to Step 5
-      setMappingReadyToProceed(true);
+      // Do NOT force-set readyToProceed here — StepMappingOptions evaluates
+      // blockingCount, compatScore, and schema conflicts and calls
+      // onProceedStateChange (= setMappingReadyToProceed) with the real result.
     } catch (err) {
       setMappingError(err?.message || 'Dry run failed.');
       setMappingDryRunStatus('error');

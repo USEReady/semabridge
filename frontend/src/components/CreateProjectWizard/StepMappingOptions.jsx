@@ -136,9 +136,13 @@ export function StepMappingOptions({
   const schemaIssues = Array.isArray(dryRunData?.schema_conflicts) ? dryRunData.schema_conflicts.length : 0;
   const hasIssues    = blockingCount > 0 || dryRunFailed || schemaIssues > 0 || (compatScore !== null && compatScore < 90);
 
-  const readyToProceed = autoMappingMode
-    ? blockingCount === 0 && (compatScore === null || compatScore >= 70)
-    : dryRunCompleted && blockingCount === 0 && (compatScore === null || compatScore >= 70);
+  // The dry-run check must have completed (at least once) before the user can
+  // proceed — regardless of mapping mode.  Without this guard the bar shows
+  // green immediately because compatScore is null before any run has run.
+  const readyToProceed =
+    dryRunCompleted &&
+    blockingCount === 0 &&
+    (compatScore === null || compatScore >= 70);
 
   useEffect(() => {
     onProceedStateChange?.(readyToProceed);
