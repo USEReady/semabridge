@@ -318,6 +318,15 @@ def build_entity_mappings(
         is_manual = bool(existing_mapping.get("is_user_edited"))
         preferred_target_name = str(existing_mapping.get("target_name") or "").strip()
 
+        # If the saved target name looks like an auto-generated hash suffix (e.g. TERRITORYSEQ_280F)
+        # and the user never manually edited it, clear it so collision detection re-runs with the
+        # improved table-prefix logic (TABLE_FIELD). Hash suffixes are always exactly 4 or 8
+        # uppercase hex chars appended after a single underscore.
+        if preferred_target_name and not is_manual:
+            _last_seg = preferred_target_name.rsplit("_", 1)
+            if len(_last_seg) == 2 and re.fullmatch(r"[0-9A-F]{4}|[0-9A-F]{8}", _last_seg[1]):
+                preferred_target_name = ""
+
         collision_detected = False
         hash_suffix = ""
         target_name = preferred_target_name or sanitized
