@@ -741,24 +741,49 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         const model = availableModels.find(m => m.id === modelId);
         if (!model) { setSelectedModelId('__all__'); setUnsyncedModel(null); return; }
 
-        // Try to match against loaded graph nodes by name (case-insensitive)
         const normalise = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-        const nodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
-        const matchingNode = nodes.find(n =>
-            n?.data?.nodeType === 'model' &&
-            normalise(n?.data?.label) === normalise(model.name)
+        const allNodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
+        const modelNodes = allNodes.filter(n => n?.data?.nodeType === 'model');
+
+        // 1. Try exact Fabric model ID match (model.id is a GUID, stored in data.model_id on some snapshots)
+        let matchingNode = modelNodes.find(n =>
+            String(n?.data?.fabric_model_id || '').toLowerCase() === String(model.id || '').toLowerCase()
         );
+
+        // 2. Try workspace_id + name match — workspace_id stored on node.data
+        if (!matchingNode && selectedWorkspaceId && selectedWorkspaceId !== '__all__') {
+            matchingNode = modelNodes.find(n =>
+                String(n?.data?.workspace_id || '').toLowerCase() === String(selectedWorkspaceId || '').toLowerCase() &&
+                normalise(n?.data?.label) === normalise(model.name)
+            );
+        }
+
+        // 3. Fall back to name-only match across all model nodes
+        if (!matchingNode) {
+            matchingNode = modelNodes.find(n =>
+                normalise(n?.data?.label) === normalise(model.name)
+            );
+        }
+
+        // 4. Also check modelOptions (graph-derived) by label similarity
+        if (!matchingNode) {
+            const moMatch = modelOptions.find(mo => normalise(mo.label) === normalise(model.name));
+            if (moMatch) {
+                setSelectedModelId(moMatch.id);
+                setUnsyncedModel(null);
+                return;
+            }
+        }
 
         if (matchingNode) {
             const mid = String(matchingNode?.data?.model_id || matchingNode.id || '');
             setSelectedModelId(mid);
             setUnsyncedModel(null);
         } else {
-            // No snapshot yet for this model
             setSelectedModelId('__all__');
             setUnsyncedModel({ id: model.id, name: model.name });
         }
-    }, [availableModels, graphData]);
+    }, [availableModels, graphData, modelOptions, selectedWorkspaceId]);
 
     const focusTableInER = useCallback((tableId) => {
         if (!tableId) return;
@@ -955,15 +980,21 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                                             ))}
                                         </optgroup>
                                     )}
-                                    {/* Live discovered models not yet synced */}
+                                    {/* Live discovered models not yet matched to a synced graph model */}
                                     {availableModels.filter(m => {
                                         const normalise = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                                        // Consider matched if any modelOption label normalises the same
+                                        const matchedInOptions = modelOptions.some(mo => normalise(mo.label) === normalise(m.name));
+                                        if (matchedInOptions) return false;
+                                        // Also check raw graph nodes
                                         const nodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
                                         return !nodes.some(n => n?.data?.nodeType === 'model' && normalise(n?.data?.label) === normalise(m.name));
                                     }).length > 0 && (
                                         <optgroup label="Not yet synced">
                                             {availableModels.filter(m => {
                                                 const normalise = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                                                const matchedInOptions = modelOptions.some(mo => normalise(mo.label) === normalise(m.name));
+                                                if (matchedInOptions) return false;
                                                 const nodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
                                                 return !nodes.some(n => n?.data?.nodeType === 'model' && normalise(n?.data?.label) === normalise(m.name));
                                             }).map(m => (
