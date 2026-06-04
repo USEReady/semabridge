@@ -160,6 +160,15 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     const [workspaceNames, setWorkspaceNames] = useState({});
     // Configured Account records for the connector dropdown
     const [accounts, setAccounts] = useState([]);
+    // Workspace selection (Fabric only — Snowflake has no workspace concept)
+    const [availableWorkspaces, setAvailableWorkspaces] = useState([]);
+    const [selectedWorkspaceId, setSelectedWorkspaceId] = usePageCache('explore:selectedWorkspaceId', '__all__');
+    const [workspacesLoading, setWorkspacesLoading] = useState(false);
+    // Available models discovered from the selected workspace / connector
+    const [availableModels, setAvailableModels] = useState([]);  // [{id, name, type}]
+    const [modelsLoading, setModelsLoading] = useState(false);
+    // When model chosen from discovery but has no synced snapshot yet
+    const [unsyncedModel, setUnsyncedModel] = useState(null);    // {id, name} | null
 
     // ── initial load ────────────────────────────────
     const loadData = useCallback(async () => {
@@ -650,6 +659,107 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         }
     }, [tableOptions, selectedTableId]);
 
+    // ── Load workspaces when a connector (Account) is selected ──────────────
+    useEffect(() => {
+        if (selectedConnector === '__all__') {
+            setAvailableWorkspaces([]);
+            setAvailableModels([]);
+            setSelectedWorkspaceId('__all__');
+            setUnsyncedModel(null);
+            return;
+        }
+        const account = accounts.find(a => String(a.id || a.tag || '') === selectedConnector);
+        if (!account) return;
+
+        const connType = String(account.connector_type || '').toUpperCase();
+
+        if (connType === 'FABRIC') {
+            // Fabric: load workspaces first, then models inside workspace
+            setWorkspacesLoading(true);
+            setAvailableWorkspaces([]);
+            setAvailableModels([]);
+            setSelectedWorkspaceId('__all__');
+            setUnsyncedModel(null);
+            api.fabricListWorkspaces(String(account.id || '')).then(resp => {
+                const list = Array.isArray(resp) ? resp : (resp?.workspaces || []);
+                setAvailableWorkspaces(list.map(ws => ({
+                    id: ws.id || ws.workspace_id || '',
+                    name: ws.displayName || ws.name || ws.id || 'Workspace',
+                })).filter(ws => ws.id));
+            }).catch(() => setAvailableWorkspaces([]))
+              .finally(() => setWorkspacesLoading(false));
+        } else {
+            // Snowflake / Databricks: no workspace concept — load models directly
+            setAvailableWorkspaces([]);
+            setSelectedWorkspaceId('__all__');
+            setModelsLoading(true);
+            setAvailableModels([]);
+            setUnsyncedModel(null);
+            api.discoverSnowflakeModels(String(account.id || '')).then(resp => {
+                const list = Array.isArray(resp) ? resp : [];
+                setAvailableModels(list.map(m => ({
+                    id: m.id || m.name || '',
+                    name: m.name || m.id || 'Model',
+                    type: m.type || 'semantic_view',
+                })).filter(m => m.id));
+            }).catch(() => setAvailableModels([]))
+              .finally(() => setModelsLoading(false));
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedConnector, accounts]);
+
+    // ── Load models when a workspace is selected (Fabric) ───────────────────
+    useEffect(() => {
+        if (selectedWorkspaceId === '__all__') {
+            if (availableWorkspaces.length > 0) setAvailableModels([]);
+            return;
+        }
+        const account = accounts.find(a => String(a.id || a.tag || '') === selectedConnector);
+        if (!account) return;
+
+        setModelsLoading(true);
+        setAvailableModels([]);
+        setUnsyncedModel(null);
+        api.discoverFabricModels(selectedWorkspaceId, String(account.id || '')).then(resp => {
+            const list = Array.isArray(resp) ? resp : [];
+            setAvailableModels(list.map(m => ({
+                id: m.id || m.name || '',
+                name: m.name || m.displayName || m.id || 'Model',
+                type: m.type || 'semantic_model',
+            })).filter(m => m.id));
+        }).catch(() => setAvailableModels([]))
+          .finally(() => setModelsLoading(false));
+
+        // Update the workspaceNames map with this workspace
+        const ws = availableWorkspaces.find(w => w.id === selectedWorkspaceId);
+        if (ws) setWorkspaceNames(prev => ({ ...prev, [ws.id]: ws.name }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedWorkspaceId]);
+
+    // ── When a discovered model is chosen, match to existing graph snapshot ──
+    const handleDiscoveredModelSelect = useCallback((modelId) => {
+        const model = availableModels.find(m => m.id === modelId);
+        if (!model) { setSelectedModelId('__all__'); setUnsyncedModel(null); return; }
+
+        // Try to match against loaded graph nodes by name (case-insensitive)
+        const normalise = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const nodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
+        const matchingNode = nodes.find(n =>
+            n?.data?.nodeType === 'model' &&
+            normalise(n?.data?.label) === normalise(model.name)
+        );
+
+        if (matchingNode) {
+            const mid = String(matchingNode?.data?.model_id || matchingNode.id || '');
+            setSelectedModelId(mid);
+            setUnsyncedModel(null);
+        } else {
+            // No snapshot yet for this model
+            setSelectedModelId('__all__');
+            setUnsyncedModel({ id: model.id, name: model.name });
+        }
+    }, [availableModels, graphData]);
+
     const focusTableInER = useCallback((tableId) => {
         if (!tableId) return;
         setSelectedTableId(String(tableId));
@@ -765,6 +875,10 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                                 setSelectedConnector(e.target.value);
                                 setSelectedModelId('__all__');
                                 setSelectedTableId('__all__');
+                                setSelectedWorkspaceId('__all__');
+                                setAvailableWorkspaces([]);
+                                setAvailableModels([]);
+                                setUnsyncedModel(null);
                             }}
                             style={dropdownStyle}
                             title="Choose connector filter"
@@ -777,25 +891,109 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                             ))}
                         </select>
 
-                        <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap', marginLeft: 8 }}>
-                            Model
-                        </span>
-                        <select
-                            value={selectedModelId}
-                            onChange={(e) => {
-                                setSelectedModelId(e.target.value);
-                                setSelectedTableId('__all__');
-                            }}
-                            style={dropdownStyle}
-                            title="Choose model"
-                        >
-                            <option value="__all__">
-                                {selectedConnector === '__all__' ? 'Select connector first' : 'Select model'}
-                            </option>
-                            {modelOptions.map(m => (
-                                <option key={m.id} value={m.id}>{m.label}</option>
-                            ))}
-                        </select>
+                        {/* Workspace dropdown — shown for Fabric connectors when workspaces loaded */}
+                        {selectedConnector !== '__all__' && (workspacesLoading || availableWorkspaces.length > 0) && (
+                            <>
+                                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>›</span>
+                                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap' }}>
+                                    Workspace
+                                </span>
+                                <select
+                                    value={selectedWorkspaceId}
+                                    onChange={(e) => {
+                                        setSelectedWorkspaceId(e.target.value);
+                                        setSelectedModelId('__all__');
+                                        setSelectedTableId('__all__');
+                                        setUnsyncedModel(null);
+                                    }}
+                                    style={dropdownStyle}
+                                    disabled={workspacesLoading}
+                                    title="Choose workspace"
+                                >
+                                    <option value="__all__">{workspacesLoading ? 'Loading…' : 'Select workspace'}</option>
+                                    {availableWorkspaces.map(w => (
+                                        <option key={w.id} value={w.id}>{w.name || w.displayName || w.id}</option>
+                                    ))}
+                                </select>
+                            </>
+                        )}
+
+                        {/* Model dropdown */}
+                        {selectedConnector !== '__all__' && (
+                            <>
+                                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>›</span>
+                                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap' }}>
+                                    Model
+                                </span>
+                                <select
+                                    value={selectedModelId}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        // If value starts with 'discovered:' it's from live discovery
+                                        if (val.startsWith('discovered:')) {
+                                            handleDiscoveredModelSelect(val.slice('discovered:'.length));
+                                        } else {
+                                            setSelectedModelId(val);
+                                            setSelectedTableId('__all__');
+                                            setUnsyncedModel(null);
+                                        }
+                                    }}
+                                    style={dropdownStyle}
+                                    disabled={modelsLoading}
+                                    title="Choose model"
+                                >
+                                    <option value="__all__">
+                                        {modelsLoading ? 'Loading…' :
+                                         availableWorkspaces.length > 0 && selectedWorkspaceId === '__all__' ? 'Select workspace first' :
+                                         'Select model'}
+                                    </option>
+                                    {/* Synced models from graph */}
+                                    {modelOptions.length > 0 && (
+                                        <optgroup label="Synced models">
+                                            {modelOptions.map(m => (
+                                                <option key={m.id} value={m.id}>{m.label}</option>
+                                            ))}
+                                        </optgroup>
+                                    )}
+                                    {/* Live discovered models not yet synced */}
+                                    {availableModels.filter(m => {
+                                        const normalise = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                                        const nodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
+                                        return !nodes.some(n => n?.data?.nodeType === 'model' && normalise(n?.data?.label) === normalise(m.name));
+                                    }).length > 0 && (
+                                        <optgroup label="Not yet synced">
+                                            {availableModels.filter(m => {
+                                                const normalise = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                                                const nodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
+                                                return !nodes.some(n => n?.data?.nodeType === 'model' && normalise(n?.data?.label) === normalise(m.name));
+                                            }).map(m => (
+                                                <option key={`discovered:${m.id}`} value={`discovered:${m.id}`}>{m.name || m.displayName}</option>
+                                            ))}
+                                        </optgroup>
+                                    )}
+                                </select>
+                            </>
+                        )}
+
+                        {/* Fallback model dropdown when no connector selected */}
+                        {selectedConnector === '__all__' && modelOptions.length > 0 && (
+                            <>
+                                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap', marginLeft: 8 }}>
+                                    Model
+                                </span>
+                                <select
+                                    value={selectedModelId}
+                                    onChange={(e) => { setSelectedModelId(e.target.value); setSelectedTableId('__all__'); }}
+                                    style={dropdownStyle}
+                                    title="Choose model"
+                                >
+                                    <option value="__all__">Select model</option>
+                                    {modelOptions.map(m => (
+                                        <option key={m.id} value={m.id}>{m.label}</option>
+                                    ))}
+                                </select>
+                            </>
+                        )}
 
                         {selectedModelId !== '__all__' && (
                             <span style={{
@@ -993,6 +1191,31 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     )}
                     </div>
                 </div>
+                )}
+
+                {/* Unsynced model banner */}
+                {unsyncedModel && (
+                    <div style={{
+                        display: 'flex', alignItems: 'center', gap: 12,
+                        padding: '10px 20px',
+                        background: 'rgba(245, 158, 11, 0.08)',
+                        borderBottom: '1px solid rgba(245, 158, 11, 0.25)',
+                        flexShrink: 0,
+                    }}>
+                        <span style={{ fontSize: 18 }}>📋</span>
+                        <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: '#92400E' }}>
+                                {unsyncedModel.name} — not yet synced
+                            </div>
+                            <div style={{ fontSize: 11, color: '#B45309', marginTop: 2 }}>
+                                This model exists in your connector but has no lineage data yet. Create a project and run a sync to explore its tables and metrics.
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => setUnsyncedModel(null)}
+                            style={{ fontSize: 16, background: 'none', border: 'none', cursor: 'pointer', color: '#B45309', padding: '0 4px' }}
+                        >✕</button>
+                    </div>
                 )}
 
                 {/* Dependency Graph */}
