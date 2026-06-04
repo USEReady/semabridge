@@ -282,16 +282,28 @@ def _parse_semantic_model_from_dict(
             status = "broken"
             break
 
+    # Extract source workspace name from platform_metadata if present
+    platform_metadata = data.get("platform_metadata") or {}
+    fabric_meta = platform_metadata.get("fabric") if isinstance(platform_metadata, dict) else {}
+    source_workspace_name = (
+        fabric_meta.get("workspace_name")
+        or data.get("source_workspace_name")
+        or data.get("workspace_name")
+        or ""
+    ) if isinstance(fabric_meta, dict) else ""
+
     return {
         "model_id": model_id,
         "model_name": model_name,
         "workspace_id": workspace_id,
+        "workspace_name": source_workspace_name,
         "description": data.get("description", ""),
         "source_tables": source_tables,
         "measures": measures,
         "relationships": relationships,
         "status": status,
         "file_path": f"db://{model_id}",
+        "platform_metadata": platform_metadata if isinstance(platform_metadata, dict) else {},
     }
 
 
@@ -370,6 +382,7 @@ def _build_graph(
                 "label": model["model_name"],
                 "model_id": mid,
                 "workspace_id": model["workspace_id"],
+                "workspace_name": model.get("workspace_name", ""),
                 "description": model["description"],
                 "status": model["status"],
                 "measures": model["measures"],

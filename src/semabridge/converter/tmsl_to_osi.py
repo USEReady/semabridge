@@ -121,12 +121,20 @@ class TMSLToOSIConverter(BaseConverter):
 
             # Use display name as unique_name to ensure Snowflake views use display names, not GUIDs.
             # GUID (dataset_id) is still preserved in metadata for traceability.
+            workspace_name = source_data.get("workspace_name") or ""
             osi_model = OSIModel(
                 unique_name=resolved_unique_name,
                 label=display_name,
                 description=model_obj.get("description", ""),
                 source_platform="fabric",
-                metadata={"workspace_id": workspace_id, "dataset_id": dataset_id}
+                metadata={"workspace_id": workspace_id, "dataset_id": dataset_id},
+                platform_metadata={
+                    "fabric": {
+                        "workspace_id": workspace_id,
+                        "workspace_name": workspace_name,
+                        "dataset_id": dataset_id,
+                    }
+                }
             )
 
             # Process Datasets (Tables)

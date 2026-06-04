@@ -872,7 +872,10 @@ async def fabric_list_workspaces(
     import anyio
     resolved_identity_id = (identity_id or connection_id or "").strip() or None
     if not resolved_identity_id and not bearer_token:
-        raise ValidationError("account_id is required")
+        # No credentials provided — return empty list instead of 400.
+        # Callers that probe this endpoint without auth (e.g. Explore tab workspace name
+        # resolution) should receive an empty list, not an error.
+        return {"workspaces": []}
     access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token, resolved_identity_id)
     logger.info("Calling Fabric workspaces API with resolved access token (Identity: %s)", resolved_identity_id)
 

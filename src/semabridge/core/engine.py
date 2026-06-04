@@ -675,10 +675,12 @@ class SemaBridgeEngine:
         
         # TMSL -> OSI pipeline (no SML conversion)
         tmsl_converter = TMSLToOSIConverter()
+        _ws_name = getattr(getattr(self.config, "source", None), "workspace_name", "") or ""
         osi_model = tmsl_converter.to_osi({
             "tmsl": metadata,
             "dataset_id": model_id,
             "project_id": model_id,
+            "workspace_name": _ws_name,
         })
         print("\n===== TABLES USED BY MODEL =====")
         if hasattr(osi_model, "datasets"):
@@ -1070,8 +1072,6 @@ class SnowflakeTargetAdapter(TargetConnectorBase):
     
     def deploy(self, model: Any) -> bool:
         try:
-            # 🔥 TEMPORARY TEST — simulate missing table error
-           raise Exception("SQL compilation error: Object does not exist: TEST_TABLE")
            model_cls = type(model).__name__
            if model_cls == "OSIModel" or hasattr(model, "source_platform"):
                self._emitter.deploy_from_osi(model)
