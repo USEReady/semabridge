@@ -339,12 +339,27 @@ def build_entity_mappings(
                 current_semantic = _semantic_name(source_name)
                 if prior_semantic != current_semantic:
                     collision_detected = True
-                    entity_seed = str(entity.get("parent_source_path") or entity.get("model_name") or "").strip()
-                    field_seed = source_name
-                    target_name, hash_suffix = apply_collision_suffix(
-                        sanitized,
-                        fingerprint=f"{entity_seed}::{field_seed}",
-                    )
+                    # Derive table name for prefix: "datasets.TERRITORY" → "TERRITORY"
+                    _parent_path = str(entity.get("parent_source_path") or entity.get("source_path") or "").strip()
+                    _table_name = ""
+                    if _parent_path:
+                        # Strip "datasets." prefix if present, then take first path segment
+                        # e.g. "datasets.TERRITORY" → "TERRITORY"
+                        #      "datasets.TERRITORY.columns" → "TERRITORY"
+                        _stripped = re.sub(r"^datasets\.", "", _parent_path, flags=re.IGNORECASE).split(".")[0]
+                        _table_name = sanitize_identifier(_stripped)
+                    if _table_name and _table_name.upper() != sanitized.upper():
+                        # Use TABLE_FIELD format (same as Fabric's Tables[Column] → TABLE_FIELD)
+                        target_name = f"{_table_name}_{sanitized}"
+                        hash_suffix = ""
+                    else:
+                        # Table name unavailable or same as field — fall back to hash
+                        entity_seed = str(entity.get("parent_source_path") or entity.get("model_name") or "").strip()
+                        field_seed = source_name
+                        target_name, hash_suffix = apply_collision_suffix(
+                            sanitized,
+                            fingerprint=f"{entity_seed}::{field_seed}",
+                        )
                     collisions.append({
                         "scope": scope,
                         "sanitized_name": sanitized,
