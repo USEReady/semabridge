@@ -356,25 +356,51 @@ class ModelRepository:
         source_connection: Optional[str] = None,
         connection_tag: Optional[str] = None,
     ) -> None:
-        """Ensure the project row exists (upsert). Retries on DuckDB write conflicts."""
+        """Ensure the project row exists.
+
+        INSERT-only when the row already exists: parallel model runs share the
+        same project_id and DuckDB is single-writer, so an unconditional UPDATE
+        on every run causes TransactionContext conflicts at scale.  The project
+        name/adapter/connection do not change between runs, so skipping the
+        UPDATE is safe.  The UPDATE path is kept for genuine renames (e.g. user
+        edits the project name) — callers that need a forced refresh should use
+        update_project() directly.
+
+        Retries with exponential back-off are kept as a safety net for the rare
+        race on the very first INSERT (two threads both see "not exists" before
+        either commits).
+        """
         import time
         import random
 
-        _MAX_RETRIES = 5
-        _BASE_DELAY = 0.05  # 50 ms initial
+        _MAX_RETRIES = 8
+        _BASE_DELAY = 0.02  # 20 ms initial
         last_exc = None
         for attempt in range(_MAX_RETRIES):
             try:
-                now = datetime.utcnow()
                 with self._session() as session:
                     existing = session.get(Project, project_id)
                     if existing:
-                        existing.name = name
-                        existing.adapter = adapter
-                        existing.source_connection = source_connection
-                        existing.last_updated = now
-                        if connection_tag:
+                        # Row already present — only update mutable fields that
+                        # may have legitimately changed (name rename, new tag).
+                        # Do NOT touch last_updated: avoids write contention
+                        # when 50 models run in parallel on the same project.
+                        changed = False
+                        if existing.name != name:
+                            existing.name = name
+                            changed = True
+                        if existing.adapter != adapter:
+                            existing.adapter = adapter
+                            changed = True
+                        if existing.source_connection != source_connection:
+                            existing.source_connection = source_connection
+                            changed = True
+                        if connection_tag and existing.connection_tag != connection_tag:
                             existing.connection_tag = connection_tag
+                            changed = True
+                        if changed:
+                            session.commit()
+                        # No write at all when nothing changed — zero contention.
                     else:
                         session.add(
                             Project(
@@ -383,20 +409,20 @@ class ModelRepository:
                                 workspace_id=workspace_id,
                                 adapter=adapter,
                                 source_connection=source_connection,
-                                last_updated=now,
+                                last_updated=datetime.utcnow(),
                                 connection_tag=connection_tag,
                             )
                         )
-                    session.commit()
-                return  # success — exit retry loop
+                        session.commit()
+                return  # success
             except Exception as exc:
                 msg = str(exc).lower()
-                if "transactioncontext" in msg or "conflict on update" in msg:
+                if "transactioncontext" in msg or "conflict on update" in msg or "unique constraint" in msg:
                     last_exc = exc
-                    delay = _BASE_DELAY * (2 ** attempt) + random.uniform(0, 0.02)
+                    delay = _BASE_DELAY * (2 ** attempt) + random.uniform(0, 0.01)
                     time.sleep(delay)
                     continue
-                raise  # non-conflict exception — propagate immediately
+                raise  # non-conflict — propagate immediately
         raise last_exc  # all retries exhausted
 
     # ------------------------------------------------------------------
