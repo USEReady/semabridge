@@ -857,8 +857,17 @@ class CLIExecutor:
         else:
             raise ExecutionError(8, f"Unsupported target type: {self.config.target.type}")
         
+        # Capture missing_dims immediately after DDL generation so dry-run
+        # (which skips Stage 9) still surfaces schema gaps in the mapping UI.
+        if self.config.target.type == "snowflake" and self._target_format:
+            _emitter = self._target_format.get("emitter")
+            _builder = getattr(_emitter, "semantic_view_builder", None)
+            _missing = dict(getattr(_builder, "missing_dims", {}) or {})
+            if _missing:
+                self._missing_dims = _missing
+
         logger.info(f"  Converted to {self.config.target.type} format")
-        
+
         duration_ms = int((time.time() - step_start) * 1000)
         self.summary.add_step(8, STEP_NAMES[8], StepStatus.SUCCESS,
                                message=f"Converted to {self.config.target.type}",
