@@ -22,6 +22,7 @@ from semabridge.api.services.project_domain_service import (
     tag_snapshot_compat,
     toggle_snapshot_pin_compat,
 )
+from semabridge.api.services.run_preview_service import get_run_preview_compat
 
 router = APIRouter()
 
@@ -129,6 +130,15 @@ async def manual_deploy(
 async def get_run_conflicts(run_id: str, request: Request):
     require_request_user_id(request)
     return await get_run_conflicts_compat(run_id)
+
+
+@router.get("/api/projects/{project_id}/run-preview")
+async def get_run_preview(project_id: str, request: Request):
+    """Return a fast snapshot diff summary so the UI can show what changed
+    since the last run before the user confirms a re-run."""
+    user_id = require_request_user_id(request)
+    _assert_project_access(project_id, user_id)
+    return await get_run_preview_compat(project_id)
 
 
 @router.post("/api/projects/{project_id}/run")

@@ -338,6 +338,37 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
         import threading
         threading.Thread(target=_run_retention_background, args=(project_id,), daemon=True).start()
 
+        # Email notification when project has notification_email configured.
+        # Always notify on scheduled runs; for manual runs only notify when
+        # the sync completed with warnings or failures.
+        try:
+            _project_meta = _compat_projects.get(project_id) or {}
+            _notify_email = str(_project_meta.get("notification_email") or "").strip()
+            if _notify_email:
+                _run_status = run.get("status", "")
+                _run_type = str(run.get("schedule") or run.get("run_type") or "Manual").lower()
+                _is_scheduled = "scheduled" in _run_type or "cron" in _run_type
+                _needs_notify = _is_scheduled or _run_status in ("failed", "warning", "partial")
+                if _needs_notify:
+                    import os as _os
+                    from semabridge.auth.email_service import send_run_summary_notification
+                    threading.Thread(
+                        target=send_run_summary_notification,
+                        kwargs=dict(
+                            project_name=_project_meta.get("name") or project_id,
+                            project_id=project_id,
+                            run_id=run.get("id") or run.get("run_id") or "",
+                            status=_run_status,
+                            changes_summary=run.get("summary") or {},
+                            results=run.get("results") or [],
+                            recipient_email=_notify_email,
+                            frontend_url=_os.environ.get("FRONTEND_URL", "http://localhost:5173"),
+                        ),
+                        daemon=True,
+                    ).start()
+        except Exception as _notify_exc:
+            logger.debug("Run notification skipped: %s", _notify_exc)
+
     except Exception as exc:
         run["status"] = "failed"
         run["error"] = str(exc)

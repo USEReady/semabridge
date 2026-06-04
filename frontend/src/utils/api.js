@@ -1720,6 +1720,13 @@ export const api = {
         return handleResponse(res);
     },
 
+    async getRunPreview(projectId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/run-preview`, {
+            timeoutMs: 10000,
+        });
+        return handleResponse(res);
+    },
+
     async syncProject(projectId) {
         invalidateApiCache('jobs:runs:');
         // Backend compatibility API exposes /run as the sync trigger route.

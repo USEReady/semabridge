@@ -57,6 +57,7 @@ class Project(Base):
     source_connection: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     last_updated: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
     connection_tag: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    notification_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     # Relationships
     account: Mapped[Optional["Account"]] = relationship(back_populates="projects")

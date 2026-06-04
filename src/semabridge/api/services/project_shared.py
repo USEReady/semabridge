@@ -721,6 +721,7 @@ def _compat_bootstrap_projects_from_orm() -> None:
                 "status": "draft",
                 "created_at": _compat_now_iso(),
                 "updated_at": _compat_now_iso(),
+                "notification_email": row.notification_email or None,
             }
             _compat_projects[pid] = project
             _compat_project_configs.setdefault(pid, _compat_load_repo_yaml_text() or _compat_default_project_yaml(project))

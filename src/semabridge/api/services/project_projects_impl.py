@@ -90,6 +90,9 @@ def _upsert_project_in_orm(project_id: str, project: Dict[str, Any], payload: di
             existing.account_id = account_id
             existing.connection_tag = connection_tag
             existing.last_updated = datetime.utcnow()
+            notification_email = str(project.get("notification_email") or "").strip() or None
+            if notification_email is not None or "notification_email" in (payload or {}):
+                existing.notification_email = notification_email
             session.commit()
     except Exception as exc:
         logger.warning("Failed to upsert ORM project %s: %s", pid, exc)
@@ -648,6 +651,8 @@ async def patch_project_compat(project_id: str, payload: dict):
 
     if payload.get("connection_tag"):
         project["connection_tag"] = payload.get("connection_tag")
+    if "notification_email" in (payload or {}):
+        project["notification_email"] = payload.get("notification_email") or None
     if payload.get("account_id"):
         project["account_id"] = str(payload.get("account_id")).strip() or project.get("account_id")
     if payload.get("user_id"):
