@@ -745,6 +745,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         const allNodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
         const modelNodes = allNodes.filter(n => n?.data?.nodeType === 'model');
 
+
         // 1. Try exact Fabric model ID match (model.id is a GUID, stored in data.model_id on some snapshots)
         let matchingNode = modelNodes.find(n =>
             String(n?.data?.fabric_model_id || '').toLowerCase() === String(model.id || '').toLowerCase()
@@ -758,16 +759,39 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             );
         }
 
-        // 3. Fall back to name-only match across all model nodes
+        // 3. Fall back to name-only exact match across all model nodes
         if (!matchingNode) {
             matchingNode = modelNodes.find(n =>
                 normalise(n?.data?.label) === normalise(model.name)
             );
         }
 
-        // 4. Also check modelOptions (graph-derived) by label similarity
+        // 4. Check modelOptions (graph-derived) by exact label match
         if (!matchingNode) {
             const moMatch = modelOptions.find(mo => normalise(mo.label) === normalise(model.name));
+            if (moMatch) {
+                setSelectedModelId(moMatch.id);
+                setUnsyncedModel(null);
+                return;
+            }
+        }
+
+        // 5. Partial/contains match — handles "_SEMANTIC" suffix or other OSI name additions
+        //    e.g. Fabric "Competitive Marketing Analysis" vs OSI "COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC"
+        const normModel = normalise(model.name);
+        if (!matchingNode && normModel.length >= 6) {
+            matchingNode = modelNodes.find(n => {
+                const normLabel = normalise(n?.data?.label);
+                return normLabel.includes(normModel) || normModel.includes(normLabel);
+            });
+        }
+
+        // 6. Partial match against modelOptions labels
+        if (!matchingNode && normModel.length >= 6) {
+            const moMatch = modelOptions.find(mo => {
+                const normLabel = normalise(mo.label);
+                return normLabel.includes(normModel) || normModel.includes(normLabel);
+            });
             if (moMatch) {
                 setSelectedModelId(moMatch.id);
                 setUnsyncedModel(null);
@@ -982,21 +1006,37 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                                     )}
                                     {/* Live discovered models not yet matched to a synced graph model */}
                                     {availableModels.filter(m => {
-                                        const normalise = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-                                        // Consider matched if any modelOption label normalises the same
-                                        const matchedInOptions = modelOptions.some(mo => normalise(mo.label) === normalise(m.name));
+                                        const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                                        const normM = norm(m.name);
+                                        // Matched if any modelOption label is an exact or partial match
+                                        const matchedInOptions = modelOptions.some(mo => {
+                                            const normL = norm(mo.label);
+                                            return normL === normM || normL.includes(normM) || normM.includes(normL);
+                                        });
                                         if (matchedInOptions) return false;
-                                        // Also check raw graph nodes
+                                        // Also check raw graph model nodes
                                         const nodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
-                                        return !nodes.some(n => n?.data?.nodeType === 'model' && normalise(n?.data?.label) === normalise(m.name));
+                                        return !nodes.some(n => {
+                                            if (n?.data?.nodeType !== 'model') return false;
+                                            const normL = norm(n?.data?.label);
+                                            return normL === normM || normL.includes(normM) || normM.includes(normL);
+                                        });
                                     }).length > 0 && (
                                         <optgroup label="Not yet synced">
                                             {availableModels.filter(m => {
-                                                const normalise = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-                                                const matchedInOptions = modelOptions.some(mo => normalise(mo.label) === normalise(m.name));
+                                                const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                                                const normM = norm(m.name);
+                                                const matchedInOptions = modelOptions.some(mo => {
+                                                    const normL = norm(mo.label);
+                                                    return normL === normM || normL.includes(normM) || normM.includes(normL);
+                                                });
                                                 if (matchedInOptions) return false;
                                                 const nodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
-                                                return !nodes.some(n => n?.data?.nodeType === 'model' && normalise(n?.data?.label) === normalise(m.name));
+                                                return !nodes.some(n => {
+                                                    if (n?.data?.nodeType !== 'model') return false;
+                                                    const normL = norm(n?.data?.label);
+                                                    return normL === normM || normL.includes(normM) || normM.includes(normL);
+                                                });
                                             }).map(m => (
                                                 <option key={`discovered:${m.id}`} value={`discovered:${m.id}`}>{m.name || m.displayName}</option>
                                             ))}
