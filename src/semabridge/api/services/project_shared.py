@@ -690,6 +690,55 @@ def _compat_load_store() -> None:
         _compat_store_loaded = True
 
 
+def _compat_refresh_project_statuses_from_runs() -> None:
+    """Overwrite each project's in-memory status with its most recent Run result.
+
+    Called unconditionally during bootstrap (after the store is loaded) so that
+    stale "draft" values from the JSON store file are replaced with the real
+    status derived from the Run table.  Also called after every run completes
+    to keep the in-memory cache accurate without restarting.
+    """
+    if not _compat_projects:
+        return
+    try:
+        from semabridge.repository.orm.run_models import Run
+        from sqlalchemy import select, func
+
+        project_ids = [
+            pid for pid in _compat_projects
+            if pid and not pid.startswith("preview")
+        ]
+        if not project_ids:
+            return
+
+        _run_map = {"success": "active", "warning": "warning", "partial": "warning", "failed": "failed"}
+        with db_manager.get_session() as session:
+            max_ts_sq = (
+                select(Run.project_id, func.max(Run.completed_at).label("max_ts"))
+                .where(Run.project_id.in_(project_ids))
+                .where(Run.status.in_(["success", "failed", "warning", "partial"]))
+                .group_by(Run.project_id)
+                .subquery()
+            )
+            run_rows = session.execute(
+                select(Run.project_id, Run.status)
+                .join(
+                    max_ts_sq,
+                    (Run.project_id == max_ts_sq.c.project_id)
+                    & (Run.completed_at == max_ts_sq.c.max_ts),
+                )
+            ).all()
+
+        for rr in run_rows:
+            pid = str(rr.project_id or "").strip()
+            if pid and pid in _compat_projects:
+                _compat_projects[pid]["status"] = _run_map.get(
+                    str(rr.status).lower(), "draft"
+                )
+    except Exception as exc:
+        logger.debug("Could not refresh project statuses from runs: %s", exc)
+
+
 def _compat_bootstrap_projects_from_orm() -> None:
     """Seed compatibility project cache from persisted ORM projects when memory is empty."""
     if _compat_projects:
@@ -697,38 +746,12 @@ def _compat_bootstrap_projects_from_orm() -> None:
 
     try:
         from semabridge.repository.orm.models import Project
-        from semabridge.repository.orm.run_models import Run
-        from sqlalchemy import select, func
+        from sqlalchemy import select
 
         with db_manager.get_session() as session:
             rows = session.execute(
                 select(Project).order_by(Project.last_updated.desc().nullslast()).limit(500)
             ).scalars().all()
-
-            # Derive project status from the most recent completed run per project.
-            # This ensures that after a server restart, projects with prior successful
-            # runs show "active" instead of always reverting to "draft".
-            project_ids = [str(r.project_id) for r in rows if r.project_id]
-            last_run_status: dict = {}
-            if project_ids:
-                try:
-                    # Subquery: most recent completed_at per project
-                    max_ts_sq = (
-                        select(Run.project_id, func.max(Run.completed_at).label("max_ts"))
-                        .where(Run.project_id.in_(project_ids))
-                        .where(Run.status.in_(["success", "failed", "warning", "partial"]))
-                        .group_by(Run.project_id)
-                        .subquery()
-                    )
-                    run_rows = session.execute(
-                        select(Run.project_id, Run.status)
-                        .join(max_ts_sq, (Run.project_id == max_ts_sq.c.project_id) & (Run.completed_at == max_ts_sq.c.max_ts))
-                    ).all()
-                    _run_map = {"success": "active", "warning": "warning", "partial": "warning", "failed": "failed"}
-                    for rr in run_rows:
-                        last_run_status[str(rr.project_id)] = _run_map.get(str(rr.status).lower(), "draft")
-                except Exception as run_exc:
-                    logger.debug("Could not derive project statuses from runs: %s", run_exc)
 
         for row in rows:
             pid = str(row.project_id or "").strip()
@@ -744,7 +767,7 @@ def _compat_bootstrap_projects_from_orm() -> None:
                 "workspace_id": row.workspace_id or "",
                 "target_type": "snowflake",
                 "folder_id": None,
-                "status": last_run_status.get(pid, "draft"),
+                "status": "draft",
                 "created_at": _compat_now_iso(),
                 "updated_at": _compat_now_iso(),
                 "notification_email": row.notification_email or None,
@@ -813,6 +836,10 @@ def _compat_ensure_loaded() -> None:
     _compat_bootstrap_projects_from_modular_configs()
     _compat_bootstrap_projects_from_orm()
     _compat_bootstrap_project_from_repo_yaml()
+    # Always refresh statuses from the Run table regardless of how _compat_projects
+    # was populated (store file, ORM bootstrap, or YAML discovery).  The store file
+    # may hold stale "draft" values for projects that have had successful runs.
+    _compat_refresh_project_statuses_from_runs()
     _compat_bootstrapped = True
 
 

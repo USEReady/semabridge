@@ -318,6 +318,13 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
             _compat_projects[project_id]["status"] = _project_status_map.get(
                 _run_final_status, _run_final_status
             )
+            # Persist the updated status so the store file has the correct value
+            # on the next server start (avoids reverting to "draft" on restart).
+            try:
+                from semabridge.api.services.project_shared import _compat_save_store
+                _compat_save_store()
+            except Exception:
+                pass
         run["summary"] = (sync_result or {}).get("summary") or {}
         run["results"] = (sync_result or {}).get("results") or []
         run["models_synced"] = int((sync_result or {}).get("models_synced") or 0)
