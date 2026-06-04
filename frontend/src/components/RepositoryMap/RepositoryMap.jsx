@@ -160,6 +160,10 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     const [workspaceNames, setWorkspaceNames] = useState({});
     // Configured Account records for the connector dropdown
     const [accounts, setAccounts] = useState([]);
+    // Projects list — used to map workspace+model → project snapshot
+    const [projects, setProjects] = useState([]);
+    // Override snapshot when user picks a workspace model — null means use prop
+    const [overrideSnapshotId, setOverrideSnapshotId] = useState(null);
     // Workspace selection (Fabric only — Snowflake has no workspace concept)
     const [availableWorkspaces, setAvailableWorkspaces] = useState([]);
     const [selectedWorkspaceId, setSelectedWorkspaceId] = usePageCache('explore:selectedWorkspaceId', '__all__');
@@ -180,6 +184,11 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             const list = Array.isArray(resp) ? resp : (resp?.accounts || resp?.items || []);
             setAccounts(list);
         }).catch(() => { /* accounts optional */ });
+
+        api.listProjects({ limit: 200 }).then((resp) => {
+            const list = Array.isArray(resp) ? resp : (resp?.projects || resp?.items || []);
+            setProjects(list);
+        }).catch(() => { /* projects optional */ });
 
         api.discoverFabricWorkspaces().then((resp) => {
             const wsList = Array.isArray(resp) ? resp : (resp?.workspaces || []);
@@ -204,7 +213,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             setTreeLoading(false);
 
             let graphResp;
-            let effectiveSnapshotId = snapshotId;
+            let effectiveSnapshotId = overrideSnapshotId || snapshotId;
             const snapshots = Array.isArray(snapshotsResp) ? snapshotsResp : [];
             if (!effectiveSnapshotId) {
                 const sorted = [...snapshots].sort(
@@ -296,7 +305,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             setGraphLoading(false);
             setLoading(false);
         }
-    }, [snapshotId, includeSystemTables]);
+    }, [snapshotId, overrideSnapshotId, includeSystemTables]);
 
     useEffect(() => { loadData(); }, [loadData]);
 
@@ -736,78 +745,48 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedWorkspaceId]);
 
-    // ── When a discovered model is chosen, match to existing graph snapshot ──
-    const handleDiscoveredModelSelect = useCallback((modelId) => {
+    // ── When a discovered model is chosen, find the matching project snapshot ──
+    const handleDiscoveredModelSelect = useCallback(async (modelId) => {
         const model = availableModels.find(m => m.id === modelId);
         if (!model) { setSelectedModelId('__all__'); setUnsyncedModel(null); return; }
 
-        const normalise = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-        const allNodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
-        const modelNodes = allNodes.filter(n => n?.data?.nodeType === 'model');
+        const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const normModelName = norm(model.name);
 
-
-        // 1. Try exact Fabric model ID match (model.id is a GUID, stored in data.model_id on some snapshots)
-        let matchingNode = modelNodes.find(n =>
-            String(n?.data?.fabric_model_id || '').toLowerCase() === String(model.id || '').toLowerCase()
-        );
-
-        // 2. Try workspace_id + name match — workspace_id stored on node.data
-        if (!matchingNode && selectedWorkspaceId && selectedWorkspaceId !== '__all__') {
-            matchingNode = modelNodes.find(n =>
-                String(n?.data?.workspace_id || '').toLowerCase() === String(selectedWorkspaceId || '').toLowerCase() &&
-                normalise(n?.data?.label) === normalise(model.name)
-            );
-        }
-
-        // 3. Fall back to name-only exact match across all model nodes
-        if (!matchingNode) {
-            matchingNode = modelNodes.find(n =>
-                normalise(n?.data?.label) === normalise(model.name)
-            );
-        }
-
-        // 4. Check modelOptions (graph-derived) by exact label match
-        if (!matchingNode) {
-            const moMatch = modelOptions.find(mo => normalise(mo.label) === normalise(model.name));
-            if (moMatch) {
-                setSelectedModelId(moMatch.id);
-                setUnsyncedModel(null);
-                return;
-            }
-        }
-
-        // 5. Partial/contains match — handles "_SEMANTIC" suffix or other OSI name additions
-        //    e.g. Fabric "Competitive Marketing Analysis" vs OSI "COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC"
-        const normModel = normalise(model.name);
-        if (!matchingNode && normModel.length >= 6) {
-            matchingNode = modelNodes.find(n => {
-                const normLabel = normalise(n?.data?.label);
-                return normLabel.includes(normModel) || normModel.includes(normLabel);
+        // 1. Find matching project by workspace_id + name similarity
+        const matchingProject = projects.find(p => {
+            const wsMatch = selectedWorkspaceId && selectedWorkspaceId !== '__all__'
+                ? String(p.workspace_id || p.source_workspace_id || '').toLowerCase() === String(selectedWorkspaceId).toLowerCase()
+                : true;
+            const nameFields = [p.name, p.model_name, p.source_model_name, p.display_name];
+            const nameMatch = nameFields.some(f => {
+                if (!f) return false;
+                const n = norm(f);
+                return n === normModelName || n.includes(normModelName) || normModelName.includes(n);
             });
+            return wsMatch && nameMatch;
+        });
+
+        if (matchingProject) {
+            const projId = matchingProject.id || matchingProject.project_id;
+            try {
+                const snaps = await api.getGraphSnapshots(projId).catch(() => []);
+                const sorted = (Array.isArray(snaps) ? snaps : []).sort(
+                    (a, b) => new Date(b?.timestamp || 0) - new Date(a?.timestamp || 0)
+                );
+                const latestSnap = sorted[0];
+                if (latestSnap?.snapshot_id) {
+                    setOverrideSnapshotId(latestSnap.snapshot_id);
+                    setUnsyncedModel(null);
+                    return;
+                }
+            } catch { /* fall through */ }
         }
 
-        // 6. Partial match against modelOptions labels
-        if (!matchingNode && normModel.length >= 6) {
-            const moMatch = modelOptions.find(mo => {
-                const normLabel = normalise(mo.label);
-                return normLabel.includes(normModel) || normModel.includes(normLabel);
-            });
-            if (moMatch) {
-                setSelectedModelId(moMatch.id);
-                setUnsyncedModel(null);
-                return;
-            }
-        }
-
-        if (matchingNode) {
-            const mid = String(matchingNode?.data?.model_id || matchingNode.id || '');
-            setSelectedModelId(mid);
-            setUnsyncedModel(null);
-        } else {
-            setSelectedModelId('__all__');
-            setUnsyncedModel({ id: model.id, name: model.name });
-        }
-    }, [availableModels, graphData, modelOptions, selectedWorkspaceId]);
+        // 2. No matching project or no snapshot yet — mark unsynced
+        setSelectedModelId('__all__');
+        setUnsyncedModel({ id: model.id, name: model.name });
+    }, [availableModels, projects, selectedWorkspaceId]);
 
     const focusTableInER = useCallback((tableId) => {
         if (!tableId) return;
