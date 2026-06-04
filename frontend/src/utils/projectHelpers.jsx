@@ -69,9 +69,12 @@ export function applyHashDeduplication(mappings) {
       if (duplicates.length < 2) {
         return { ...column, status: normalizeTargetStatus(column), collision_detected: false };
       }
-      // Prefer table-prefix (SALES_AMOUNT) over a meaningless hash.
-      // Fall back to hash only when the table name is identical to the field name.
+      // Prefer table-prefix (ORDERS_ORDERID) over a meaningless hash.
+      // Use resolveColumnSourceTable so source_path / parent_source_path are parsed
+      // correctly — these are the actual fields the backend sends.
+      // Fall back to hash only when no table can be determined.
       const tbl = sanitizeMappingName(
+        resolveColumnSourceTable(column, mapping?.source || '') ||
         column?.source_table_name || column?.parent_table || mapping?.source || ''
       );
       const resolved = (tbl && tbl !== baseTarget)
@@ -104,7 +107,9 @@ export function applyHashDeduplication(mappings) {
  */
 export function suggestCollisionResolutions(row, allRows) {
   const baseTarget = sanitizeMappingName(row?.target_field || row?.source_field || '');
-  const tbl        = sanitizeMappingName(row?.source_table_name || '');
+  const tbl        = sanitizeMappingName(
+    resolveColumnSourceTable(row) || row?.source_table_name || ''
+  );
   const field      = sanitizeMappingName(row?.source_field || '');
 
   const peers = (allRows || []).filter(
