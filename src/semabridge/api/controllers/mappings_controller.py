@@ -237,6 +237,11 @@ async def dry_run_mapping(
             "project_id": preview_project_id,
             "content": config_yaml,
             "dry_run": True,
+            # Pass account_id and user_id so credential scoping works for the
+            # transient preview project (not in ORM, so sync_models can't resolve
+            # account_id automatically via the DB lookup).
+            "account_id": source_account_id or target_account_id,
+            "user_id": str(request_user_id) if request_user_id is not None else None,
         })
 
         preferred_snapshot_id = _compat_preferred_snapshot_id_from_sync_result(
