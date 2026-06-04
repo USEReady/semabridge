@@ -356,30 +356,48 @@ class ModelRepository:
         source_connection: Optional[str] = None,
         connection_tag: Optional[str] = None,
     ) -> None:
-        """Ensure the project row exists (upsert)."""
-        now = datetime.utcnow()
-        with self._session() as session:
-            existing = session.get(Project, project_id)
-            if existing:
-                existing.name = name
-                existing.adapter = adapter
-                existing.source_connection = source_connection
-                existing.last_updated = now
-                if connection_tag:
-                    existing.connection_tag = connection_tag
-            else:
-                session.add(
-                    Project(
-                        project_id=project_id,
-                        name=name,
-                        workspace_id=workspace_id,
-                        adapter=adapter,
-                        source_connection=source_connection,
-                        last_updated=now,
-                        connection_tag=connection_tag,
-                    )
-                )
-            session.commit()
+        """Ensure the project row exists (upsert). Retries on DuckDB write conflicts."""
+        import time
+        import random
+
+        _MAX_RETRIES = 5
+        _BASE_DELAY = 0.05  # 50 ms initial
+        last_exc = None
+        for attempt in range(_MAX_RETRIES):
+            try:
+                now = datetime.utcnow()
+                with self._session() as session:
+                    existing = session.get(Project, project_id)
+                    if existing:
+                        existing.name = name
+                        existing.adapter = adapter
+                        existing.source_connection = source_connection
+                        existing.last_updated = now
+                        if connection_tag:
+                            existing.connection_tag = connection_tag
+                    else:
+                        session.add(
+                            Project(
+                                project_id=project_id,
+                                name=name,
+                                workspace_id=workspace_id,
+                                adapter=adapter,
+                                source_connection=source_connection,
+                                last_updated=now,
+                                connection_tag=connection_tag,
+                            )
+                        )
+                    session.commit()
+                return  # success — exit retry loop
+            except Exception as exc:
+                msg = str(exc).lower()
+                if "transactioncontext" in msg or "conflict on update" in msg:
+                    last_exc = exc
+                    delay = _BASE_DELAY * (2 ** attempt) + random.uniform(0, 0.02)
+                    time.sleep(delay)
+                    continue
+                raise  # non-conflict exception — propagate immediately
+        raise last_exc  # all retries exhausted
 
     # ------------------------------------------------------------------
     # Snapshots / version history
