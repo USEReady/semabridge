@@ -278,9 +278,15 @@ export function resolveMeasureSourceTables(row) {
 }
 
 export function resolveColumnSourceTable(row, parentTable = '') {
+  // 1. Direct source_table field (sent by mappings_controller dry-run response)
+  const direct = String(row?.source_table || '').trim();
+  if (direct) return direct;
+
+  // 2. Parse from source_path e.g. "datasets.Orders.columns.OrderID" → "Orders"
   const fromPath = parseDatasetFromPath(row?.source_path);
   if (fromPath) return fromPath;
 
+  // 3. Parse from parent_source_path e.g. "datasets.Orders" → "Orders"
   const fromParentPath = parseDatasetFromPath(row?.parent_source_path);
   if (fromParentPath) return fromParentPath;
 
