@@ -358,11 +358,51 @@ class SnowflakeEmitter(BaseEmitter):
                 logger.info("[%s] generated %s DDL statement(s) for model=%s", path_type, len(ddls), model_name)
 
                 # Step 3: Execute DDLs  (generate_ddls returns list[str])
-                # Pre-pass: DROP existing semantic views before (re)creating them.
+                # Pre-pass A: Refresh any stale *_ENRICHED regular views referenced by the DDL.
+                # Snowflake error 002057 fires when a semantic view is compiled against an
+                # enriched view whose stored column count no longer matches the live SELECT
+                # (e.g. the underlying fact table gained columns since the enriched view was
+                # last created).  Recreating the enriched view here keeps the counts in sync.
+                import re as _re_drop
+                _enriched_pattern = _re_drop.compile(
+                    r'"?(\w+_ENRICHED)"?', _re_drop.IGNORECASE
+                )
+                _seen_enriched: set = set()
+                for _s in ddls:
+                    if not _s:
+                        continue
+                    for _em in _enriched_pattern.findall(_s):
+                        _en = _em.upper()
+                        if _en in _seen_enriched:
+                            continue
+                        _seen_enriched.add(_en)
+                        # Recreate the enriched view so column count matches the current
+                        # fact table regardless of when it was last created.
+                        try:
+                            _refreshed = self._create_enriched_view(model, cur)
+                            if _refreshed:
+                                logger.info(
+                                    "Pre-refreshed enriched view '%s' to sync column count", _refreshed
+                                )
+                            else:
+                                # Fallback: just drop the stale view so Snowflake won't
+                                # reject the semantic view DDL on column-count mismatch.
+                                _drop_enriched = f'DROP VIEW IF EXISTS "{_en}"'
+                                self.connection_manager._execute_sql(
+                                    cur, _drop_enriched, context="pre-drop-enriched-view"
+                                )
+                                logger.info(
+                                    "Pre-dropped stale enriched view '%s' (could not recreate)", _en
+                                )
+                        except Exception as _enr_exc:
+                            logger.warning(
+                                "Could not refresh enriched view '%s' (non-fatal): %s", _en, _enr_exc
+                            )
+
+                # Pre-pass B: DROP existing semantic views before (re)creating them.
                 # Snowflake error 002057 fires when a CREATE OR REPLACE SEMANTIC VIEW
                 # changes the number of declared columns vs the existing view definition.
                 # Dropping first eliminates that constraint entirely.
-                import re as _re_drop
                 for _s in ddls:
                     if not _s:
                         continue
