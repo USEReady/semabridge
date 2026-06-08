@@ -24,6 +24,20 @@ const inFlightApiCalls = new Map();
 // Prevent unbounded growth of in-memory caches. Keep a simple LRU-ish cap.
 const API_CACHE_MAX_ITEMS = Number(import.meta.env.VITE_CACHE_MAX_ITEMS) || 200;
 
+/**
+ * Read the csrf_token cookie set by the backend CSRFMiddleware.
+ * The cookie is httponly=false so JS can read it and echo it back
+ * as X-CSRF-Token on state-changing requests (double-submit cookie pattern).
+ */
+function getCsrfToken() {
+    try {
+        const match = document.cookie.split(';').find(c => c.trim().startsWith('csrf_token='));
+        return match ? decodeURIComponent(match.trim().slice('csrf_token='.length)) : '';
+    } catch {
+        return '';
+    }
+}
+
 function ensureCacheSize() {
     try {
         if (apiCache.size > API_CACHE_MAX_ITEMS) {
@@ -504,6 +518,15 @@ async function authFetch(url, options = {}) {
     if (workspaceId) {
         headers['X-Fabric-Context'] = workspaceId;
     }
+    // Double-submit cookie CSRF protection: echo the csrf_token cookie back as
+    // X-CSRF-Token on all state-changing requests. The backend CSRFMiddleware
+    // (active when AUTH_ENABLED=true) validates header == cookie before processing.
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+        const csrfToken = getCsrfToken();
+        if (csrfToken) {
+            headers['X-CSRF-Token'] = csrfToken;
+        }
+    }
     let res;
     let lastError = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -584,6 +607,9 @@ export const api = {
 
     async createAccount(payload) {
         invalidateApiCache('accounts:');
+        // Bust discovery cache so the new account's warehouses/databases load fresh
+        invalidateApiCache('discovery:snowflake:');
+        invalidateApiCache('discovery:fabric:');
         const res = await authFetch(`${API_BASE_URL}/accounts`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

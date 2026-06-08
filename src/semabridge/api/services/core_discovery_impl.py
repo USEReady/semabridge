@@ -259,10 +259,19 @@ def _execute_in_snowflake_context(func_name: str, identity_id: Optional[str] = N
                     database="placeholder",
                 )
 
-            snowflake_cfg = build_snowflake_config(account, session, base_cfg)
+            try:
+                snowflake_cfg = build_snowflake_config(account, session, base_cfg)
+            except ValueError as ve:
+                raise ValidationError(
+                    f"Snowflake account '{account.tag}' is missing required credentials: {ve}. "
+                    "Edit the connection in Settings → Connections and verify all fields."
+                )
             extractor = make_source_extractor("snowflake", snowflake_cfg)
             func = getattr(extractor, func_name)
-            return func(*args, **kwargs)
+            try:
+                return func(*args, **kwargs)
+            except ValueError as ve:
+                raise ValidationError(str(ve))
     else:
         logger.info("No identity_id provided, using default system settings for SnowflakeExtractor")
         try:
@@ -276,7 +285,10 @@ def _execute_in_snowflake_context(func_name: str, identity_id: Optional[str] = N
             )
         extractor = make_source_extractor("snowflake", snowflake_config)
         func = getattr(extractor, func_name)
-        return func(*args, **kwargs)
+        try:
+            return func(*args, **kwargs)
+        except ValueError as ve:
+            raise ValidationError(str(ve))
 
 
 def discover_snowflake_warehouses(identity_id: Optional[str] = Query(None)):
