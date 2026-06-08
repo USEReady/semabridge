@@ -300,6 +300,18 @@ def delete_account(request: Request, account_id: str, db: Session = Depends(get_
     except Exception:
         pass  # projects table may not have account_id column on older schemas
 
+    # Also unlink from the in-memory _compat_projects store (JSON-backed).
+    try:
+        import semabridge.api.services.project_shared as _ps
+        if hasattr(_ps, "_compat_projects"):
+            for _proj in _ps._compat_projects.values():
+                if isinstance(_proj, dict) and _proj.get("account_id") == account.id:
+                    _proj["account_id"] = None
+            if hasattr(_ps, "_compat_save_store"):
+                _ps._compat_save_store()
+    except Exception:
+        pass
+
     # Commit the unlink first so DuckDB releases the FK reference before we delete.
     db.commit()
 
