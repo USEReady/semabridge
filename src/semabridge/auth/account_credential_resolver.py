@@ -145,6 +145,10 @@ def _load_account_credentials(
 
     # 2. Fall back to global CredentialManager for legacy accounts
     if not has_full_bundle:
+        logger.info(
+            "Account bundle empty or unreadable for %s/%s — falling back to legacy CredentialManager",
+            connector, account.tag,
+        )
         try:
             from semabridge.repository.credential_manager import CredentialManager
             cm = CredentialManager()

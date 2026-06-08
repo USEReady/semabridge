@@ -96,7 +96,16 @@ def build_snowflake_config(
     if base_config.oauth_client_secret:
         base_oauth_secret = base_config.oauth_client_secret.get_secret_value()
 
-    sf_account = env_map.get("SNOWFLAKE_ACCOUNT") or base_config.account
+    import os as _os
+    sf_account = (
+        env_map.get("SNOWFLAKE_ACCOUNT")
+        or base_config.account
+        # Last-resort: check os.environ directly. This handles legacy accounts
+        # whose encrypted_token predates the JSON-bundle format (so env_map is
+        # empty) when saveConnection previously injected the value into the
+        # process environment.
+        or _os.environ.get("SNOWFLAKE_ACCOUNT", "")
+    )
     if not sf_account or sf_account == "placeholder":
         raise ValueError(
             f"Snowflake account identifier is missing for account '{account.tag}'. "
