@@ -876,8 +876,10 @@ async def auto_map_compat(payload: dict):
             )
             if not has_existing_project_mappings:
                 logger.warning("Auto-map pre-sync failed for project %s: %s", project_id, exc)
-                raise ExternalServiceError(
-                    f"Dry-run sync failed before auto-map for project '{project_id}': {exc}"
+                from fastapi import HTTPException
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Dry-run sync failed before auto-map: {exc}"
                 )
             logger.warning(
                 "Auto-map pre-sync failed for project %s; falling back to existing mapping state: %s",

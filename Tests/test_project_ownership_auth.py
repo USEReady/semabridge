@@ -93,6 +93,7 @@ def test_is_project_owned_by_user_uses_direct_owner_only(monkeypatch):
             "recovered": False,
         },
     )
+    monkeypatch.setattr(pos, "_user_exists", lambda user_id: True)
 
     assert pos.is_project_owned_by_user("proj-1", "7") is True
     assert pos.is_project_owned_by_user("proj-1", "8", log_denied=False) is False

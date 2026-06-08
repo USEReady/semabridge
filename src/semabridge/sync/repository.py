@@ -393,21 +393,29 @@ class SyncRepository:
     def upsert_mapping(self, mapping: ModelMapping) -> ModelMapping:
         """Insert or update a model mapping."""
         with self._session() as session:
-            existing = session.execute(
+            existing_rows = session.execute(
                 select(ModelMappingRow)
                 .where(
                     and_(
                         ModelMappingRow.source_type == mapping.source_type,
                         ModelMappingRow.source_identifier == mapping.source_identifier,
                         ModelMappingRow.target_type == mapping.target_type,
-                        ModelMappingRow.target_identifier == mapping.target_identifier,
-                    )
+                        )
                 )
-                .limit(1)
-            ).scalars().first()
+                .order_by(
+                    ModelMappingRow.last_synced_at.desc(),
+                    ModelMappingRow.created_at.desc(),
+                    ModelMappingRow.mapping_id.desc(),
+                )
+            ).scalars().all()
+
+            existing = existing_rows[0] if existing_rows else None
 
             if existing:
+                for stale in existing_rows[1:]:
+                    stale.is_active = False
                 existing.model_name = mapping.model_name
+                existing.target_identifier = mapping.target_identifier
                 existing.last_synced_at = SyncRepository._str_to_dt(mapping.last_synced_at)
                 existing.last_osi_hash = mapping.last_osi_hash
                 existing.is_active = mapping.is_active
@@ -436,18 +444,26 @@ class SyncRepository:
         source_type: str,
         source_identifier: str,
         target_type: str,
+        target_identifier: Optional[str] = None,
     ) -> Optional[ModelMapping]:
         """Find a mapping by source and target type."""
         with self._session() as session:
+            conditions = [
+                ModelMappingRow.source_type == source_type,
+                ModelMappingRow.source_identifier == source_identifier,
+                ModelMappingRow.target_type == target_type,
+                ModelMappingRow.is_active.is_(True),
+            ]
+            if target_identifier is not None:
+                conditions.append(ModelMappingRow.target_identifier == target_identifier)
+
             row = session.execute(
                 select(ModelMappingRow)
-                .where(
-                    and_(
-                        ModelMappingRow.source_type == source_type,
-                        ModelMappingRow.source_identifier == source_identifier,
-                        ModelMappingRow.target_type == target_type,
-                        ModelMappingRow.is_active.is_(True),
-                    )
+                .where(and_(*conditions))
+                .order_by(
+                    ModelMappingRow.last_synced_at.desc(),
+                    ModelMappingRow.created_at.desc(),
+                    ModelMappingRow.mapping_id.desc(),
                 )
                 .limit(1)
             ).scalars().first()

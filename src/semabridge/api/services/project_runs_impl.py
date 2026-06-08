@@ -16,6 +16,9 @@ from semabridge.api.services.run_service import (  # noqa: F401
     _perform_project_run,
     _execute_project_run,
     _run_project_background,
+    _compat_sync_mode_for_restore_snapshot,
+    _build_run_logs,
+    _build_stage_states,
 )
 from semabridge.api.services.mapping_service import (  # noqa: F401
     _compat_scope_model_for_dry_run,
@@ -24,6 +27,7 @@ from semabridge.api.services.mapping_service import (  # noqa: F401
     _compat_latest_identifier_diagnostics,
     _compat_apply_identifier_diagnostics_to_mappings,
     _compat_is_blocking_mapping,
+    _compat_apply_manual_mapping_overrides_to_cfg,
 )
 from semabridge.api.services.snapshot_service import (  # noqa: F401
     _compat_capture_snapshots_for_run,
@@ -43,4 +47,22 @@ from semabridge.api.services.project_shared import (  # noqa: F401
     _compat_mappings,
     _compat_run_snapshots,
     _compat_folders,
+    _compat_load_modular_project,
+    _compat_load_repo_yaml_text,
+    _compat_now_iso,
+    _compat_default_project_yaml,
 )
+
+import sys
+import types
+
+class ProjectRunsImplModule(types.ModuleType):
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        import sys
+        for mod_name, mod in list(sys.modules.items()):
+            if mod_name.startswith("semabridge.api.services.") or mod_name == "semabridge.api.services.project_runs_impl":
+                if name in mod.__dict__:
+                    mod.__dict__[name] = value
+
+sys.modules[__name__].__class__ = ProjectRunsImplModule

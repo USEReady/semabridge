@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 
-class AutoMapRequest(BaseModel):
+class LegacyAutoMapRequest(BaseModel):
     project_id: Optional[str] = None
     source: Optional[Dict[str, Any]] = None
     targets: Optional[List[Any]] = None
@@ -104,6 +104,12 @@ def _build_config_yaml_from_request(
         source_section["database"] = source_config["database"]
     if source_config.get("schema"):
         source_section["schema"] = source_config["schema"]
+    if source_config.get("pbix_path"):
+        source_section["pbix_path"] = source_config["pbix_path"]
+    if source_config.get("pbix_file_path"):
+        source_section["pbix_file_path"] = source_config["pbix_file_path"]
+    if source_config.get("pbix_folder"):
+        source_section["pbix_folder"] = source_config["pbix_folder"]
     if selected_sources:
         source_section["models"] = selected_sources
 
@@ -591,7 +597,7 @@ async def deploy_mappings(
 
 # Keep old endpoint for backwards compatibility for now
 @router.post('/api/mappings/auto')
-async def auto_map_with_user_context(request: Request, payload: AutoMapRequest):
+async def auto_map_with_user_context(request: Request, payload: LegacyAutoMapRequest):
     from semabridge.api.services.project_domain_service import auto_map_compat
     body = payload.model_dump(exclude_none=False)
     user_id = require_request_user_id(request)

@@ -79,6 +79,13 @@ def _iter_metrics(model: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
     rows = model.get("metrics") if isinstance(model.get("metrics"), list) else []
     return [row for row in rows if isinstance(row, dict)]
 
+def _display_name(row: Dict[str, Any], fallback: str) -> str:
+    return str(
+        row.get("label")
+        or row.get("display_name")
+        or row.get("name")
+        or fallback
+    ).strip()
 
 def _dataset_name(dataset: Dict[str, Any]) -> str:
     return str(
@@ -162,12 +169,13 @@ def extract_model_entities(model: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     for dataset_index, dataset in enumerate(_iter_datasets(model), start=1):
         dataset_name = _dataset_name(dataset) or f"dataset_{dataset_index}"
+        dataset_display_name = _display_name(dataset, dataset_name)
         dataset_lookup[dataset_name.lower()] = dataset_name
         dataset_path = f"datasets.{dataset_name}"
         entities.append({
             "entity_kind": "table",
             "model_name": model_name,
-            "source_name": dataset_name,
+            "source_name": dataset_display_name,
             "source_path": dataset_path,
             "parent_source_path": None,
             "data_type": None,
@@ -178,10 +186,12 @@ def extract_model_entities(model: Dict[str, Any]) -> List[Dict[str, Any]]:
             if not isinstance(column, dict):
                 continue
             column_name = _column_name(column) or f"column_{column_index}"
+            column_display_name = _display_name(column, column_name)
+
             entities.append({
                 "entity_kind": "column",
                 "model_name": model_name,
-                "source_name": column_name,
+                "source_name": column_display_name,
                 "source_path": f"{dataset_path}.columns.{column_name}",
                 "parent_source_path": dataset_path,
                 "data_type": column.get("data_type"),
@@ -189,13 +199,14 @@ def extract_model_entities(model: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     for metric_index, metric in enumerate(_iter_metrics(model), start=1):
         metric_name = _metric_name(metric) or f"metric_{metric_index}"
+        metric_display_name = _display_name(metric, metric_name)
         measure_tables = _extract_metric_source_tables(metric, dataset_lookup)
         metric_parent = f"datasets.{measure_tables[0]}" if len(measure_tables) == 1 else None
         metric_expression = str(metric.get("expression") or "").strip()
         entities.append({
             "entity_kind": "metric",
             "model_name": model_name,
-            "source_name": metric_name,
+            "source_name": metric_display_name,
             "source_path": f"metrics.{metric_name}",
             "parent_source_path": metric_parent,
             "data_type": metric.get("data_type"),

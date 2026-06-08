@@ -67,3 +67,32 @@ def test_metric_target_name_uses_snowflake_leading_digit_rule() -> None:
     metric = next(row for row in payload["mappings"] if row.get("entity_kind") == "metric")
 
     assert metric["target_name"] == "_2024_SALES"
+
+
+def test_column_display_name_prefers_label_over_unique_name() -> None:
+    model = {
+        "unique_name": "Core_Finance_v1",
+        "datasets": [
+            {
+                "unique_name": "CATEGORY_3",
+                "label": "Category",
+                "columns": [
+                    {
+                        "unique_name": "CATEGORY_3",
+                        "label": "Category",
+                        "data_type": "number",
+                    }
+                ],
+            },
+        ],
+        "metrics": [],
+    }
+
+    payload = build_entity_mappings(project_id="p1", model=model)
+    table = next(row for row in payload["mappings"] if row.get("entity_kind") == "table")
+    column = next(row for row in payload["mappings"] if row.get("entity_kind") == "column")
+
+    assert table["source_name"] == "Category"
+    assert table["source_path"] == "datasets.CATEGORY_3"
+    assert column["source_name"] == "Category"
+    assert column["source_path"] == "datasets.CATEGORY_3.columns.CATEGORY_3"

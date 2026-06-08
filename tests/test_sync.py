@@ -322,6 +322,39 @@ class TestSyncRepository:
         assert retrieved is not None
         assert retrieved.last_osi_hash == "abc123"
 
+    def test_upsert_mapping_prefers_latest_target_for_same_source(self, sync_repo):
+        source_identifier = "/path/to/file.pbix"
+
+        first = ModelMapping(
+            source_type="pbix",
+            source_identifier=source_identifier,
+            target_type="snowflake",
+            target_identifier="snowflake://db/old_schema",
+            model_name="test_model",
+            last_osi_hash="old_hash",
+        )
+        sync_repo.upsert_mapping(first)
+
+        latest = ModelMapping(
+            source_type="pbix",
+            source_identifier=source_identifier,
+            target_type="snowflake",
+            target_identifier="snowflake://db/new_schema",
+            model_name="test_model",
+            last_osi_hash="new_hash",
+        )
+        sync_repo.upsert_mapping(latest)
+
+        active = sync_repo.list_mappings()
+        assert len(active) == 1
+        assert active[0].target_identifier == "snowflake://db/new_schema"
+        assert active[0].last_osi_hash == "new_hash"
+
+        retrieved = sync_repo.get_mapping("pbix", source_identifier, "snowflake")
+        assert retrieved is not None
+        assert retrieved.target_identifier == "snowflake://db/new_schema"
+        assert retrieved.last_osi_hash == "new_hash"
+
     def test_schema_version_crud(self, sync_repo):
         version = SchemaVersion(
             model_name="test_model",

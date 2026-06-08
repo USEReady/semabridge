@@ -321,7 +321,6 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
             # Persist the updated status so the store file has the correct value
             # on the next server start (avoids reverting to "draft" on restart).
             try:
-                from semabridge.api.services.project_shared import _compat_save_store
                 _compat_save_store()
             except Exception:
                 pass
@@ -540,6 +539,33 @@ async def run_project_now_compat(
         from semabridge.api.services.mapping_service import _compat_apply_manual_mapping_overrides_to_cfg
         config_override = _compat_apply_manual_mapping_overrides_to_cfg(base_cfg, project_id)
         _compat_project_configs[project_id] = config_override
+
+        force = bool((payload or {}).get("force", False))
+        if not force:
+            from semabridge.api.services.mapping_service import auto_map_compat, _compat_is_blocking_mapping
+            dry_run_payload = dict(payload or {})
+            dry_run_payload["project_id"] = project_id
+            dry_run_payload["dry_run"] = True
+            dry_run_payload["require_sync"] = True
+
+            dry_run_res = await auto_map_compat(dry_run_payload)
+            blockers = [
+                m for m in dry_run_res.get("entity_mappings", [])
+                if _compat_is_blocking_mapping(m)
+            ]
+            if blockers:
+                from fastapi import HTTPException
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "status": "blocked",
+                        "mode": "DRY_RUN",
+                        "message": f"Run blocked by {len(blockers)} conflict(s) or unmapped field(s).",
+                        "blocking_issue_count": len(blockers),
+                        "issues": blockers,
+                    }
+                )
+
     run, project_cfg, started = _create_project_run(
         project_id,
         "Manual",

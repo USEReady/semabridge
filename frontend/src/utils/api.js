@@ -482,6 +482,17 @@ async function handleResponse(res) {
     return res.json();
 }
 
+function getCookie(name) {
+    try {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) return parts.pop().split(';').shift();
+    } catch (e) {
+        console.error('Failed to read cookie:', e);
+    }
+    return '';
+}
+
 /**
  * Wrapper around fetch that automatically injects the JWT
  * Authorization header when a token is stored.
@@ -503,6 +514,12 @@ async function authFetch(url, options = {}) {
     const headers = { ...getAuthHeaders(), ...restOptions.headers };
     if (workspaceId) {
         headers['X-Fabric-Context'] = workspaceId;
+    }
+    if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+        const csrfToken = getCookie('csrf_token');
+        if (csrfToken) {
+            headers['x-csrf-token'] = csrfToken;
+        }
     }
     let res;
     let lastError = null;

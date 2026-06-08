@@ -20,6 +20,7 @@ export function useProjectMappings({
   snowflakeDatabase,
   targetDatabase,
   selectedModelNames,
+  resolvedPbixPath,
   createdProject,
   setCreatedProject,
   currentMappingSignature,
@@ -48,6 +49,7 @@ export function useProjectMappings({
     const { sourceConfig, targetConfig } = buildDryRunPayload({
       sourceConnector, targetConnectors, fabricAccountId,
       fabricWorkspaceId, snowflakeDatabase, targetDatabase, selectedModelNames,
+      pbixPath: resolvedPbixPath,
     });
 
     try {
@@ -78,6 +80,7 @@ export function useProjectMappings({
     targetConnectors, targetDatabase, selectedModelNames, currentMappingSignature,
     fabricAccountId, setMappingDryRunStatus, setMappingError, setDetectedMappings,
     setDryRunData, setMappingDryRunSignature, setUnmappedAcknowledged, setMappingReadyToProceed,
+    resolvedPbixPath,
   ]);
 
   const handleFieldEdit = useCallback(async (rowId, updates) => {

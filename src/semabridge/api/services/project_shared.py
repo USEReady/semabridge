@@ -992,3 +992,17 @@ def _compat_default_project_yaml(project: Dict[str, Any]) -> str:
 # surface. Python skips underscore-prefixed names during `import *` unless
 # `__all__` is defined, so publish the shared compat helpers explicitly.
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+import sys
+import types
+
+class ProjectSharedModule(types.ModuleType):
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        import sys
+        for mod_name, mod in list(sys.modules.items()):
+            if mod_name.startswith("semabridge.api.services.") or mod_name == "semabridge.api.services.project_runs_impl":
+                if name in mod.__dict__:
+                    mod.__dict__[name] = value
+
+sys.modules[__name__].__class__ = ProjectSharedModule

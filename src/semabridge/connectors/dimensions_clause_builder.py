@@ -81,7 +81,7 @@ class DimensionsClauseBuilder:
         missing_dims: Dict[str, List[str]] = {}
         added_dimensions = set()
         added_physical_dimensions = set()
-        used_dimension_aliases: Set[str] = set()
+        used_dimension_aliases: Dict[str, Set[str]] = {}
 
         # 1. Add explicitly defined dimensions
         for dim in dimensions:
@@ -121,7 +121,10 @@ class DimensionsClauseBuilder:
                 
                 if dim_key not in added_dimensions and physical_dim_key not in added_physical_dimensions:
                     emitted_name = self._resolve_unique_dimension_alias(
-                        semantic_name, used_dimension_aliases, attr.unique_name
+                        semantic_name,
+                        alias,
+                        used_dimension_aliases,
+                        attr.unique_name,
                     )
                     col_synonyms = self._lookup_attribute_synonyms(
                         attr,
@@ -216,7 +219,10 @@ class DimensionsClauseBuilder:
                         continue
                 
                 emitted_name = self._resolve_unique_dimension_alias(
-                    semantic_name, used_dimension_aliases, semantic_source_name
+                    semantic_name,
+                    alias,
+                    used_dimension_aliases,
+                    semantic_source_name,
                 )
                 dims_lines.append(
                     f'  {alias}."{emitted_name}" AS '
@@ -289,22 +295,27 @@ class DimensionsClauseBuilder:
     def _resolve_unique_dimension_alias(
         self,
         base_alias: str,
-        used_aliases: Set[str],
+        table_alias: str,
+        used_aliases: Dict[str, Set[str]],
         original_dimension_name: str
     ) -> str:
-        """Ensure dimension alias is unique across a semantic view."""
-        if base_alias not in used_aliases:
-            used_aliases.add(base_alias)
+        """Ensure dimension alias is unique within a table alias scope."""
+        scope_key = str(table_alias or "").strip().casefold() or "__default__"
+        scope_aliases = used_aliases.setdefault(scope_key, set())
+
+        if base_alias not in scope_aliases:
+            scope_aliases.add(base_alias)
             return base_alias
 
         idx = 2
         while True:
             candidate = self.sanitizer.sanitize_semantic_name(f"{base_alias}_{idx}")
-            if candidate not in used_aliases:
-                used_aliases.add(candidate)
+            if candidate not in scope_aliases:
+                scope_aliases.add(candidate)
                 logger.warning(
-                    "Dimension alias collision for '%s' (base '%s'); using '%s'",
+                    "Dimension alias collision for '%s' in table alias '%s' (base '%s'); using '%s'",
                     original_dimension_name,
+                    table_alias,
                     base_alias,
                     candidate,
                 )
@@ -336,7 +347,12 @@ class DimensionsClauseBuilder:
 
             if not col.unique_name.startswith("_") and phys in known_phys:
                 semantic = self.sanitizer.sanitize_semantic_name(col.unique_name)
-                emitted_name = self._resolve_unique_dimension_alias(semantic, used_dimension_aliases, col.unique_name)
+                emitted_name = self._resolve_unique_dimension_alias(
+                    semantic,
+                    alias,
+                    used_dimension_aliases,
+                    col.unique_name,
+                )
                 dims_lines.append(
                     f'  {alias}."{emitted_name}" AS '
                     f'{self.sanitizer.format_physical_column_ref(alias, phys, model_name=model_name)}'
@@ -350,7 +366,12 @@ class DimensionsClauseBuilder:
             semantic = self.sanitizer.sanitize_semantic_name(col.unique_name)
             phys = (self.identifier_sanitizer.sanitize_column(col.unique_name) if is_osi 
                     else self.schema_manager._resolve_physical_column_name(first_ds, col.unique_name))
-            emitted_name = self._resolve_unique_dimension_alias(semantic, used_dimension_aliases, col.unique_name)
+            emitted_name = self._resolve_unique_dimension_alias(
+                semantic,
+                alias,
+                used_dimension_aliases,
+                col.unique_name,
+            )
             dims_lines.append(
                 f'  {alias}."{emitted_name}" AS '
                 f'{self.sanitizer.format_physical_column_ref(alias, phys, model_name=model_name)}'

@@ -1521,6 +1521,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         snowflakeDatabase,
         targetDatabase,
         selectedModelNames,
+        pbixPath: resolvedPbixPath,
       });
 
       const payload = {
@@ -1574,7 +1575,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     } finally {
       setMappingLoading(false);
     }
-  }, [addLog, currentMappingSignature, sourceConnector, targetConnectors, selectedModelNames, createdProject, fabricWorkspaceId, snowflakeDatabase, targetDatabase]);
+  }, [addLog, currentMappingSignature, sourceConnector, targetConnectors, fabricAccountId, fabricWorkspaceId, snowflakeDatabase, targetDatabase, selectedModelNames, createdProject, resolvedPbixPath]);
 
   // ── handleDryRun — triggers the dry-run API and populates detectedMappings ──
   const handleDryRun = useCallback(async () => {
@@ -1590,6 +1591,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       snowflakeDatabase,
       targetDatabase,
       selectedModelNames,
+      pbixPath: resolvedPbixPath,
     });
 
     const selectedSources = selectedModelNames;
@@ -1634,8 +1636,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       // preserve existing detectedMappings on failure
     }
   }, [
-    createdProject, sourceConnector, fabricWorkspaceId, snowflakeDatabase,
-    targetConnectors, targetDatabase, selectedModelNames, currentMappingSignature,
+    createdProject, sourceConnector, fabricAccountId, fabricWorkspaceId, snowflakeDatabase,
+    targetConnectors, targetDatabase, selectedModelNames, currentMappingSignature, resolvedPbixPath,
   ]);
 
   // ── handleFieldEdit — saves a single field mapping edit via the API ──────────
