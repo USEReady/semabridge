@@ -287,16 +287,21 @@ def delete_account(request: Request, account_id: str, db: Session = Depends(get_
 
     connector_type = account.connector_type
 
-    # Unlink projects that reference this account (if the column exists on the ORM model).
-    # Use hasattr instead of inspector.get_columns() — DuckDB's pg_catalog doesn't support
-    # pg_collation which causes SQLAlchemy reflection to crash.
-    if hasattr(Project, 'account_id'):
+    # Unlink all tables that reference this account before deleting it.
+    # DuckDB enforces FK constraints at DELETE time, not at transaction commit,
+    # so we must commit the unlink updates before issuing the DELETE — flush()
+    # alone is not sufficient.
+    try:
         db.execute(
             update(Project)
             .where(Project.account_id == account.id)
             .values(account_id=None)
         )
-        db.flush()
+    except Exception:
+        pass  # projects table may not have account_id column on older schemas
+
+    # Commit the unlink first so DuckDB releases the FK reference before we delete.
+    db.commit()
 
     # Use SQL-level delete to avoid ORM relationship lazy-loads against
     # legacy projects schemas that may miss newer optional columns.
