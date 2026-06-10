@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate, useLocation, Navigate } from 'react-router-dom';
+import { useNavigate, useLocation, Navigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Hexagon, Eye, EyeOff, LogIn, UserPlus, AlertCircle } from 'lucide-react';
 
@@ -22,6 +22,14 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+
+  function validatePassword(pwd) {
+    if (pwd.length < 8) return 'Password must be at least 8 characters';
+    if (!/[0-9]/.test(pwd) && !/[^A-Za-z0-9]/.test(pwd))
+      return 'Password must contain at least one number or special character';
+    return null;
+  }
 
   if (isAuthenticated) {
     return <Navigate to={from} replace />;
@@ -31,6 +39,7 @@ export default function LoginPage() {
     setMode(newMode);
     clearError();
     setSuccessMsg('');
+    setPasswordError('');
     setUsername('');
     setEmail('');
     setPassword('');
@@ -38,8 +47,17 @@ export default function LoginPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    // On register, enforce password strength before submitting.
+    if (mode === 'register') {
+      const pwdErr = validatePassword(password);
+      if (pwdErr) {
+        setPasswordError(pwdErr);
+        return;
+      }
+    }
     setSubmitting(true);
     setSuccessMsg('');
+    setPasswordError('');
     clearError();
     try {
       if (mode === 'register') {
@@ -150,14 +168,19 @@ export default function LoginPage() {
               <input
                 type={showPassword ? 'text' : 'password'}
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  if (mode === 'register' && passwordError) {
+                    setPasswordError(validatePassword(e.target.value) || '');
+                  }
+                }}
                 required
-                minLength={6}
+                minLength={mode === 'register' ? 8 : 1}
                 placeholder="Enter password"
                 className="w-full h-9 px-3 pr-9 rounded-md text-sm bg-app border border-main text-primary"
-                style={{ outline: 'none' }}
-                onFocus={(e) => { e.target.style.borderColor = 'var(--accent-blue)'; }}
-                onBlur={(e) => { e.target.style.borderColor = 'var(--border-main)'; }}
+                style={{ outline: 'none', borderColor: passwordError ? 'var(--color-danger)' : undefined }}
+                onFocus={(e) => { e.target.style.borderColor = passwordError ? 'var(--color-danger)' : 'var(--accent-blue)'; }}
+                onBlur={(e) => { e.target.style.borderColor = passwordError ? 'var(--color-danger)' : 'var(--border-main)'; }}
               />
               <button
                 type="button"
@@ -168,17 +191,35 @@ export default function LoginPage() {
                 {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
             </div>
+            {/* Inline password strength error — only shown on register */}
+            {mode === 'register' && passwordError && (
+              <span className="text-xs" style={{ color: 'var(--color-danger)' }}>
+                {passwordError}
+              </span>
+            )}
           </div>
 
-          {/* Submit */}
+          {/* Forgot password — only shown on login form */}
+          {mode === 'login' && (
+            <div className="text-right -mt-2">
+              <Link
+                to="/auth/forgot-password"
+                className="text-xs text-accent-blue hover:underline"
+              >
+                Forgot password?
+              </Link>
+            </div>
+          )}
+
+          {/* Submit — disabled on register if password fails strength check */}
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || (mode === 'register' && Boolean(validatePassword(password)))}
             className="flex items-center justify-center gap-2 h-9 rounded-md text-sm font-medium"
             style={{
-              background: submitting ? 'var(--color-accent-faint)' : 'var(--accent-blue)',
-              color: submitting ? 'var(--text-tertiary)' : '#fff',
-              cursor: submitting ? 'not-allowed' : 'pointer',
+              background: (submitting || (mode === 'register' && Boolean(validatePassword(password)))) ? 'var(--color-accent-faint)' : 'var(--accent-blue)',
+              color: (submitting || (mode === 'register' && Boolean(validatePassword(password)))) ? 'var(--text-tertiary)' : '#fff',
+              cursor: (submitting || (mode === 'register' && Boolean(validatePassword(password)))) ? 'not-allowed' : 'pointer',
               border: 'none',
             }}
           >

@@ -5,7 +5,7 @@ import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import delete, inspect, select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
@@ -287,22 +287,33 @@ def delete_account(request: Request, account_id: str, db: Session = Depends(get_
 
     connector_type = account.connector_type
 
-    bind = db.get_bind()
-    has_project_account_link = False
-    if bind is not None:
-        inspector = inspect(bind)
-        has_project_account_link = (
-            inspector.has_table('projects')
-            and any(col.get('name') == 'account_id' for col in inspector.get_columns('projects'))
-        )
-
-    if has_project_account_link:
+    # Unlink all tables that reference this account before deleting it.
+    # DuckDB enforces FK constraints at DELETE time, not at transaction commit,
+    # so we must commit the unlink updates before issuing the DELETE — flush()
+    # alone is not sufficient.
+    try:
         db.execute(
             update(Project)
             .where(Project.account_id == account.id)
             .values(account_id=None)
         )
-        db.flush()
+    except Exception:
+        pass  # projects table may not have account_id column on older schemas
+
+    # Also unlink from the in-memory _compat_projects store (JSON-backed).
+    try:
+        import semabridge.api.services.project_shared as _ps
+        if hasattr(_ps, "_compat_projects"):
+            for _proj in _ps._compat_projects.values():
+                if isinstance(_proj, dict) and _proj.get("account_id") == account.id:
+                    _proj["account_id"] = None
+            if hasattr(_ps, "_compat_save_store"):
+                _ps._compat_save_store()
+    except Exception:
+        pass
+
+    # Commit the unlink first so DuckDB releases the FK reference before we delete.
+    db.commit()
 
     # Use SQL-level delete to avoid ORM relationship lazy-loads against
     # legacy projects schemas that may miss newer optional columns.

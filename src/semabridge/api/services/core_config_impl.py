@@ -1,4 +1,5 @@
 from semabridge.api.services.core_shared import *
+from semabridge.domain.exceptions import InternalError, NotFoundError, SemaBridgeError, ValidationError
 
 
 async def get_config():
@@ -6,12 +7,12 @@ async def get_config():
         from semabridge.core.config_loader import get_default_config_path
         config_path = get_default_config_path() or Path("config/semabridge.yaml")
         if not config_path.exists():
-            raise HTTPException(status_code=404, detail="semabridge.yaml not found in project")
+            raise NotFoundError("semabridge.yaml not found in project")
         return {"content": config_path.read_text(encoding="utf-8")}
-    except HTTPException:
+    except SemaBridgeError:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise InternalError(str(e))
 
 
 def _global_config_path() -> Path:
@@ -48,7 +49,7 @@ defaults:
     try:
         return {"content": config_path.read_text(encoding="utf-8"), "path": str(config_path), "exists": True}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read global config: {e}")
+        raise InternalError(f"Failed to read global config: {e}")
 
 
 def _check_inline_secrets(data: Any, path: str, errors: list) -> None:
@@ -69,18 +70,18 @@ def _check_inline_secrets(data: Any, path: str, errors: list) -> None:
 async def save_global_config(payload: Dict[str, Any]):
     content = payload.get("content", "")
     if not content.strip():
-        raise HTTPException(status_code=400, detail="Config content cannot be empty")
+        raise ValidationError("Config content cannot be empty")
     try:
         parsed = yaml.safe_load(content)
         if not isinstance(parsed, dict):
-            raise HTTPException(status_code=400, detail="Config must be a YAML mapping (dict)")
+            raise ValidationError("Config must be a YAML mapping (dict)")
     except yaml.YAMLError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid YAML syntax: {e}")
+        raise ValidationError(f"Invalid YAML syntax: {e}")
 
     errors = []
     _check_inline_secrets(parsed, "", errors)
     if errors:
-        raise HTTPException(status_code=400, detail=f"Security violation: {'; '.join(errors)}")
+        raise ValidationError(f"Security violation: {'; '.join(errors)}")
 
     config_path = _global_config_path()
     try:
@@ -88,7 +89,7 @@ async def save_global_config(payload: Dict[str, Any]):
         config_path.write_text(content, encoding="utf-8")
         return {"status": "saved", "path": str(config_path)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save global config: {e}")
+        raise InternalError(f"Failed to save global config: {e}")
 
 
 async def generate_config(payload: Dict[str, Any]):
@@ -147,7 +148,7 @@ async def generate_config(payload: Dict[str, Any]):
         }
     except Exception as e:
         logger.exception("YAML generation failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise InternalError(str(e))
 
 
 async def validate_config(payload: Dict[str, str]):
@@ -186,7 +187,7 @@ async def get_history():
         ]
     except Exception as e:
         logger.exception("History fetch failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise InternalError(str(e))
 
 
 async def validate_live(payload: Dict[str, Any] = None):

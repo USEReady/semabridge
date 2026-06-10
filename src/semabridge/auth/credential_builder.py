@@ -96,9 +96,33 @@ def build_snowflake_config(
     if base_config.oauth_client_secret:
         base_oauth_secret = base_config.oauth_client_secret.get_secret_value()
 
+    import os as _os
+    sf_account = (
+        env_map.get("SNOWFLAKE_ACCOUNT")
+        or base_config.account
+        # Last-resort: check os.environ directly. This handles legacy accounts
+        # whose encrypted_token predates the JSON-bundle format (so env_map is
+        # empty) when saveConnection previously injected the value into the
+        # process environment.
+        or _os.environ.get("SNOWFLAKE_ACCOUNT", "")
+    )
+    if not sf_account or sf_account == "placeholder":
+        raise ValueError(
+            f"Snowflake account identifier is missing for account '{account.tag}'. "
+            "Edit the connection in Settings → Connections and enter the Account URL "
+            "(e.g. abc123.us-east-1)."
+        )
+    # Normalize: strip full URLs down to just the account identifier
+    sf_account = sf_account.strip()
+    for _pfx in ("https://", "http://"):
+        if sf_account.lower().startswith(_pfx):
+            sf_account = sf_account[len(_pfx):]
+    if ".snowflakecomputing.com" in sf_account.lower():
+        sf_account = sf_account.lower().split(".snowflakecomputing.com")[0]
+
     config = SnowflakeConfig(
         # Auth — always from Account bundle (user-specific)
-        account=env_map.get("SNOWFLAKE_ACCOUNT") or base_config.account,
+        account=sf_account,
         user=env_map.get("SNOWFLAKE_USER") or base_config.user,
         password=env_map.get("SNOWFLAKE_PASSWORD") or base_password,
         auth_type=env_map.get("SNOWFLAKE_AUTH_TYPE") or base_config.auth_type,

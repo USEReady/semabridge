@@ -64,8 +64,13 @@ def _step3_resolve_auth(self, context: RunContext) -> None:
 
     # Validate source auth
     if context.source_type == "snowflake":
-        if not config.validate_snowflake():
+        snowflake_env_ok = config.validate_snowflake()
+        src_identity_id = str(getattr(getattr(config, "source", None), "identity_id", "") or "").strip()
+        snowflake_identity_ok = bool(src_identity_id)
+        if not (snowflake_env_ok or snowflake_identity_ok):
             missing.append("Snowflake credentials (SNOWFLAKE_*)")
+        elif snowflake_identity_ok:
+            auth_sources.append("DB identity")
     elif context.source_type == "fabric":
         if context.behavior.features.offline_mode:
             logger.info("Step 3: OFFLINE mode enabled - skipping Fabric auth validation")
@@ -74,10 +79,13 @@ def _step3_resolve_auth(self, context: RunContext) -> None:
             fabric_env_ok = config.validate_fabric()
             identity_id = str(getattr(getattr(config, "source", None), "identity_id", "") or "").strip()
             fabric_identity_ok = self._has_fabric_identity_auth(identity_id)
+            # If scoped_account_env injected credentials for a Fabric account,
+            # context.account_id is set — treat that as proof of identity auth.
+            fabric_account_ctx_ok = bool(getattr(context, "account_id", None)) and not fabric_env_ok
             fabric_ui_ok = self._has_fabric_interactive_auth()
-            if not (fabric_env_ok or fabric_identity_ok or fabric_ui_ok):
+            if not (fabric_env_ok or fabric_identity_ok or fabric_account_ctx_ok or fabric_ui_ok):
                 missing.append("Fabric credentials (FABRIC_*)")
-            elif fabric_identity_ok:
+            elif fabric_identity_ok or fabric_account_ctx_ok:
                 auth_sources.append("DB identity")
             elif fabric_ui_ok:
                 auth_sources.append("UI token")
@@ -89,8 +97,14 @@ def _step3_resolve_auth(self, context: RunContext) -> None:
 
     # Validate target auth
     if context.target_type == "snowflake":
-        if not config.validate_snowflake():
+        snowflake_env_ok = config.validate_snowflake()
+        tgt_identity_id = str(getattr(getattr(config, "target", None), "identity_id", "") or "").strip()
+        # Also accept account_id on the context as proof of identity-scoped credentials
+        snowflake_identity_ok = bool(tgt_identity_id) or bool(getattr(context, "account_id", None))
+        if not (snowflake_env_ok or snowflake_identity_ok):
             missing.append("Snowflake credentials (SNOWFLAKE_*)")
+        elif snowflake_identity_ok:
+            auth_sources.append("DB identity")
     elif context.target_type == "fabric":
         fabric_env_ok = config.validate_fabric()
         identity_id = str(getattr(getattr(config, "target", None), "identity_id", "") or "").strip()
@@ -131,14 +145,25 @@ def _has_fabric_interactive_auth(self) -> bool:
         return False
 
 def _has_fabric_identity_auth(self, identity_id: str) -> bool:
-    """Return True when a selected Fabric identity is resolvable from the DB."""
+    """Return True when an Account record exists for this identity_id.
+
+    Deliberately does NOT validate the token — an expired token is still a
+    valid credential record and will be refreshed at extraction time (Step 4).
+    Checking token validity here would cause auth to fail for any user whose
+    Fabric token has expired since last login.
+    """
     if not identity_id:
         return False
     try:
-        from semabridge.api.services.connection_domain_service import _resolve_fabric_access_token
+        from sqlalchemy import select
+        from semabridge.repository.orm.models import Account
+        from semabridge.repository.orm.session_factory import db_manager
 
-        token = _resolve_fabric_access_token(None, identity_id)
-        return bool(token)
+        with db_manager.get_session() as session:
+            account = session.execute(
+                select(Account).where(Account.id == identity_id)
+            ).scalars().first()
+            return account is not None
     except Exception as exc:
-        logger.warning("_has_fabric_identity_auth: identity lookup failed for %s: %s", identity_id, exc)
+        logger.warning("_has_fabric_identity_auth: DB lookup failed for %s: %s", identity_id, exc)
         return False

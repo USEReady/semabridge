@@ -10,7 +10,7 @@ import { useState } from 'react';
  *   • File preview (syntax-highlighted raw content) when a file is selected.
  *   • Structured node detail (HLD & LLD) when a graph node is clicked.
  */
-export default function DetailPanel({ filePreview, selectedNode, onClose }) {
+export default function DetailPanel({ filePreview, selectedNode, workspaceNames = {}, onClose }) {
     const [expandedSections, setExpandedSections] = useState({});
 
     // ── File preview ────────────────────────────
@@ -98,11 +98,13 @@ export default function DetailPanel({ filePreview, selectedNode, onClose }) {
         const nodeType = ['model', 'table', 'measure'].includes(rawNodeType) ? rawNodeType : 'model';
         const nodeTypeLabel = nodeType.charAt(0).toUpperCase() + nodeType.slice(1);
         const inspectionSource = selectedNode.parent_model ? 'Dependency Graph → Table/Measure' : 'Dependency Graph → Model';
+        // Prefer the pre-resolved name in node data, fall back to workspaceNames map, then raw GUID
+        const resolvedWsName = selectedNode.workspace_name || workspaceNames[selectedNode.workspace_id] || selectedNode.workspace_id || 'local';
         const contextLabel = nodeType === 'table'
             ? `${selectedNode.schema || 'PUBLIC'}.${selectedNode.table_name || selectedNode.label || 'table'}`
             : nodeType === 'measure'
                 ? `${selectedNode.parent_model || 'Model'} :: ${selectedNode.label || 'Measure'}`
-                : `${selectedNode.workspace_id || 'local'} :: ${selectedNode.model_id || selectedNode.label || 'model'}`;
+                : `${resolvedWsName} :: ${selectedNode.model_id || selectedNode.label || 'model'}`;
         const quickStatus = selectedNode.status === 'broken' ? 'Needs Attention' : 'Healthy';
         
         const toggleSection = (section) => {
@@ -211,7 +213,7 @@ export default function DetailPanel({ filePreview, selectedNode, onClose }) {
                 }}>
                     <MiniInfoCard label="Type" value={nodeTypeLabel} />
                     <MiniInfoCard label="Current State" value={quickStatus} tone={selectedNode.status === 'broken' ? '#EF4444' : '#22C55E'} />
-                    <MiniInfoCard label="From" value={nodeType === 'table' ? (selectedNode.source_type || 'source') : (selectedNode.workspace_id || 'workspace')} />
+                    <MiniInfoCard label="From" value={nodeType === 'table' ? (selectedNode.source_type || 'source') : resolvedWsName} />
                 </div>
 
                 {/* ═══ CONTENT SECTIONS ═══ */}
@@ -229,7 +231,7 @@ export default function DetailPanel({ filePreview, selectedNode, onClose }) {
                             >
                                 <Section title="Overview">
                                     <Row label="Model ID" value={selectedNode.model_id} code />
-                                    <Row label="Workspace" value={selectedNode.workspace_id || 'local'} />
+                                    <Row label="Workspace" value={resolvedWsName} />
                                     <Row label="Status" value={
                                         <StatusBadge status={selectedNode.status} />
                                     } />
@@ -237,6 +239,68 @@ export default function DetailPanel({ filePreview, selectedNode, onClose }) {
                                         <Row label="Description" value={selectedNode.description} />
                                     )}
                                 </Section>
+                            </CollapsibleSection>
+
+                            {/* Lineage section */}
+                            <CollapsibleSection
+                                title="Source Lineage"
+                                subtitle="Where this model's data originates"
+                                icon={<Link2 size={14} />}
+                                expanded={expandedSections.lineage !== false}
+                                onToggle={() => toggleSection('lineage')}
+                            >
+                                <Section title="Origin">
+                                    <Row
+                                        label="Source Workspace"
+                                        value={resolvedWsName !== 'local' ? resolvedWsName : '—'}
+                                    />
+                                    <Row
+                                        label="Source Platform"
+                                        value={selectedNode.source_tables?.[0]?.source_type || '—'}
+                                    />
+                                    <Row
+                                        label="Tables"
+                                        value={`${selectedNode.source_tables?.length || 0} source table(s)`}
+                                    />
+                                    <Row
+                                        label="Measures"
+                                        value={`${selectedNode.measures?.length || 0} measure(s)`}
+                                    />
+                                </Section>
+                                {selectedNode.source_tables?.length > 0 && (
+                                    <Section title="Table → Column Mapping">
+                                        {selectedNode.source_tables.map((t, i) => (
+                                            <div key={i} style={{ ...tableCardStyle, flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                    <Database size={11} style={{ color: '#22C55E', flexShrink: 0 }} />
+                                                    <span style={{ fontWeight: 700, fontSize: 12 }}>{t.schema}.{t.table}</span>
+                                                    <span style={{ fontSize: 10, color: 'var(--text-tertiary)', marginLeft: 4 }}>
+                                                        {t.columns?.length ? `${t.columns.length} col(s)` : 'no columns'}
+                                                    </span>
+                                                </div>
+                                                {t.columns?.length > 0 && (
+                                                    <div style={{
+                                                        display: 'grid',
+                                                        gridTemplateColumns: '1fr auto',
+                                                        gap: '2px 8px',
+                                                        fontSize: 10,
+                                                        width: '100%',
+                                                        paddingLeft: 18,
+                                                    }}>
+                                                        {t.columns.map((col, ci) => {
+                                                            const cName = col?.name || col?.unique_name || '';
+                                                            const cType = col?.data_type || col?.type || '';
+                                                            return (
+                                                                <><span key={`n-${ci}`} style={{ color: 'var(--text-primary)' }}>{cName}</span>
+                                                                <span key={`t-${ci}`} style={{ color: 'var(--text-tertiary)', fontFamily: 'monospace' }}>{cType}</span></>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </Section>
+                                )}
                             </CollapsibleSection>
 
                             {/* LLD - Low Level Design */}
@@ -333,15 +397,21 @@ export default function DetailPanel({ filePreview, selectedNode, onClose }) {
                                         }}>
                                             <div style={{ fontWeight: 700, fontSize: 10, color: 'var(--text-tertiary)', padding: '4px 0' }}>Name</div>
                                             <div style={{ fontWeight: 700, fontSize: 10, color: 'var(--text-tertiary)', padding: '4px 0' }}>Type</div>
-                                            {selectedNode.columns.map((col, i) => (
-                                                <div
-                                                    key={col.id || col.name || i}
-                                                    style={{ display: 'contents' }}
-                                                >
-                                                    <span style={{ color: 'var(--text-primary)', padding: '4px 0', wordBreak: 'break-word' }}>{col.name}</span>
-                                                    <span style={{ color: 'var(--text-secondary)', fontFamily: 'monospace', fontSize: 10, padding: '4px 0' }}>{col.data_type}</span>
-                                                </div>
-                                            ))}
+                                            {selectedNode.columns.map((col, i) => {
+                                                const colName = typeof col === 'string'
+                                                    ? col
+                                                    : (col.unique_name || col.label || col.name || col.column_name || '');
+                                                const colType = col.data_type || col.type || '';
+                                                return (
+                                                    <div
+                                                        key={col.id || colName || i}
+                                                        style={{ display: 'contents' }}
+                                                    >
+                                                        <span style={{ color: 'var(--text-primary)', padding: '4px 0', wordBreak: 'break-word' }}>{colName}</span>
+                                                        <span style={{ color: 'var(--text-secondary)', fontFamily: 'monospace', fontSize: 10, padding: '4px 0' }}>{colType}</span>
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
                                     </Section>
                                 </CollapsibleSection>

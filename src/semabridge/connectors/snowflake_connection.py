@@ -268,10 +268,15 @@ def get_snowflake_connect_kwargs(config: SnowflakeConfig) -> Dict[str, Any]:
     kwargs: Dict[str, Any] = {
         "user": config.user,
         "account": normalized_account,
-        "warehouse": config.warehouse,
-        "database": config.database,
         "schema": config.schema_name,
     }
+    # Only include warehouse/database/schema when they are set — discovery
+    # calls (SHOW WAREHOUSES, SHOW DATABASES) work without them, and passing
+    # None causes Snowflake connector errors on fresh accounts.
+    if config.warehouse:
+        kwargs["warehouse"] = config.warehouse
+    if config.database:
+        kwargs["database"] = config.database
 
     if config.role:
         kwargs["role"] = config.role

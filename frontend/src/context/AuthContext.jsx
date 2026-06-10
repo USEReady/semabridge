@@ -5,7 +5,6 @@ import { fetchWithTimeout, tryRefreshToken, resetRefreshCooldown } from '../util
 
 
 const AUTH_BASE = (import.meta.env.VITE_AUTH_BASE_URL || '/auth').replace(/\/$/, '');
-const TOKEN_KEY = 'semabridge-token';
 const AUTH_REQUEST_TIMEOUT_MS = 8000;
 const AUTH_BOOTSTRAP_RETRY_DELAY_MS = 350;
 
@@ -24,7 +23,7 @@ const AuthContext = createContext(undefined);
 export function AuthProvider({ children }) {
   const queryClient = useQueryClient();
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY));
+  const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -37,21 +36,23 @@ export function AuthProvider({ children }) {
   // ── helpers ──────────────────────────────────────────────────
 
   const saveToken = useCallback((jwt) => {
-    localStorage.setItem(TOKEN_KEY, jwt);
+    previousTokenRef.current = jwt;
     setToken(jwt);
   }, []);
 
   const clearAuth = useCallback(() => {
-    localStorage.removeItem(TOKEN_KEY);
     setToken(null);
     setUser(null);
   }, []);
 
-  /** Fetch /auth/me with current token */
+  /** Fetch /auth/me — sends Bearer token if available, falls back to HttpOnly cookie */
   const fetchMe = useCallback(async (jwt) => {
     try {
+      const currentToken = jwt || previousTokenRef.current;
+      const headers = currentToken ? { Authorization: `Bearer ${currentToken}` } : {};
       const res = await fetchWithTimeout(`${AUTH_BASE}/me`, {
-        headers: { Authorization: `Bearer ${jwt}` },
+        credentials: 'include',
+        headers,
       }, AUTH_REQUEST_TIMEOUT_MS);
       if (!res.ok) {
         return false;
@@ -128,7 +129,7 @@ export function AuthProvider({ children }) {
         if (data.user) {
           setUser(data.user);
         } else {
-          await fetchMe(data.access_token);
+          await fetchMe();
         }
         scheduleProactiveRefresh(data.access_token);
         return true;
@@ -187,8 +188,7 @@ export function AuthProvider({ children }) {
       // genuinely no usable token.  A transient network hiccup during
       // page navigation should NOT wipe the session; the proactive
       // refresh timer will retry later.
-      const existingToken = localStorage.getItem(TOKEN_KEY);
-      if (!existingToken) {
+      if (!token) {
         clearAuth();
       }
     } finally {
@@ -204,19 +204,17 @@ export function AuthProvider({ children }) {
     };
 
     (async () => {
-      const existingToken = localStorage.getItem(TOKEN_KEY);
-
-      if (existingToken) {
-        const valid = await fetchMe(existingToken);
-        if (valid) {
-          scheduleProactiveRefresh(existingToken);
-          return;
-        }
-        await silentRecover();
+      // Try /auth/me using the HttpOnly cookie — if it succeeds the session is alive
+      const valid = await fetchMe();
+      if (valid) {
+        // Cookie is valid. We don't have the raw JWT in memory yet, so we cannot
+        // schedule proactive refresh by TTL. silentRecover (via /auth/refresh) will
+        // re-establish the in-memory token when the cookie nears expiry.
         return;
       }
 
-      await autoLoginWithRetry();
+      // Cookie missing or expired — try to recover via refresh cookie / auto-login
+      await silentRecover();
     })()
       .catch(() => {
         // Non-blocking bootstrap: app can still render login and public UI states.
@@ -342,16 +340,18 @@ export function AuthProvider({ children }) {
       throw new Error(msg);
     }
     const data = await res.json();
-    saveToken(data.access_token);
+    // The backend now sets the access_token as an HttpOnly cookie on login.
+    // Keep the in-memory token only for proactive refresh scheduling.
+    if (data.access_token) {
+      saveToken(data.access_token);
+      scheduleProactiveRefresh(data.access_token);
+    }
     // Use inline user data from login response to skip the blocking /auth/me round trip.
-    // This saves 50-100ms by eliminating a sequential network request.
     if (data.user) {
       setUser(data.user);
     } else {
-      // Fallback for older backend versions that don't include user data
       await fetchMe(data.access_token);
     }
-    scheduleProactiveRefresh(data.access_token);
     return data;
   }, [saveToken, fetchMe, scheduleProactiveRefresh]);
 

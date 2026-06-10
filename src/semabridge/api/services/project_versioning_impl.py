@@ -1,4 +1,5 @@
 from semabridge.api.services.project_shared import *
+from semabridge.domain.exceptions import InternalError, NotFoundError, SemaBridgeError, ValidationError
 
 async def list_model_versions(
     model_id: str = "",
@@ -59,8 +60,7 @@ async def list_model_versions(
         return all_versions[:limit]
     except Exception as e:
         logger.error(f"list_model_versions failed: {e}", exc_info=True)
-        from fastapi import HTTPException as _HTTPException
-        raise _HTTPException(status_code=500, detail=f"Failed to load version history: {e}")
+        raise InternalError(f"Failed to load version history: {e}")
 
 
 async def compare_model_versions(v1: str = "", v2: str = ""):
@@ -79,7 +79,7 @@ async def delete_model_versions(
 ):
     """Delete all version history rows for a model."""
     if not model_id:
-        raise HTTPException(status_code=400, detail="model_id is required")
+        raise ValidationError("model_id is required")
     try:
         deleted = version_control_service.delete_versions(
             model_id=model_id,
@@ -93,23 +93,23 @@ async def delete_model_versions(
         return {"deleted": deleted, "model_id": model_id}
     except Exception as e:
         logger.warning(f"delete_model_versions failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise InternalError(str(e))
 
 
 async def get_version_snapshot(version_id: str = ""):
     """Get the full snapshot JSON for a specific version."""
     if not version_id:
-        raise HTTPException(status_code=400, detail="version_id is required")
+        raise ValidationError("version_id is required")
     try:
         snapshot = version_control_service.get_snapshot(version_id)
         if snapshot is None:
-            raise HTTPException(status_code=404, detail=f"Version '{version_id}' not found")
+            raise NotFoundError(f"Version '{version_id}' not found")
         return {"version_id": version_id, "snapshot": snapshot}
-    except HTTPException:
+    except SemaBridgeError:
         raise
     except Exception as e:
         logger.warning(f"get_version_snapshot failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise InternalError(str(e))
 
 
 async def rollback_model_version(payload: Dict[str, Any]):
@@ -124,7 +124,7 @@ async def rollback_model_version(payload: Dict[str, Any]):
     model_id = payload.get("model_id", "default")
     workspace_id = payload.get("workspace_id", "default")
     if not version_id:
-        raise HTTPException(status_code=400, detail="version_id is required")
+        raise ValidationError("version_id is required")
     try:
         return version_control_service.rollback_version(
             version_id=version_id,
@@ -134,7 +134,7 @@ async def rollback_model_version(payload: Dict[str, Any]):
         )
     except Exception as e:
         logger.exception(f"rollback_model_version failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise InternalError(str(e))
 
 
 # -------------------------------------------------------
@@ -155,10 +155,10 @@ async def rollback_version(payload: Dict[str, Any]):
     """Rollback to a specific version."""
     version_id = payload.get("version_id")
     if not version_id:
-        raise HTTPException(status_code=400, detail="version_id is required")
+        raise ValidationError("version_id is required")
     try:
         result = db_manager.rollback_to_version(version_id)
         return {"status": "success", "result": result}
     except Exception as e:
         logger.exception(f"Rollback failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise InternalError(str(e))

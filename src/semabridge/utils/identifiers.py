@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Reserved Words
 # ───────────────────────────────────────────────────────────────────────────
 
-SNOWFLAKE_RESERVED_WORDS: Set[str] = {
+SNOWFLAKE_RESERVED_WORDS: frozenset = frozenset({
     # SQL Keywords
     "table", "column", "date", "group", "order", "join", "view", "select", "from", "where",
     "and", "or", "not", "null", "true", "false", "as", "by", "on", "in", "is",
@@ -46,7 +46,7 @@ SNOWFLAKE_RESERVED_WORDS: Set[str] = {
     "all", "any", "some", "exists", "case", "when", "then", "else", "end",
     "distinct", "unique", "primary", "foreign", "key", "references",
     "constraint", "index", "default", "check", "like", "ilike",
-}
+})
 
 SQL_FUNCTION_NAMES: Set[str] = {
     # Aggregate functions

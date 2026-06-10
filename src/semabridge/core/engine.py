@@ -17,6 +17,7 @@ from pathlib import Path
 from threading import Semaphore
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 from semabridge.connectors.snowflake_emitter import MissingSourceTableWarning
+from semabridge.core.conversion_router import get_router
 from semabridge.core.project import ProjectConfig, SourceConfig, TargetConfig
 from semabridge.utils.logger import get_logger
 from semabridge.utils.model_dedup import (
@@ -314,6 +315,29 @@ class SemaBridgeEngine:
         broadcast_results: List[BroadcastResult] = []
         
         try:
+            # Phase 0: Route validation — ensure a registered pipeline exists
+            _router = get_router()
+            _src = getattr(getattr(self.config, "source", None), "type", None)
+            _tgt_types = [
+                getattr(t, "type", None) for t in getattr(self.config, "targets", [])
+            ]
+            _src_str = _src.value.lower() if hasattr(_src, "value") else str(_src or "").lower()
+            for _tgt in _tgt_types:
+                _tgt_str = _tgt.value.lower() if hasattr(_tgt, "value") else str(_tgt or "").lower()
+                # Normalise Snowflake variant names to "snowflake"
+                _tgt_str = "snowflake" if "snowflake" in _tgt_str else _tgt_str
+                _src_str_norm = "snowflake" if "snowflake" in _src_str else _src_str
+                if _router.is_supported(_src_str_norm, _tgt_str):
+                    _pipeline = _router.route(_src_str_norm, _tgt_str)
+                    logger.info(
+                        f"Conversion pipeline {_src_str_norm}→{_tgt_str}: {' → '.join(_pipeline)}"
+                    )
+                else:
+                    logger.warning(
+                        f"No registered pipeline for {_src_str_norm}→{_tgt_str}. "
+                        "Proceeding with built-in engine logic."
+                    )
+
             # Phase 1: Discovery
             with self._time_phase(ExecutionPhase.DISCOVERY):
                 discovered_models = self._discover_models()
@@ -651,10 +675,12 @@ class SemaBridgeEngine:
         
         # TMSL -> OSI pipeline (no SML conversion)
         tmsl_converter = TMSLToOSIConverter()
+        _ws_name = getattr(getattr(self.config, "source", None), "workspace_name", "") or ""
         osi_model = tmsl_converter.to_osi({
             "tmsl": metadata,
             "dataset_id": model_id,
             "project_id": model_id,
+            "workspace_name": _ws_name,
         })
         print("\n===== TABLES USED BY MODEL =====")
         if hasattr(osi_model, "datasets"):
@@ -1046,8 +1072,6 @@ class SnowflakeTargetAdapter(TargetConnectorBase):
     
     def deploy(self, model: Any) -> bool:
         try:
-            # 🔥 TEMPORARY TEST — simulate missing table error
-           raise Exception("SQL compilation error: Object does not exist: TEST_TABLE")
            model_cls = type(model).__name__
            if model_cls == "OSIModel" or hasattr(model, "source_platform"):
                self._emitter.deploy_from_osi(model)

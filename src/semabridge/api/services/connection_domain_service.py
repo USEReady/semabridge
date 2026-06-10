@@ -24,7 +24,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Dict, Any, List, Optional
 import asyncio
-from fastapi import FastAPI, HTTPException, Depends, Header, BackgroundTasks, Query
+from fastapi import FastAPI, Depends, Header, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -54,7 +54,7 @@ from semabridge.core.settings import get_settings, reload_settings
 from semabridge.repository.model_repository import ModelRepository
 from semabridge.core.execution_engine import ExecutionEngine
 from semabridge.utils.logger import setup_logging
-from semabridge.connectors.fabric_extractor import FabricExtractor
+from semabridge.connectors.factory import make_source_extractor, make_target_emitter
 from semabridge.auth.fabric_validator import fabric_validator
 from semabridge.api.repo_router import router as repo_router
 from semabridge.api.sync_router import router as sync_router
@@ -76,6 +76,7 @@ from semabridge.api.services.connection_session_store import (
 )
 from sqlalchemy.orm import Session
 from semabridge.api.deps import get_db
+from semabridge.domain.exceptions import AuthenticationError, ExternalServiceError, InternalError, RateLimitError, SemaBridgeError, ValidationError
 
 try:
     from semabridge.api.auth_router import router as auth_router
@@ -128,10 +129,7 @@ def _extract_bearer_token(
     token = token.strip()
     if scheme.lower() != "bearer" or not token:
         logger.warning("Invalid Authorization header format for Fabric request")
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid Authorization header format. Expected: Bearer <token>",
-        )
+        raise AuthenticationError("Invalid Authorization header format. Expected: Bearer <token>")
     logger.info("Fabric bearer token received in Authorization header")
     return token
 
@@ -147,21 +145,21 @@ async def list_workspaces(
 
     access_token: str | None = None
     if not identity_id:
-        raise HTTPException(status_code=400, detail="account_id is required")
+        raise ValidationError("account_id is required")
 
     try:
         import anyio
         access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, None, identity_id)
         logger.info("list_workspaces: using account '%s'", identity_id)
-    except HTTPException:
+    except SemaBridgeError:
         raise
     except Exception as exc:
         logger.exception("list_workspaces: account-scoped lookup failed for %s: %s", identity_id, exc)
-        raise HTTPException(status_code=503, detail="Workspace discovery temporarily unavailable")
+        raise ExternalServiceError("Workspace discovery temporarily unavailable")
 
     if not access_token:
         logger.warning("list_workspaces: no valid default account token — returning 401")
-        raise HTTPException(status_code=401, detail="token_missing")
+        raise AuthenticationError("token_missing")
 
     # --- Call Fabric API with the live token ---
     try:
@@ -408,10 +406,7 @@ async def fabric_device_code_login(request: Request, payload: Dict[str, Any] = N
         app_msal, flow = await loop.run_in_executor(None, _initiate_flow)
 
         if "user_code" not in flow:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to initiate device flow: {flow.get('error_description', 'Unknown error')}"
-            )
+            raise InternalError(f"Failed to initiate device flow: {flow.get('error_description', 'Unknown error')}")
 
         # Issue a unique flow_id for this login session.
         flow_id = str(_uuid.uuid4())
@@ -441,9 +436,9 @@ async def fabric_device_code_login(request: Request, payload: Dict[str, Any] = N
             "expires_in": flow.get("expires_in", 900),
         }
 
-    except HTTPException:
+    except SemaBridgeError:
         raise
-    except HTTPException:
+    except SemaBridgeError:
         raise
     except Exception as e:
         # Check for DNS/Network errors specifically
@@ -454,15 +449,15 @@ async def fabric_device_code_login(request: Request, payload: Dict[str, Any] = N
                 "Please verify your internet connection or configure a proxy in .env."
             )
             logger.error("Fabric login DNS failure: %s", error_msg)
-            raise HTTPException(status_code=503, detail=friendly_msg)
+            raise ExternalServiceError(friendly_msg)
         
         if "ConnectionPool" in error_msg or "timeout" in error_msg.lower():
             friendly_msg = "Network Error: Connection to Microsoft timed out. Please check your firewall or proxy settings."
             logger.error("Fabric login connection timeout: %s", error_msg)
-            raise HTTPException(status_code=503, detail=friendly_msg)
+            raise ExternalServiceError(friendly_msg)
 
         logger.exception("Failed to initiate device code flow: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise InternalError(str(e))
 
 
 async def fabric_device_code_poll(request: Request, payload: Dict[str, Any] = None):
@@ -477,20 +472,20 @@ async def fabric_device_code_poll(request: Request, payload: Dict[str, Any] = No
 
     flow_id = (payload or {}).get("flow_id", "")
     if not flow_id:
-        raise HTTPException(status_code=400, detail={"status": "error", "message": "Missing flow_id."})
+        raise ValidationError(str({"status": "error", "message": "Missing flow_id."}))
 
     # Rate Limiting: max 1 poll per second per flow_id
     now = _time.time()
     if now - _last_poll_time.get(flow_id, 0) < 1.0:
         # Soft delay or throttle
-        raise HTTPException(status_code=429, detail={"status": "too_many_requests", "message": "Slow down polling."})
+        raise RateLimitError(str({"status": "too_many_requests", "message": "Slow down polling."}))
     _last_poll_time[flow_id] = now
 
     with _poll_sessions_lock:
         state = _poll_sessions.get(flow_id, {}).copy()
 
     if not state:
-        raise HTTPException(status_code=400, detail={"status": "expired", "message": "Unknown or expired flow_id. Please login again."})
+        raise ValidationError(str({"status": "expired", "message": "Unknown or expired flow_id. Please login again."}))
 
     # CSRF/IP Validation: Soft reject (log only) to support VPN/cellular hops
     user_ip = _get_client_ip(request)
@@ -503,7 +498,7 @@ async def fabric_device_code_poll(request: Request, payload: Dict[str, Any] = No
         with _poll_sessions_lock:
             _poll_sessions.pop(flow_id, None)
             _last_poll_time.pop(flow_id, None)
-        raise HTTPException(status_code=401, detail={"status": "expired", "message": "Login session expired. Please login again."})
+        raise AuthenticationError(str({"status": "expired", "message": "Login session expired. Please login again."}))
 
     if state["status"] == "polling":
         return {"status": "pending", "message": "Waiting for user to authenticate..."}
@@ -604,7 +599,7 @@ async def fabric_logout():
         logger.info("Fabric interactive session and workspace config cleared")
         return {"status": "logged_out"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise InternalError(str(e))
 
 
 async def _clear_fabric_from_config() -> None:
@@ -676,7 +671,7 @@ def _get_valid_fabric_token() -> str:
     token_data = cm.get_msal_token()
 
     if not token_data or "access_token" not in token_data:
-        raise HTTPException(status_code=401, detail="Not logged in. Please sign in first.")
+        raise AuthenticationError("Not logged in. Please sign in first.")
 
     # If the token is still valid, return it
     if cm.has_valid_token():
@@ -721,195 +716,23 @@ def _get_valid_fabric_token() -> str:
             if token_data.get("access_token"):
                 logger.warning("Using existing Fabric access token after refresh failure")
                 return token_data["access_token"]
-            raise HTTPException(
-                status_code=401,
-                detail=f"Token refresh failed: {error}. Please sign in again.",
-            )
+            raise AuthenticationError(f"Token refresh failed: {error}. Please sign in again.")
 
-    except HTTPException:
+    except SemaBridgeError:
         raise
     except Exception as e:
         logger.exception(f"Silent token refresh error: {e}")
-        raise HTTPException(
-            status_code=401,
-            detail="Token expired and refresh failed. Please sign in again.",
-        )
+        raise AuthenticationError("Token expired and refresh failed. Please sign in again.")
 
 
 
 def _resolve_fabric_access_token(
-    header_bearer_token: Optional[str],
-    identity_id: Optional[str] = None,
-) -> str:
-    """Resolve Fabric access token with compatibility-safe precedence.
-
-    Precedence:
-    1. Explicit identity-scoped account token, if ``identity_id`` is supplied.
-    2. Authorization header bearer token from current request.
-    3. Default stored MSAL token from interactive Connections login flow.
-       - If expired, silently refresh using the stored refresh_token.
-    4. FABRIC_ACCESS_TOKEN environment variable from the process or .env file.
-
-    Explicit ``identity_id`` selection wins over any ambient bearer token so
-    the UI-selected account is always honored.
-    """
-    # ── Phase 0: Header token (no DB needed) ─────────────────────────────
-    if identity_id:
-        header_bearer_token = None
-
-    if header_bearer_token:
-        try:
-            fabric_validator.validate_msal_token(header_bearer_token)
-            logger.info("Using and validated Fabric token from Authorization header")
-            return header_bearer_token
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Fabric token validation error: {e}")
-            raise HTTPException(status_code=401, detail={"status": "invalid_token", "message": "Signature or claim validation failed."})
-
-    if not identity_id:
-        env_token = get_fabric_access_token_from_env()
-        if env_token:
-            logger.info("Using temporary Fabric access token from .env / environment")
-            return env_token
-
-    # ── Phase 1: Read everything we need from DB in ONE session ──────────
-    # Variables populated by Phase 1:
-    encrypted_token: Optional[str] = None
-    account_tag: Optional[str] = None
-    matched_account_id: Optional[str] = None
-    credential_token_data: dict = {}      # from Credential table fallback
-    has_account_row: bool = False
-
-    try:
-        from sqlalchemy import select
-        from semabridge.repository.orm.models import Account, Credential
-        from semabridge.repository.orm.session_factory import db_manager
-
-        with db_manager.get_session() as session:
-            session.expire_all()
-
-            if identity_id:
-                default_account = session.execute(
-                    select(Account).where(
-                        Account.connector_type == "FABRIC",
-                        Account.id == identity_id,
-                    )
-                ).scalars().first()
-            else:
-                fabric_accounts = session.execute(
-                    select(Account).where(Account.connector_type == "FABRIC")
-                ).scalars().all()
-                default_account = next((account for account in fabric_accounts if account.is_default), None)
-                if not default_account and fabric_accounts:
-                    default_account = fabric_accounts[0]
-
-            if default_account:
-                has_account_row = True
-                account_tag = default_account.tag
-                matched_account_id = default_account.id
-                encrypted_token = default_account.encrypted_token
-
-                if not encrypted_token:
-                    # Fallback: read from Credential table
-                    rows = session.execute(
-                        select(Credential).where(Credential.service == "fabric_token")
-                    ).scalars().all()
-                    credential_token_data = {row.key: row.value for row in rows} if rows else {}
-        # ── Session is now CLOSED — connection returned to pool ──────────
-
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.warning(f"Failed to query default account token in DB: {exc}")
-
-    # ── Phase 2: Validate / refresh tokens (no session held) ─────────────
-    if has_account_row:
-        logger.debug(f"Attempting Fabric token resolution for: {account_tag}")
-
-        # Path A: Credential table fallback (no encrypted_token on Account)
-        if not encrypted_token and credential_token_data:
-            import time as _time
-            raw_access_token = credential_token_data.get("access_token", "")
-
-            if not raw_access_token:
-                raise HTTPException(status_code=401, detail={"error": "reauth_required"})
-
-            try:
-                expires_at = int(credential_token_data.get("expires_at", "0"))
-                if _time.time() >= expires_at - 60:
-                    logger.warning("Credential-table Fabric token expired. Attempting silent refresh...")
-                    # Pass account context so refresh writes to the correct Account row,
-                    # not the global CredentialManager (multi-account-safe).
-                    refreshed = _try_silent_refresh(
-                        account_id=matched_account_id,
-                        account_tag=account_tag,
-                        credential_payload=credential_token_data,
-                    )
-                    if refreshed:
-                        return refreshed
-                    raise HTTPException(status_code=401, detail={"error": "reauth_required"})
-            except (ValueError, TypeError):
-                raise HTTPException(status_code=401, detail={"error": "reauth_required"})
-
-            logger.info(f"Using fallback Credential table access token for Fabric account: {account_tag}")
-            return raw_access_token
-
-        # Path B: Decrypted token from Account row
-        if encrypted_token:
-            try:
-                import json
-                from semabridge.auth.encryption import decrypt_token
-                tok_raw = decrypt_token(encrypted_token)
-                
-                is_json_payload = False
-                access_token = tok_raw
-                refresh_token = None
-                tenant_id = "organizations"
-                payload_dict = {}
-                
-                try:
-                    payload_dict = json.loads(tok_raw)
-                    if isinstance(payload_dict, dict) and "access_token" in payload_dict:
-                        is_json_payload = True
-                        access_token = payload_dict["access_token"]
-                        refresh_token = payload_dict.get("refresh_token")
-                        tenant_id = payload_dict.get("tenant_id", "organizations")
-                except json.JSONDecodeError:
-                    pass
-
-                try:
-                    fabric_validator.validate_msal_token(access_token)
-                except HTTPException:
-                    logger.warning("Decrypted Fabric token from DB is expired.")
-                    if is_json_payload and refresh_token and matched_account_id:
-                        logger.info(f"Attempting isolated silent refresh for account {account_tag}...")
-                        refreshed_access_token = _refresh_account_token(
-                            matched_account_id, account_tag, refresh_token, tenant_id, payload_dict
-                        )
-                        if refreshed_access_token:
-                            return refreshed_access_token
-                    
-                    logger.warning("Silent refresh failed. Forcing reauthentication.")
-                    raise HTTPException(status_code=401, detail={"error": "reauth_required"})
-
-                logger.info(f"Using access token from default Fabric account: {account_tag}")
-                return access_token
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.warning(f"Failed to decrypt token for account {account_tag}: {e}")
-
-        # Path C: Account row exists but has neither token source
-        if not encrypted_token and not credential_token_data:
-            raise HTTPException(status_code=401, detail={"error": "reauth_required"})
-
-    logger.warning("No valid Fabric access token available")
-    raise HTTPException(
-        status_code=401,
-        detail={"error": "reauth_required"}
-    )
+    header_bearer_token,
+    identity_id=None,
+):
+    """Delegates to auth.token_resolver. Kept for backward compatibility."""
+    from semabridge.auth.token_resolver import resolve_fabric_access_token
+    return resolve_fabric_access_token(header_bearer_token, identity_id)
 
 
 def _refresh_account_token(account_id: str, account_tag: str, refresh_token: str, tenant_id: str, original_payload: dict) -> Optional[str]:
@@ -1049,7 +872,10 @@ async def fabric_list_workspaces(
     import anyio
     resolved_identity_id = (identity_id or connection_id or "").strip() or None
     if not resolved_identity_id and not bearer_token:
-        raise HTTPException(status_code=400, detail="account_id is required")
+        # No credentials provided — return empty list instead of 400.
+        # Callers that probe this endpoint without auth (e.g. Explore tab workspace name
+        # resolution) should receive an empty list, not an error.
+        return {"workspaces": []}
     access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token, resolved_identity_id)
     logger.info("Calling Fabric workspaces API with resolved access token (Identity: %s)", resolved_identity_id)
 
@@ -1062,13 +888,10 @@ async def fabric_list_workspaces(
 
         if resp.status_code == 401:
             logger.error(f"Microsoft Fabric API rejected the token with 401: {resp.text}")
-            raise HTTPException(status_code=401, detail={"status": "expired", "message": "Token rejected by Microsoft. Please sign in again."})
+            raise AuthenticationError(str({"status": "expired", "message": "Token rejected by Microsoft. Please sign in again."}))
 
         if resp.status_code != 200:
-            raise HTTPException(
-                status_code=resp.status_code,
-                detail=f"Fabric API error: {resp.text}",
-            )
+            raise InternalError(f"Fabric API error: {resp.text}")
 
         data = resp.json()
         workspaces = data.get("value", [])
@@ -1120,7 +943,7 @@ async def fabric_get_default_workspace(
 
     import anyio
     if not identity_id:
-        raise HTTPException(status_code=400, detail="account_id is required")
+        raise ValidationError("account_id is required")
     access_token = await anyio.to_thread.run_sync(_resolve_fabric_access_token, bearer_token, identity_id)
 
     if not access_token:
@@ -1209,7 +1032,7 @@ async def fabric_select_workspace(payload: Dict[str, str]):
     workspace_name = payload.get("workspace_name", "").strip()
 
     if not workspace_id:
-        raise HTTPException(status_code=400, detail="workspace_id is required")
+        raise ValidationError("workspace_id is required")
 
     # Save to DuckDB credentials (single source of truth)
     cm = CredentialManager()
@@ -1310,10 +1133,55 @@ async def get_connections_status(user_id: int = 0):
         user_id: Authenticated user ID.  ``0`` returns global/system status.
     """
     from semabridge.repository.credential_manager import CredentialManager
+    from semabridge.repository.orm.session_factory import db_manager
+    from semabridge.repository.orm.models import Account
+    from sqlalchemy import select
 
     try:
         cm = CredentialManager()
-        return cm.get_connection_status(user_id=user_id)
+        status = cm.get_connection_status(user_id=user_id)
+
+        # Augment with Account table — accounts stored via the Connections UI
+        # are the primary credential store; CredentialManager is the legacy store.
+        _CONNECTOR_MAP = {"FABRIC": "fabric", "SNOWFLAKE": "snowflake", "DATABRICKS": "databricks"}
+        try:
+            with db_manager.get_session() as session:
+                accounts = session.execute(select(Account)).scalars().all()
+                for acct in accounts:
+                    svc = _CONNECTOR_MAP.get(acct.connector_type.upper())
+                    if not svc:
+                        continue
+                    svc_status = status.get(svc, {})
+                    # Mark as configured if a valid account exists
+                    svc_status["has_account"] = True
+                    svc_status["account_tag"] = acct.tag
+                    svc_status["account_id"] = str(acct.id)
+                    svc_status["identity_email"] = acct.identity_email or ""
+                    # Resolve missing fields from account bundle
+                    if acct.encrypted_token:
+                        try:
+                            import json
+                            from semabridge.auth.encryption import decrypt_token
+                            bundle = json.loads(decrypt_token(acct.encrypted_token))
+                            if isinstance(bundle, dict):
+                                remaining_missing = [f for f in svc_status.get("missing_fields", []) if f not in bundle]
+                                svc_status["missing_fields"] = remaining_missing
+                                if not remaining_missing and (svc != "fabric" or svc_status.get("has_auth") or bundle.get("access_token") or bundle.get("client_secret")):
+                                    svc_status["configured"] = True
+                                    svc_status["status"] = "connected"
+                        except Exception:
+                            pass
+                    # Fabric: if account exists with a valid token, mark as configured
+                    if svc == "fabric" and acct.encrypted_token:
+                        svc_status["configured"] = True
+                        svc_status["status"] = "connected"
+                        svc_status["has_auth"] = True
+                        svc_status["auth_method"] = "interactive"
+                    status[svc] = svc_status
+        except Exception as acc_err:
+            logger.warning("Could not load Account table for status: %s", acc_err)
+
+        return status
     except Exception as e:
         logger.exception(f"Failed to fetch connection status: {e}")
         # Keep the Settings page usable even when credential storage is unavailable.
@@ -1380,7 +1248,7 @@ async def save_connection(service: str, payload: Dict[str, Any], user_id: int = 
         }
     except Exception as e:
         logger.exception(f"Failed to save {service} credentials: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise InternalError(str(e))
 
 
 async def delete_connection(service: str, user_id: int = 0):
@@ -1397,7 +1265,7 @@ async def delete_connection(service: str, user_id: int = 0):
         cm.delete_credentials(service, user_id=user_id)
         return {"status": "deleted", "service": service}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise InternalError(str(e))
 
 
 async def test_connection(service: str, user_id: int = 0):
@@ -1413,12 +1281,12 @@ async def test_connection(service: str, user_id: int = 0):
     try:
         cm.inject_credentials_to_env(service, user_id=user_id)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"No credentials stored: {e}")
+        raise ValidationError(f"No credentials stored: {e}")
 
     if service == "fabric":
         try:
             cfg = reload_settings()
-            extractor = FabricExtractor(cfg.fabric)
+            extractor = make_source_extractor("fabric", cfg.fabric)
             extractor._get_access_token()
             return {"status": "success", "message": "Fabric authentication successful"}
         except Exception as e:
@@ -1441,9 +1309,7 @@ async def test_connection(service: str, user_id: int = 0):
     if service == "databricks":
         try:
             cfg = reload_settings()
-            from semabridge.connectors.databricks_publisher import DatabricksPublisher
-
-            publisher = DatabricksPublisher(cfg.databricks)
+            publisher = make_target_emitter("databricks", cfg.databricks)
             token = publisher._resolve_token()
             # Fire a lightweight query to validate warehouse access
             import requests as _requests
@@ -1467,7 +1333,7 @@ async def test_connection(service: str, user_id: int = 0):
         except Exception as e:
             return {"status": "failed", "message": str(e)}
 
-    raise HTTPException(status_code=400, detail=f"Unknown service: {service}")
+    raise ValidationError(f"Unknown service: {service}")
 
 
 async def snowflake_oauth_test(body: Dict[str, Any]) -> Dict[str, Any]:
@@ -1494,15 +1360,9 @@ async def snowflake_oauth_test(body: Dict[str, Any]) -> Dict[str, Any]:
     scope = (body.get("oauth_scope") or "").strip()
 
     if not account or not user:
-        raise HTTPException(
-            status_code=400,
-            detail="Please provide Account and Username before testing OAuth.",
-        )
+        raise ValidationError("Please provide Account and Username before testing OAuth.")
     if not client_id or not client_secret:
-        raise HTTPException(
-            status_code=400,
-            detail="OAuth Client ID and Client Secret are required.",
-        )
+        raise ValidationError("OAuth Client ID and Client Secret are required.")
 
     if not token_endpoint:
         import os

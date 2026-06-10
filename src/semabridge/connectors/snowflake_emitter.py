@@ -293,7 +293,58 @@ class SnowflakeEmitter(BaseEmitter):
                 else:
                     ddls = self.semantic_view_builder.generate_ddls(model)
                 
-                # Step 2b: UPSERT preserve only skips existing base-table DDLs.
+                # Step 2b: Surface columns present in the source model but absent from the
+                # Snowflake physical schema (excluded from DIMENSIONS to prevent DDL errors).
+                # Offer to add them via ALTER TABLE ADD COLUMN when auto_add_missing_dims=True.
+                _missing_dims = getattr(self.semantic_view_builder, "missing_dims", {})
+                if _missing_dims:
+                    for _ds_name, _cols in _missing_dims.items():
+                        _col_list = ", ".join(_cols)
+                        logger.warning(
+                            "⚠️  Missing dimension columns: table '%s' has columns [%s] in the "
+                            "source model but they were NOT found in the Snowflake physical schema. "
+                            "These columns are excluded from DIMENSIONS in the semantic view. "
+                            "To include them, run: ALTER TABLE \"<schema>\".\"%s\" ADD COLUMN <col> <type>  "
+                            "for each of: [%s]",
+                            _ds_name, _col_list, _ds_name, _col_list,
+                        )
+                    _auto_add = getattr(getattr(self, "sf_behavior", None), "auto_add_missing_dims", False)
+                    if _auto_add:
+                        logger.info("auto_add_missing_dims=True — attempting ALTER TABLE ADD COLUMN for missing dimensions")
+                        _added_any = False
+                        for _ds_name, _cols in list(_missing_dims.items()):
+                            _src_tbl = _ds_name  # use dataset name as table name fallback
+                            for _ds_obj in (model.datasets if is_osi else getattr(model, "datasets", [])):
+                                if getattr(_ds_obj, "unique_name", None) == _ds_name:
+                                    _src_tbl = getattr(_ds_obj, "source_table", None) or _ds_name
+                                    break
+                            _safe_tbl = _src_tbl.rsplit(".", 1)[-1] if "." in _src_tbl else _src_tbl
+                            for _col in _cols:
+                                _alter_sql = (
+                                    f'ALTER TABLE "{self.connection_manager.config.database}"'
+                                    f'."{self.connection_manager.config.schema_name}"'
+                                    f'."{_safe_tbl}" ADD COLUMN IF NOT EXISTS "{_col}" VARCHAR'
+                                )
+                                try:
+                                    self.connection_manager._execute_sql(cur, _alter_sql, context="add-missing-dim")
+                                    logger.info("Added missing dimension column '%s' to table '%s'", _col, _safe_tbl)
+                                    _added_any = True
+                                except Exception as _alter_exc:
+                                    logger.warning("Could not add missing dim column '%s.%s': %s", _safe_tbl, _col, _alter_exc)
+                        if _added_any:
+                            # Refresh live schema so the re-generated DDL picks up the new columns
+                            logger.info("Refreshing live schema after adding missing dimension columns")
+                            _fresh_meta = self.schema_manager._fetch_schema_metadata(cur)
+                            self.semantic_view_builder.live_schema_metadata.update(_fresh_meta or {})
+                            self.semantic_view_builder.missing_dims.clear()
+                            # Regenerate DDLs with the updated schema
+                            if is_osi:
+                                ddls = self.semantic_view_builder.generate_ddls_from_osi(model)
+                            else:
+                                ddls = self.semantic_view_builder.generate_ddls(model)
+                            logger.info("Regenerated %d DDL statement(s) after schema update", len(ddls))
+
+                # Step 2c: UPSERT preserve only skips existing base-table DDLs.
                 if preserve_existing and existing_tables:
                     logger.info("Filtering DDLs to skip existing tables")
                     ddls = self._filter_ddls_for_existing_tables(ddls, existing_tables)
@@ -307,13 +358,141 @@ class SnowflakeEmitter(BaseEmitter):
                 logger.info("[%s] generated %s DDL statement(s) for model=%s", path_type, len(ddls), model_name)
 
                 # Step 3: Execute DDLs  (generate_ddls returns list[str])
+                # Pre-pass A: Refresh any stale *_ENRICHED regular views referenced by the DDL.
+                # Snowflake error 002057 fires when a semantic view is compiled against an
+                # enriched view whose stored column count no longer matches the live SELECT
+                # (e.g. the underlying fact table gained columns since the enriched view was
+                # last created).  Recreating the enriched view here keeps the counts in sync.
+                import re as _re_drop
+                _enriched_pattern = _re_drop.compile(
+                    r'"?(\w+_ENRICHED)"?', _re_drop.IGNORECASE
+                )
+                _seen_enriched: set = set()
+                for _s in ddls:
+                    if not _s:
+                        continue
+                    for _em in _enriched_pattern.findall(_s):
+                        _en = _em.upper()
+                        if _en in _seen_enriched:
+                            continue
+                        _seen_enriched.add(_en)
+                        # Recreate the enriched view so column count matches the current
+                        # fact table regardless of when it was last created.
+                        try:
+                            _refreshed = self._create_enriched_view(model, cur)
+                            if _refreshed:
+                                logger.info(
+                                    "Pre-refreshed enriched view '%s' to sync column count", _refreshed
+                                )
+                            else:
+                                # Fallback: just drop the stale view so Snowflake won't
+                                # reject the semantic view DDL on column-count mismatch.
+                                _drop_enriched = f'DROP VIEW IF EXISTS "{_en}"'
+                                self.connection_manager._execute_sql(
+                                    cur, _drop_enriched, context="pre-drop-enriched-view"
+                                )
+                                logger.info(
+                                    "Pre-dropped stale enriched view '%s' (could not recreate)", _en
+                                )
+                        except Exception as _enr_exc:
+                            logger.warning(
+                                "Could not refresh enriched view '%s' (non-fatal): %s", _en, _enr_exc
+                            )
+
+                # Pre-pass B: DROP existing semantic views before (re)creating them.
+                # Snowflake error 002057 fires when a CREATE OR REPLACE SEMANTIC VIEW
+                # changes the number of declared columns vs the existing view definition.
+                # Dropping first eliminates that constraint entirely.
+                for _s in ddls:
+                    if not _s:
+                        continue
+                    _upper = _s.upper()
+                    if "CREATE" in _upper and "SEMANTIC VIEW" in _upper:
+                        _vm = _re_drop.search(
+                            r'CREATE\s+(?:OR\s+REPLACE\s+)?SEMANTIC\s+VIEW\s+"?(\w+)"?',
+                            _s, _re_drop.IGNORECASE,
+                        )
+                        if _vm:
+                            _drop_sql = f'DROP SEMANTIC VIEW IF EXISTS "{_vm.group(1)}"'
+                            try:
+                                self.connection_manager._execute_sql(cur, _drop_sql, context="pre-drop-semantic-view")
+                                logger.info("Pre-dropped semantic view '%s' before recreation", _vm.group(1))
+                            except Exception as _drop_exc:
+                                logger.warning("Pre-drop of semantic view '%s' failed (non-fatal): %s", _vm.group(1), _drop_exc)
+
                 for idx, sql in enumerate(ddls):
-                    if sql:
+                    if not sql:
+                        continue
+                    try:
                         self.connection_manager._execute_sql(cur, sql, context=f"DDL[{idx}]")
+                    except Exception as ddl_exc:
+                        # Auto-remediate invalid identifier errors iteratively.
+                        # Each pass fixes one invalid identifier; we retry up to
+                        # MAX_REMEDIATION_PASSES times so chained bad identifiers
+                        # (e.g. MAX_DATE → fixed, then cross-metric reference → fixed)
+                        # are all resolved before giving up.
+                        from semabridge.connectors.semantic_ddl_sanitizer import SemanticDDLSanitizer
+                        _sanitizer = SemanticDDLSanitizer(self._id)
+                        _current_sql = sql
+                        _current_exc = ddl_exc
+                        _MAX_PASSES = 10
+                        _remediated = False
+                        for _pass in range(_MAX_PASSES):
+                            _invalid_id = self.connection_manager._extract_invalid_identifier(_current_exc)
+                            if not _invalid_id:
+                                break
+                            _fixed_sql, _changed = _sanitizer.remediate_invalid_identifier(_current_sql, _invalid_id)
+                            if not _changed:
+                                logger.warning(
+                                    "DDL[%d] pass %d: sanitizer could not fix '%s' — giving up",
+                                    idx, _pass + 1, _invalid_id,
+                                )
+                                break
+                            logger.warning(
+                                "DDL[%d] pass %d: fixing invalid identifier '%s'",
+                                idx, _pass + 1, _invalid_id,
+                            )
+                            _current_sql = _fixed_sql
+                            try:
+                                self.connection_manager._execute_sql(
+                                    cur, _current_sql, context=f"DDL[{idx}] pass {_pass + 1}"
+                                )
+                                _remediated = True
+                                break
+                            except Exception as _retry_exc:
+                                _current_exc = _retry_exc
+                        if _remediated:
+                            continue  # DDL succeeded after remediation
+                        raise _current_exc  # re-raise last failure
 
                 # Step 5: Artifact Generation (Cortex YAML / Audit)
                 if not is_osi:
                     self._generate_deployment_artifacts(model, ddls)
+
+                # Step 6: Post-deploy smoke test — catch runtime errors early
+                # ddls is list[str]; extract view name from each DDL for the test.
+                import re as _re_smoke
+                for _ddl_sql in ddls:
+                    _m = _re_smoke.search(
+                        r'CREATE\s+(?:OR\s+REPLACE\s+)?SEMANTIC\s+VIEW\s+"?(\w+)"?',
+                        _ddl_sql, _re_smoke.IGNORECASE,
+                    )
+                    if not _m:
+                        continue
+                    _view_name = _m.group(1)
+                    _smoke_err = self._smoke_test_semantic_view(cur, _view_name)
+                    if _smoke_err:
+                        logger.warning(
+                            "[%s] Semantic view '%s' deployed but smoke test failed: %s",
+                            path_type, _view_name, _smoke_err,
+                        )
+                        # Non-fatal: view was accepted by Snowflake DDL validation.
+                        # Surface as a warning in the run log without rolling back.
+                        if not hasattr(self, "_smoke_test_warnings"):
+                            self._smoke_test_warnings = []
+                        self._smoke_test_warnings.append(
+                            {"view": _view_name, "error": _smoke_err}
+                        )
 
                 logger.info("[%s] success model=%s (%.2fs)", path_type, model_name, time.perf_counter() - deploy_started_at)
                 return True
@@ -326,6 +505,27 @@ class SnowflakeEmitter(BaseEmitter):
             self.last_deployment_error = str(exc)
             logger.error("[%s] FAILED model=%s: %s", path_type, model_name, exc, exc_info=True)
             return False
+
+    def _smoke_test_semantic_view(self, cursor: Any, view_name: str) -> Optional[str]:
+        """Run a lightweight SELECT against the semantic view to catch runtime errors.
+
+        Snowflake accepts some invalid DDL that only fails at query time
+        (e.g., column referenced in DIMENSIONS that doesn't exist in the physical table).
+
+        Args:
+            cursor: Active Snowflake cursor.
+            view_name: Name of the semantic view to test.
+
+        Returns:
+            None on success; error message string on failure.
+        """
+        # Use SHOW COLUMNS to avoid scanning any data — much cheaper than SELECT *
+        test_sql = f'SELECT * FROM "{view_name}" LIMIT 0'
+        try:
+            self.connection_manager._execute_sql(cursor, test_sql, context=f"smoke_test:{view_name}")
+            return None
+        except Exception as e:
+            return str(e)
 
     def _generate_deployment_artifacts(self, sml: SMLModel, ddls: Dict[str, str]) -> None:
         """Generate side-car artifacts like Cortex YAML."""
@@ -354,7 +554,8 @@ class SnowflakeEmitter(BaseEmitter):
     def emit(self, sml: Any) -> Dict[str, Any]:
         """Emit SML model to Snowflake."""
         success = self.deploy(sml)
-        return {"success": success}
+        missing = dict(getattr(self.semantic_view_builder, "missing_dims", {}) or {})
+        return {"success": success, "missing_dims": missing}
 
     @property
     def max_concurrency(self) -> int:

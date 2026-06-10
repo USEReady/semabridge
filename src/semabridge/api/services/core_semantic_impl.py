@@ -1,4 +1,5 @@
 from semabridge.api.services.core_shared import *
+from semabridge.domain.exceptions import ConfigurationError, SemaBridgeError, ValidationError
 
 
 async def discover_semantic():
@@ -15,19 +16,16 @@ async def discover_semantic():
     snowflake_error: Optional[str] = None
 
     try:
-        from semabridge.connectors.fabric_extractor import FabricExtractor
+        from semabridge.connectors.factory import make_source_extractor
         settings = get_settings()
         try:
             fabric_config = settings.fabric
         except ValidationError:
-            raise HTTPException(
-                status_code=400,
-                detail=(
+            raise ValidationError((
                     "Fabric is not properly configured. "
                     "Please set FABRIC_TENANT_ID, FABRIC_CLIENT_ID, and FABRIC_WORKSPACE_ID in settings."
-                ),
-            )
-        extractor = FabricExtractor(fabric_config)
+                ))
+        extractor = make_source_extractor("fabric", fabric_config)
         models = extractor.list_semantic_models()
         fabric_items = [
             SemanticModelItem(
@@ -40,14 +38,14 @@ async def discover_semantic():
             )
             for m in models
         ]
-    except HTTPException:
+    except SemaBridgeError:
         raise
     except Exception as exc:
         fabric_error = str(exc)
         logger.warning("Fabric semantic discovery failed (non-fatal): %s", exc)
 
     try:
-        from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
+        from semabridge.connectors.factory import make_source_extractor as _make_source_extractor
         settings = get_settings()
         try:
             snowflake_config = settings.snowflake
@@ -58,7 +56,7 @@ async def discover_semantic():
             )
             snowflake_config = None
         if snowflake_config is not None:
-            extractor = SnowflakeExtractor(snowflake_config)
+            extractor = _make_source_extractor("snowflake", snowflake_config)
             views = extractor.discover_semantic_views()
             snowflake_items = [
                 SemanticModelItem(
@@ -71,7 +69,7 @@ async def discover_semantic():
                 )
                 for v in views
             ]
-    except HTTPException:
+    except SemaBridgeError:
         raise
     except Exception as exc:
         snowflake_error = str(exc)
@@ -122,13 +120,10 @@ async def semantic_sync(request_body: SemanticSyncRequest):
         SyncDirection.FABRIC_SNOWFLAKE_BIDIRECTIONAL,
     }
     if request_body.direction not in allowed:
-        raise HTTPException(
-            status_code=422,
-            detail=(
+        raise ConfigurationError((
                 f"direction '{request_body.direction.value}' is not a semantic sync direction. "
                 f"Use one of: {[d.value for d in allowed]}"
-            ),
-        )
+            ))
 
     config = SyncConfig(
         direction=request_body.direction,

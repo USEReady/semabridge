@@ -27,10 +27,10 @@ from semabridge.api.services.discovery_service import (
     discover_semantic,
     discover_snowflake,
 )
-from semabridge.api.services.health_service import health_check
-from semabridge.api.services.history_service import get_history
-from semabridge.api.services.model_service import get_model, save_model
-from semabridge.api.services.semantic_service import (
+from semabridge.api.services.core_domain_service import health_check
+from semabridge.api.services.core_domain_service import get_history
+from semabridge.api.services.core_domain_service import get_model, save_model
+from semabridge.api.services.core_domain_service import (
     semantic_refresh,
     semantic_sync,
     sync_models,

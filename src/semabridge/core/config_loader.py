@@ -1,12 +1,11 @@
 """
-Centralized Configuration Loader.
+YAML configuration loader with environment-variable interpolation.
 
-Provides:
-- Environment variable interpolation (${ENV_VAR} syntax)
-- Multiple YAML file merging (later files override earlier)
-- Fail-fast for missing environment variables
-- Sensitive value protection (never logs credentials)
-- Strict validation with line-number error reporting
+Use this module when you need to load semabridge project YAML files.
+Supports ``${ENV_VAR}`` syntax, multi-file merging, and sensitive-value
+masking in logs.
+
+Do NOT import settings.py here — that module handles Pydantic/env config.
 """
 
 from __future__ import annotations

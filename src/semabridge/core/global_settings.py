@@ -1,3 +1,5 @@
+# NOTE: This module has no active importers as of 2026-05. Verify usage
+# before relying on it. Candidate for removal in a future cleanup sprint.
 """
 Global Configuration Manager for Semabridge.
 

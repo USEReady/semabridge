@@ -713,6 +713,32 @@ class SemanticDDLSanitizer:
             return ddl, False
 
         invalid_norm = invalid_identifier.upper().replace('"', "")
+
+        # Special case: MAX_DATE is a synthetic anchor that the translator
+        # injected by replacing CURRENT_DATE().  Snowflake semantic views do
+        # not have this column in scope, but CURRENT_DATE() is valid.  Replace
+        # all bare MAX_DATE tokens globally rather than nulling out metrics.
+        if invalid_norm == "MAX_DATE":
+            # Replace bare MAX_DATE (not inside quotes) with CURRENT_DATE()
+            fixed = re.sub(r'(?<!["\w])MAX_DATE(?!["\w])', 'CURRENT_DATE()', ddl)
+            if fixed != ddl:
+                return fixed, True
+            return ddl, False
+
+        if invalid_norm == "MAX_MONTHINDEX":
+            # MAX_MONTHINDEX is a synthetic anchor column for rolling-period metrics.
+            # Replace with EXTRACT(MONTH FROM CURRENT_DATE()) * 12 + EXTRACT(YEAR FROM CURRENT_DATE())
+            # as a close semantic approximation (months since epoch).  This keeps the
+            # metric alive with a sensible current-period value.
+            fixed = re.sub(
+                r'(?<!["\w])MAX_MONTHINDEX(?!["\w])',
+                '(EXTRACT(YEAR FROM CURRENT_DATE()) * 12 + EXTRACT(MONTH FROM CURRENT_DATE()))',
+                ddl
+            )
+            if fixed != ddl:
+                return fixed, True
+            return ddl, False
+
         invalid_alias: Optional[str] = None
         invalid_col: Optional[str] = None
         if "." in invalid_norm:
@@ -785,7 +811,11 @@ class SemanticDDLSanitizer:
                 in_tables = in_relationships = in_dimensions = False
                 remediated_lines.append(line)
                 continue
-            if (in_tables or in_relationships or in_dimensions or in_metrics) and line.strip().startswith(")"):
+            # A bare ")" line closes the current clause — but only if it is
+            # truly a clause-closing paren (i.e. the stripped line is exactly
+            # ")" or ");").  Inner parentheses inside multi-line expressions
+            # start with ")" but are followed by more content.
+            if (in_tables or in_relationships or in_dimensions or in_metrics) and re.match(r'^\s*\)\s*;?\s*$', line):
                 in_tables = in_relationships = in_dimensions = in_metrics = False
                 remediated_lines.append(line)
                 continue
@@ -826,13 +856,26 @@ class SemanticDDLSanitizer:
                 continue
 
             if in_metrics and contains_invalid:
+                # Replace the metric expression with a NULL placeholder so the
+                # metric declaration survives but produces no data.  The
+                # metric_line_pattern extracts the alias/name prefix; if it
+                # doesn't match (e.g. synonym suffix or unusual formatting)
+                # we still drop the whole line so the clause stays valid.
                 metric_match = metric_line_pattern.match(line)
                 if metric_match:
                     prefix = metric_match.group(1)
-                    comma = metric_match.group("comma") or ""
-                    remediated_lines.append(f"{prefix}CAST(NULL AS DOUBLE){comma}")
-                    changed = True
-                    continue
+                    # Strip any trailing synonym clause from the original line
+                    # so we can reconstruct a clean replacement.
+                    raw_after_as = line[metric_match.end(1):]
+                    # Detect trailing comma (before optional WITH SYNONYMS or $)
+                    trailing_comma = "," if raw_after_as.rstrip().endswith(",") or "," in raw_after_as else ""
+                    remediated_lines.append(f"{prefix}CAST(NULL AS DOUBLE){trailing_comma}")
+                else:
+                    # Continuation line or unrecognised format — drop it entirely;
+                    # _normalize_all_clause_commas will fix up trailing commas.
+                    pass
+                changed = True
+                continue
 
             remediated_lines.append(line)
 
@@ -840,8 +883,13 @@ class SemanticDDLSanitizer:
         return "\n".join(remediated_lines), changed
 
     def _normalize_all_clause_commas(self, all_lines: list[str]) -> None:
-        """Normalize trailing commas inside semantic-view clause blocks."""
-        clauses = ["TABLES (", "RELATIONSHIPS (", "DIMENSIONS (", "METRICS ("]
+        """Normalize trailing commas inside semantic-view clause blocks.
+
+        TABLES is intentionally excluded — its items may span multiple lines
+        (inline subqueries) and the sanitizer never removes TABLES entries,
+        so comma normalization there is both unnecessary and dangerous.
+        """
+        clauses = ["RELATIONSHIPS (", "DIMENSIONS (", "METRICS ("]
         for clause in clauses:
             self._normalize_clause_commas(all_lines, clause)
 
@@ -852,10 +900,27 @@ class SemanticDDLSanitizer:
                 idx += 1
                 continue
             start = idx + 1
+            # Track paren depth so multi-line inline subqueries inside TABLES
+            # (e.g. "SALESFACT AS (\n  SELECT ...\n) PRIMARY KEY (...)") are
+            # not mistaken for the closing paren of the clause itself.
             end = start
-            while end < len(all_lines) and not all_lines[end].strip().startswith(")"):
+            depth = 1  # we are one level inside "CLAUSE_HEADER ("
+            while end < len(all_lines):
+                line_stripped = all_lines[end].strip()
+                depth += line_stripped.count('(') - line_stripped.count(')')
+                if depth <= 0:
+                    break
                 end += 1
-            item_idxs = [j for j in range(start, end) if all_lines[j].strip()]
+            # Only normalise top-level items (depth==1 lines, i.e. not nested
+            # inside an inline subquery).  A top-level item line is one where
+            # the running depth before that line is exactly 1.
+            item_idxs = []
+            d = 1
+            for j in range(start, end):
+                line_stripped = all_lines[j].strip()
+                if d == 1 and line_stripped:
+                    item_idxs.append(j)
+                d += line_stripped.count('(') - line_stripped.count(')')
             for pos, line_idx in enumerate(item_idxs):
                 base = re.sub(r',\s*$', '', all_lines[line_idx].rstrip())
                 all_lines[line_idx] = f"{base}," if pos < len(item_idxs) - 1 else base

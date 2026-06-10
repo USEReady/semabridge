@@ -58,18 +58,45 @@ class TablesClauseBuilder:
                 date_dataset.unique_name,
                 date_dataset.source_table or date_dataset.unique_name,
             )
-            safe_table = self.identifier_sanitizer.sanitize_table_name(resolved_source_table)
+            _unq = resolved_source_table.rsplit(".", 1)[-1] if "." in resolved_source_table else resolved_source_table
+            safe_table = self.identifier_sanitizer.sanitize_table_name(_unq)
             date_table_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
             resolved_date_col = self.schema_manager._resolve_physical_column_name(date_dataset, date_col)
             resolved_fiscal_col = self.schema_manager._resolve_physical_column_name(date_dataset, fiscal_col)
         else:
-            safe_table = self.identifier_sanitizer.sanitize_table_name(date_table)
+            _unq_dt = date_table.rsplit(".", 1)[-1] if "." in date_table else date_table
+            safe_table = self.identifier_sanitizer.sanitize_table_name(_unq_dt)
             date_table_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
             resolved_date_col = self.identifier_sanitizer.sanitize_column(date_col)
             resolved_fiscal_col = self.identifier_sanitizer.sanitize_column(fiscal_col)
 
+        # Guard: only inject the anchor when the fiscal column is confirmed to
+        # exist in the live Snowflake schema.  If the calendar table doesn't
+        # have MONTHINDEX (or whichever column was resolved), emitting a
+        # subquery that references it produces Snowflake error 000904 inside a
+        # multi-line TABLE subquery — a position the DDL sanitizer cannot reach.
+        if self.live_schema_metadata:
+            # live_schema_metadata keys may be bare table names or fully-qualified;
+            # try bare sanitized name first, then the full FQ path.
+            _live_cols = (
+                self.live_schema_metadata.get(safe_table)
+                or self.live_schema_metadata.get(safe_table.upper())
+                or self.live_schema_metadata.get(date_table)
+                or self.live_schema_metadata.get(date_table.upper())
+                or set()
+            )
+            if _live_cols and resolved_fiscal_col not in _live_cols:
+                # Fiscal column confirmed absent from live schema — skip anchor.
+                import logging as _log
+                _log.getLogger(__name__).warning(
+                    "Skipping _CURRENT_FISCAL_PERIOD anchor: column '%s' not found "
+                    "in live Snowflake schema for table '%s'.",
+                    resolved_fiscal_col, safe_table,
+                )
+                return source_fq
+
         return f"""(
-    SELECT 
+    SELECT
         f.*,
         (SELECT MAX("{resolved_fiscal_col}") FROM {date_table_ref} WHERE "{resolved_date_col}" = CURRENT_DATE()) AS "_CURRENT_FISCAL_PERIOD"
     FROM {source_fq} f
@@ -81,7 +108,7 @@ class TablesClauseBuilder:
         registry: Any,
         metric_counts_by_dataset: dict[str, int],
         related_datasets: set[str],
-    ) -> Tuple[List[str], Dict[str, List[str]], Dict[tuple, str], Dict[str, set[str]], Dict[str, Any]]:
+    ) -> Tuple[List[str], Dict[str, List[str]], Dict[tuple, str], Dict[str, set[str]], Dict[str, Any], Dict[str, set[str]]]:
         self._current_model = sml
         return self._build(sml.datasets, sml.relationships, registry, metric_counts_by_dataset, related_datasets, is_osi=False)
 
@@ -91,7 +118,7 @@ class TablesClauseBuilder:
         registry: Any,
         metric_counts_by_dataset: dict[str, int],
         related_datasets: set[str],
-    ) -> Tuple[List[str], Dict[str, List[str]], Dict[tuple, str], Dict[str, set[str]], Dict[str, Any]]:
+    ) -> Tuple[List[str], Dict[str, List[str]], Dict[tuple, str], Dict[str, set[str]], Dict[str, Any], Dict[str, set[str]]]:
         self._current_model = osi
         return self._build(osi.datasets, osi.relationships, registry, metric_counts_by_dataset, related_datasets, is_osi=True)
 
@@ -103,7 +130,7 @@ class TablesClauseBuilder:
         metric_counts_by_dataset: dict[str, int],
         related_datasets: set[str],
         is_osi: bool
-    ) -> Tuple[List[str], Dict[str, List[str]], Dict[tuple, str], Dict[str, set[str]], Dict[str, Any]]:
+    ) -> Tuple[List[str], Dict[str, List[str]], Dict[tuple, str], Dict[str, set[str]], Dict[str, Any], Dict[str, set[str]]]:
         tables_lines: List[str] = []
         relationship_target_alias: dict[tuple[str, str], str] = {}
         declared_pk_by_alias: dict[str, list[str]] = {}
@@ -118,6 +145,11 @@ class TablesClauseBuilder:
                         relationship_pk_map[rel.to_dataset].append(col)
 
         dataset_col_lookup: dict[str, set[str]] = {}
+        # live_col_lookup contains ONLY confirmed-live columns from Snowflake schema
+        # metadata.  Unlike dataset_col_lookup it is NEVER populated with modeled_cols
+        # as a fallback, so downstream code can use it to distinguish "physically
+        # confirmed" from "modelled assumption".  Empty entry = schema unknown.
+        live_col_lookup: dict[str, set[str]] = {}
         dataset_by_name: dict[str, Any] = {d.unique_name: d for d in datasets}
         source_table_mapping = getattr(self.behavior.snowflake, "source_table_mapping", {}) or {}
         for dataset in datasets:
@@ -125,15 +157,22 @@ class TablesClauseBuilder:
                 modeled_cols = {self.identifier_sanitizer.sanitize_column(c.unique_name) for c in dataset.columns}
             else:
                 modeled_cols = set(self.schema_manager._collect_physical_source_columns(dataset).keys())
-            
+
             source_table = source_table_mapping.get(dataset.unique_name, dataset.source_table or dataset.unique_name)
-            source_key = self.identifier_sanitizer.sanitize_table_name(source_table).upper()
+            _unq_src = source_table.rsplit(".", 1)[-1] if "." in source_table else source_table
+            source_key = self.identifier_sanitizer.sanitize_table_name(_unq_src).upper()
             live_cols = self.live_schema_metadata.get(source_key, set())
             dataset_col_lookup[dataset.unique_name] = set(live_cols) if live_cols else modeled_cols
+            if live_cols:
+                live_col_lookup[dataset.unique_name] = set(live_cols)
 
         for dataset in datasets:
             source_table = source_table_mapping.get(dataset.unique_name, dataset.source_table or dataset.unique_name)
-            safe_table = self.identifier_sanitizer.sanitize_table_name(source_table)
+            # Strip any existing schema/database prefix (e.g. "db.schema.TableName" → "TableName")
+            # so sanitize_table_name doesn't replace dots with underscores and produce a
+            # double-prefixed name like "SEMABRIDGE_PUBLIC_SALESFACT_ENRICHED".
+            unqualified_table = source_table.rsplit(".", 1)[-1] if "." in source_table else source_table
+            safe_table = self.identifier_sanitizer.sanitize_table_name(unqualified_table)
             full_table = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
 
             alias = self._get_unique_alias(dataset.unique_name, registry)
@@ -190,7 +229,7 @@ class TablesClauseBuilder:
                 declared_pk_by_alias[rel_alias] = [rel_pk]
                 relationship_target_alias[(dataset.unique_name, rel_pk.upper())] = rel_alias
 
-        return tables_lines, declared_pk_by_alias, relationship_target_alias, dataset_col_lookup, dataset_by_name
+        return tables_lines, declared_pk_by_alias, relationship_target_alias, dataset_col_lookup, dataset_by_name, live_col_lookup
 
     def _get_unique_alias(self, name: str, registry: Any) -> str:
         alias = registry.get_alias(name)

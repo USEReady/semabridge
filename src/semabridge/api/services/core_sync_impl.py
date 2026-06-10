@@ -1,4 +1,5 @@
 from semabridge.api.services.core_shared import *
+from semabridge.domain.exceptions import InternalError, NotFoundError, PermissionError, SemaBridgeError
 
 
 async def sync_models(payload: Dict[str, Any]):
@@ -53,11 +54,11 @@ async def sync_models(payload: Dict[str, Any]):
                 )
 
         return execute_sync_request(payload, _normalize_yaml_windows_path_fields, account_id=account_id)
-    except HTTPException:
+    except SemaBridgeError:
         raise
     except Exception as e:
         logger.exception("Sync execution failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise InternalError(str(e))
 
 
 def _validate_account_ownership(account_id: str, user_id: int) -> None:
@@ -85,27 +86,18 @@ def _validate_account_ownership(account_id: str, user_id: int) -> None:
             ).scalar_one_or_none()
 
             if not account:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Account '{account_id}' not found.",
-                )
+                raise NotFoundError(f"Account '{account_id}' not found.")
 
             if account.owner_id is not None and account.owner_id != user_id:
                 logger.warning(
                     "Ownership violation: user %d attempted sync with account %s (owner=%s)",
                     user_id, account_id, account.owner_id,
                 )
-                raise HTTPException(
-                    status_code=403,
-                    detail="Account access denied — this account belongs to another user.",
-                )
-    except HTTPException:
+                raise PermissionError("Account access denied — this account belongs to another user.")
+    except SemaBridgeError:
         raise
     except Exception as exc:
         logger.error("Account ownership check failed: %s", exc)
         # Fail-open only in development — fail-closed in production
         if os.environ.get("AUTH_ENABLED", "").lower() == "true":
-            raise HTTPException(
-                status_code=500,
-                detail="Account ownership validation failed.",
-            ) from exc
+            raise InternalError("Account ownership validation failed.") from exc

@@ -1,4 +1,6 @@
 """
+ORM model package — imports all models so Alembic autogenerate can find them.
+
 SQLAlchemy 2.0 ORM layer for SemaBridge.
 
 Provides:
@@ -8,53 +10,79 @@ Provides:
 """
 
 from semabridge.repository.orm.base import Base
-from semabridge.repository.orm.models import (
-    # Application layer
-    ModelVersionHistory,
-    Post,
+from semabridge.repository.orm.auth_models import (
     User,
     UserCredential,
-    # Version-control layer
+    RefreshToken,
+    PasswordResetToken,
+)
+from semabridge.repository.orm.account_models import (
+    Account,
+    Post,
+)
+from semabridge.repository.orm.project_models import (
     Project,
-    SnapshotRow,
-    Change,
+    LocalFolder,
+    RetentionPolicy,
+)
+from semabridge.repository.orm.run_models import (
     Run,
     SourceArtifact,
-    ModelVersion,
-    # Sync engine layer
-    SyncJob,
-    SyncJobItem,
-    ModelMappingRow,
-    SchemaVersionRow,
     SyncConflictRow,
     SyncCheckpointRow,
-    # Credential & audit layer
+)
+from semabridge.repository.orm.snapshot_models import (
+    SnapshotRow,
+    Change,
+    ModelVersion,
+    ModelVersionHistory,
+    SchemaVersionRow,
+)
+from semabridge.repository.orm.schedule_models import (
+    SyncJob,
+    SyncJobItem,
+)
+from semabridge.repository.orm.mapping_models import (
+    ModelMappingRow,
+    SynonymOverride,
+)
+from semabridge.repository.orm.infra_models import (
     Credential,
     CommandLog,
 )
 
 __all__ = [
     "Base",
-    # Application layer
+    # Auth/identity
     "User",
     "UserCredential",
+    "RefreshToken",
+    "PasswordResetToken",
+    # External accounts
+    "Account",
     "Post",
-    "ModelVersionHistory",
-    # Version-control layer
+    # Project lifecycle
     "Project",
-    "SnapshotRow",
-    "Change",
+    "LocalFolder",
+    "RetentionPolicy",
+    # Execution runs
     "Run",
     "SourceArtifact",
-    "ModelVersion",
-    # Sync engine layer
-    "SyncJob",
-    "SyncJobItem",
-    "ModelMappingRow",
-    "SchemaVersionRow",
     "SyncConflictRow",
     "SyncCheckpointRow",
-    # Credential & audit layer
+    # Version snapshots
+    "SnapshotRow",
+    "Change",
+    "ModelVersion",
+    "ModelVersionHistory",
+    "SchemaVersionRow",
+    # Job scheduling
+    "SyncJob",
+    "SyncJobItem",
+    # Field mappings
+    "ModelMappingRow",
+    "SynonymOverride",
+    # Infrastructure
     "Credential",
     "CommandLog",
 ]

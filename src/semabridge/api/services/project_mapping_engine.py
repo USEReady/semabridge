@@ -11,6 +11,25 @@ from semabridge.utils.identifiers import IdentifierSanitizer, SNOWFLAKE_RESERVED
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9]+")
 _MULTI_UNDERSCORE = re.compile(r"_+")
 _SNOWFLAKE_SANITIZER = IdentifierSanitizer(suppress_reserved=True)
+
+# Regex used to normalise source names for semantic identity comparison.
+# Strips all non-alphanumeric chars and lowercases so that:
+#   "Date Today", "date today", "date_today", "DATE_TODAY" → "datetoday"
+# This means two entities whose source names reduce to the same token are
+# treated as the *same concept*, not a name collision.
+_SEMANTIC_NORM = re.compile(r"[^a-z0-9]")
+
+
+def _semantic_name(name: str) -> str:
+    """Return a normalised token used only for semantic identity comparison.
+
+    All of: "Date Today", "date today", "date_today", "DATE TODAY"
+    reduce to the same string ("datetoday") so they are never flagged as
+    collisions against each other.  A real collision only occurs when two
+    *different* source names happen to produce the same sanitised target
+    name (e.g. "rev_total" and "revenue_total" both becoming REVENUE_TOTAL).
+    """
+    return _SEMANTIC_NORM.sub("", str(name or "").lower().strip())
 _METRIC_DAX_TABLE_REF = re.compile(r"(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_]*))\s*\[")
 _METRIC_SQL_QUOTED_REF = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*\"")
 _METRIC_SQL_PLAIN_REF = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*[A-Za-z_][A-Za-z0-9_]*")
@@ -30,7 +49,7 @@ def sanitize_identifier(value: str, *, max_length: int = 120) -> str:
     return sanitized[:max_length].rstrip("_") or "UNNAMED"
 
 
-def deterministic_hash_suffix(*parts: str, size: int = 4) -> str:
+def deterministic_hash_suffix(*parts: str, size: int = 8) -> str:
     joined = "::".join(str(part or "").strip() for part in parts)
     digest = hashlib.sha1(joined.encode("utf-8")).hexdigest().upper()
     return digest[: max(1, size)]
@@ -41,11 +60,13 @@ def apply_collision_suffix(
     *,
     fingerprint: str,
     max_length: int = 120,
-    size: int = 4,
+    size: int = 8,
 ) -> Tuple[str, str]:
     suffix = deterministic_hash_suffix(fingerprint, size=size)
-    stem_max = max_length - size - 1
-    stem = sanitized_name[:stem_max].rstrip("_") or sanitized_name[:stem_max] or "UNNAMED"
+    # stem_max must be at least 1 so we always produce a valid identifier even
+    # when max_length is pathologically small (e.g. max_length <= size + 1).
+    stem_max = max(1, max_length - size - 1)
+    stem = sanitized_name[:stem_max].rstrip("_") or sanitized_name[:1] or "X"
     return f"{stem}_{suffix}", suffix
 
 
@@ -188,7 +209,10 @@ def extract_model_entities(model: Dict[str, Any]) -> List[Dict[str, Any]]:
 def _scope_key(entity: Dict[str, Any]) -> str:
     kind = str(entity.get("entity_kind") or "").lower()
     if kind == "column":
-        return f"column::{entity.get('parent_source_path') or 'root'}"
+        # Use a flat column scope so columns from DIFFERENT tables compete for the
+        # same namespace — matching Snowflake's flat DIMENSIONS namespace where all
+        # columns from all tables share a single identifier space.
+        return f"column::{entity.get('model_name') or 'model'}"
     if kind == "table":
         return f"table::{entity.get('model_name') or 'model'}"
     if kind == "metric":
@@ -273,8 +297,13 @@ def build_entity_mappings(
     normalized_target_connector = _normalize_connector_name(target_connector)
     entities = extract_model_entities(model)
     session = session_key or f"map-session-{uuid.uuid4().hex[:12]}"
-    claimed_names: Dict[str, Dict[str, str]] = {}
+    # claimed_names[scope][sanitized_key] = {"source_path": ..., "source_name": ...}
+    # Stores both the path and the original source name so we can distinguish
+    # a true collision (different concepts → same sanitised name) from an
+    # apparent collision (same concept, different platform naming conventions).
+    claimed_names: Dict[str, Dict[str, Dict[str, str]]] = {}
     generated: List[Dict[str, Any]] = []
+    generated_index: Dict[str, int] = {}  # source_path → index in generated list
     collisions: List[Dict[str, Any]] = []
 
     for entity in entities:
@@ -288,34 +317,105 @@ def build_entity_mappings(
         scope = _scope_key(entity)
         claimed_names.setdefault(scope, {})
         collision_key = sanitized
-        prior_source_path = claimed_names[scope].get(collision_key)
+        prior_claim = claimed_names[scope].get(collision_key)
         existing_mapping = existing.get(source_path, {})
         is_manual = bool(existing_mapping.get("is_user_edited"))
         preferred_target_name = str(existing_mapping.get("target_name") or "").strip()
+
+        # If the saved target name looks like an auto-generated hash suffix (e.g. TERRITORYSEQ_280F)
+        # and the user never manually edited it, clear it so collision detection re-runs with the
+        # improved table-prefix logic (TABLE_FIELD). Hash suffixes are always exactly 4 or 8
+        # uppercase hex chars appended after a single underscore.
+        if preferred_target_name and not is_manual:
+            _last_seg = preferred_target_name.rsplit("_", 1)
+            if len(_last_seg) == 2 and re.fullmatch(r"[0-9A-F]{4}|[0-9A-F]{8}", _last_seg[1]):
+                preferred_target_name = ""
 
         collision_detected = False
         hash_suffix = ""
         target_name = preferred_target_name or sanitized
 
         if not preferred_target_name:
-            if prior_source_path and prior_source_path != source_path:
-                collision_detected = True
-                entity_seed = str(entity.get("parent_source_path") or entity.get("model_name") or "").strip()
-                field_seed = source_name
-                target_name, hash_suffix = apply_collision_suffix(
-                    sanitized,
-                    fingerprint=f"{entity_seed}::{field_seed}",
-                )
-                collisions.append({
-                    "scope": scope,
-                    "sanitized_name": sanitized,
-                    "first_source_path": prior_source_path,
-                    "second_source_path": source_path,
-                    "resolved_target_name": target_name,
-                })
-            claimed_names[scope][collision_key] = source_path
+            if prior_claim and prior_claim["source_path"] != source_path:
+                # A prior entity already claimed this sanitised name.
+                # Only treat it as a REAL collision when the two source names
+                # are semantically different concepts.
+                #
+                # Examples that are NOT collisions (same concept, different conventions):
+                #   Power BI "Date Today"  vs Snowflake "date_today"
+                #   Power BI "Revenue_YTD" vs Snowflake "revenue_ytd"
+                #
+                # Examples that ARE real collisions (different concepts, same sanitised name):
+                #   "rev_total" vs "revenue_total"  → both → REVENUE_TOTAL
+                #   "SalesAmt"  vs "Sales_Amt"      → both → SALES_AMT (ambiguous abbreviation)
+                prior_semantic = _semantic_name(prior_claim["source_name"])
+                current_semantic = _semantic_name(source_name)
+                # Same-named columns from DIFFERENT tables are always real collisions
+                # because Snowflake semantic views use a flat DIMENSIONS namespace.
+                _prior_parent = str(prior_claim.get("parent_source_path") or "")
+                _curr_parent = str(entity.get("parent_source_path") or "")
+                _different_tables = bool(_prior_parent and _curr_parent and _prior_parent != _curr_parent)
+                if prior_semantic != current_semantic or _different_tables:
+                    collision_detected = True
+                    # Derive table name for prefix: "datasets.TERRITORY" → "TERRITORY"
+                    _parent_path = str(entity.get("parent_source_path") or entity.get("source_path") or "").strip()
+                    _table_name = ""
+                    if _parent_path:
+                        # Strip "datasets." prefix if present, then take first path segment
+                        # e.g. "datasets.TERRITORY" → "TERRITORY"
+                        #      "datasets.TERRITORY.columns" → "TERRITORY"
+                        _stripped = re.sub(r"^datasets\.", "", _parent_path, flags=re.IGNORECASE).split(".")[0]
+                        _table_name = sanitize_identifier(_stripped)
+                    if _table_name and _table_name.upper() != sanitized.upper():
+                        # Use TABLE_FIELD format (same as Fabric's Tables[Column] → TABLE_FIELD)
+                        target_name = f"{_table_name}_{sanitized}"
+                        hash_suffix = ""
+                    else:
+                        # Table name unavailable or same as field — fall back to hash
+                        entity_seed = str(entity.get("parent_source_path") or entity.get("model_name") or "").strip()
+                        field_seed = source_name
+                        target_name, hash_suffix = apply_collision_suffix(
+                            sanitized,
+                            fingerprint=f"{entity_seed}::{field_seed}",
+                        )
+                    collisions.append({
+                        "scope": scope,
+                        "sanitized_name": sanitized,
+                        "first_source_path": prior_claim["source_path"],
+                        "first_source_name": prior_claim["source_name"],
+                        "second_source_path": source_path,
+                        "second_source_name": source_name,
+                        "resolved_target_name": target_name,
+                    })
+                # else: same concept under different naming conventions — not a collision,
+                # keep the existing claimed slot and the same sanitised target name.
+            claimed_names[scope][collision_key] = {
+                "source_path": source_path,
+                "source_name": source_name,
+                "parent_source_path": str(entity.get("parent_source_path") or ""),
+            }
         else:
-            claimed_names[scope][target_name] = source_path
+            # User provided a manual override. Check whether it collides with a name
+            # already claimed in this scope by a *different* entity.  If it does,
+            # flag the collision so the user can see the conflict — but do NOT
+            # auto-resolve it (the user made an explicit choice; inform, don't override).
+            manual_prior = claimed_names[scope].get(preferred_target_name)
+            if manual_prior and manual_prior["source_path"] != source_path:
+                prior_semantic = _semantic_name(manual_prior["source_name"])
+                current_semantic = _semantic_name(source_name)
+                if prior_semantic != current_semantic:
+                    collision_detected = True
+                    collisions.append({
+                        "scope": scope,
+                        "sanitized_name": preferred_target_name,
+                        "first_source_path": manual_prior["source_path"],
+                        "first_source_name": manual_prior["source_name"],
+                        "second_source_path": source_path,
+                        "second_source_name": source_name,
+                        "resolved_target_name": preferred_target_name,
+                        "manual_override_conflict": True,
+                    })
+            claimed_names[scope][target_name] = {"source_path": source_path, "source_name": source_name}
 
         validation = _validate_target_name(
             target_name=target_name,
@@ -324,6 +424,33 @@ def build_entity_mappings(
             target_connector=normalized_target_connector,
         )
 
+        # Back-patch the first conflicting entry with table-prefix when a new collision is detected
+        if collision_detected and prior_claim:
+            _prior_sp = prior_claim["source_path"]
+            _prior_idx = generated_index.get(_prior_sp)
+            if _prior_idx is not None:
+                _prior_entry = generated[_prior_idx]
+                if not _prior_entry.get("is_user_edited") and not _prior_entry.get("collision_detected"):
+                    # Compute table-prefix for the prior entry
+                    _prior_parent = str(prior_claim.get("parent_source_path") or "").strip()
+                    _prior_table = ""
+                    if _prior_parent:
+                        _prior_stripped = re.sub(r"^datasets\.", "", _prior_parent, flags=re.IGNORECASE).split(".")[0]
+                        _prior_table = sanitize_identifier(_prior_stripped)
+                    _prior_sanitized = _prior_entry.get("sanitized_name") or _prior_entry.get("target_name") or ""
+                    if _prior_table and _prior_table.upper() != str(_prior_sanitized).upper():
+                        _prior_resolved = f"{_prior_table}_{_prior_sanitized}"
+                    else:
+                        _prior_resolved = _prior_entry.get("target_name") or _prior_sanitized
+                    _prior_entry["target_name"] = _prior_resolved
+                    _prior_entry["suggested_target_name"] = _prior_resolved
+                    _prior_entry["collision_detected"] = True
+                    _prior_entry["collision_group"] = f"{scope}:{sanitized}"
+                    _prior_entry["validation_status"] = "collision"
+                    _prior_entry["validation_code"] = "NAME_COLLISION"
+                    _prior_entry["validation_message"] = "Name collision resolved with table prefix."
+
+        generated_index[source_path] = len(generated)
         generated.append({
             "id": mapping_id,
             "project_id": project_id,

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Real-time progress reporter with Rich live dashboard.
 
 Displays overall progress, worker status, and success/failure
@@ -186,8 +186,8 @@ class ProgressReporter:
         if self._live:
             try:
                 self._live.stop()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Error stopping live dashboard: %s", exc)
 
         self._print_summary()
 
@@ -272,8 +272,8 @@ class ProgressReporter:
         if self._live:
             try:
                 self._live.update(self._build_layout())
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Error refreshing live dashboard: %s", exc)
 
     def _print_summary(self) -> None:
         """Print the final summary after processing completes."""

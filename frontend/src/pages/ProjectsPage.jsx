@@ -152,6 +152,8 @@ export default function ProjectsPage() {
   const useRegexSearch = filterOptions?.useRegexSearch ?? DEFAULT_FILTER_OPTIONS.useRegexSearch;
   const isAnyFilterActive = sourceFilter !== 'all' || targetFilters.length > 0 || tagFilters.size > 0;
 
+  const hasRunning = runningProjectIds.size > 0;
+
   const {
     data: projects = [],
     isLoading: projectsLoading,
@@ -160,7 +162,9 @@ export default function ProjectsPage() {
   } = useQuery({
     queryKey: ['projects'],
     initialData: () => readCachedList(PROJECTS_CACHE_KEY),
-    staleTime: 5000,
+    staleTime: hasRunning ? 0 : 5000,
+    refetchOnWindowFocus: true,
+    refetchInterval: hasRunning ? 5000 : false,
     retry: 0,
     enabled: !authLoading && !!token,
     queryFn: async () => {
@@ -190,6 +194,18 @@ export default function ProjectsPage() {
 
   const loading = (projectsLoading && projects.length === 0) || (foldersLoading && folders.length === 0);
   const loadFailed = (projectsError || foldersError) && projects.length === 0 && folders.length === 0;
+
+  // Stop polling a project once the fetched data shows a terminal status
+  useEffect(() => {
+    if (runningProjectIds.size === 0) return;
+    const terminalStatuses = new Set(['success', 'active', 'failed', 'warning', 'partial', 'draft', 'idle']);
+    runningProjectIds.forEach(pid => {
+      const p = projects.find(pr => pr.id === pid || pr.project_id === pid);
+      if (p && terminalStatuses.has(String(p.status || '').toLowerCase())) {
+        setRunningProjectIds(prev => { const next = new Set(prev); next.delete(pid); return next; });
+      }
+    });
+  }, [projects, runningProjectIds]);
 
   const setProjects = useCallback((updater) => {
     queryClient.setQueryData(['projects'], (current = []) => (
@@ -452,6 +468,16 @@ export default function ProjectsPage() {
       }
       const status = String(result?.status || '').toLowerCase();
       if (result?.run_id || result?.id || status === 'running') {
+        // Optimistically mark the project as "running" so the badge updates immediately,
+        // then schedule a re-fetch after the run is likely to have completed so the
+        // Projects page shows the real final status when the user returns.
+        setProjects(prev => prev.map(p =>
+          (p.id === projectId || p.project_id === projectId) ? { ...p, status: 'running' } : p
+        ));
+        // Refetch at 5s, 15s, 30s, 60s, 120s to catch fast failures and slow runs
+        [5000, 15000, 30000, 60000, 120000].forEach(delay =>
+          setTimeout(() => refetchProjects(), delay)
+        );
         openRunsPage();
         return result;
       }
@@ -471,7 +497,7 @@ export default function ProjectsPage() {
         return next;
       });
     }
-  }, [setProjects]);
+  }, [setProjects, refetchProjects, openRunsPage]);
 
   /* ── Render ── */
   if (loadFailed) {

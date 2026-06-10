@@ -111,9 +111,9 @@ def _extract_fabric(
 
         if identity_id:
             try:
-                from semabridge.api.services.connection_domain_service import _resolve_fabric_access_token
+                from semabridge.auth.token_resolver import resolve_fabric_access_token
 
-                interactive_token = _resolve_fabric_access_token(None, identity_id)
+                interactive_token = resolve_fabric_access_token(None, identity_id)
                 logger.debug("_extract_fabric: injecting identity-scoped interactive token for %s", identity_id)
             except Exception as identity_exc:
                 logger.warning(
@@ -181,8 +181,8 @@ def _extract_fabric(
     # and guarantees freshness for the Fabric extraction API call.
     if identity_id:
         try:
-            from semabridge.api.services.connection_domain_service import _resolve_fabric_access_token
-            jit_token = _resolve_fabric_access_token(None, identity_id)
+            from semabridge.auth.token_resolver import resolve_fabric_access_token
+            jit_token = resolve_fabric_access_token(None, identity_id)
             if jit_token:
                 interactive_token = jit_token
                 logger.info(

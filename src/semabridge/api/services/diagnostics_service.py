@@ -56,8 +56,8 @@ class DiagnosticsService:
                 if "." not in host:
                     host = f"{host}.snowflakecomputing.com"
                 targets.append({"name": "Snowflake Account", "url": f"https://{host}"})
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Could not add Snowflake to diagnostics targets: %s", exc)
 
         results = []
         for target in targets:

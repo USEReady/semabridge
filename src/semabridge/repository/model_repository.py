@@ -26,7 +26,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import inspect, select, update, delete, and_
+from sqlalchemy import select, update, delete, and_
 from sqlalchemy.orm import Session, sessionmaker
 
 from semabridge.repository.orm.base import Base
@@ -231,14 +231,30 @@ class ModelRepository:
                 return
             try:
                 with engine.begin() as conn:
+                    from sqlalchemy import text as _text
                     Base.metadata.create_all(bind=conn)
-                    inspector = inspect(conn)
-                    if "snapshots" in inspector.get_table_names():
-                        snapshot_columns = {col["name"] for col in inspector.get_columns("snapshots")}
-                        if "ix_snapshots_trigger" in {idx["name"] for idx in inspector.get_indexes("snapshots")}:
-                            conn.exec_driver_sql("DROP INDEX IF EXISTS ix_snapshots_trigger")
-                        if "ix_snapshots_connector" in {idx["name"] for idx in inspector.get_indexes("snapshots")}:
-                            conn.exec_driver_sql("DROP INDEX IF EXISTS ix_snapshots_connector")
+
+                    def _col_names(tbl: str) -> set:
+                        rows = conn.execute(
+                            _text("SELECT column_name FROM information_schema.columns WHERE table_name = :t"),
+                            {"t": tbl},
+                        ).fetchall()
+                        return {r[0] for r in rows}
+
+                    def _tbl_exists(tbl: str) -> bool:
+                        return conn.execute(
+                            _text("SELECT 1 FROM information_schema.tables WHERE table_name = :t LIMIT 1"),
+                            {"t": tbl},
+                        ).fetchone() is not None
+
+                    if _tbl_exists("snapshots"):
+                        snapshot_columns = _col_names("snapshots")
+                        # Drop stale indexes (ignore errors — DuckDB IF EXISTS is safest)
+                        for idx in ("ix_snapshots_trigger", "ix_snapshots_connector"):
+                            try:
+                                conn.exec_driver_sql(f"DROP INDEX IF EXISTS {idx}")
+                            except Exception:
+                                pass
                         if "initiated_by" in snapshot_columns:
                             conn.exec_driver_sql("ALTER TABLE snapshots DROP COLUMN initiated_by")
                             snapshot_columns.discard("initiated_by")
@@ -250,8 +266,8 @@ class ModelRepository:
                             snapshot_columns.discard("trigger")
                         if "sync_mode" not in snapshot_columns:
                             conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN sync_mode VARCHAR(20) NOT NULL DEFAULT 'copy'")
-                    if "runs" in inspector.get_table_names():
-                        run_columns = {col["name"] for col in inspector.get_columns("runs")}
+                    if _tbl_exists("runs"):
+                        run_columns = _col_names("runs")
                         if "sync_mode" not in run_columns:
                             conn.exec_driver_sql("ALTER TABLE runs ADD COLUMN sync_mode VARCHAR(20) NOT NULL DEFAULT 'copy'")
                 cls._schema_initialized_urls.add(url_key)
@@ -340,30 +356,74 @@ class ModelRepository:
         source_connection: Optional[str] = None,
         connection_tag: Optional[str] = None,
     ) -> None:
-        """Ensure the project row exists (upsert)."""
-        now = datetime.utcnow()
-        with self._session() as session:
-            existing = session.get(Project, project_id)
-            if existing:
-                existing.name = name
-                existing.adapter = adapter
-                existing.source_connection = source_connection
-                existing.last_updated = now
-                if connection_tag:
-                    existing.connection_tag = connection_tag
-            else:
-                session.add(
-                    Project(
-                        project_id=project_id,
-                        name=name,
-                        workspace_id=workspace_id,
-                        adapter=adapter,
-                        source_connection=source_connection,
-                        last_updated=now,
-                        connection_tag=connection_tag,
-                    )
-                )
-            session.commit()
+        """Ensure the project row exists.
+
+        INSERT-only when the row already exists: parallel model runs share the
+        same project_id and DuckDB is single-writer, so an unconditional UPDATE
+        on every run causes TransactionContext conflicts at scale.  The project
+        name/adapter/connection do not change between runs, so skipping the
+        UPDATE is safe.  The UPDATE path is kept for genuine renames (e.g. user
+        edits the project name) — callers that need a forced refresh should use
+        update_project() directly.
+
+        Retries with exponential back-off are kept as a safety net for the rare
+        race on the very first INSERT (two threads both see "not exists" before
+        either commits).
+        """
+        import time
+        import random
+
+        _MAX_RETRIES = 8
+        _BASE_DELAY = 0.02  # 20 ms initial
+        last_exc = None
+        for attempt in range(_MAX_RETRIES):
+            try:
+                with self._session() as session:
+                    existing = session.get(Project, project_id)
+                    if existing:
+                        # Row already present — only update mutable fields that
+                        # may have legitimately changed (name rename, new tag).
+                        # Do NOT touch last_updated: avoids write contention
+                        # when 50 models run in parallel on the same project.
+                        changed = False
+                        if existing.name != name:
+                            existing.name = name
+                            changed = True
+                        if existing.adapter != adapter:
+                            existing.adapter = adapter
+                            changed = True
+                        if existing.source_connection != source_connection:
+                            existing.source_connection = source_connection
+                            changed = True
+                        if connection_tag and existing.connection_tag != connection_tag:
+                            existing.connection_tag = connection_tag
+                            changed = True
+                        if changed:
+                            session.commit()
+                        # No write at all when nothing changed — zero contention.
+                    else:
+                        session.add(
+                            Project(
+                                project_id=project_id,
+                                name=name,
+                                workspace_id=workspace_id,
+                                adapter=adapter,
+                                source_connection=source_connection,
+                                last_updated=datetime.utcnow(),
+                                connection_tag=connection_tag,
+                            )
+                        )
+                        session.commit()
+                return  # success
+            except Exception as exc:
+                msg = str(exc).lower()
+                if "transactioncontext" in msg or "conflict on update" in msg or "unique constraint" in msg:
+                    last_exc = exc
+                    delay = _BASE_DELAY * (2 ** attempt) + random.uniform(0, 0.01)
+                    time.sleep(delay)
+                    continue
+                raise  # non-conflict — propagate immediately
+        raise last_exc  # all retries exhausted
 
     # ------------------------------------------------------------------
     # Snapshots / version history

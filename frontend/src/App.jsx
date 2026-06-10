@@ -8,6 +8,7 @@ import MobileGate from './components/MobileGate';
 import { useState } from 'react';
 import ProtectedRoute from './components/common/ProtectedRoute';
 import { ConfigurationProvider } from './context/ConfigurationContext';
+import ErrorBoundary from './components/ErrorBoundary';
 
 // Layouts
 import DashboardLayout from './layouts/DashboardLayout';
@@ -26,6 +27,9 @@ const GlobalConfigPage   = lazy(() => import('./pages/GlobalConfigPage'));
 const ProjectDetailPage  = lazy(() => import('./pages/ProjectDetailPage'));
 const ComparatorPage     = lazy(() => import('./pages/ComparatorPage'));
 const VersionControlPage = lazy(() => import('./pages/VersionControlPage'));
+const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
+const ResetPasswordPage  = lazy(() => import('./pages/ResetPasswordPage'));
+const UnauthorizedPage   = lazy(() => import('./pages/UnauthorizedPage'));
 
 function PageFallback() {
   return (
@@ -77,6 +81,11 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
 
+        {/* Public: Password reset flow */}
+        <Route path="/auth/forgot-password" element={<Suspense fallback={<PageFallback />}><ForgotPasswordPage /></Suspense>} />
+        <Route path="/auth/reset-password/:token" element={<Suspense fallback={<PageFallback />}><ResetPasswordPage /></Suspense>} />
+        <Route path="/unauthorized" element={<Suspense fallback={<PageFallback />}><UnauthorizedPage /></Suspense>} />
+
         {/* Protected: All app routes — auto-login handles auth transparently */}
         <Route element={<ProtectedRoute />}>
           <Route element={
@@ -91,18 +100,20 @@ export default function App() {
             </ConfigurationProvider>
           }>
             <Route index element={<Navigate to="/projects" replace />} />
-            <Route path="/explore"       element={<Suspense fallback={<PageFallback />}><ExplorePage /></Suspense>} />
+            <Route path="/explore"       element={<ErrorBoundary><Suspense fallback={<PageFallback />}><ExplorePage /></Suspense></ErrorBoundary>} />
             <Route path="/projects"      element={<ProjectsPage />} />
-            <Route path="/projects/new"  element={<Suspense fallback={<PageFallback />}><CreateProjectPage /></Suspense>} />
-            <Route path="/projects/:id" element={<Suspense fallback={<PageFallback />}><ProjectDetailPage /></Suspense>} />
-            <Route path="/projects/:id/edit" element={<Suspense fallback={<PageFallback />}><EditProjectPage /></Suspense>} />
-            <Route path="/projects/:id/config" element={<Suspense fallback={<PageFallback />}><ProjectConfigPage /></Suspense>} />
-            <Route path="/jobs"          element={<Suspense fallback={<PageFallback />}><ProjectJobsPage /></Suspense>} />
+            <Route path="/projects/new"  element={<ErrorBoundary><Suspense fallback={<PageFallback />}><CreateProjectPage /></Suspense></ErrorBoundary>} />
+            <Route path="/projects/:id" element={<ErrorBoundary><Suspense fallback={<PageFallback />}><ProjectDetailPage /></Suspense></ErrorBoundary>} />
+            <Route path="/projects/:id/edit" element={<ErrorBoundary><Suspense fallback={<PageFallback />}><EditProjectPage /></Suspense></ErrorBoundary>} />
+            <Route path="/projects/:id/config" element={<ErrorBoundary><Suspense fallback={<PageFallback />}><ProjectConfigPage /></Suspense></ErrorBoundary>} />
+            <Route path="/jobs"          element={<ErrorBoundary><Suspense fallback={<PageFallback />}><ProjectJobsPage /></Suspense></ErrorBoundary>} />
             <Route path="/model-mapping" element={<Navigate to="/projects/new?step=4" replace />} />
-            <Route path="/comparator"    element={<Suspense fallback={<PageFallback />}><ComparatorPage /></Suspense>} />
-            <Route path="/settings"      element={<Suspense fallback={<PageFallback />}><SettingsPage /></Suspense>} />
-            <Route path="/global-config" element={<Suspense fallback={<PageFallback />}><GlobalConfigPage /></Suspense>} />
-            <Route path="/version-control" element={<Suspense fallback={<PageFallback />}><VersionControlPage /></Suspense>} />
+            <Route path="/comparator"    element={<ErrorBoundary><Suspense fallback={<PageFallback />}><ComparatorPage /></Suspense></ErrorBoundary>} />
+            <Route element={<ProtectedRoute requiredRole="admin" />}>
+              <Route path="/settings"      element={<ErrorBoundary><Suspense fallback={<PageFallback />}><SettingsPage /></Suspense></ErrorBoundary>} />
+              <Route path="/global-config" element={<ErrorBoundary><Suspense fallback={<PageFallback />}><GlobalConfigPage /></Suspense></ErrorBoundary>} />
+            </Route>
+            <Route path="/version-control" element={<ErrorBoundary><Suspense fallback={<PageFallback />}><VersionControlPage /></Suspense></ErrorBoundary>} />
           </Route>
         </Route>
 

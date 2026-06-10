@@ -6,6 +6,7 @@ from semabridge.api.services.core_shared import (
     _DISCOVERY_CACHE_TTL,
     _time,
 )
+from semabridge.domain.exceptions import AuthenticationError, InternalError, SemaBridgeError, ValidationError
 
 _snowflake_discovery_cache = {}
 
@@ -17,35 +18,34 @@ async def discover_fabric_models(
 ):
     import anyio
     import httpx
-    from pydantic import ValidationError
+    from pydantic import ValidationError as _PydanticValidationError
 
     try:
         settings = get_settings()
-        try:
-            settings.fabric
-        except ValidationError:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Fabric is not configured. "
-                    "Set FABRIC_TENANT_ID, FABRIC_CLIENT_ID, and FABRIC_WORKSPACE_ID in .env or environment variables."
-                ),
-            )
 
         resolved_workspace_id = (workspace_id or "").strip()
+
+        # When no workspace_id is in the path, fall back to env / base config.
+        # Only require base Fabric config when no identity_id is provided —
+        # identity_id-based requests resolve credentials from the Account table.
         if not resolved_workspace_id:
+            if not identity_id:
+                try:
+                    settings.fabric
+                except _PydanticValidationError:
+                    raise ValidationError((
+                        "Fabric is not configured. "
+                        "Set FABRIC_TENANT_ID, FABRIC_CLIENT_ID, and FABRIC_WORKSPACE_ID in .env or environment variables."
+                    ))
             resolved_workspace_id = os.environ.get("FABRIC_WORKSPACE_ID", "").strip()
-        if not resolved_workspace_id:
-            try:
-                resolved_workspace_id = settings.fabric.workspace_id
-            except Exception:
-                pass
+            if not resolved_workspace_id:
+                try:
+                    resolved_workspace_id = settings.fabric.workspace_id
+                except Exception as exc:
+                    logger.debug("Could not read fabric.workspace_id from settings: %s", exc)
 
         if not resolved_workspace_id:
-            raise HTTPException(
-                status_code=400,
-                detail="No Fabric workspace configured. Select a workspace in Settings -> Connections.",
-            )
+            raise ValidationError("No Fabric workspace configured. Select a workspace in Settings -> Connections.")
 
         cache_key = f"fabric:{resolved_workspace_id}:{identity_id}"
         cached = _discovery_cache.get(cache_key)
@@ -66,16 +66,10 @@ async def discover_fabric_models(
 
         if resp.status_code == 401:
             if "invalid_token" in resp.text.lower() or "expired" in resp.text.lower():
-                raise HTTPException(
-                    status_code=401,
-                    detail="Fabric token expired or invalid. Please sign in again via Connections.",
-                )
-            raise HTTPException(
-                status_code=401,
-                detail="Fabric API returned 401. Possibly invalid workspace ID or insufficient permissions. Please sign in again.",
-            )
+                raise AuthenticationError("Fabric token expired or invalid. Please sign in again via Connections.")
+            raise AuthenticationError("Fabric API returned 401. Possibly invalid workspace ID or insufficient permissions. Please sign in again.")
         if resp.status_code != 200:
-            raise HTTPException(status_code=resp.status_code, detail=f"Fabric API error: {resp.text}")
+            raise InternalError(f"Fabric API error: {resp.text}")
 
         models = resp.json().get("value", [])
         result = [
@@ -89,11 +83,11 @@ async def discover_fabric_models(
         ]
         _discovery_cache[cache_key] = {"data": result, "expires_at": _time.monotonic() + _DISCOVERY_CACHE_TTL}
         return result
-    except HTTPException:
+    except SemaBridgeError:
         raise
     except Exception as e:
         logger.exception("Unexpected error in Fabric discovery: %s", e)
-        raise HTTPException(status_code=500, detail=f"Fabric discovery failed ({type(e).__name__}): {e}")
+        raise InternalError(f"Fabric discovery failed ({type(e).__name__}): {e}")
 
 
 async def discover_fabric_models_by_workspace(
@@ -110,12 +104,11 @@ async def discover_fabric_models_by_workspace(
 
 def discover_snowflake(identity_id: Optional[str] = Query(None)):
     import time
-    from pydantic import ValidationError
-    from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
+    from semabridge.connectors.factory import make_source_extractor
     from sqlalchemy import select
     from semabridge.repository.orm.models import Account
     from semabridge.repository.orm.session_factory import db_manager
-    from semabridge.auth.account_credential_resolver import scoped_account_env
+    from semabridge.auth.credential_builder import build_snowflake_config
 
     global _snowflake_discovery_cache
     if "_snowflake_discovery_cache" not in globals():
@@ -138,36 +131,31 @@ def discover_snowflake(identity_id: Optional[str] = Query(None)):
                 ).scalars().first()
 
                 if not account:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            f"No Snowflake account found for identity_id '{identity_id}'. "
-                            "Link this account in Settings -> Connections or POST to /api/accounts with connector_type 'SNOWFLAKE'."
-                        ),
+                    raise ValidationError(
+                        f"No Snowflake account found for identity_id '{identity_id}'. "
+                        "Link this account in Settings → Connections."
                     )
-                    
-                with scoped_account_env(account, session):
-                    from semabridge.core.settings import reload_settings
-                    scoped_settings = reload_settings()
-                    extractor = SnowflakeExtractor(scoped_settings.snowflake)
-                    views = extractor.discover_semantic_views()
+
+                try:
+                    base_cfg = get_settings().snowflake
+                except Exception:
+                    from semabridge.core.settings import SnowflakeConfig
+                    base_cfg = SnowflakeConfig(account="placeholder", user="placeholder", warehouse="placeholder", database="placeholder")
+
+                snowflake_cfg = build_snowflake_config(account, session, base_cfg)
+                extractor = make_source_extractor("snowflake", snowflake_cfg)
+                views = extractor.discover_semantic_views()
         else:
-            settings = get_settings()
             try:
-                snowflake_config = settings.snowflake
-            except ValidationError:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "Snowflake is not configured. "
-                        "Set SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, and SNOWFLAKE_PASSWORD in .env or environment variables."
-                    ),
+                snowflake_cfg = get_settings().snowflake
+            except Exception:
+                raise ValidationError(
+                    "Snowflake is not configured. "
+                    "Add a Snowflake connection in Settings → Connections."
                 )
-            extractor = SnowflakeExtractor(snowflake_config)
+            extractor = make_source_extractor("snowflake", snowflake_cfg)
             views = extractor.discover_semantic_views()
 
-        # Build final view format
-        snowflake_cfg_to_use = scoped_settings.snowflake if identity_id and 'scoped_settings' in locals() else snowflake_config
         final_results = sorted([
             {
                 "id": v["name"],
@@ -176,33 +164,28 @@ def discover_snowflake(identity_id: Optional[str] = Query(None)):
                 "status": "Available",
                 "description": v.get("comment") or "",
                 "created_on": v.get("created_on"),
-                "schema": v.get("schema", snowflake_cfg_to_use.schema_name),
-                "database": v.get("database", snowflake_cfg_to_use.database),
+                "schema": v.get("schema", snowflake_cfg.schema_name),
+                "database": v.get("database", snowflake_cfg.database),
             }
             for v in views
         ], key=lambda x: x["name"])
         
         _snowflake_discovery_cache[cache_key] = (final_results, time.monotonic())
         return final_results
-    except HTTPException:
+    except SemaBridgeError:
         raise
     except AttributeError as ae:
         if "execute" in str(ae).lower() or "SnowflakeConnection" in str(ae):
-            raise HTTPException(
-                status_code=500,
-                detail=f"Snowflake connection error - this is likely a driver issue. Please check your Snowflake connection. Error: {ae}",
-            )
-        raise HTTPException(status_code=500, detail=f"Snowflake semantic view discovery failed: {ae}")
+            raise InternalError(f"Snowflake connection error - this is likely a driver issue. Please check your Snowflake connection. Error: {ae}")
+        raise InternalError(f"Snowflake semantic view discovery failed: {ae}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Snowflake semantic view discovery failed: {e}")
+        raise InternalError(f"Snowflake semantic view discovery failed: {e}")
 
 def _get_snowflake_extractor(identity_id: Optional[str] = None):
-    from pydantic import ValidationError
-    from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
+    from semabridge.connectors.factory import make_source_extractor
     from semabridge.repository.orm.models import Account
     from semabridge.repository.orm.session_factory import db_manager
-    from semabridge.auth.account_credential_resolver import scoped_account_env
-    from fastapi import HTTPException
+    from semabridge.auth.credential_builder import build_snowflake_config
     from sqlalchemy import select
 
     if identity_id:
@@ -215,39 +198,33 @@ def _get_snowflake_extractor(identity_id: Optional[str] = None):
             ).scalars().first()
 
             if not account:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"No Snowflake account found for identity_id '{identity_id}'. "
-                        "Link this account in Settings -> Connections or POST to /api/accounts with connector_type 'SNOWFLAKE'."
-                    ),
+                raise ValidationError(
+                    f"No Snowflake account found for identity_id '{identity_id}'. "
+                    "Link this account in Settings → Connections."
                 )
-                
-            with scoped_account_env(account, session):
-                from semabridge.core.settings import reload_settings
-                scoped_settings = reload_settings()
-                return SnowflakeExtractor(scoped_settings.snowflake)
+
+            try:
+                base_cfg = get_settings().snowflake
+            except Exception:
+                from semabridge.core.settings import SnowflakeConfig
+                base_cfg = SnowflakeConfig(account="placeholder", user="placeholder", warehouse="placeholder", database="placeholder")
+
+            return make_source_extractor("snowflake", build_snowflake_config(account, session, base_cfg))
     else:
-        settings = get_settings()
         try:
-            snowflake_config = settings.snowflake
-        except ValidationError:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Snowflake is not configured. "
-                    "Set SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, and SNOWFLAKE_PASSWORD in .env or environment variables."
-                ),
+            snowflake_config = get_settings().snowflake
+        except Exception:
+            raise ValidationError(
+                "Snowflake is not configured. "
+                "Add a Snowflake connection in Settings → Connections."
             )
-        return SnowflakeExtractor(snowflake_config)
+        return make_source_extractor("snowflake", snowflake_config)
 
 def _execute_in_snowflake_context(func_name: str, identity_id: Optional[str] = None, *args, **kwargs):
-    from pydantic import ValidationError
-    from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
+    from semabridge.connectors.factory import make_source_extractor
     from semabridge.repository.orm.models import Account
     from semabridge.repository.orm.session_factory import db_manager
-    from semabridge.auth.account_credential_resolver import scoped_account_env
-    from fastapi import HTTPException
+    from semabridge.auth.credential_builder import build_snowflake_config
     from sqlalchemy import select
 
     logger.info("Starting Snowflake discovery context for action: %s, identity_id: %s", func_name, identity_id)
@@ -262,69 +239,86 @@ def _execute_in_snowflake_context(func_name: str, identity_id: Optional[str] = N
             ).scalars().first()
 
             if not account:
-                logger.error("No Snowflake account found for identity_id '%s'", identity_id)
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"No Snowflake account found for identity_id '{identity_id}'. "
-                        "Link this account in Settings -> Connections or POST to /api/accounts with connector_type 'SNOWFLAKE'."
-                    ),
+                raise ValidationError(
+                    f"No Snowflake account found for identity_id '{identity_id}'. "
+                    "Link this account in Settings → Connections."
                 )
-                
-            logger.info("Initializing SnowflakeExtractor inside scoped_account_env for account tag: %s", account.tag)
-            with scoped_account_env(account, session):
-                from semabridge.core.settings import reload_settings
-                scoped_settings = reload_settings()
-                extractor = SnowflakeExtractor(scoped_settings.snowflake)
-                func = getattr(extractor, func_name)
+
+            # Build a scoped SnowflakeConfig from the account bundle without
+            # mutating os.environ (thread-safe for concurrent API requests).
+            try:
+                base_cfg = get_settings().snowflake
+            except Exception:
+                # No base Snowflake config in .env — use a minimal placeholder;
+                # credential_builder will override all required fields from the account.
+                from semabridge.core.settings import SnowflakeConfig
+                base_cfg = SnowflakeConfig(
+                    account="placeholder",
+                    user="placeholder",
+                    warehouse="placeholder",
+                    database="placeholder",
+                )
+
+            try:
+                snowflake_cfg = build_snowflake_config(account, session, base_cfg)
+            except ValueError as ve:
+                raise ValidationError(
+                    f"Snowflake account '{account.tag}' is missing required credentials: {ve}. "
+                    "Edit the connection in Settings → Connections and verify all fields."
+                )
+            extractor = make_source_extractor("snowflake", snowflake_cfg)
+            func = getattr(extractor, func_name)
+            try:
                 return func(*args, **kwargs)
+            except ValueError as ve:
+                raise ValidationError(str(ve))
     else:
         logger.info("No identity_id provided, using default system settings for SnowflakeExtractor")
-        settings = get_settings()
         try:
-            snowflake_config = settings.snowflake
-        except ValidationError as ve:
+            snowflake_config = get_settings().snowflake
+        except Exception as ve:
             logger.error("Snowflake config validation failed: %s", ve)
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Snowflake is not configured. "
-                    "Set SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, and SNOWFLAKE_PASSWORD in .env or environment variables."
-                ),
+            raise ValidationError(
+                "Snowflake is not configured. "
+                "Add a Snowflake connection in Settings → Connections, or set "
+                "SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, and SNOWFLAKE_PASSWORD in .env."
             )
-        extractor = SnowflakeExtractor(snowflake_config)
+        extractor = make_source_extractor("snowflake", snowflake_config)
         func = getattr(extractor, func_name)
-        return func(*args, **kwargs)
+        try:
+            return func(*args, **kwargs)
+        except ValueError as ve:
+            raise ValidationError(str(ve))
 
 
 def discover_snowflake_warehouses(identity_id: Optional[str] = Query(None)):
     try:
         return _execute_in_snowflake_context("get_warehouses", identity_id)
-    except HTTPException:
+    except SemaBridgeError:
         raise
     except Exception as e:
         logger.exception("Snowflake warehouse discovery failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"Snowflake warehouse discovery failed: {e}")
+        raise InternalError(f"Snowflake warehouse discovery failed: {e}")
 
 
 def discover_snowflake_databases(identity_id: Optional[str] = Query(None)):
     try:
         return _execute_in_snowflake_context("get_databases", identity_id)
-    except HTTPException:
+    except SemaBridgeError:
         raise
     except Exception as e:
         logger.exception("Snowflake database discovery failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"Snowflake database discovery failed: {e}")
+        raise InternalError(f"Snowflake database discovery failed: {e}")
 
 
 def discover_snowflake_schemas(database: str, identity_id: Optional[str] = Query(None)):
     try:
         return _execute_in_snowflake_context("get_schemas", identity_id, database)
-    except HTTPException:
+    except SemaBridgeError:
         raise
     except Exception as e:
         logger.exception("Snowflake schema discovery failed for database %s: %s", database, e)
-        raise HTTPException(status_code=500, detail=f"Snowflake schema discovery failed: {e}")
+        raise InternalError(f"Snowflake schema discovery failed: {e}")
 
 
 def discover_repository():
@@ -364,11 +358,11 @@ def discover_repository():
                     "versioned": count_map.get(row.model_id, 0) > 0,
                 })
             return sorted(results, key=lambda x: x["name"])
-    except HTTPException:
+    except SemaBridgeError:
         raise
     except Exception as e:
         logger.error("Repository discovery failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"Failed to scan repository: {e}")
+        raise InternalError(f"Failed to scan repository: {e}")
 
 
 async def discover_multi_workspace(payload: Dict[str, Any]):
@@ -376,7 +370,7 @@ async def discover_multi_workspace(payload: Dict[str, Any]):
 
     workspace_ids = payload.get("workspace_ids", [])
     if not workspace_ids:
-        raise HTTPException(status_code=400, detail="workspace_ids array is required")
+        raise ValidationError("workspace_ids array is required")
 
     try:
         orchestrator = MultiWorkspaceOrchestrator(settings.fabric)
@@ -391,4 +385,4 @@ async def discover_multi_workspace(payload: Dict[str, Any]):
         }
     except Exception as e:
         logger.exception("Multi-workspace discovery failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise InternalError(str(e))

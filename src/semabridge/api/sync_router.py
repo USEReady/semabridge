@@ -10,7 +10,8 @@ Endpoints:
     POST   /sync/jobs/{id}/cancel   — Cancel a running job
     POST   /sync/jobs/{id}/resume   — Resolve conflicts and resume
     GET    /sync/jobs/{id}/conflicts — Get conflicts for a job
-    POST   /sync/conflicts/{id}/resolve — Resolve a single conflict
+    POST   /sync/conflicts/{id}/resolve — Resolve a single conflict (bulk)
+    PATCH  /sync/jobs/{id}/conflicts/{cid} — Approve/reject/escalate a single conflict
     GET    /sync/mappings      — List model mappings
     GET    /sync/schema/{model}/history — Schema version history
 """
@@ -81,10 +82,24 @@ class StartSyncRequest(BaseModel):
 
 
 class ResolveConflictRequest(BaseModel):
-    """Request to resolve a single conflict."""
+    """Request to resolve a single conflict (bulk endpoint)."""
 
     resolution: ConflictResolution
     resolved_by: str = "user"
+
+
+class PatchConflictRequest(BaseModel):
+    """Per-conflict approval/rejection request (fine-grained PATCH endpoint).
+
+    resolution must be one of: source_wins, target_wins, merge, human_review.
+    human_review blocks the deploy until a user with admin access clears it.
+    """
+
+    resolution: ConflictResolution
+    resolved_by: str = "user"
+    resolution_note: Optional[str] = Field(
+        default=None, description="Optional explanation for audit trail"
+    )
 
 
 class ResumeJobRequest(BaseModel):
@@ -217,13 +232,74 @@ def get_conflicts(job_id: str) -> List[Dict[str, Any]]:
 def resolve_conflict(
     conflict_id: str, request: ResolveConflictRequest
 ) -> Dict[str, str]:
-    """Resolve a single conflict."""
+    """Resolve a single conflict (legacy bulk-style endpoint)."""
     try:
         repo = _get_repo()
         repo.resolve_conflict(
             conflict_id, request.resolution, request.resolved_by
         )
         return {"conflict_id": conflict_id, "status": "resolved"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.patch("/jobs/{job_id}/conflicts/{conflict_id}")
+def patch_conflict(
+    job_id: str,
+    conflict_id: str,
+    request: PatchConflictRequest,
+) -> Dict[str, Any]:
+    """Approve, reject, or escalate a single conflict.
+
+    - resolution=source_wins / target_wins / merge  →  resolve and potentially auto-resume
+    - resolution=human_review  →  escalate (sets escalated=True); blocks deploy until cleared
+
+    Returns:
+        conflict_id, status, auto_resumed (True if all criticals are now resolved).
+    """
+    from semabridge.sync.models import ConflictResolution, ConflictSeverity
+
+    try:
+        repo = _get_repo()
+
+        # Resolve with note + escalated flag
+        is_escalated = request.resolution == ConflictResolution.HUMAN_REVIEW
+        repo.resolve_conflict_detailed(
+            conflict_id=conflict_id,
+            resolution=request.resolution,
+            resolved_by=request.resolved_by,
+            resolution_note=request.resolution_note,
+            escalated=is_escalated,
+        )
+
+        # Check if all CRITICAL conflicts for this job are now resolved
+        # (auto-resume when no more critical blockers remain)
+        remaining_criticals = [
+            c for c in repo.get_unresolved_conflicts(job_id)
+            if c.severity == ConflictSeverity.CRITICAL
+        ]
+        auto_resumed = False
+        if not remaining_criticals:
+            # No critical blockers — check if job is paused and resume it
+            try:
+                job = repo.get_job(job_id)
+                from semabridge.sync.models import SyncJobStatus
+                if job and job.status == SyncJobStatus.PAUSED:
+                    repo.update_job_status(job_id, SyncJobStatus.PENDING)
+                    auto_resumed = True
+                    logger.info(
+                        f"Job {job_id} auto-resumed: all critical conflicts resolved"
+                    )
+            except Exception as resume_err:
+                logger.warning(f"Could not auto-resume job {job_id}: {resume_err}")
+
+        return {
+            "conflict_id": conflict_id,
+            "job_id": job_id,
+            "status": "escalated" if is_escalated else "resolved",
+            "auto_resumed": auto_resumed,
+            "remaining_critical_conflicts": len(remaining_criticals),
+        }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -252,3 +328,78 @@ def get_schema_history(
     tracker = SchemaEvolutionTracker(repo)
     versions = tracker.get_history(model_name, limit=limit)
     return [v.model_dump() for v in versions]
+
+
+# =============================================================================
+# Schema Fix Endpoints — auto-add missing dimension columns
+# =============================================================================
+
+
+class AddMissingColumnRequest(BaseModel):
+    project_id: str = Field(..., description="Project that owns the Snowflake target")
+    dataset_name: str = Field(..., description="Dataset/table to ALTER")
+    column_name: str = Field(..., description="Column to add")
+    column_type: str = Field("VARCHAR", description="Snowflake SQL type for the new column (default VARCHAR)")
+
+
+@router.post("/schema/add-missing-column")
+async def add_missing_dimension_column(body: AddMissingColumnRequest) -> Dict[str, Any]:
+    """Add a missing dimension column to the Snowflake physical table.
+
+    Called by the frontend when the user clicks "Auto-add to Snowflake" for a
+    DIMENSION_MISSING conflict surfaced during dry run.  Executes
+    ALTER TABLE ... ADD COLUMN IF NOT EXISTS, then returns the ALTER SQL so the
+    caller can trigger a re-sync to include the column in DIMENSIONS.
+    """
+    from semabridge.api.services.project_shared import db_manager
+    from semabridge.connectors.connection_manager import ConnectionManager
+
+    try:
+        # Load project config to get Snowflake connection details
+        session = db_manager.get_session().__enter__()
+        try:
+            from semabridge.repository.orm.models import Project
+            project_row = session.query(Project).filter(Project.id == body.project_id).first()
+            if not project_row:
+                raise HTTPException(status_code=404, detail=f"Project '{body.project_id}' not found")
+            config_yaml = str(project_row.config_yaml or "")
+        finally:
+            session.__exit__(None, None, None)
+
+        if not config_yaml:
+            raise HTTPException(status_code=400, detail="Project has no stored configuration")
+
+        from semabridge.core.config_loader import load_config_from_yaml
+        config = load_config_from_yaml(config_yaml)
+        sf_cfg = getattr(config, "target", None) or getattr(config, "snowflake", None)
+        if sf_cfg is None:
+            raise HTTPException(status_code=400, detail="Project has no Snowflake target configuration")
+
+        conn_mgr = ConnectionManager(sf_cfg)
+        safe_col = body.column_name.replace('"', '""')
+        safe_tbl = body.dataset_name.rsplit(".", 1)[-1].replace('"', '""')
+        db_name = str(getattr(sf_cfg, "database", "") or "").strip()
+        schema_name = str(getattr(sf_cfg, "schema_name", "") or "").strip()
+
+        alter_sql = (
+            f'ALTER TABLE "{db_name}"."{schema_name}"."{safe_tbl}" '
+            f'ADD COLUMN IF NOT EXISTS "{safe_col}" {body.column_type}'
+        )
+
+        with conn_mgr.get_cursor() as cur:
+            conn_mgr._execute_sql(cur, alter_sql, context="add-missing-dim-column")
+
+        logger.info(
+            "Added missing dimension column '%s' to '%s.%s.%s' for project %s",
+            body.column_name, db_name, schema_name, safe_tbl, body.project_id,
+        )
+        return {
+            "status": "ok",
+            "message": f"Column '{body.column_name}' added to table '{safe_tbl}'. Re-run the sync to include it in DIMENSIONS.",
+            "alter_sql": alter_sql,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("add-missing-column failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))

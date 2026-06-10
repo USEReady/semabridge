@@ -146,8 +146,8 @@ def _resolve_models_path() -> Path:
             raw = (global_cfg or {}).get("core", {}).get("local_models_path")
             if raw:
                 return Path(raw).expanduser().resolve()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not read global config for models path: %s", exc)
 
     # 3/4. Project-level semabridge.yaml
     try:
@@ -159,8 +159,8 @@ def _resolve_models_path() -> Path:
             raw = source_cfg.get("pbix_folder") or source_cfg.get("repository_path")
             if raw:
                 return Path(raw).expanduser().resolve()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not read project config for models path: %s", exc)
 
     # 5. Default — project root (no more ./models subdirectory)
     return Path.cwd()
@@ -213,6 +213,25 @@ version_control_service = VersionControlService(
 )
 
 
+# ---------------------------------------------------------------------------
+# In-memory write-through cache
+#
+# These dicts are the primary read path for all project operations.
+# They are populated at startup from:
+#   1. config/.semabridge_compat_store.json  (fast path)
+#   2. ORM / SQLAlchemy                      (fallback)
+#   3. Filesystem YAML files                 (last resort)
+#
+# On write, data is stored to BOTH the dict AND the ORM (write-through).
+# This means reads are fast (no DB query), but the process holds the
+# authoritative state — two processes cannot share it without a proper
+# external store.
+#
+# Future direction: replace with a proper ProjectCache class that exposes
+# typed accessors (get_snapshots, find_snapshot, etc.) and is injected
+# via ServiceContainer rather than being a module-level global.
+# ---------------------------------------------------------------------------
+
 # -------------------------------------------------------
 # Health
 # -------------------------------------------------------
@@ -236,6 +255,24 @@ _compat_job_config: Dict[str, Any] = {
     "mode": "local",
 }
 _compat_store_loaded: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Cache accessor helpers
+# ---------------------------------------------------------------------------
+
+def get_project_snapshots(project_id: str) -> List[Dict[str, Any]]:
+    """Return all valid snapshot dicts for a project (filters out corrupt entries)."""
+    return [r for r in _compat_project_snapshots.get(project_id, []) if isinstance(r, dict)]
+
+
+def find_project_snapshot(project_id: str, snapshot_id: str) -> Optional[Dict[str, Any]]:
+    """Return a single snapshot by ID, or None if not found."""
+    return next(
+        (r for r in get_project_snapshots(project_id)
+         if str(r.get("snapshot_id") or "") == snapshot_id),
+        None,
+    )
 
 
 def _compat_now_iso() -> str:
@@ -653,6 +690,55 @@ def _compat_load_store() -> None:
         _compat_store_loaded = True
 
 
+def _compat_refresh_project_statuses_from_runs() -> None:
+    """Overwrite each project's in-memory status with its most recent Run result.
+
+    Called unconditionally during bootstrap (after the store is loaded) so that
+    stale "draft" values from the JSON store file are replaced with the real
+    status derived from the Run table.  Also called after every run completes
+    to keep the in-memory cache accurate without restarting.
+    """
+    if not _compat_projects:
+        return
+    try:
+        from semabridge.repository.orm.run_models import Run
+        from sqlalchemy import select, func
+
+        project_ids = [
+            pid for pid in _compat_projects
+            if pid and not pid.startswith("preview")
+        ]
+        if not project_ids:
+            return
+
+        _run_map = {"success": "active", "warning": "warning", "partial": "warning", "failed": "failed"}
+        with db_manager.get_session() as session:
+            max_ts_sq = (
+                select(Run.project_id, func.max(Run.completed_at).label("max_ts"))
+                .where(Run.project_id.in_(project_ids))
+                .where(Run.status.in_(["success", "failed", "warning", "partial"]))
+                .group_by(Run.project_id)
+                .subquery()
+            )
+            run_rows = session.execute(
+                select(Run.project_id, Run.status)
+                .join(
+                    max_ts_sq,
+                    (Run.project_id == max_ts_sq.c.project_id)
+                    & (Run.completed_at == max_ts_sq.c.max_ts),
+                )
+            ).all()
+
+        for rr in run_rows:
+            pid = str(rr.project_id or "").strip()
+            if pid and pid in _compat_projects:
+                _compat_projects[pid]["status"] = _run_map.get(
+                    str(rr.status).lower(), "draft"
+                )
+    except Exception as exc:
+        logger.debug("Could not refresh project statuses from runs: %s", exc)
+
+
 def _compat_bootstrap_projects_from_orm() -> None:
     """Seed compatibility project cache from persisted ORM projects when memory is empty."""
     if _compat_projects:
@@ -684,6 +770,7 @@ def _compat_bootstrap_projects_from_orm() -> None:
                 "status": "draft",
                 "created_at": _compat_now_iso(),
                 "updated_at": _compat_now_iso(),
+                "notification_email": row.notification_email or None,
             }
             _compat_projects[pid] = project
             _compat_project_configs.setdefault(pid, _compat_load_repo_yaml_text() or _compat_default_project_yaml(project))
@@ -749,6 +836,10 @@ def _compat_ensure_loaded() -> None:
     _compat_bootstrap_projects_from_modular_configs()
     _compat_bootstrap_projects_from_orm()
     _compat_bootstrap_project_from_repo_yaml()
+    # Always refresh statuses from the Run table regardless of how _compat_projects
+    # was populated (store file, ORM bootstrap, or YAML discovery).  The store file
+    # may hold stale "draft" values for projects that have had successful runs.
+    _compat_refresh_project_statuses_from_runs()
     _compat_bootstrapped = True
 
 
@@ -801,8 +892,8 @@ def _compat_load_repo_yaml_text() -> str:
             text = p.read_text(encoding="utf-8")
             if text.strip():
                 return text
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not read repo YAML text: %s", exc)
     return ""
 
 

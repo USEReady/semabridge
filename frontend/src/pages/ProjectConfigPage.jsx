@@ -476,6 +476,8 @@ export default function ProjectConfigPage() {
   const [compareResult, setCompareResult] = useState(null);
   const [compareMaximized, setCompareMaximized] = useState(false);
   const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
+  const [runPreview, setRunPreview] = useState(null);
+  const [runPreviewLoading, setRunPreviewLoading] = useState(false);
   const timezoneOptions = useMemo(() => ([
     'UTC',
     'Asia/Kolkata',
@@ -597,6 +599,10 @@ export default function ProjectConfigPage() {
         setProject(p);
         setYamlText(cfg?.config_yaml || '');
         setYamlPath(cfg?.yaml_path || '');
+        // Seed notification_email from project record (not stored in YAML)
+        if (p?.notification_email != null) {
+          setConfigForm(prev => ({ ...prev, notification_email: p.notification_email || '' }));
+        }
         // Initialize syncMode from project record or YAML options if available
         try {
           const yamlSync = (cfg && cfg.config_yaml) ? (parseProjectYaml(cfg.config_yaml, p)?.form?.write_strategy) : null;
@@ -1164,7 +1170,19 @@ export default function ProjectConfigPage() {
       setSaveInfo(msg);
       return;
     }
+    // Load snapshot diff preview (fast — no extraction required) before
+    // opening the confirm modal so the user can see what changed last time.
+    setRunPreview(null);
+    setRunPreviewLoading(true);
     setSyncConfirmOpen(true);
+    try {
+      const preview = await api.getRunPreview(id);
+      setRunPreview(preview);
+    } catch {
+      setRunPreview(null);
+    } finally {
+      setRunPreviewLoading(false);
+    }
   };
 
   const executeRunNow = async () => {
@@ -1588,6 +1606,15 @@ export default function ProjectConfigPage() {
 
     try {
       const response = await api.saveProjectSchedule(id, payload);
+
+      // Persist notification_email alongside the schedule
+      const notifEmail = (configForm.notification_email || '').trim();
+      try {
+        await api.updateProject(id, { notification_email: notifEmail || null });
+      } catch {
+        // non-fatal — schedule still saved
+      }
+
       let successMsg = '';
       if (scheduleType === 'manual') {
         successMsg = response?.message || 'Schedule cleared. Trigger remains on-demand.';
@@ -2131,10 +2158,29 @@ export default function ProjectConfigPage() {
               </div>
             </div>
           </div>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 24 }}>
-          <button onClick={() => setSchedulerOpen(false)} style={secondaryBtn}>Cancel</button>
-          <button onClick={handleScheduleSave} style={primaryBtn}>Save</button>
+
+          {/* Notification email — shown in the schedule modal so users can
+              configure it alongside the schedule they're setting up. */}
+          <div>
+            <label style={{ fontWeight: 500, fontSize: 12, display: 'block', marginBottom: 4 }}>
+              Notification Email <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>(optional)</span>
+            </label>
+            <input
+              type="email"
+              value={configForm.notification_email || ''}
+              onChange={e => setConfigForm(prev => ({ ...prev, notification_email: e.target.value }))}
+              placeholder="alerts@yourcompany.com"
+              style={{ ...modalInputStyle }}
+            />
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+              Receive an email when a scheduled sync completes with warnings or failures.
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+            <button onClick={() => setSchedulerOpen(false)} style={secondaryBtn}>Cancel</button>
+            <button onClick={handleScheduleSave} style={primaryBtn}>Save</button>
+          </div>
         </div>
       </Modal>
 
@@ -2466,6 +2512,48 @@ export default function ProjectConfigPage() {
               <div style={{ fontSize: 12, color: 'var(--text-primary)', lineHeight: 1.5 }}>
                 COPY mode will fully replace the target. Any target-only models not present in the source will be permanently removed.
               </div>
+            </div>
+          )}
+
+          {/* Run preview: changes since last run */}
+          {runPreviewLoading && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-tertiary)', padding: '8px 0' }}>
+              <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
+              Checking for changes since last run…
+            </div>
+          )}
+          {!runPreviewLoading && runPreview && runPreview.has_prior_run && runPreview.total_changes > 0 && (() => {
+            const s = runPreview.summary || {};
+            const rows = [
+              s.metrics_added > 0 && { label: `+${s.metrics_added} metric(s) added`, color: '#16a34a' },
+              s.metrics_removed > 0 && { label: `-${s.metrics_removed} metric(s) removed`, color: '#dc2626' },
+              s.metrics_changed > 0 && { label: `~${s.metrics_changed} metric(s) changed`, color: '#d97706' },
+              s.tables_added > 0 && { label: `+${s.tables_added} table(s) added`, color: '#16a34a' },
+              s.tables_removed > 0 && { label: `-${s.tables_removed} table(s) removed`, color: '#dc2626' },
+              s.columns_added > 0 && { label: `+${s.columns_added} column(s) added`, color: '#16a34a' },
+              s.columns_removed > 0 && { label: `-${s.columns_removed} column(s) removed`, color: '#dc2626' },
+              s.relationships_added > 0 && { label: `+${s.relationships_added} relationship(s) added`, color: '#16a34a' },
+              s.relationships_removed > 0 && { label: `-${s.relationships_removed} relationship(s) removed`, color: '#dc2626' },
+            ].filter(Boolean);
+            const lastRunDate = runPreview.last_run_at
+              ? new Date(runPreview.last_run_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+              : 'last run';
+            return (
+              <div style={{ padding: 12, borderRadius: 8, background: 'rgba(245, 158, 11, 0.07)', border: '1px solid rgba(245, 158, 11, 0.4)' }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#92400e', marginBottom: 6 }}>
+                  ⚠ {runPreview.total_changes} change(s) detected since {lastRunDate}
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px' }}>
+                  {rows.map((r, i) => (
+                    <span key={i} style={{ fontSize: 11, color: r.color, fontWeight: 500 }}>{r.label}</span>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+          {!runPreviewLoading && runPreview && runPreview.has_prior_run && runPreview.total_changes === 0 && (
+            <div style={{ fontSize: 12, color: '#16a34a', padding: '4px 0' }}>
+              ✓ No schema changes detected since last run.
             </div>
           )}
 

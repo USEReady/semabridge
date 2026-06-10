@@ -246,29 +246,47 @@ const ConflictResolutionModal = ({ isOpen, onClose, onProceed, conflicts, isDepl
                         <h3 className="text-xs font-bold text-tertiary uppercase tracking-widest flex items-center gap-2">
                             <Activity size={14} /> Affected Entities
                         </h3>
-                        <div className="border border-main rounded-xl overflow-hidden bg-surface-raised shadow-inner max-h-60 overflow-y-auto">
+                        <div className="border border-main rounded-xl overflow-hidden bg-surface-raised shadow-inner max-h-72 overflow-y-auto">
                             <table className="w-full text-xs text-left">
                                 <thead className="bg-surface sticky top-0 border-b border-main">
                                     <tr>
-                                        <th className="px-4 py-3 font-bold text-tertiary uppercase tracking-tighter">Model / Entity</th>
-                                        <th className="px-4 py-3 font-bold text-tertiary uppercase tracking-tighter">Change</th>
+                                        <th className="px-3 py-3 font-bold text-tertiary uppercase tracking-tighter">Severity</th>
+                                        <th className="px-3 py-3 font-bold text-tertiary uppercase tracking-tighter">Model / Entity</th>
+                                        <th className="px-3 py-3 font-bold text-tertiary uppercase tracking-tighter">Change Type</th>
+                                        <th className="px-3 py-3 font-bold text-tertiary uppercase tracking-tighter">Details</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {conflicts?.map((c, i) => (
-                                        <tr key={i} className="border-b border-main last:border-0 hover:bg-surface-hover transition-colors">
-                                            <td className="px-4 py-3 font-mono font-bold text-primary">{c.model_name}</td>
-                                            <td className="px-4 py-3">
-                                                <span className={`px-2.5 py-1 rounded-md text-[10px] font-bold uppercase ${c.change_type === 'ADDED' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-blue-500/10 text-blue-400'
-                                                    }`}>
-                                                    {c.change_type}
-                                                </span>
-                                            </td>
-                                        </tr>
-                                    ))}
+                                    {conflicts?.map((c, i) => {
+                                        const sev = (c.severity || '').toUpperCase();
+                                        const sevColor = sev === 'CRITICAL'
+                                            ? 'bg-red-500/15 text-red-400'
+                                            : sev === 'WARNING'
+                                                ? 'bg-amber-500/15 text-amber-400'
+                                                : 'bg-blue-500/10 text-blue-400';
+                                        const changeColor = (c.change_type || '').toLowerCase().includes('add')
+                                            ? 'bg-emerald-500/10 text-emerald-400'
+                                            : (c.change_type || '').toLowerCase().includes('remov') || (c.change_type || '').toLowerCase().includes('delet')
+                                                ? 'bg-red-500/10 text-red-400'
+                                                : 'bg-blue-500/10 text-blue-400';
+                                        return (
+                                            <tr key={c.conflict_id || i} className="border-b border-main last:border-0 hover:bg-surface-hover transition-colors">
+                                                <td className="px-3 py-2.5">
+                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${sevColor}`}>{sev || '—'}</span>
+                                                </td>
+                                                <td className="px-3 py-2.5 font-mono font-bold text-primary max-w-[120px] truncate" title={c.model_name}>{c.model_name}</td>
+                                                <td className="px-3 py-2.5">
+                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${changeColor}`}>
+                                                        {(c.change_type || '').replace(/_/g, ' ')}
+                                                    </span>
+                                                </td>
+                                                <td className="px-3 py-2.5 text-secondary max-w-[180px] truncate" title={c.description}>{c.description || '—'}</td>
+                                            </tr>
+                                        );
+                                    })}
                                     {(!conflicts || conflicts.length === 0) && (
                                         <tr>
-                                            <td colSpan="2" className="px-4 py-8 text-center text-tertiary italic">
+                                            <td colSpan="4" className="px-4 py-8 text-center text-tertiary italic">
                                                 No granular conflict details available.
                                             </td>
                                         </tr>

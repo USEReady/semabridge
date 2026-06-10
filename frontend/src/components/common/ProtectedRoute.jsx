@@ -6,12 +6,21 @@ import { Hexagon } from 'lucide-react';
  * ProtectedRoute — wraps private routes.
  * If not authenticated, redirects to /login preserving the intended destination.
  * Shows a loading spinner while auth state is being confirmed.
+ *
+ * Accepts an optional `requiredRole` prop. When provided, the authenticated
+ * user's role must match; otherwise the user is redirected to /unauthorized.
+ *
+ * Security: never renders protected content until isAuthenticated is
+ * confirmed true AND loading has resolved. This prevents an unauthenticated
+ * user with a stale/invalid token in localStorage from accessing app routes
+ * while the bootstrap check is still in-flight.
  */
-export default function ProtectedRoute() {
-  const { isAuthenticated, loading, token } = useAuth();
+export default function ProtectedRoute({ requiredRole } = {}) {
+  const { isAuthenticated, loading, user } = useAuth();
   const location = useLocation();
 
-  if (loading && !token) {
+  // Block rendering until auth resolution is complete — show spinner.
+  if (loading) {
     return (
       <div
         className="flex items-center justify-center h-screen bg-app"
@@ -23,15 +32,16 @@ export default function ProtectedRoute() {
     );
   }
 
-  // Optimistic route access: if a token exists, allow app routes while
-  // AuthContext finishes background profile recovery.
-  if (!isAuthenticated && token) {
-    return <Outlet />;
-  }
-
+  // Auth resolved and user is not authenticated — redirect to login.
   if (!isAuthenticated) {
     const nextPath = `${location.pathname}${location.search}${location.hash}`;
     return <Navigate to="/login" replace state={{ from: nextPath }} />;
+  }
+
+  // Role check — if a required role is specified and the user doesn't have it,
+  // redirect to the unauthorized page instead of rendering the route.
+  if (requiredRole && user?.role !== requiredRole) {
+    return <Navigate to="/unauthorized" replace />;
   }
 
   return <Outlet />;

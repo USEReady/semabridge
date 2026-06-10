@@ -1,11 +1,11 @@
 """
-Configuration settings for Semabridge.
+Connection configuration models (Pydantic).
 
-Uses Pydantic Settings for type-safe configuration loading from environment
-variables and .env files. Avoids the issues from semantic-sync by:
-1. Clear separation of config concerns (Snowflake, Fabric, Model)
-2. No nested Settings objects that cause attribute errors
-3. Explicit validation with helpful error messages
+Use this module when you need typed, validated connection config for
+Snowflake, Fabric, or Databricks connectors.  Settings are loaded from
+environment variables and .env files via ``pydantic-settings``.
+
+Do NOT import config_loader here — that module handles YAML files.
 """
 
 from __future__ import annotations
@@ -33,8 +33,11 @@ class SnowflakeConfig(BaseSettings):
         extra="ignore",
     )
     
-    account: str = Field(..., description="Snowflake account identifier (e.g., abc123.us-east-1)")
-    user: str = Field(..., description="Snowflake username")
+    # All connection fields are Optional so that identity-based (Account table)
+    # auth works without SNOWFLAKE_* env vars. Credentials are resolved at
+    # runtime from the Account record when identity_id is present.
+    account: Optional[str] = Field(default=None, description="Snowflake account identifier (e.g., abc123.us-east-1)")
+    user: Optional[str] = Field(default=None, description="Snowflake username")
     password: Optional[SecretStr] = Field(default=None, description="Snowflake password (required for password auth)")
     auth_type: str = Field(default="password", description="Auth method: password | oauth | keypair")
     private_key: Optional[str] = Field(default=None, description="PEM-encoded private key for Key Pair auth")
@@ -45,8 +48,8 @@ class SnowflakeConfig(BaseSettings):
     oauth_client_secret: Optional[SecretStr] = Field(default=None, description="OAuth client secret for External OAuth S2S auth")
     oauth_token_endpoint: Optional[str] = Field(default=None, description="OAuth token endpoint URL (e.g. https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token)")
     oauth_scope: Optional[str] = Field(default=None, description="OAuth scope for token request")
-    warehouse: str = Field(..., description="Snowflake warehouse name")
-    database: str = Field(..., description="Snowflake database name")
+    warehouse: Optional[str] = Field(default=None, description="Snowflake warehouse name")
+    database: Optional[str] = Field(default=None, description="Snowflake database name")
     schema_name: str = Field(default="PUBLIC", validation_alias="SNOWFLAKE_SCHEMA", description="Snowflake schema name")
     role: Optional[str] = Field(default=None, description="Snowflake role (optional)")
 
@@ -84,11 +87,28 @@ class SnowflakeConfig(BaseSettings):
     
     @field_validator("account")
     @classmethod
-    def validate_account(cls, v: str) -> str:
-        """Ensure account identifier is properly formatted."""
+    def validate_account(cls, v) -> str:
+        """Ensure account identifier is properly formatted.
+
+        Accepts full URLs like https://abc123.snowflakecomputing.com and
+        strips them down to just the account identifier (abc123).
+
+        None is allowed — it signals identity-based (Account table) auth where
+        the account is resolved at runtime, not from env vars.
+        """
+        if v is None:
+            return v  # Identity-based auth — env vars not required
         if not v or v == "your-account.region":
             raise ValueError("SNOWFLAKE_ACCOUNT must be set to your actual Snowflake account")
-        return v.strip()
+        v = v.strip()
+        # Strip protocol
+        for prefix in ("https://", "http://"):
+            if v.lower().startswith(prefix):
+                v = v[len(prefix):]
+        # Strip .snowflakecomputing.com suffix and any trailing path
+        if ".snowflakecomputing.com" in v.lower():
+            v = v.lower().split(".snowflakecomputing.com")[0]
+        return v
 
 
 class FabricConfig(BaseSettings):
@@ -101,15 +121,18 @@ class FabricConfig(BaseSettings):
         extra="ignore",
     )
     
-    tenant_id: str = Field(..., description="Azure AD tenant ID")
-    client_id: str = Field(..., description="Azure AD application (client) ID")
+    # All fields are Optional so that identity-based (Account table) auth works
+    # without any FABRIC_* env vars. When env vars are absent the extractor
+    # resolves credentials from the Account record at runtime.
+    tenant_id: Optional[str] = Field(default=None, description="Azure AD tenant ID")
+    client_id: Optional[str] = Field(default=None, description="Azure AD application (client) ID")
     # client_secret is only required for service-principal (client-credentials) flow.
-    # Leave unset when using interactive device-code flow.
+    # Leave unset when using interactive device-code / identity-based flow.
     client_secret: Optional[SecretStr] = Field(
         default=None,
         description="Azure AD client secret (not required for device-code / delegated flow)",
     )
-    workspace_id: str = Field(..., description="Primary Fabric workspace ID")
+    workspace_id: Optional[str] = Field(default=None, description="Primary Fabric workspace ID")
     
     # Multi-workspace support
     workspace_ids: List[str] = Field(
@@ -147,8 +170,14 @@ class FabricConfig(BaseSettings):
     
     @field_validator("tenant_id", "client_id", "workspace_id")
     @classmethod
-    def validate_guid(cls, v: str, info) -> str:
-        """Validate GUID format. 'organizations' is accepted as a valid tenant."""
+    def validate_guid(cls, v, info) -> str:
+        """Validate GUID format. 'organizations' is accepted as a valid tenant.
+
+        None is allowed — it signals identity-based (Account table) auth where
+        these fields are resolved at runtime from the Account record, not env vars.
+        """
+        if v is None:
+            return v  # Identity-based auth — env vars not required
         if not v or v.startswith("your-"):
             raise ValueError(f"FABRIC_{info.field_name.upper()} must be set to a valid value")
         return v.strip()
@@ -674,18 +703,29 @@ class Settings(BaseSettings):
         return self._behavior
 
     def validate_snowflake(self) -> bool:
-        """Validate Snowflake configuration is complete."""
+        """Validate Snowflake configuration is complete (env-var path only).
+
+        Returns True only when the required connection fields are populated from
+        env vars. Returns False when credentials come from the Account table
+        (identity-based path) — Stage 3 handles that separately.
+        """
         try:
-            _ = self.snowflake
-            return True
+            cfg = self.snowflake
+            return bool(cfg.account and cfg.user)
         except Exception:
             return False
     
     def validate_fabric(self) -> bool:
-        """Validate Fabric configuration is complete."""
+        """Validate Fabric configuration is complete (env-var path only).
+
+        Returns True only when the *required* fields are populated from env vars.
+        This intentionally returns False when credentials come from the Account
+        table (identity-based path) — Stage 3 handles that via
+        _has_fabric_identity_auth() / fabric_account_ctx_ok.
+        """
         try:
-            _ = self.fabric
-            return True
+            cfg = self.fabric
+            return bool(cfg.client_id and cfg.workspace_id)
         except Exception:
             return False
 
@@ -761,8 +801,8 @@ def resolve_workspace_id(
             val = cfg.get("fabric", {}).get("default_workspace_id")
             if val:
                 return val
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not read semabridge.yaml for workspace ID: %s", exc)
 
     # 3. Global config.yaml
     try:
@@ -773,23 +813,23 @@ def resolve_workspace_id(
             val = cfg.get("fabric", {}).get("default_workspace_id")
             if val:
                 return val
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not read global config.yaml for workspace ID: %s", exc)
 
     # 4. Env-var via FabricConfig
     try:
         s = get_settings()
         return s.fabric.resolved_default_workspace_id
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not read workspace ID from settings: %s", exc)
 
     # 5. Interactive prompt (only works in CLI context)
     if prompt_fallback:
         try:
             import typer
             return typer.prompt("No workspace ID configured. Enter Fabric Workspace ID")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Interactive workspace ID prompt failed: %s", exc)
 
     raise ValueError(
         "No workspace ID configured. Set FABRIC_WORKSPACE_ID in .env, "

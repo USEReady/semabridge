@@ -1,19 +1,42 @@
 // ...existing code...
 // (Removed duplicate export of api. Only export once at the end of the file, with getDatabricksSources included as a method.)
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
-const TOKEN_KEY = 'semabridge-token';
+// Fabric MSAL token is kept in memory only — not persisted to localStorage.
+// This prevents XSS exfiltration of the Fabric OAuth token. On page reload the
+// token is re-acquired via the MSAL device-code / refresh flow.
+// (Legacy localStorage keys are kept only to remove stale values on cleanup.)
 const FABRIC_TOKEN_KEY = 'semabridge-fabric-token';
 const FABRIC_TOKEN_EXPIRES_KEY = 'semabridge-fabric-token-expires';
-const API_CACHE_TTL_MS = 2 * 60 * 1000;
+
+// Module-level memory storage for the Fabric MSAL token (not persisted across
+// page refreshes — intentional: re-authentication is required after reload).
+let _fabricTokenMemory = null;
+let _fabricTokenExpiresAt = 0;
+const API_CACHE_TTL_MS = Number(import.meta.env.VITE_CACHE_TTL_MS) || 2 * 60 * 1000;
 const API_REQUEST_TIMEOUT_MS = 60000;
 const UI_LIST_REQUEST_TIMEOUT_MS = 30000;
-const PROJECT_LIST_REQUEST_TIMEOUT_MS = 60000;
-const PROJECT_RUN_REQUEST_TIMEOUT_MS = 180000;
+const PROJECT_LIST_REQUEST_TIMEOUT_MS = parseInt(import.meta.env.VITE_API_TIMEOUT_MS ?? '60000', 10);
+const PROJECT_RUN_REQUEST_TIMEOUT_MS = parseInt(import.meta.env.VITE_RUN_TIMEOUT_MS ?? '180000', 10);
+const HEALTH_CHECK_TIMEOUT_MS = parseInt(import.meta.env.VITE_HEALTH_TIMEOUT_MS ?? '5000', 10);
 const UI_LIST_CACHE_TTL_MS = 20000;
 const apiCache = new Map();
 const inFlightApiCalls = new Map();
 // Prevent unbounded growth of in-memory caches. Keep a simple LRU-ish cap.
-const API_CACHE_MAX_ITEMS = 200;
+const API_CACHE_MAX_ITEMS = Number(import.meta.env.VITE_CACHE_MAX_ITEMS) || 200;
+
+/**
+ * Read the csrf_token cookie set by the backend CSRFMiddleware.
+ * The cookie is httponly=false so JS can read it and echo it back
+ * as X-CSRF-Token on state-changing requests (double-submit cookie pattern).
+ */
+function getCsrfToken() {
+    try {
+        const match = document.cookie.split(';').find(c => c.trim().startsWith('csrf_token='));
+        return match ? decodeURIComponent(match.trim().slice('csrf_token='.length)) : '';
+    } catch {
+        return '';
+    }
+}
 
 function ensureCacheSize() {
     try {
@@ -266,8 +289,8 @@ function normalizeLocalFolder(folder) {
 }
 
 function getAuthHeaders() {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (token) return { Authorization: `Bearer ${token}` };
+    // Access token is now stored in an HttpOnly cookie sent automatically by the browser.
+    // No Authorization header is injected here; credentials: 'include' in authFetch handles it.
     return {};
 }
 
@@ -283,14 +306,15 @@ async function _getDatabricksSources(connectionId = '') {
  * Return the stored Fabric MSAL access token as a Bearer header if valid.
  * This is injected on Fabric-specific API calls so the backend resolves
  * the correct per-user token instead of falling back to the shared DB row.
+ * The token is stored in memory only (not localStorage) to prevent XSS exfiltration.
  */
 function getFabricAuthHeaders() {
-    const token = localStorage.getItem(FABRIC_TOKEN_KEY);
-    const expiresAt = parseInt(localStorage.getItem(FABRIC_TOKEN_EXPIRES_KEY) || '0', 10);
-    if (token && Date.now() < expiresAt) {
-        return { Authorization: `Bearer ${token}` };
+    if (_fabricTokenMemory && Date.now() < _fabricTokenExpiresAt) {
+        return { Authorization: `Bearer ${_fabricTokenMemory}` };
     }
-    // Token expired or missing - clean up stale values.
+    // Token expired or missing — clear in-memory state and any stale localStorage remnants.
+    _fabricTokenMemory = null;
+    _fabricTokenExpiresAt = 0;
     localStorage.removeItem(FABRIC_TOKEN_KEY);
     localStorage.removeItem(FABRIC_TOKEN_EXPIRES_KEY);
     return {};
@@ -316,9 +340,7 @@ export async function fetchWithTimeout(url, options = {}, timeoutMs = API_REQUES
 }
 
 function hasValidFabricToken() {
-    const token = localStorage.getItem(FABRIC_TOKEN_KEY);
-    const expiresAt = parseInt(localStorage.getItem(FABRIC_TOKEN_EXPIRES_KEY) || '0', 10);
-    return Boolean(token && Date.now() < expiresAt);
+    return Boolean(_fabricTokenMemory && Date.now() < _fabricTokenExpiresAt);
 }
 
 const AUTH_BASE = (import.meta.env.VITE_AUTH_BASE_URL || '/auth').replace(/\/$/, '');
@@ -330,11 +352,10 @@ const REFRESH_FAILURE_COOLDOWN_MS = 5000;
 const AUTH_EXPIRED_EVENT_COOLDOWN_MS = 5000;
 
 function hasJwtToken() {
-    try {
-        return Boolean(localStorage.getItem(TOKEN_KEY));
-    } catch {
-        return false;
-    }
+    // Token is in an HttpOnly cookie — we can't read it from JS.
+    // Assume a token exists if the user has been authenticated (checked via /auth/me on bootstrap).
+    // This function is used only for logging/diagnostics; always return true as a safe default.
+    return true;
 }
 
 function readPersistentListCache(key) {
@@ -382,28 +403,17 @@ export async function tryRefreshToken() {
             if (res.ok) {
                 const data = await res.json();
                 if (data.access_token) {
-                    localStorage.setItem(TOKEN_KEY, data.access_token);
+                    // Backend sets the new access_token cookie; just notify listeners
                     window.dispatchEvent(new CustomEvent('semabridge:token-refreshed', { detail: data.access_token }));
                     _lastRefreshFailureAt = 0;
                     return data.access_token;
                 }
             }
 
-            // Step 2: Refresh cookie failed — try auto-login (dev mode)
-            const autoRes = await fetchWithTimeout(`${AUTH_BASE}/auto-login`, {
-                method: 'POST',
-                credentials: 'include',
-            });
-            if (autoRes.ok) {
-                const autoData = await autoRes.json();
-                if (autoData.access_token) {
-                    localStorage.setItem(TOKEN_KEY, autoData.access_token);
-                    window.dispatchEvent(new CustomEvent('semabridge:token-refreshed', { detail: autoData.access_token }));
-                    _lastRefreshFailureAt = 0;
-                    return autoData.access_token;
-                }
-            }
-
+            // Refresh cookie missing or expired — notify AuthContext to handle
+            // cleanup. Auto-login is intentionally NOT called here; it may only
+            // be triggered during the explicit dev bootstrap (app first load).
+            emitAuthExpiredOnce();
             _lastRefreshFailureAt = Date.now();
             return null;
         } catch {
@@ -431,7 +441,12 @@ async function handleResponse(res) {
         try {
             const cloned = res.clone();
             const data = await cloned.json();
-            if (data?.error === 'reauth_required' || data?.detail?.error === 'reauth_required') {
+            const detailStr = typeof data?.detail === 'string' ? data.detail : '';
+            const isReauth = data?.error === 'reauth_required'
+                || data?.detail?.error === 'reauth_required'
+                || detailStr.includes('reauth_required')
+                || data?.error_type === 'AuthenticationError';
+            if (isReauth) {
                 return data.detail || data;
             }
         } catch {
@@ -492,17 +507,25 @@ async function authFetch(url, options = {}) {
     const retryDelayMs = 250;
     // Inject X-Fabric-Context header if workspace ID is available
     let workspaceId = null;
-    let tokenPresent = false;
+    // tokenPresent is always true when using HttpOnly cookie auth (can't be read from JS)
+    const tokenPresent = true;
     try {
         workspaceId = localStorage.getItem('FABRIC_WORKSPACE_ID');
-        tokenPresent = Boolean(localStorage.getItem(TOKEN_KEY));
     } catch {
         workspaceId = null;
-        tokenPresent = false;
     }
     const headers = { ...getAuthHeaders(), ...restOptions.headers };
     if (workspaceId) {
         headers['X-Fabric-Context'] = workspaceId;
+    }
+    // Double-submit cookie CSRF protection: echo the csrf_token cookie back as
+    // X-CSRF-Token on all state-changing requests. The backend CSRFMiddleware
+    // (active when AUTH_ENABLED=true) validates header == cookie before processing.
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+        const csrfToken = getCsrfToken();
+        if (csrfToken) {
+            headers['X-CSRF-Token'] = csrfToken;
+        }
     }
     let res;
     let lastError = null;
@@ -584,6 +607,9 @@ export const api = {
 
     async createAccount(payload) {
         invalidateApiCache('accounts:');
+        // Bust discovery cache so the new account's warehouses/databases load fresh
+        invalidateApiCache('discovery:snowflake:');
+        invalidateApiCache('discovery:fabric:');
         const res = await authFetch(`${API_BASE_URL}/accounts`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -628,7 +654,7 @@ export const api = {
         try {
             const res = await fetchWithTimeout(`${API_BASE_URL}/health`, {
                 credentials: 'include',
-            }, 5000);
+            }, HEALTH_CHECK_TIMEOUT_MS);
             if (!res.ok) return { status: 'error' };
             return await res.json();
         } catch {
@@ -981,11 +1007,15 @@ export const api = {
         });
         const data = await handleResponse(res);
 
-        // On success, store the MSAL token in localStorage for Bearer passthrough.
+        // On success, store the MSAL token in memory only (not localStorage) to
+        // prevent XSS exfiltration. The token will need to be re-acquired on reload.
         if (data.status === 'success' && data.access_token) {
-            localStorage.setItem(FABRIC_TOKEN_KEY, data.access_token);
             const expiresAt = Date.now() + (data.expires_in || 3600) * 1000;
-            localStorage.setItem(FABRIC_TOKEN_EXPIRES_KEY, String(expiresAt));
+            _fabricTokenMemory = data.access_token;
+            _fabricTokenExpiresAt = expiresAt;
+            // Clean up any stale localStorage remnants from previous sessions.
+            localStorage.removeItem(FABRIC_TOKEN_KEY);
+            localStorage.removeItem(FABRIC_TOKEN_EXPIRES_KEY);
             // Notify listeners (UI) that a new Fabric token is available.
             try {
                 window.dispatchEvent(new CustomEvent('semabridge:fabric-token-refreshed', {
@@ -1011,6 +1041,9 @@ export const api = {
     },
 
     async fabricLogout() {
+        // Clear in-memory token and any stale localStorage remnants.
+        _fabricTokenMemory = null;
+        _fabricTokenExpiresAt = 0;
         localStorage.removeItem(FABRIC_TOKEN_KEY);
         localStorage.removeItem(FABRIC_TOKEN_EXPIRES_KEY);
         try {
@@ -1072,7 +1105,11 @@ export const api = {
             return { workspaces: [] };
         }
 
-        return handleResponse(res);
+        try {
+            return await handleResponse(res);
+        } catch (err) {
+            throw err;
+        }
     },
 
     async fabricSelectWorkspace(workspaceId, workspaceName) {
@@ -1182,15 +1219,15 @@ export const api = {
     },
 
     // ── Projects ───────────────────────────────────────────────────────────
-    async listProjects() {
-        const cacheKey = 'projects:list';
+    async listProjects({ limit = 50, offset = 0 } = {}) {
+        const cacheKey = `projects:list:${limit}:${offset}`;
         const cached = getCachedApiValue(cacheKey);
         if (cached) return cached;
 
         return coalesceApiCall(cacheKey, async () => {
             try {
                 const res = await withSingleTimeoutRetry(() =>
-                    authFetch(`${API_BASE_URL}/projects`, { timeoutMs: PROJECT_LIST_REQUEST_TIMEOUT_MS })
+                    authFetch(`${API_BASE_URL}/projects?limit=${limit}&offset=${offset}`, { timeoutMs: PROJECT_LIST_REQUEST_TIMEOUT_MS })
                 );
                 const data = await handleResponse(res);
                 const normalized = dedupeProjects(data || []);
@@ -1297,6 +1334,7 @@ export const api = {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
+            timeoutMs: PROJECT_RUN_REQUEST_TIMEOUT_MS,
         });
         const created = await handleResponse(res);
         return normalizeProject(created?.project ?? created);
@@ -1491,6 +1529,7 @@ export const api = {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
+                timeoutMs: PROJECT_RUN_REQUEST_TIMEOUT_MS,
             });
             
             // Handle non-200 responses
@@ -1511,18 +1550,48 @@ export const api = {
             if (!data.entity_mappings) {
                 data.entity_mappings = [];
             }
-            
+
             if (!Array.isArray(data.entity_mappings)) {
                 console.warn('[API] entity_mappings is not an array, fixing...');
                 data.entity_mappings = [];
             }
-            
+
+            // Normalise schema_conflicts
+            if (!Array.isArray(data.schema_conflicts)) {
+                data.schema_conflicts = [];
+            }
+            // compatibility_score comes from the backend only when a real dry-run
+            // executed. If the backend returns null/undefined we leave it as null so
+            // the UI does NOT show a score bar at all — a fake 100% is misleading.
+            if (typeof data.compatibility_score !== 'number') {
+                data.compatibility_score = null;
+            }
+
             return data;
             
         } catch (error) {
             console.error('[API] runProjectDryRun error:', error);
             throw error;
         }
+    },
+
+    /**
+     * Auto-add a missing dimension column to the Snowflake physical table.
+     * Called from the dry-run conflict UI when the user clicks "Auto-add to Snowflake".
+     * After this succeeds the caller should trigger a re-sync.
+     */
+    async addMissingDimensionColumn(projectId, datasetName, columnName, columnType = 'VARCHAR') {
+        const res = await authFetch(`${API_BASE_URL.replace('/api', '')}/sync/schema/add-missing-column`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                project_id: String(projectId),
+                dataset_name: datasetName,
+                column_name: columnName,
+                column_type: columnType,
+            }),
+        });
+        return handleResponse(res);
     },
 
     async updateMapping(projectId, mappingId, targetNameOrPayload) {
@@ -1673,6 +1742,13 @@ export const api = {
             headers: payload ? { 'Content-Type': 'application/json' } : undefined,
             body: payload ? JSON.stringify(payload) : undefined,
             timeoutMs: PROJECT_RUN_REQUEST_TIMEOUT_MS,
+        });
+        return handleResponse(res);
+    },
+
+    async getRunPreview(projectId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/run-preview`, {
+            timeoutMs: 10000,
         });
         return handleResponse(res);
     },
@@ -1854,15 +1930,24 @@ export const api = {
     // ── Discovery ─────────────────────────────────────────────────────────
 
     async discoverFabricWorkspaces() {
+        // Skip entirely when no Fabric token is available — avoids a guaranteed 400.
+        if (!hasValidFabricToken()) return [];
         const cacheKey = 'discovery:fabric:workspaces';
         const cached = getCachedApiValue(cacheKey);
         if (cached) return cached;
-        const res = await fetch(`${API_BASE_URL}/connections/fabric/workspaces`, {
-            headers: { ...getAuthHeaders(), ...getFabricAuthHeaders() },
+        // Use authFetch so the app JWT and retry/timeout logic is applied consistently.
+        // Fabric auth headers are merged in via the options headers field.
+        const res = await authFetch(`${API_BASE_URL}/connections/fabric/workspaces`, {
+            method: 'GET',
+            headers: { ...getFabricAuthHeaders() },
         });
-        const data = await handleResponse(res);
-        const normalized = (data.workspaces || data || []).map(normalizeWorkspace);
-        return setCachedApiValue(cacheKey, normalized);
+        try {
+            const data = await handleResponse(res);
+            const normalized = (data.workspaces || data || []).map(normalizeWorkspace);
+            return setCachedApiValue(cacheKey, normalized);
+        } catch (err) {
+            throw err;
+        }
     },
 
     async discoverFabricModels(workspaceId, connectionId = '') {
@@ -2078,6 +2163,42 @@ export const api = {
     },
     async getDatabricksSources(connectionId = '') {
         return _getDatabricksSources(connectionId);
+    },
+
+    // ── Password Reset ────────────────────────────────────────────────────
+
+    /**
+     * Request a password reset email for the given address.
+     * Uses plain fetch — called before the user is authenticated.
+     */
+    async requestPasswordReset(email) {
+        const res = await fetch(`${AUTH_BASE}/forgot-password`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Failed to request password reset');
+        }
+        return res.json();
+    },
+
+    /**
+     * Complete a password reset using the token from the email link.
+     * Uses plain fetch — called before the user is authenticated.
+     */
+    async resetPassword(token, newPassword) {
+        const res = await fetch(`${AUTH_BASE}/reset-password`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token, new_password: newPassword }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Failed to reset password');
+        }
+        return res.json();
     },
 };
 

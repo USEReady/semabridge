@@ -4,6 +4,16 @@ import yaml
 import logging
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
+
+
+class AutoMapRequest(BaseModel):
+    project_id: Optional[str] = None
+    source: Optional[Dict[str, Any]] = None
+    targets: Optional[List[Any]] = None
+    user_id: Optional[str] = None
+
+    class Config:
+        extra = "allow"
 from fastapi import APIRouter, Request, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 
@@ -135,7 +145,7 @@ async def dry_run_mapping(
     WITHOUT deployment, then return the real field-level mappings (columns + measures).
     """
     from semabridge.api.services.core_domain_service import sync_models
-    from semabridge.api.services.project_runs_impl import (
+    from semabridge.api.services.mapping_service import (
         _compat_build_project_entity_mappings,
         _compat_preferred_snapshot_id_from_sync_result,
         _compat_serialize_auto_map_entity_mappings,
@@ -227,6 +237,11 @@ async def dry_run_mapping(
             "project_id": preview_project_id,
             "content": config_yaml,
             "dry_run": True,
+            # Pass account_id and user_id so credential scoping works for the
+            # transient preview project (not in ORM, so sync_models can't resolve
+            # account_id automatically via the DB lookup).
+            "account_id": source_account_id or target_account_id,
+            "user_id": str(request_user_id) if request_user_id is not None else None,
         })
 
         preferred_snapshot_id = _compat_preferred_snapshot_id_from_sync_result(
@@ -249,7 +264,7 @@ async def dry_run_mapping(
         # is stored under the Fabric dataset_id (e.g. "d32e8900-..."), not our
         # preview project ID — so the project_id lookup would return an empty model.
         from semabridge.api.services.project_mapping_engine import build_entity_mappings
-        from semabridge.api.services.project_runs_impl import db_manager as _db_manager
+        from semabridge.api.services.project_shared import db_manager as _db_manager
 
         sml_blob: Dict[str, Any] = {}
 
@@ -281,8 +296,10 @@ async def dry_run_mapping(
                 except Exception:
                     continue
 
-        if not sml_blob:
-            print(f"[DryRun] WARNING: No SML blob found — returning empty mappings")
+        extraction_failed = not sml_blob
+        if extraction_failed:
+            sync_status = str((sync_result or {}).get("status") or "unknown")
+            logger.warning("[DryRun] No SML blob found for project=%s sync_status=%s — extraction may have failed", preview_project_id, sync_status)
 
         # Scope to selected sources if specified
         if sml_blob and request.selected_sources:
@@ -375,11 +392,13 @@ async def dry_run_mapping(
             "project_id": preview_project_id,
             "model_name": model_name,
             "entity_mappings": filtered_mappings,
+            "extraction_failed": extraction_failed,
             "summary": {
                 "total_fields": len(filtered_mappings),
                 "auto_mapped": auto_count,
                 "unmapped": unmapped_count,
                 "collisions": collision_count,
+                "extraction_failed": extraction_failed,
             },
         }
 
@@ -572,9 +591,9 @@ async def deploy_mappings(
 
 # Keep old endpoint for backwards compatibility for now
 @router.post('/api/mappings/auto')
-async def auto_map_with_user_context(request: Request, payload: Dict[str, Any]):
+async def auto_map_with_user_context(request: Request, payload: AutoMapRequest):
     from semabridge.api.services.project_domain_service import auto_map_compat
-    body = dict(payload or {})
+    body = payload.model_dump(exclude_none=False)
     user_id = require_request_user_id(request)
     if user_id:
         body["user_id"] = user_id

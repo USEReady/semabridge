@@ -15,9 +15,12 @@ Conflict Detection Flow:
 
 from __future__ import annotations
 
+import hashlib
+import re as _re
 from typing import Dict, List, Optional, Tuple
 
 from semabridge.core.exceptions import ConflictError
+from semabridge.sync.type_compat import column_type_conflict_severity as _type_sev
 from semabridge.intermediate.models import OSIColumn, OSIDataset, OSIModel, OSIRelationship
 from semabridge.sync.models import (
     ConflictResolution,
@@ -30,6 +33,21 @@ from semabridge.sync.repository import SyncRepository
 from semabridge.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _measure_semantic_hash(metric_or_dict) -> str:
+    """Hash that ignores DAX vs SQL textual differences."""
+    if hasattr(metric_or_dict, 'expression'):
+        expr = (getattr(metric_or_dict, 'sql_expression', None)
+                or metric_or_dict.expression or "")
+        agg = str(getattr(metric_or_dict, 'aggregation', ''))
+    else:
+        expr = metric_or_dict.get('sql_expression') or metric_or_dict.get('expression', '')
+        agg = str(metric_or_dict.get('aggregation', ''))
+    # Normalize: upper-case, collapse whitespace, strip quotes
+    expr = _re.sub(r'\s+', ' ', expr.upper()).strip()
+    expr = expr.replace('"', '').replace("'", "")
+    return hashlib.md5(f"{agg}:{expr}".encode()).hexdigest()
 
 
 class ConflictResolver:
@@ -169,7 +187,7 @@ class ConflictResolver:
             target_m = target_metrics[metric.unique_name]
             src_expr = metric.expression or ""
             tgt_expr = target_m.get("expression", "") or ""
-            if src_expr != tgt_expr:
+            if _measure_semantic_hash(metric) != _measure_semantic_hash(target_m):
                 conflicts.append(
                     self._make_conflict(
                         job_id=job_id,
@@ -212,6 +230,85 @@ class ConflictResolver:
                     severity=ConflictSeverity.WARNING,
                     description=f"Relationship '{name}' removed from source",
                     target_value={"relationship": name},
+                )
+            )
+
+        # Relationship cardinality / cross-filter changes
+        for src_rel in source_model.relationships:
+            if src_rel.unique_name not in target_rels:
+                continue
+            tgt_rel = target_rels[src_rel.unique_name]
+            src_card = src_rel.cardinality.value if hasattr(src_rel.cardinality, "value") else str(src_rel.cardinality)
+            tgt_card = tgt_rel.get("cardinality", "")
+            if src_card != tgt_card:
+                conflicts.append(
+                    self._make_conflict(
+                        job_id=job_id,
+                        item_id=item_id,
+                        model_name=model_name,
+                        change_type=SchemaChangeType.RELATIONSHIP_MODIFIED,
+                        severity=ConflictSeverity.WARNING,
+                        description=(
+                            f"Relationship '{src_rel.unique_name}' cardinality changed: "
+                            f"{tgt_card} → {src_card}"
+                        ),
+                        source_value={"cardinality": src_card},
+                        target_value={"cardinality": tgt_card},
+                    )
+                )
+            src_cf = src_rel.cross_filter_direction.value if hasattr(src_rel.cross_filter_direction, "value") else str(src_rel.cross_filter_direction)
+            tgt_cf = tgt_rel.get("cross_filter_direction", "")
+            if src_cf != tgt_cf:
+                conflicts.append(
+                    self._make_conflict(
+                        job_id=job_id,
+                        item_id=item_id,
+                        model_name=model_name,
+                        change_type=SchemaChangeType.RELATIONSHIP_MODIFIED,
+                        severity=ConflictSeverity.WARNING,
+                        description=(
+                            f"Relationship '{src_rel.unique_name}' cross-filter changed: "
+                            f"{tgt_cf} → {src_cf}"
+                        ),
+                        source_value={"cross_filter_direction": src_cf},
+                        target_value={"cross_filter_direction": tgt_cf},
+                    )
+                )
+
+        # --- Hierarchy diffs ---
+        target_hierarchies = {
+            h_name
+            for dim in target_schema.get("dimensions", [])
+            for h_name in [h.get("unique_name", "") for h in dim.get("hierarchies", [])]
+            if h_name
+        }
+        source_hierarchies = {
+            h.unique_name
+            for dim in source_model.dimensions
+            for h in dim.hierarchies
+        }
+        for h_name in source_hierarchies - target_hierarchies:
+            conflicts.append(
+                self._make_conflict(
+                    job_id=job_id,
+                    item_id=item_id,
+                    model_name=model_name,
+                    change_type=SchemaChangeType.HIERARCHY_ADDED,
+                    severity=ConflictSeverity.INFO,
+                    description=f"New hierarchy '{h_name}' will be created",
+                    source_value={"hierarchy": h_name},
+                )
+            )
+        for h_name in target_hierarchies - source_hierarchies:
+            conflicts.append(
+                self._make_conflict(
+                    job_id=job_id,
+                    item_id=item_id,
+                    model_name=model_name,
+                    change_type=SchemaChangeType.HIERARCHY_REMOVED,
+                    severity=ConflictSeverity.WARNING,
+                    description=f"Hierarchy '{h_name}' removed from source",
+                    target_value={"hierarchy": h_name},
                 )
             )
 
@@ -374,13 +471,15 @@ class ConflictResolver:
             src_type = col.data_type.value
             tgt_type = target_col.get("data_type", "unknown")
             if src_type != tgt_type:
+                _sev_str = _type_sev(src_type, tgt_type)
+                _sev = ConflictSeverity[_sev_str]
                 conflicts.append(
                     self._make_conflict(
                         job_id=job_id,
                         item_id=item_id,
                         model_name=model_name,
                         change_type=SchemaChangeType.COLUMN_TYPE_CHANGED,
-                        severity=ConflictSeverity.CRITICAL,
+                        severity=_sev,
                         description=(
                             f"Column '{col.unique_name}' in '{table_name}' "
                             f"type changed: {tgt_type} → {src_type}"

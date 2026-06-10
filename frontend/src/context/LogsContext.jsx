@@ -15,9 +15,12 @@ const WS_URL = (() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${protocol}//${window.location.host}/ws/alerts`;
 })();
-const RECONNECT_STEPS_MS = [5000, 10000, 30000];
+const RECONNECT_STEPS_MS = import.meta.env.VITE_WS_RECONNECT_DELAYS
+  ? import.meta.env.VITE_WS_RECONNECT_DELAYS.split(',').map(Number)
+  : [5000, 10000, 30000];
 const TOAST_DURATION_MS = 6000;
-const WS_PING_INTERVAL_MS = 30000;
+const WS_PING_INTERVAL_MS = Number(import.meta.env.VITE_WS_PING_INTERVAL_MS) || 30000;
+const MAX_WS_RETRIES = 10;
 
 export function LogsProvider({ children }) {
     const [logs, setLogs] = useState([]);
@@ -25,6 +28,7 @@ export function LogsProvider({ children }) {
     const [wsConnected, setWsConnected] = useState(false);
     const wsRef = useRef(null);
     const reconnectAttempt = useRef(0);
+    const wsRetryCount = useRef(0);
     const reconnectTimer = useRef(null);
     const pingTimer = useRef(null);
     const { isAuthenticated, token } = useAuth();
@@ -75,6 +79,7 @@ export function LogsProvider({ children }) {
             ws.onopen = () => {
                 setWsConnected(true);
                 reconnectAttempt.current = 0;
+                wsRetryCount.current = 0;
                 console.log('[SemaBridge] WebSocket connected to alerts');
                 // Start keepalive pings to prevent idle disconnects
                 if (pingTimer.current) clearInterval(pingTimer.current);
@@ -105,6 +110,12 @@ export function LogsProvider({ children }) {
                 setWsConnected(false);
                 wsRef.current = null;
                 if (pingTimer.current) { clearInterval(pingTimer.current); pingTimer.current = null; }
+                // Stop reconnecting after max attempts to avoid infinite retry loops.
+                if (wsRetryCount.current >= MAX_WS_RETRIES) {
+                    console.warn('[LogsContext] Max WebSocket reconnect attempts reached. Giving up.');
+                    return;
+                }
+                wsRetryCount.current += 1;
                 // Auto-reconnect with exponential backoff: 5s, 10s, then 30s capped.
                 const delayMs = getReconnectDelay(reconnectAttempt.current);
                 reconnectTimer.current = setTimeout(() => {
@@ -120,6 +131,11 @@ export function LogsProvider({ children }) {
             // WebSocket constructor can throw if URL is invalid
             setWsConnected(false);
 
+            if (wsRetryCount.current >= MAX_WS_RETRIES) {
+                console.warn('[LogsContext] Max WebSocket reconnect attempts reached. Giving up.');
+                return;
+            }
+            wsRetryCount.current += 1;
             const delayMs = getReconnectDelay(reconnectAttempt.current);
             reconnectTimer.current = setTimeout(() => {
                 reconnectAttempt.current += 1;

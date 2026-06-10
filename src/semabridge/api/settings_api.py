@@ -12,8 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, delete
 from sqlalchemy.orm import Session
 
-from semabridge.api.deps import get_db
-from semabridge.auth.deps import get_current_user
+from semabridge.api.deps import get_db, get_current_user
 from semabridge.repository.orm.models import LocalFolder, UserCredential
 from semabridge.connectors.schema_manager import clear_schema_cache
 

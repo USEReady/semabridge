@@ -156,10 +156,53 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     const [diffLoading, setDiffLoading] = useState(false);
     const [diffReport, setDiffReport] = useState(null);
     const [inspectorResetToken, setInspectorResetToken] = useState(0);
+    // Map of workspace_id → display name for the Explore detail panel
+    const [workspaceNames, setWorkspaceNames] = useState({});
+    // Configured Account records for the connector dropdown
+    const [accounts, setAccounts] = useState([]);
+    // Projects list — used to map workspace+model → project snapshot
+    const [projects, setProjects] = useState([]);
+    // Override snapshot when user picks a workspace model — null means use prop
+    const [overrideSnapshotId, setOverrideSnapshotId] = useState(null);
+    // Tracks the raw dropdown value for the model select (may be 'discovered:xxx')
+    const [modelDropdownValue, setModelDropdownValue] = useState('__all__');
+    // Workspace selection (Fabric only — Snowflake has no workspace concept)
+    const [availableWorkspaces, setAvailableWorkspaces] = useState([]);
+    const [selectedWorkspaceId, setSelectedWorkspaceId] = usePageCache('explore:selectedWorkspaceId', '__all__');
+    const [workspacesLoading, setWorkspacesLoading] = useState(false);
+    // Available models discovered from the selected workspace / connector
+    const [availableModels, setAvailableModels] = useState([]);  // [{id, name, type}]
+    const [modelsLoading, setModelsLoading] = useState(false);
+    // When model chosen from discovery but has no synced snapshot yet
+    const [unsyncedModel, setUnsyncedModel] = useState(null);    // {id, name} | null
 
     // ── initial load ────────────────────────────────
     const loadData = useCallback(async () => {
         setLoading(true);
+        // Preload workspace names so the Detail panel can show human-readable names instead of raw GUIDs.
+        // Uses the fabric workspaces endpoint — requires a bearer token; silently skips if unavailable.
+        // Load configured accounts for the connector dropdown
+        api.getAccounts().then((resp) => {
+            const list = Array.isArray(resp) ? resp : (resp?.accounts || resp?.items || []);
+            setAccounts(list);
+        }).catch(() => { /* accounts optional */ });
+
+        api.listProjects({ limit: 200 }).then((resp) => {
+            const list = Array.isArray(resp) ? resp : (resp?.projects || resp?.items || []);
+            setProjects(list);
+        }).catch(() => { /* projects optional */ });
+
+        api.discoverFabricWorkspaces().then((resp) => {
+            const wsList = Array.isArray(resp) ? resp : (resp?.workspaces || []);
+            if (!wsList.length) return;
+            const nameMap = {};
+            wsList.forEach((ws) => {
+                const wsId = ws?.id || ws?.workspace_id;
+                const wsName = ws?.name || ws?.displayName || ws?.display_name;
+                if (wsId && wsName) nameMap[wsId] = wsName;
+            });
+            setWorkspaceNames(nameMap);
+        }).catch(() => { /* workspace names are optional — fall back to raw IDs silently */ });
         setTreeLoading(true);
         setGraphLoading(true);
         try {
@@ -172,7 +215,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             setTreeLoading(false);
 
             let graphResp;
-            let effectiveSnapshotId = snapshotId;
+            let effectiveSnapshotId = overrideSnapshotId || snapshotId;
             const snapshots = Array.isArray(snapshotsResp) ? snapshotsResp : [];
             if (!effectiveSnapshotId) {
                 const sorted = [...snapshots].sort(
@@ -264,7 +307,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             setGraphLoading(false);
             setLoading(false);
         }
-    }, [snapshotId, includeSystemTables]);
+    }, [snapshotId, overrideSnapshotId, includeSystemTables]);
 
     useEffect(() => { loadData(); }, [loadData]);
 
@@ -330,7 +373,44 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         if (nodeData?.nodeType === 'table' && nodeData?.id) {
             setSelectedTableId(String(nodeData.id));
         }
-        setSelectedNode(nodeData);
+
+        // Enrich table nodes with only the measures that belong to this table.
+        // Each measure node carries a `dataset` field (from SMLMetric.dataset)
+        // that matches the dataset's unique_name. We match against table_name,
+        // label, and the unqualified part of the qualified label (e.g.
+        // "PUBLIC.SalesFact" → "SalesFact") so the lookup is robust to
+        // schema-prefixed node labels.
+        let enrichedNode = nodeData;
+        if (nodeData?.nodeType === 'table') {
+            const allNodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
+            const allMeasures = allNodes
+                .filter(n => n.data?.nodeType === 'measure')
+                .map(n => n.data);
+
+            if (allMeasures.length > 0) {
+                // Candidate names for this table (unqualified + qualified)
+                const tableLabel = String(nodeData.label || nodeData.table_name || '');
+                const unqualified = tableLabel.includes('.')
+                    ? tableLabel.split('.').pop()
+                    : tableLabel;
+                const candidates = new Set(
+                    [tableLabel, unqualified, nodeData.table_name].filter(Boolean).map(s => s.toLowerCase())
+                );
+
+                const tableMeasures = allMeasures.filter(m => {
+                    const ds = String(m.dataset || '').toLowerCase();
+                    return ds && candidates.has(ds);
+                });
+
+                // Fall back to all measures only when no measure has dataset info
+                const hasDsInfo = allMeasures.some(m => m.dataset);
+                enrichedNode = {
+                    ...nodeData,
+                    measures: hasDsInfo ? tableMeasures : allMeasures,
+                };
+            }
+        }
+        setSelectedNode(enrichedNode);
     };
 
     const handleCloseDetail = () => {
@@ -469,6 +549,15 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     }, [diffMode, diffReport, graphStructureKey, erMode]);
 
     const connectorOptions = useMemo(() => {
+        // Prefer configured Account records — they show the user's actual named connections
+        if (accounts.length > 0) {
+            return accounts.map(a => ({
+                id: String(a.id || a.account_id || a.tag || ''),
+                label: String(a.tag || a.name || a.identity_email || a.id || 'Account'),
+                subtitle: String(a.connector_type || a.type || ''),
+            })).filter(a => a.id).sort((a, b) => a.label.localeCompare(b.label));
+        }
+        // Fallback: derive connector types from graph node metadata
         const nodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
         const connectors = new Set();
         nodes.forEach(n => {
@@ -478,12 +567,13 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             }
         });
         return Array.from(connectors)
-            .map(c => ({ 
-                id: c, 
-                label: c.charAt(0).toUpperCase() + c.slice(1).toLowerCase() 
+            .map(c => ({
+                id: c,
+                label: c.charAt(0).toUpperCase() + c.slice(1).toLowerCase(),
+                subtitle: '',
             }))
-            .sort((a,b) => a.label.localeCompare(b.label));
-    }, [graphData]);
+            .sort((a, b) => a.label.localeCompare(b.label));
+    }, [accounts, graphData]);
 
     const modelOptions = useMemo(() => {
         const nodes = Array.isArray(renderedGraphData?.nodes) ? renderedGraphData.nodes : [];
@@ -534,8 +624,20 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         });
 
         if (selectedConnector === '__all__') return byId;
-        return byId.filter(m => m.connector === selectedConnector);
-    }, [renderedGraphData, selectedConnector]);
+        // If connectorOptions are Account records, match by account_id on the node or by connector type string
+        const selectedAccount = accounts.find(a => String(a.id || a.account_id || a.tag || '') === selectedConnector);
+        return byId.filter(m => {
+            if (selectedAccount) {
+                const node = nodes.find(n => n.id === m.id || n.data?.model_id === m.id);
+                const nodeAccountId = node?.data?.account_id;
+                if (nodeAccountId) return String(nodeAccountId) === String(selectedAccount.id || selectedAccount.account_id || '');
+                // Fallback: match by connector_type
+                const connType = String(selectedAccount.connector_type || selectedAccount.type || '').toLowerCase();
+                return (m.connector || '').toLowerCase() === connType;
+            }
+            return m.connector === selectedConnector;
+        });
+    }, [renderedGraphData, selectedConnector, accounts]);
 
     const tableOptions = useMemo(() => {
         const nodes = Array.isArray(renderedGraphData?.nodes) ? renderedGraphData.nodes : [];
@@ -567,6 +669,137 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             setSelectedTableId('__all__');
         }
     }, [tableOptions, selectedTableId]);
+
+    // ── Load workspaces when a connector (Account) is selected ──────────────
+    useEffect(() => {
+        if (selectedConnector === '__all__') {
+            setAvailableWorkspaces([]);
+            setAvailableModels([]);
+            setSelectedWorkspaceId('__all__');
+            setUnsyncedModel(null);
+            setModelDropdownValue('__all__');
+            setOverrideSnapshotId(null);
+            return;
+        }
+        const account = accounts.find(a => String(a.id || a.tag || '') === selectedConnector);
+        if (!account) return;
+
+        const connType = String(account.connector_type || '').toUpperCase();
+
+        if (connType === 'FABRIC') {
+            // Fabric: load workspaces first, then models inside workspace
+            setWorkspacesLoading(true);
+            setAvailableWorkspaces([]);
+            setAvailableModels([]);
+            setSelectedWorkspaceId('__all__');
+            setUnsyncedModel(null);
+            setModelDropdownValue('__all__');
+            setOverrideSnapshotId(null);
+            api.fabricListWorkspaces(String(account.id || '')).then(resp => {
+                const list = Array.isArray(resp) ? resp : (resp?.workspaces || []);
+                setAvailableWorkspaces(list.map(ws => ({
+                    id: ws.id || ws.workspace_id || '',
+                    name: ws.displayName || ws.name || ws.id || 'Workspace',
+                })).filter(ws => ws.id));
+            }).catch(() => setAvailableWorkspaces([]))
+              .finally(() => setWorkspacesLoading(false));
+        } else {
+            // Snowflake / Databricks: no workspace concept — load models directly
+            setAvailableWorkspaces([]);
+            setSelectedWorkspaceId('__all__');
+            setModelsLoading(true);
+            setAvailableModels([]);
+            setUnsyncedModel(null);
+            setModelDropdownValue('__all__');
+            setOverrideSnapshotId(null);
+            api.discoverSnowflakeModels(String(account.id || '')).then(resp => {
+                const list = Array.isArray(resp) ? resp : [];
+                setAvailableModels(list.map(m => ({
+                    id: m.id || m.name || '',
+                    name: m.name || m.id || 'Model',
+                    type: m.type || 'semantic_view',
+                })).filter(m => m.id));
+            }).catch(() => setAvailableModels([]))
+              .finally(() => setModelsLoading(false));
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedConnector, accounts]);
+
+    // ── Load models when a workspace is selected (Fabric) ───────────────────
+    useEffect(() => {
+        if (selectedWorkspaceId === '__all__') {
+            if (availableWorkspaces.length > 0) setAvailableModels([]);
+            return;
+        }
+        const account = accounts.find(a => String(a.id || a.tag || '') === selectedConnector);
+        if (!account) return;
+
+        setModelsLoading(true);
+        setAvailableModels([]);
+        setUnsyncedModel(null);
+        setModelDropdownValue('__all__');
+        setOverrideSnapshotId(null);
+        api.discoverFabricModels(selectedWorkspaceId, String(account.id || '')).then(resp => {
+            const list = Array.isArray(resp) ? resp : [];
+            setAvailableModels(list.map(m => ({
+                id: m.id || m.name || '',
+                name: m.name || m.displayName || m.id || 'Model',
+                type: m.type || 'semantic_model',
+            })).filter(m => m.id));
+        }).catch(() => setAvailableModels([]))
+          .finally(() => setModelsLoading(false));
+
+        // Update the workspaceNames map with this workspace
+        const ws = availableWorkspaces.find(w => w.id === selectedWorkspaceId);
+        if (ws) setWorkspaceNames(prev => ({ ...prev, [ws.id]: ws.name }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedWorkspaceId]);
+
+    // ── When a discovered model is chosen, find the matching project snapshot ──
+    const handleDiscoveredModelSelect = useCallback(async (modelId) => {
+        const model = availableModels.find(m => m.id === modelId);
+        if (!model) { setSelectedModelId('__all__'); setUnsyncedModel(null); return; }
+
+        const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const normModelName = norm(model.name);
+
+        // 1. Find matching project by workspace_id + name similarity
+        const matchingProject = projects.find(p => {
+            const wsMatch = selectedWorkspaceId && selectedWorkspaceId !== '__all__'
+                ? String(p.workspace_id || p.source_workspace_id || '').toLowerCase() === String(selectedWorkspaceId).toLowerCase()
+                : true;
+            const nameFields = [p.name, p.model_name, p.source_model_name, p.display_name];
+            const nameMatch = nameFields.some(f => {
+                if (!f) return false;
+                const n = norm(f);
+                return n === normModelName || n.includes(normModelName) || normModelName.includes(n);
+            });
+            return wsMatch && nameMatch;
+        });
+
+        if (matchingProject) {
+            const projId = matchingProject.id || matchingProject.project_id;
+            try {
+                const snaps = await api.getGraphSnapshots(projId).catch(() => []);
+                const sorted = (Array.isArray(snaps) ? snaps : []).sort(
+                    (a, b) => new Date(b?.timestamp || 0) - new Date(a?.timestamp || 0)
+                );
+                const latestSnap = sorted[0];
+                if (latestSnap?.snapshot_id) {
+                    setOverrideSnapshotId(latestSnap.snapshot_id);
+                    setModelDropdownValue(`discovered:${modelId}`);
+                    setUnsyncedModel(null);
+                    return;
+                }
+            } catch { /* fall through */ }
+        }
+
+        // 2. No matching project or no snapshot yet — clear graph and mark unsynced
+        setOverrideSnapshotId(null);
+        setModelDropdownValue(`discovered:${modelId}`);
+        setGraphData({ nodes: [], edges: [], meta: {} });
+        setUnsyncedModel({ id: model.id, name: model.name });
+    }, [availableModels, projects, selectedWorkspaceId]);
 
     const focusTableInER = useCallback((tableId) => {
         if (!tableId) return;
@@ -683,35 +916,152 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                                 setSelectedConnector(e.target.value);
                                 setSelectedModelId('__all__');
                                 setSelectedTableId('__all__');
+                                setSelectedWorkspaceId('__all__');
+                                setAvailableWorkspaces([]);
+                                setAvailableModels([]);
+                                setUnsyncedModel(null);
+                                setModelDropdownValue('__all__');
+                                setOverrideSnapshotId(null);
                             }}
                             style={dropdownStyle}
                             title="Choose connector filter"
                         >
                             <option value="__all__">Select connector</option>
                             {connectorOptions.map(c => (
-                                <option key={c.id} value={c.id}>{c.label}</option>
+                                <option key={c.id} value={c.id}>
+                                    {c.label}{c.subtitle ? ` (${c.subtitle})` : ''}
+                                </option>
                             ))}
                         </select>
 
-                        <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap', marginLeft: 8 }}>
-                            Model
-                        </span>
-                        <select
-                            value={selectedModelId}
-                            onChange={(e) => {
-                                setSelectedModelId(e.target.value);
-                                setSelectedTableId('__all__');
-                            }}
-                            style={dropdownStyle}
-                            title="Choose model"
-                        >
-                            <option value="__all__">
-                                {selectedConnector === '__all__' ? 'Select connector first' : 'Select model'}
-                            </option>
-                            {modelOptions.map(m => (
-                                <option key={m.id} value={m.id}>{m.label}</option>
-                            ))}
-                        </select>
+                        {/* Workspace dropdown — shown for Fabric connectors when workspaces loaded */}
+                        {selectedConnector !== '__all__' && (workspacesLoading || availableWorkspaces.length > 0) && (
+                            <>
+                                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>›</span>
+                                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap' }}>
+                                    Workspace
+                                </span>
+                                <select
+                                    value={selectedWorkspaceId}
+                                    onChange={(e) => {
+                                        setSelectedWorkspaceId(e.target.value);
+                                        setSelectedModelId('__all__');
+                                        setSelectedTableId('__all__');
+                                        setUnsyncedModel(null);
+                                        setModelDropdownValue('__all__');
+                                        setOverrideSnapshotId(null);
+                                    }}
+                                    style={dropdownStyle}
+                                    disabled={workspacesLoading}
+                                    title="Choose workspace"
+                                >
+                                    <option value="__all__">{workspacesLoading ? 'Loading…' : 'Select workspace'}</option>
+                                    {availableWorkspaces.map(w => (
+                                        <option key={w.id} value={w.id}>{w.name || w.displayName || w.id}</option>
+                                    ))}
+                                </select>
+                            </>
+                        )}
+
+                        {/* Model dropdown */}
+                        {selectedConnector !== '__all__' && (
+                            <>
+                                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>›</span>
+                                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap' }}>
+                                    Model
+                                </span>
+                                <select
+                                    value={modelDropdownValue !== '__all__' ? modelDropdownValue : selectedModelId}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        setModelDropdownValue(val);
+                                        if (val.startsWith('discovered:')) {
+                                            handleDiscoveredModelSelect(val.slice('discovered:'.length));
+                                        } else {
+                                            setSelectedModelId(val);
+                                            setSelectedTableId('__all__');
+                                            setUnsyncedModel(null);
+                                            setOverrideSnapshotId(null);
+                                        }
+                                    }}
+                                    style={dropdownStyle}
+                                    disabled={modelsLoading}
+                                    title="Choose model"
+                                >
+                                    <option value="__all__">
+                                        {modelsLoading ? 'Loading…' :
+                                         availableWorkspaces.length > 0 && selectedWorkspaceId === '__all__' ? 'Select workspace first' :
+                                         'Select model'}
+                                    </option>
+                                    {/* Synced models from graph */}
+                                    {modelOptions.length > 0 && (
+                                        <optgroup label="Synced models">
+                                            {modelOptions.map(m => (
+                                                <option key={m.id} value={m.id}>{m.label}</option>
+                                            ))}
+                                        </optgroup>
+                                    )}
+                                    {/* Live discovered models not yet matched to a synced graph model */}
+                                    {availableModels.filter(m => {
+                                        const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                                        const normM = norm(m.name);
+                                        // Matched if any modelOption label is an exact or partial match
+                                        const matchedInOptions = modelOptions.some(mo => {
+                                            const normL = norm(mo.label);
+                                            return normL === normM || normL.includes(normM) || normM.includes(normL);
+                                        });
+                                        if (matchedInOptions) return false;
+                                        // Also check raw graph model nodes
+                                        const nodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
+                                        return !nodes.some(n => {
+                                            if (n?.data?.nodeType !== 'model') return false;
+                                            const normL = norm(n?.data?.label);
+                                            return normL === normM || normL.includes(normM) || normM.includes(normL);
+                                        });
+                                    }).length > 0 && (
+                                        <optgroup label="Not yet synced">
+                                            {availableModels.filter(m => {
+                                                const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                                                const normM = norm(m.name);
+                                                const matchedInOptions = modelOptions.some(mo => {
+                                                    const normL = norm(mo.label);
+                                                    return normL === normM || normL.includes(normM) || normM.includes(normL);
+                                                });
+                                                if (matchedInOptions) return false;
+                                                const nodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
+                                                return !nodes.some(n => {
+                                                    if (n?.data?.nodeType !== 'model') return false;
+                                                    const normL = norm(n?.data?.label);
+                                                    return normL === normM || normL.includes(normM) || normM.includes(normL);
+                                                });
+                                            }).map(m => (
+                                                <option key={`discovered:${m.id}`} value={`discovered:${m.id}`}>{m.name || m.displayName}</option>
+                                            ))}
+                                        </optgroup>
+                                    )}
+                                </select>
+                            </>
+                        )}
+
+                        {/* Fallback model dropdown when no connector selected */}
+                        {selectedConnector === '__all__' && modelOptions.length > 0 && (
+                            <>
+                                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap', marginLeft: 8 }}>
+                                    Model
+                                </span>
+                                <select
+                                    value={selectedModelId}
+                                    onChange={(e) => { setSelectedModelId(e.target.value); setSelectedTableId('__all__'); }}
+                                    style={dropdownStyle}
+                                    title="Choose model"
+                                >
+                                    <option value="__all__">Select model</option>
+                                    {modelOptions.map(m => (
+                                        <option key={m.id} value={m.id}>{m.label}</option>
+                                    ))}
+                                </select>
+                            </>
+                        )}
 
                         {selectedModelId !== '__all__' && (
                             <span style={{
@@ -911,6 +1261,31 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                 </div>
                 )}
 
+                {/* Unsynced model banner */}
+                {unsyncedModel && (
+                    <div style={{
+                        display: 'flex', alignItems: 'center', gap: 12,
+                        padding: '10px 20px',
+                        background: 'rgba(245, 158, 11, 0.08)',
+                        borderBottom: '1px solid rgba(245, 158, 11, 0.25)',
+                        flexShrink: 0,
+                    }}>
+                        <span style={{ fontSize: 18 }}>📋</span>
+                        <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: '#92400E' }}>
+                                {unsyncedModel.name} — not yet synced
+                            </div>
+                            <div style={{ fontSize: 11, color: '#B45309', marginTop: 2 }}>
+                                This model exists in your connector but has no lineage data yet. Create a project and run a sync to explore its tables and metrics.
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => setUnsyncedModel(null)}
+                            style={{ fontSize: 16, background: 'none', border: 'none', cursor: 'pointer', color: '#B45309', padding: '0 4px' }}
+                        >✕</button>
+                    </div>
+                )}
+
                 {/* Dependency Graph */}
                 {/* Full Screen Relationship Diagram (ER/Table View) */}
                 {(erMode || filterType === 'tables') && fullScreen && (
@@ -1003,6 +1378,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                             <DetailPanel
                                 filePreview={filePreview}
                                 selectedNode={selectedNode}
+                                workspaceNames={workspaceNames}
                                 onClose={handleCloseDetail}
                             />
                         </div>

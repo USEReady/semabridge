@@ -51,7 +51,7 @@ from semabridge.api.services.pbix_service import (
     upload_pbix_temp,
     upload_project_pbix,
 )
-from semabridge.api.services.project_runs_service import (
+from semabridge.api.services.project_domain_service import (
     get_project_runs_compat,
     run_project_now_compat,
 )

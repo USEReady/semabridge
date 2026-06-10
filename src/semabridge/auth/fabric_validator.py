@@ -10,10 +10,18 @@ import time
 import httpx
 import jwt
 from typing import Dict, Any, Optional
-from fastapi import HTTPException
 from semabridge.utils.logger import get_logger
+from semabridge.domain.exceptions import AuthenticationError
 
 logger = get_logger(__name__)
+
+# Keep HTTPException importable for any callers that still need it, but
+# validate_msal_token now raises AuthenticationError (a SemaBridgeError) instead
+# so that token_resolver.py can catch it and attempt a silent refresh.
+try:
+    from fastapi import HTTPException as _FastAPIHTTPException  # noqa: F401
+except ImportError:
+    _FastAPIHTTPException = None  # type: ignore[assignment,misc]
 
 JWKS_URL = "https://login.microsoftonline.com/common/discovery/v2.0/keys"
 JWKS_CACHE_TTL = 3600  # 1 hour
@@ -77,19 +85,19 @@ class FabricTokenValidator:
             unverified_payload = jwt.decode(token, options={"verify_signature": False})
         except jwt.PyJWTError as e:
             logger.warning(f"Token validation failed (Malformed token): {e}")
-            raise HTTPException(status_code=401, detail={"status": "invalid_token", "message": "Malformed token."})
+            raise AuthenticationError(str({"status": "invalid_token", "message": "Malformed token."}))
 
         kid = unverified_header.get("kid")
         if not kid:
             logger.warning("Token validation failed: Missing 'kid' in header.")
-            raise HTTPException(status_code=401, detail={"status": "invalid_token", "message": "Missing key ID."})
+            raise AuthenticationError(str({"status": "invalid_token", "message": "Missing key ID."}))
 
         # 3. Strip cryptographic signature constraint on opaque Microsoft First-Party Access Tokens.
-        # Power BI / Fabric access tokens use internal MACs or opaque RSA keys NOT published to the 
+        # Power BI / Fabric access tokens use internal MACs or opaque RSA keys NOT published to the
         # common /discovery/v2.0/keys endpoint. Therefore, PyJWT verify_signature=True will ALWAYS crash.
         # We must extract the unverified payload locally to enforce claim constraints, and let Fabric
         # securely authorize the exact signature remotely.
-        
+
         try:
             payload = jwt.decode(
                 token,
@@ -101,19 +109,21 @@ class FabricTokenValidator:
             )
         except jwt.PyJWTError as e:
             logger.warning(f"Token validation failed (Malformed): {e}")
-            raise HTTPException(status_code=401, detail={"status": "invalid_token", "message": "Malformed token payload."})
-            
+            raise AuthenticationError(str({"status": "invalid_token", "message": "Malformed token payload."}))
+
         # Manually enforce exp and nbf natively since verify_signature=False disables PyJWT auto-checking.
         now = time.time()
         token_exp = payload.get("exp")
         if token_exp and now > token_exp:
+            # Raise AuthenticationError (a SemaBridgeError) so token_resolver.py
+            # can catch it and attempt a silent MSAL refresh_token flow.
             logger.debug("Token validation: access token expired on local clock (will attempt refresh).")
-            raise HTTPException(status_code=401, detail={"status": "expired", "message": "Login session expired. Please try again."})
-            
+            raise AuthenticationError(str({"status": "expired", "message": "Login session expired. Please try again."}))
+
         token_nbf = payload.get("nbf")
         if token_nbf and now < token_nbf:
             logger.warning("Token validation failed: Token mathematically not-yet-valid on local clock.")
-            raise HTTPException(status_code=401, detail={"status": "invalid_token", "message": "Token not yet valid (check system clock)."})
+            raise AuthenticationError(str({"status": "invalid_token", "message": "Token not yet valid (check system clock)."}))
             
 
         # 5. Cache the strongly validated payload

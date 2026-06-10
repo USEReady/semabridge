@@ -69,6 +69,7 @@ class ConflictResolution(str, Enum):
     SOURCE_WINS = "source_wins"            # Source overwrites target
     TARGET_WINS = "target_wins"            # Target kept, source discarded
     MERGE = "merge"                        # Attempt structural merge
+    HUMAN_REVIEW = "human_review"          # Escalate — block deploy until manually resolved
 
 
 class SchemaChangeType(str, Enum):
@@ -85,6 +86,9 @@ class SchemaChangeType(str, Enum):
     RELATIONSHIP_ADDED = "relationship_added"
     RELATIONSHIP_REMOVED = "relationship_removed"
     RELATIONSHIP_MODIFIED = "relationship_modified"
+    HIERARCHY_ADDED = "hierarchy_added"
+    HIERARCHY_REMOVED = "hierarchy_removed"
+    DIMENSION_MISSING = "dimension_missing"  # Column in source model absent from Snowflake physical table
 
 
 class ConflictSeverity(str, Enum):
@@ -306,6 +310,8 @@ class SyncConflict(BaseModel):
     )
     resolved_at: Optional[str] = Field(default=None, description="Resolution timestamp")
     resolved_by: Optional[str] = Field(default=None, description="Who resolved it")
+    resolution_note: Optional[str] = Field(default=None, description="Human explanation for the resolution")
+    escalated: bool = Field(default=False, description="True when HUMAN_REVIEW is required before deploy")
     created_at: str = Field(default_factory=_utc_now, description="Detection time")
 
     model_config = {"extra": "forbid"}

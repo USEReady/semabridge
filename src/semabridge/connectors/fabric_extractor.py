@@ -51,8 +51,10 @@ class FabricExtractor:
         self._skip_env_token_once: bool = False
 
         if self._access_token:
-            # Conservative lifetime for request-provided tokens.
-            self._token_expires_at = time.time() + 600
+            # Conservative in-memory TTL for request-provided tokens.
+            # Set to 5 min so the extractor re-checks the DB before the token
+            # actually expires (avoids 401s from stale in-memory tokens).
+            self._token_expires_at = time.time() + 300
             logger.info("FabricExtractor initialized with request-provided access token")
 
     def list_workspaces(self) -> list[dict[str, Any]]:
@@ -197,25 +199,53 @@ class FabricExtractor:
         logger.info("Listing semantic models in workspace %s...", workspace_id)
         for source_name, api_url in candidate_urls:
             try:
-                response = self._request_with_auth_retry(
-                    "GET",
-                    api_url,
-                    timeout=20,
-                    transient_retries=2,
-                    retry_delay=2,
-                )
-                if response.status_code == 404:
-                    logger.warning("Fabric model list endpoint '%s' returned 404 for workspace %s", source_name, workspace_id)
-                    continue
+                # Fabric Items API paginates at 10 items per page via continuationToken.
+                # Follow all pages until no continuationToken is present.
+                all_models: list[dict] = []
+                next_url: Optional[str] = api_url
+                page = 0
+                while next_url:
+                    response = self._request_with_auth_retry(
+                        "GET",
+                        next_url,
+                        timeout=20,
+                        transient_retries=2,
+                        retry_delay=2,
+                    )
+                    if response.status_code == 404:
+                        logger.warning("Fabric model list endpoint '%s' returned 404 for workspace %s", source_name, workspace_id)
+                        all_models = []
+                        break
 
-                response.raise_for_status()
-                models = _normalize_models(response.json())
+                    response.raise_for_status()
+                    payload = response.json()
+                    page_models = _normalize_models(payload)
+                    all_models.extend(page_models)
+                    page += 1
+
+                    # Fabric uses continuationToken / continuationUri for pagination
+                    continuation_token = None
+                    if isinstance(payload, dict):
+                        continuation_token = payload.get("continuationToken") or payload.get("@odata.nextLink")
+                        continuation_uri = payload.get("continuationUri")
+                        if continuation_uri:
+                            next_url = continuation_uri
+                        elif continuation_token and not continuation_uri:
+                            # Build next URL by appending continuationToken as query param
+                            sep = "&" if "?" in api_url else "?"
+                            next_url = f"{api_url}{sep}continuationToken={continuation_token}"
+                        else:
+                            next_url = None
+                    else:
+                        next_url = None
+
+                models = all_models
                 if not models:
                     logger.warning("Fabric model list endpoint '%s' returned no models for workspace %s", source_name, workspace_id)
                     continue
 
                 _cache_models(models)
-                logger.info("Found %d semantic models via %s", len(models), source_name)
+                logger.info("Found %d semantic models via %s (%d page(s))", len(models), source_name, page)
                 return models
             except RequestException as e:
                 last_error = str(e)
@@ -405,8 +435,9 @@ class FabricExtractor:
             if token_data and cm.has_valid_token():
                 self._access_token = token_data.get("access_token")
                 if self._access_token:
-                    # CredentialManager already checks expiry; use a conservative TTL.
-                    self._token_expires_at = time.time() + 600
+                    # Use 5-min in-memory TTL so the extractor re-reads from DB
+                    # before the token actually expires, enabling silent refresh.
+                    self._token_expires_at = time.time() + 300
                     logger.debug("Using stored device-code access token")
                     return self._access_token
 

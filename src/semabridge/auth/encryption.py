@@ -6,16 +6,35 @@ Responsibilities:
 - Provide helper functions for token encryption and decryption.
 """
 
+import logging
 import os
 from typing import Optional
 from cryptography.fernet import Fernet
 import base64
 import hashlib
 
+_encryption_logger = logging.getLogger(__name__)
+
+
 def _get_fernet() -> Fernet:
     """Derives a Fernet key from a configured secret key or environment variable."""
-    # Attempt to use a strong secret, fallback to a local deterministic key for dev
-    secret = os.environ.get("SEMABRIDGE_ENCRYPTION_KEY", "default-insecure-dev-key")
+    secret = os.environ.get("SEMABRIDGE_ENCRYPTION_KEY")
+    if not secret:
+        # Allow dev mode to proceed with a warning, but never silently use a hardcoded key
+        # without logging loudly. In production (AUTH_ENABLED=true) this is a hard failure.
+        auth_enabled = os.environ.get("AUTH_ENABLED", "true").lower() == "true"
+        if auth_enabled:
+            raise RuntimeError(
+                "SEMABRIDGE_ENCRYPTION_KEY environment variable must be set. "
+                "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+            )
+        # Dev/test mode: warn loudly but continue with a deterministic dev key
+        _encryption_logger.warning(
+            "SECURITY WARNING: SEMABRIDGE_ENCRYPTION_KEY is not set. "
+            "Using an insecure dev key — DO NOT use this in production. "
+            "Set AUTH_ENABLED=true or SEMABRIDGE_ENCRYPTION_KEY to suppress this warning."
+        )
+        secret = "dev-only-insecure-key-do-not-use-in-production"
     # Fernet requires a 32-url-safe-base64-encoded key. We use sha256 to ensure length/format:
     key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode('utf-8')).digest())
     return Fernet(key)

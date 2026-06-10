@@ -7,7 +7,7 @@ export function shortDeterministicHash(value) {
     hash ^= text.charCodeAt(i);
     hash = Math.imul(hash, 16777619);
   }
-  return (hash >>> 0).toString(16).padStart(8, '0').slice(0, 4);
+  return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
 export function sanitizeMappingName(value) {
@@ -69,8 +69,17 @@ export function applyHashDeduplication(mappings) {
       if (duplicates.length < 2) {
         return { ...column, status: normalizeTargetStatus(column), collision_detected: false };
       }
-      const hash = shortDeterministicHash(buildSourceFingerprint(mapping, column));
-      const resolved = `${baseTarget}_${hash}`;
+      // Prefer table-prefix (ORDERS_ORDERID) over a meaningless hash.
+      // Use resolveColumnSourceTable so source_path / parent_source_path are parsed
+      // correctly — these are the actual fields the backend sends.
+      // Fall back to hash only when no table can be determined.
+      const tbl = sanitizeMappingName(
+        resolveColumnSourceTable(column, mapping?.source || '') ||
+        column?.source_table_name || column?.parent_table || mapping?.source || ''
+      );
+      const resolved = (tbl && tbl !== baseTarget)
+        ? `${tbl}_${baseTarget}`
+        : `${baseTarget}_${shortDeterministicHash(buildSourceFingerprint(mapping, column)).slice(0, 6)}`;
       return {
         ...column,
         target: resolved,
@@ -89,6 +98,57 @@ export function applyHashDeduplication(mappings) {
       collision_detected: false,
     };
   });
+}
+
+/**
+ * Given a collision row and the full flat list of rows, return:
+ *  - peers: the other rows that share the same target name (what we're colliding with)
+ *  - suggestions: ordered list of rename options, best-first
+ */
+export function suggestCollisionResolutions(row, allRows) {
+  const baseTarget = sanitizeMappingName(row?.target_field || row?.source_field || '');
+  const tbl        = sanitizeMappingName(
+    resolveColumnSourceTable(row) || row?.source_table_name || ''
+  );
+  const field      = sanitizeMappingName(row?.source_field || '');
+
+  const peers = (allRows || []).filter(
+    r => r.id !== row.id &&
+         sanitizeMappingName(r.target_field || r.source_field || '') === baseTarget
+  );
+
+  const suggestions = [];
+
+  // Option A: table_prefix — SALES_AMOUNT (most readable, preferred)
+  if (tbl && tbl !== baseTarget) {
+    suggestions.push({
+      id: 'table_prefix',
+      label: `${tbl}_${field}`,
+      description: `Prefix with source table "${tbl}"`,
+    });
+  }
+
+  // Option B: kind_prefix — COL_AMOUNT or MSR_AMOUNT
+  const kind = String(row?.entity_kind || row?.field_type || 'col').toUpperCase();
+  const kindPrefix = kind === 'MEASURE' || kind === 'METRIC' ? 'MSR' : 'COL';
+  const kindLabel = `${kindPrefix}_${field}`;
+  if (kindLabel !== suggestions[0]?.label) {
+    suggestions.push({
+      id: 'kind_prefix',
+      label: kindLabel,
+      description: `Prefix with entity type (${kindPrefix})`,
+    });
+  }
+
+  // Option C: short hash fallback — always last
+  const hash = shortDeterministicHash(buildSourceFingerprint({}, row)).slice(0, 6);
+  suggestions.push({
+    id: 'hash',
+    label: `${baseTarget}_${hash}`,
+    description: 'Append short unique hash (last resort)',
+  });
+
+  return { suggestions, peers };
 }
 
 export function TypeBadge({ type }) {
@@ -218,9 +278,15 @@ export function resolveMeasureSourceTables(row) {
 }
 
 export function resolveColumnSourceTable(row, parentTable = '') {
+  // 1. Direct source_table field (sent by mappings_controller dry-run response)
+  const direct = String(row?.source_table || '').trim();
+  if (direct) return direct;
+
+  // 2. Parse from source_path e.g. "datasets.Orders.columns.OrderID" → "Orders"
   const fromPath = parseDatasetFromPath(row?.source_path);
   if (fromPath) return fromPath;
 
+  // 3. Parse from parent_source_path e.g. "datasets.Orders" → "Orders"
   const fromParentPath = parseDatasetFromPath(row?.parent_source_path);
   if (fromParentPath) return fromParentPath;
 

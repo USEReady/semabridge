@@ -179,5 +179,5 @@ class ConnectionPoolManager:
         """Safely close a connection."""
         try:
             conn.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Error closing pooled connection: %s", exc)

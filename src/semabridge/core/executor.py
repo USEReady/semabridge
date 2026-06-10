@@ -857,8 +857,17 @@ class CLIExecutor:
         else:
             raise ExecutionError(8, f"Unsupported target type: {self.config.target.type}")
         
+        # Capture missing_dims immediately after DDL generation so dry-run
+        # (which skips Stage 9) still surfaces schema gaps in the mapping UI.
+        if self.config.target.type == "snowflake" and self._target_format:
+            _emitter = self._target_format.get("emitter")
+            _builder = getattr(_emitter, "semantic_view_builder", None)
+            _missing = dict(getattr(_builder, "missing_dims", {}) or {})
+            if _missing:
+                self._missing_dims = _missing
+
         logger.info(f"  Converted to {self.config.target.type} format")
-        
+
         duration_ms = int((time.time() - step_start) * 1000)
         self.summary.add_step(8, STEP_NAMES[8], StepStatus.SUCCESS,
                                message=f"Converted to {self.config.target.type}",
@@ -948,7 +957,13 @@ class CLIExecutor:
             emitter = SnowflakeEmitter(settings.snowflake, behavior=self.config.behavior)
         
         emitter.deploy(self._sml_model)
-        
+
+        # Capture missing_dims for RunSummary (schema evolution warnings)
+        _builder = getattr(emitter, "semantic_view_builder", None)
+        _missing = dict(getattr(_builder, "missing_dims", {}) or {})
+        if _missing:
+            self._missing_dims = _missing  # stored for _step_10_finalize
+
         # Save DDL to output file
         output_path = Path("output/reverse/semantic_view.sql")
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1019,6 +1034,11 @@ class CLIExecutor:
                                message=f"Status: {status.value}",
                                duration_ms=duration_ms)
         
+        # Propagate missing_dims captured during Snowflake deploy
+        _missing = getattr(self, "_missing_dims", None)
+        if _missing:
+            self.summary.missing_dims = _missing
+
         # Finalize summary (calculate total duration)
         self.summary.finalize()
         

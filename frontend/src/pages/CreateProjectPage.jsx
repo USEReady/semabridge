@@ -377,7 +377,7 @@ function normalizeRows(data) {
         measure_expression: isMeasure ? resolveMeasureExpression(row) : '',
         target_field: targetName,
         target_type: String(row?.target_data_type || row?.source_data_type || row?.data_type || 'unknown'),
-        status: normalizeStatus({ ...row, target_field: targetName }),
+        status: row?.collision_detected ? 'collision' : normalizeStatus({ ...row, target_field: targetName }),
         validation_status: String(row?.validation_status || ''),
         validation_code: String(row?.validation_code || ''),
         validation_message: String(row?.validation_message || ''),
@@ -753,7 +753,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
 
       if (mappingMode === 'saved' && Array.isArray(initialData.mappings) && initialData.mappings.length > 0) {
         setDetectedMappings(initialData.mappings);
-        setMappingDryRunStatus('success');
+        // Loading saved mappings does NOT mean the integrity check has passed —
+        // keep status idle so the user is required to run the check explicitly.
+        setMappingDryRunStatus('idle');
       } else if (mappingMode === 'auto') {
         setDetectedMappings([]);
         setMappingDryRunStatus('idle');
@@ -1605,14 +1607,27 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         return;
       }
 
+      // If the extraction pipeline failed (e.g. auth expired, connection error),
+      // the response is technically "success" but contains no fields.
+      // Surface a meaningful warning so the user knows to check their connection.
+      if (response?.extraction_failed || response?.summary?.extraction_failed) {
+        setMappingError(
+          'Could not load model fields — the source extraction failed. ' +
+          'Check that your connection is active and re-run the check.'
+        );
+        setMappingDryRunStatus('error');
+        return;
+      }
+
       const rows = normalizeRows(response);
       setDetectedMappings(rows);
       setDryRunData(response);
       setMappingDryRunStatus('success');
       setMappingDryRunSignature(currentMappingSignature);
       setUnmappedAcknowledged(false);
-      // Dry run succeeded — unlock the Continue button so the user can proceed to Step 5
-      setMappingReadyToProceed(true);
+      // Do NOT force-set readyToProceed here — StepMappingOptions evaluates
+      // blockingCount, compatScore, and schema conflicts and calls
+      // onProceedStateChange (= setMappingReadyToProceed) with the real result.
     } catch (err) {
       setMappingError(err?.message || 'Dry run failed.');
       setMappingDryRunStatus('error');
@@ -2032,6 +2047,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
                 }}
                 onDeploy={handleDeployMapping}
                 onProceedStateChange={setMappingReadyToProceed}
+                onProceed={goNext}
                 primaryTargetConnector={[...targetConnectors][0] || ''}
                 dryRunData={dryRunData}
                 editingRow={editingRow}

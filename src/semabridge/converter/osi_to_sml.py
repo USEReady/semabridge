@@ -228,6 +228,42 @@ class OSIToSMLConverter(BaseConverter):
         )
 
     def _convert_metric(self, osi_metric: OSIMetric) -> SMLMetric:
+        # --- Snowflake-sourced metrics already have sql_expression ---
+        # When the source is a Snowflake semantic view, the expression is already
+        # valid SQL. Use SQLToDAXConverter to produce a DAX representation for
+        # Fabric publishing, and preserve the sql_expression directly.
+        # NOTE: The OSIMetric validator copies sql_expression → expression when
+        # expression is absent, so we detect this path by checking if sql_expression
+        # equals expression (i.e., no separate DAX was ever set).
+        _has_separate_dax = (
+            osi_metric.expression
+            and osi_metric.sql_expression
+            and osi_metric.expression != osi_metric.sql_expression
+        )
+        if osi_metric.sql_expression and not _has_separate_dax:
+            from semabridge.converter.sql_to_dax import SQLToDAXConverter
+            _sql_to_dax = SQLToDAXConverter()
+            _dax, _tier = _sql_to_dax.translate(osi_metric.sql_expression, osi_metric.dataset)
+            sml_agg = getattr(SMLAggregationType, osi_metric.aggregation.name, SMLAggregationType.SUM)
+            metric = SMLMetric(
+                unique_name=osi_metric.unique_name,
+                label=osi_metric.label,
+                description=osi_metric.description or "",
+                dataset=osi_metric.dataset,
+                expression=_dax if _tier > 0 else osi_metric.sql_expression,
+                sql_expression=osi_metric.sql_expression,
+                aggregation=sml_agg,
+                format_string=osi_metric.format_string,
+                is_hidden=osi_metric.is_hidden,
+                complexity_tier=_tier if _tier > 0 else osi_metric.complexity_tier or 1,
+                sync_enabled=True,
+                access_modifier=osi_metric.access_modifier,
+                synonyms=list(osi_metric.synonyms),
+            )
+            if _tier == 0:
+                metric.sync_failure_reason = "SQL→DAX reverse translation not available for this expression; raw SQL preserved"
+            return metric
+
         # DAX Translation Logic
         expression = osi_metric.expression or ""
 

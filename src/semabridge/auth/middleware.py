@@ -16,7 +16,8 @@ The following paths are **always** accessible without a token:
 
 Toggle
 ------
-Set ``AUTH_ENABLED=false`` (or omit) to bypass enforcement entirely.
+Set ``AUTH_ENABLED=false`` to bypass enforcement entirely (single-user / dev mode).
+Auth is **enabled by default** (``AUTH_ENABLED`` defaults to ``"true"``).
 This allows the existing frontend to keep working while auth is
 integrated progressively.
 """
@@ -40,10 +41,11 @@ logger = get_logger(__name__)
 # Paths that never require authentication
 PUBLIC_PATHS: Set[str] = {
     "/api/health",
-    "/api/discovery/fabric",       # Fabric discovery (uses Fabric credentials)
-    "/api/discovery/snowflake",    # Snowflake discovery (uses Snowflake credentials)  
-    "/api/discovery/semantic",     # Unified semantic discovery (uses both)
-    "/api/discovery/repository",   # Repository discovery (uses local DB)
+    "/api/health/live",
+    "/api/health/ready",
+    # Discovery endpoints removed from public paths — they return tenant data and require auth.
+    # If a specific discovery endpoint must be public (e.g. for OAuth callback), add it here
+    # with a comment explaining the reason.
     "/auth/register",
     "/auth/login",
     "/auth/auto-login",
@@ -72,8 +74,27 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
-        # Feature flag — off by default so nothing breaks during rollout
-        if os.environ.get("AUTH_ENABLED", "").lower() != "true":
+        # Feature flag — on by default; set AUTH_ENABLED=false explicitly for dev/single-user mode
+        if os.environ.get("AUTH_ENABLED", "true").lower() != "true":
+            # Still populate request.state so get_current_user deps don't fail.
+            # Try to resolve from Bearer token; fall back to dev user id=1.
+            token = None
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                token = auth_header[len("Bearer "):].strip()
+            if not token:
+                token = request.cookies.get("access_token")
+            if token:
+                try:
+                    payload = decode_access_token(token)
+                    request.state.user_id = payload.get("sub")
+                    request.state.user_role = payload.get("role", "admin")
+                except Exception:
+                    request.state.user_id = "1"
+                    request.state.user_role = "admin"
+            else:
+                request.state.user_id = "1"
+                request.state.user_role = "admin"
             return await call_next(request)
 
         path = request.url.path.rstrip("/")
@@ -89,16 +110,20 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES):
             return await call_next(request)
 
-        # Extract and validate the bearer token
+        # Extract token: prefer Authorization header, fall back to HttpOnly cookie
+        token = None
         auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
+        if auth_header.startswith("Bearer "):
+            token = auth_header[len("Bearer "):].strip()
+        if not token:
+            token = request.cookies.get("access_token")
+
+        if not token:
             return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={"detail": "Missing or invalid Authorization header"},
                 headers={"WWW-Authenticate": "Bearer"},
             )
-
-        token = auth_header.removeprefix("Bearer ").strip()
         try:
             payload = decode_access_token(token)
             # Attach user info to request state for downstream handlers

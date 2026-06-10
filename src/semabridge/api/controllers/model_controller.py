@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from semabridge.api.services.model_service import get_model, save_model
+from semabridge.api.services.core_domain_service import get_model, save_model
 
 router = APIRouter()
 router.get('/api/models/{model_id}')(get_model)

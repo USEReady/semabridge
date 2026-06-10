@@ -257,9 +257,19 @@ class ExecutionEngine:
                             account.connector_type,
                             account.identity_email or account.tag,
                         )
+                        # Preserve project-scoped source/target namespaces (set from YAML
+                        # in Step 1) before clearing the settings cache — the fresh
+                        # get_settings() call would otherwise lose them.
+                        _old_source = getattr(context.config, "source", None)
+                        _old_target = getattr(context.config, "target", None)
                         # Force settings cache clear so pydantic re-reads env vars
                         get_settings.cache_clear()
                         context.config = get_settings()
+                        # Re-attach project-scoped namespaces to the refreshed config.
+                        if _old_source is not None:
+                            object.__setattr__(context.config, "source", _old_source)
+                        if _old_target is not None:
+                            object.__setattr__(context.config, "target", _old_target)
                 except Exception as acct_exc:
                     logger.warning(
                         "Account credential injection failed for %s: %s",
@@ -335,8 +345,8 @@ class ExecutionEngine:
             if hasattr(self, '_account_env_ctx') and self._account_env_ctx is not None:
                 try:
                     self._account_env_ctx.__exit__(None, None, None)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Error cleaning up account env context: %s", exc)
                 self._account_env_ctx = None
 
     def _record_step(

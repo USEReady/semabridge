@@ -1,13 +1,64 @@
+import asyncio
 import json
 import logging
 import zipfile
 from io import BytesIO
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List, Optional
 
 import yaml
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel
+
+
+class CreateProjectRequest(BaseModel):
+    name: Optional[str] = None
+    user_id: Optional[str] = None
+    account_id: Optional[str] = None
+    source: Optional[Dict[str, Any]] = None
+    targets: Optional[List[Any]] = None
+    config_yaml: Optional[str] = None
+    connection_tag: Optional[str] = None
+
+    class Config:
+        extra = "allow"
+
+
+class PatchProjectRequest(BaseModel):
+    name: Optional[str] = None
+    config_yaml: Optional[str] = None
+    connection_tag: Optional[str] = None
+    source: Optional[Dict[str, Any]] = None
+    targets: Optional[List[Any]] = None
+
+    class Config:
+        extra = "allow"
+
+
+class SaveProjectConfigRequest(BaseModel):
+    config_yaml: Optional[str] = None
+
+    class Config:
+        extra = "allow"
+
+
+class CaptureSnapshotsRequest(BaseModel):
+    label: Optional[str] = None
+    roles: Optional[List[str]] = None
+    stage: Optional[str] = None
+
+    class Config:
+        extra = "allow"
+
+
+class RestoreProjectVersionRequest(BaseModel):
+    snapshot_id: Optional[str] = None
+    version_id: Optional[str] = None
+    target_ids: Optional[List[str]] = None
+
+    class Config:
+        extra = "allow"
 
 from semabridge.api.services.project_ownership_service import (
     auth_is_enabled,
@@ -15,7 +66,7 @@ from semabridge.api.services.project_ownership_service import (
     require_request_user_id,
     validate_project_connector_accounts_belong_to_user,
 )
-from semabridge.api.services.project_runs_service import (
+from semabridge.api.services.project_domain_service import (
     apply_project_retention_policy,
     capture_manual_snapshots_compat,
     compare_project_snapshots_compat,
@@ -42,14 +93,19 @@ logger = logging.getLogger(__name__)
 
 
 def _assert_project_access(project_id: str, user_id: str | None) -> None:
+    """Synchronous access guard — call via asyncio.to_thread from async endpoints."""
     if auth_is_enabled() and not is_project_owned_by_user(project_id, user_id):
         raise HTTPException(status_code=403, detail="Forbidden: project access denied")
 
 
 @router.get("/api/projects")
-async def list_projects(request: Request):
+async def list_projects(
+    request: Request,
+    limit: int = Query(50, ge=1, le=200, description="Max projects to return"),
+    offset: int = Query(0, ge=0, description="Number of projects to skip"),
+):
     user_id = require_request_user_id(request)
-    projects = await list_projects_compat()
+    projects = await list_projects_compat(limit=limit, offset=offset)
     if auth_is_enabled():
         return [
             project
@@ -75,56 +131,57 @@ async def list_project_discovery(request: Request):
 
 
 @router.post("/api/projects")
-async def create_project(request: Request, payload: dict):
+async def create_project(request: Request, payload: CreateProjectRequest):
     user_id = require_request_user_id(request)
+    payload_dict = payload.model_dump(exclude_none=False)
     if user_id:
-        payload["user_id"] = str(user_id)
-        validate_project_connector_accounts_belong_to_user(user_id, payload)
-        src = payload.get("source") if isinstance(payload.get("source"), dict) else {}
-        identity_id = src.get("identity_id") or payload.get("account_id")
+        payload_dict["user_id"] = str(user_id)
+        validate_project_connector_accounts_belong_to_user(user_id, payload_dict)
+        src = payload_dict.get("source") if isinstance(payload_dict.get("source"), dict) else {}
+        identity_id = src.get("identity_id") or payload_dict.get("account_id")
         logger.info(
             "[ProjectCreate] user_id=%s payload_name=%s source_identity_id=%s target_count=%s",
             user_id,
-            payload.get("name"),
+            payload_dict.get("name"),
             identity_id,
-            len(payload.get("targets") or []),
+            len(payload_dict.get("targets") or []),
         )
-    return await create_project_compat(payload)
+    return await create_project_compat(payload_dict)
 
 
 @router.get("/api/projects/{project_id}")
 async def get_project(project_id: str, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await get_project_compat(project_id)
 
 
 @router.patch("/api/projects/{project_id}")
-async def patch_project(project_id: str, payload: dict, request: Request):
+async def patch_project(project_id: str, payload: PatchProjectRequest, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
-    return await patch_project_compat(project_id, payload)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
+    return await patch_project_compat(project_id, payload.model_dump(exclude_none=False))
 
 
 @router.delete("/api/projects/{project_id}")
 async def delete_project(project_id: str, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await delete_project_compat(project_id)
 
 
 @router.get("/api/projects/{project_id}/config")
 async def get_project_config(project_id: str, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await get_project_config_compat(project_id)
 
 
 @router.put("/api/projects/{project_id}/config")
-async def save_project_config(project_id: str, payload: dict, request: Request):
+async def save_project_config(project_id: str, payload: SaveProjectConfigRequest, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
-    return await save_project_config_compat(project_id, payload)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
+    return await save_project_config_compat(project_id, payload.model_dump(exclude_none=False))
 
 
 @router.get("/api/projects/{project_id}/snapshots")
@@ -140,7 +197,7 @@ async def list_project_snapshots(
     limit: int = Query(200, ge=1, le=500),
 ):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await list_project_snapshots_compat(
         project_id,
         role=role,
@@ -156,7 +213,7 @@ async def list_project_snapshots(
 @router.delete("/api/projects/{project_id}/snapshots")
 async def delete_snapshots(project_id: str, snapshot_ids: List[str], request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await delete_project_snapshots_compat(project_id, snapshot_ids)
 
 
@@ -167,15 +224,15 @@ async def list_snapshot_groups(
     limit: int = Query(200, ge=1, le=500),
 ):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await list_snapshot_groups_compat(project_id, limit=limit)
 
 
 @router.post("/api/projects/{project_id}/snapshots/capture")
-async def capture_snapshots(project_id: str, payload: dict, request: Request):
+async def capture_snapshots(project_id: str, payload: CaptureSnapshotsRequest, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
-    return await capture_manual_snapshots_compat(project_id, payload)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
+    return await capture_manual_snapshots_compat(project_id, payload.model_dump(exclude_none=False))
 
 
 @router.get("/api/projects/{project_id}/snapshots/compare")
@@ -218,7 +275,7 @@ async def compare_snapshots(
         )
 
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await compare_project_snapshots_compat(
         project_id,
         resolved_from_snapshot_id,
@@ -229,37 +286,37 @@ async def compare_snapshots(
 
 
 @router.post("/api/projects/{project_id}/restore-version")
-async def restore_project_version(project_id: str, payload: dict, request: Request):
+async def restore_project_version(project_id: str, payload: RestoreProjectVersionRequest, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
-    return await restore_project_version_compat(project_id, payload)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
+    return await restore_project_version_compat(project_id, payload.model_dump(exclude_none=False))
 
 
 @router.get("/api/projects/{project_id}/runs")
 async def get_project_runs(project_id: str, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await get_project_runs_compat(project_id)
 
 
 @router.get("/api/projects/{project_id}/vc/stats")
 async def get_project_vc_stats(project_id: str, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await get_project_storage_stats(project_id)
 
 
 @router.post("/api/projects/{project_id}/vc/retention")
 async def run_project_retention(project_id: str, request: Request, days: int = 30):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await apply_project_retention_policy(project_id, days)
 
 
 @router.get("/api/projects/{project_id}/export")
 async def export_project(project_id: str, request: Request):
     user_id = require_request_user_id(request)
-    _assert_project_access(project_id, user_id)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
     project = await get_project_config_compat(project_id)
     config_yaml = str(project.get("config_yaml") or "").strip()
     if not config_yaml:

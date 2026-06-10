@@ -1,7 +1,7 @@
 import logging
 from typing import Any, Dict
 
-from fastapi import HTTPException, Request
+from fastapi import Request
 from semabridge.core.settings import reload_settings
 from semabridge.utils.logger import setup_logging
 
@@ -15,12 +15,12 @@ from semabridge.api.services.connection_session_store import (
     _time,
     _uuid,
 )
+from semabridge.domain.exceptions import InternalError, RateLimitError, ValidationError
 
 # setup_logging(level="INFO")  # Centralized in app_setup.py
 logger = logging.getLogger("semabridge.api")
 _databricks_session_token = None
 _databricks_session_token_expires_at = 0.0
-
 
 async def databricks_native_oauth_login(request: Request, payload: Dict[str, Any] = None):
     """Initiate native Databricks OAuth authorization-code flow with PKCE."""
@@ -32,17 +32,14 @@ async def databricks_native_oauth_login(request: Request, payload: Dict[str, Any
     _cleanup_stale_poll_sessions()
 
     if not payload:
-        raise HTTPException(status_code=400, detail="Missing payload")
+        raise ValidationError("Missing payload")
 
     host = payload.get("host")
     client_id = payload.get("client_id")
     redirect_uri = payload.get("redirect_uri")
 
     if not host or not client_id or not redirect_uri:
-        raise HTTPException(
-            status_code=400,
-            detail="host, client_id, and redirect_uri are required.",
-        )
+        raise ValidationError("host, client_id, and redirect_uri are required.")
 
     code_verifier = base64.urlsafe_b64encode(os.urandom(32)).decode("utf-8").rstrip("=")
     code_challenge = base64.urlsafe_b64encode(
@@ -61,8 +58,8 @@ async def databricks_native_oauth_login(request: Request, payload: Dict[str, Any
             user = get_current_user_optional(request, session)
             if user:
                 user_id = user.id
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Could not resolve user_id for Databricks OAuth session: %s", exc)
 
     with _poll_sessions_lock:
         _poll_sessions[flow_id] = {
@@ -100,7 +97,6 @@ async def databricks_native_oauth_login(request: Request, payload: Dict[str, Any
         "user_code": "",
         "message": "Please log in using the opened browser tab.",
     }
-
 
 async def databricks_oauth_callback(
     request: Request,
@@ -206,34 +202,24 @@ async def databricks_oauth_callback(
             html_template.format(title="Error", message="Internal error during token exchange.")
         )
 
-
 async def databricks_device_code_poll(request: Request, payload: Dict[str, Any] = None):
     """Return the Databricks OAuth flow status for a specific flow id."""
     from semabridge.repository.credential_manager import CredentialManager
 
     flow_id = (payload or {}).get("flow_id", "")
     if not flow_id:
-        raise HTTPException(
-            status_code=400,
-            detail={"status": "error", "message": "Missing flow_id."},
-        )
+        raise ValidationError(str({"status": "error", "message": "Missing flow_id."}))
 
     now = _time.time()
     if now - _last_poll_time.get(flow_id, 0) < 1.0:
-        raise HTTPException(
-            status_code=429,
-            detail={"status": "too_many_requests", "message": "Slow down polling."},
-        )
+        raise RateLimitError(str({"status": "too_many_requests", "message": "Slow down polling."}))
     _last_poll_time[flow_id] = now
 
     with _poll_sessions_lock:
         state = _poll_sessions.get(flow_id, {}).copy()
 
     if not state:
-        raise HTTPException(
-            status_code=400,
-            detail={"status": "expired", "message": "Unknown or expired flow_id. Please login again."},
-        )
+        raise ValidationError(str({"status": "expired", "message": "Unknown or expired flow_id. Please login again."}))
 
     user_ip = _get_client_ip(request)
     session_ip = state.get("user_ip")
@@ -295,7 +281,7 @@ async def databricks_device_code_poll(request: Request, payload: Dict[str, Any] 
             reload_settings()
         except Exception as exc:
             logger.exception("Failed to persist Databricks OAuth token: %s", exc)
-            raise HTTPException(status_code=500, detail=f"Database write failed: {exc}")
+            raise InternalError(f"Database write failed: {exc}")
 
         return {
             "status": "success",
@@ -307,7 +293,6 @@ async def databricks_device_code_poll(request: Request, payload: Dict[str, Any] 
     with _poll_sessions_lock:
         _poll_sessions.pop(flow_id, None)
     return {"status": "failed", "message": state.get("message", "Unknown error")}
-
 
 def databricks_auth_status():
     """Get the current Databricks authentication status."""
@@ -333,7 +318,6 @@ def databricks_auth_status():
     except Exception as exc:
         return {"auth_method": "none", "logged_in": False, "error": str(exc)}
 
-
 def databricks_logout():
     """Clear stored Databricks tokens."""
     from semabridge.repository.credential_manager import CredentialManager
@@ -350,4 +334,4 @@ def databricks_logout():
         logger.info("Databricks interactive session cleared")
         return {"status": "logged_out"}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise InternalError(str(exc))
