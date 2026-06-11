@@ -287,10 +287,15 @@ def register_pipeline_commands(app: typer.Typer, console: Console, show_banner) 
 
         # Publish
         publisher = FabricPublisher(settings.fabric)
+        publish_name = (
+            sml_model.label
+            or sml_model.unique_name
+            or model_name
+        )
 
         result = publisher.publish(
             sml_model=sml_model,
-            model_name=model_name,
+            model_name=publish_name,
             snowflake_server=settings.snowflake.account,
             snowflake_warehouse=settings.snowflake.warehouse,
             snowflake_database=settings.snowflake.database,
@@ -298,6 +303,6 @@ def register_pipeline_commands(app: typer.Typer, console: Console, show_banner) 
             overwrite=overwrite,
         )
 
-        console.print(f"\n[green][OK] Published to Fabric![/green]")
+        console.print(f"\n[green][OK][/green] Published to Fabric![/green]")
         console.print(f"  Model ID: {result.get('id', 'N/A')}")
-        console.print(f"  Display Name: {result.get('displayName', model_name)}")
+        console.print(f"  Display Name: {result.get('displayName', publish_name)}")

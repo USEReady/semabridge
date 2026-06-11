@@ -375,9 +375,14 @@ def register_version_history_commands(app: typer.Typer, console: Console, show_b
                     console.print("  Deploying to Fabric...")
                     from semabridge.connectors.fabric_publisher import FabricPublisher
                     publisher = FabricPublisher(settings.fabric)
+                    publish_name = (
+                        sml_model.label
+                        or sml_model.unique_name
+                        or dataset_id
+                    )
                     publisher.publish(
                         sml_model=sml_model,
-                        model_name=dataset_id,
+                        model_name=publish_name,
                         snowflake_server=settings.snowflake.account,
                         snowflake_warehouse=settings.snowflake.warehouse,
                         snowflake_database=settings.snowflake.database,

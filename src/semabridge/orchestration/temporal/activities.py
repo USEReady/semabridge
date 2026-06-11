@@ -401,10 +401,12 @@ async def emit_to_fabric(inp: EmitInput) -> EmitOutput:
         from semabridge.formats.sml.models import SMLModel
         sml_model = SMLModel.model_validate_json(inp.sml_json)
 
-        activity.heartbeat("Publishing to Fabric")
+        model_name = sml_model.label or sml_model.unique_name or inp.model_id
+
+        activity.heartbeat(f"Publishing to Fabric model={model_name}")
 
         try:
-            result = publisher.publish(sml_model, model_name=inp.model_id)
+            result = publisher.publish(sml_model, model_name=model_name)
         except PublishError as pe:
             error_msg = str(pe)
             # Detect 429 throttling

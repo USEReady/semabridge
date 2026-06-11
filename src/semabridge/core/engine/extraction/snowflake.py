@@ -230,7 +230,7 @@ def _extract_snowflake(
         project_id=context.project_id,
         run_id=context.run_id,
         metadata=metadata,
-        semantic_view_name=semantic_view_name,
+        semantic_view_name=semantic_view_name or dataset_id,
         semantic_view_ddl=semantic_view_ddl,
     )
 
@@ -319,7 +319,7 @@ def _extract_snowflake_unscoped(
         project_id=context.project_id,
         run_id=context.run_id,
         metadata=metadata,
-        semantic_view_name=semantic_view_name,
+        semantic_view_name=semantic_view_name or dataset_id,
         semantic_view_ddl=semantic_view_ddl,
     )
 

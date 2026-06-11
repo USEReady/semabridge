@@ -106,10 +106,15 @@ def _deploy_to_fabric(self, context: RunContext) -> None:
                 if target_workspace:
                     scoped_settings.fabric.workspace_id = target_workspace
 
+                model_name = (
+                    context.sml_model.label
+                    or context.sml_model.unique_name
+                    or context.project_id
+                )
                 publisher = FabricPublisher(scoped_settings.fabric)
                 publisher.publish(
                     sml_model=context.sml_model,
-                    model_name=context.project_id,
+                    model_name=model_name,
                     snowflake_server=scoped_settings.snowflake.account,
                     snowflake_warehouse=scoped_settings.snowflake.warehouse,
                     snowflake_database=scoped_settings.snowflake.database,
@@ -133,10 +138,15 @@ def _deploy_to_fabric(self, context: RunContext) -> None:
     get_settings.cache_clear()
     config = get_settings()
 
+    model_name = (
+        context.sml_model.label
+        or context.sml_model.unique_name
+        or context.project_id
+    )
     publisher = FabricPublisher(config.fabric)
     publisher.publish(
         sml_model=context.sml_model,
-        model_name=context.project_id,
+        model_name=model_name,
         snowflake_server=config.snowflake.account,
         snowflake_warehouse=config.snowflake.warehouse,
         snowflake_database=config.snowflake.database,

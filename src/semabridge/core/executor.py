@@ -978,10 +978,15 @@ class CLIExecutor:
         """Deploy to Fabric."""
         from semabridge.connectors.fabric_publisher import FabricPublisher
         
+        model_name = (
+            self._sml_model.label
+            or self._sml_model.unique_name
+            or self.project_id
+        )
         publisher = FabricPublisher(settings.fabric)
         return publisher.publish(
             sml_model=self._sml_model,
-            model_name=self.config.model_name,
+            model_name=model_name,
             snowflake_server=settings.snowflake.account,
             snowflake_warehouse=settings.snowflake.warehouse,
             snowflake_database=settings.snowflake.database,

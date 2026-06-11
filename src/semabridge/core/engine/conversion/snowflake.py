@@ -102,8 +102,13 @@ def _convert_snowflake_to_sml(self, context: RunContext) -> SMLModel:
         "primary_keys": sf.primary_keys,
     }
 
+    model_name = (
+        sf.semantic_view_name
+        or (getattr(config.source, "model", None) if hasattr(config, "source") else None)
+        or context.project_id
+    )
     assembler = SMLAssembler(
-        model_name=context.project_id,
+        model_name=model_name,
         description=config.model.description,
         source_database=sf.database,
         source_schema=sf.schema_name,

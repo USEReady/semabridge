@@ -288,9 +288,14 @@ def _run_snowflake_to_fabric(
         else:
             console.print("\n[bold cyan]Step 5/5: Publishing to Fabric...[/bold cyan]")
             publisher = FabricPublisher(settings.fabric)
+            publish_name = (
+                sml_model.label
+                or sml_model.unique_name
+                or model_name
+            )
             result = publisher.publish(
                 sml_model=sml_model,
-                model_name=model_name,
+                model_name=publish_name,
                 snowflake_server=settings.snowflake.account,
                 snowflake_warehouse=settings.snowflake.warehouse,
                 snowflake_database=settings.snowflake.database,
